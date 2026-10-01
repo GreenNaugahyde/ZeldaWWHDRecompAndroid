@@ -34,7 +34,10 @@ static uint32_t g_watch_val = 0;
 static uint32_t g_watch_r3 = 0;
 static std::atomic<int> g_watch_r3_count{0};
 
+void true60_nan_probe(uint32_t addr);  // true60.cpp (WWHD_NAN_PROBE)
 extern "C" void ppc_trace_enter(uint32_t addr) {
+    static const bool nan_probe = getenv("WWHD_NAN_PROBE") != nullptr;
+    if (nan_probe) true60_nan_probe(addr);
     if (g_watch_r3) {
         Cpu* c = threads::current();
         if (c && c->r[3] == g_watch_r3 && g_watch_r3_count++ < 3000) {
@@ -104,6 +107,7 @@ __attribute__((constructor)) static void trace_init() {
         }
         g_ppc_trace = 1;
     }
+    if (getenv("WWHD_NAN_PROBE")) g_ppc_trace = 1;
     if (getenv("WWHD_TRACE_FUNCS")) {
         g_ppc_trace = 1;
         signal(SIGUSR1, on_usr1);

@@ -4,6 +4,7 @@
 #include <deque>
 // GX2 core: command execution, display lists, context states, draws, clears,
 // copies and presentation.
+#include <algorithm>
 #include <chrono>
 #include <mutex>
 #include <thread>
@@ -190,7 +191,7 @@ constexpr uint32 kColorBufferWords = 0x9C / 4, kDepthBufferWords = 0xAC / 4, kSu
 // one at a time, so a couple of fixed slots suffice)
 static uint32 unpack_struct(const uint32* words, uint32 count, int slot) {
     static uint32 scratch = 0;
-    if (!scratch) scratch = mem::runtime_alloc(2 * 0x100, 0x40);
+    if (!scratch) scratch = mem::host_alloc(2 * 0x100, 0x40);
     uint32 addr = scratch + slot * 0x100;
     memcpy(mem::ptr(addr), words, count * 4);
     return addr;
@@ -293,7 +294,9 @@ using namespace gx2;
 // flip executes on the first vsync that is at least `swap interval` vsyncs after the previous flip.
 // Games pace themselves by waiting for vsync until their flips have executed.
 static uint64_t g_swap_count = 0, g_flip_count = 0;
-static uint32 g_swap_interval = 1;
+namespace gx2 { uint64_t flips_presented() { return __atomic_load_n(&g_flip_count, __ATOMIC_RELAXED); } }  // live fps in the title
+static uint32 g_swap_interval = 1;  // as set by the game (frame interpolation halves it)
+namespace interp { uint32_t effective_swap_interval(uint32_t game); }
 static std::mutex g_flip_mutex;
 static const auto g_vsync_epoch = std::chrono::steady_clock::now();
 static constexpr std::chrono::nanoseconds kVsyncPeriod(16683333);  // 59.94 Hz
@@ -303,13 +306,14 @@ struct PendingFlip { uint64_t vsync, swap; };
 static std::deque<PendingFlip> g_pending_flips;
 static uint64_t g_last_flip_vsync = 0;
 static uint64_t g_last_flip_time = 0;  // timebase
+static int64_t g_count_offset = 0;     // guest-visible swap/flip counts minus ours (set by a loaded save state)
 
 static uint64_t vsync_index() { return (std::chrono::steady_clock::now() - g_vsync_epoch) / kVsyncPeriod; }
 
 static void update_flips() {  // g_flip_mutex held
     uint64_t now = vsync_index();
     while (!g_pending_flips.empty()) {
-        uint64_t at = std::max(g_pending_flips.front().vsync + 1, g_last_flip_vsync + g_swap_interval);
+        uint64_t at = std::max(g_pending_flips.front().vsync + 1, g_last_flip_vsync + interp::effective_swap_interval(g_swap_interval));
         if (at > now || gfx::frames_completed() < g_pending_flips.front().swap) break;
         at = now;
         g_pending_flips.pop_front();
@@ -424,6 +428,21 @@ HLE(gx2, GX2DrawDone) {
     ret(c, 1);
 }
 HLE(gx2, GX2SwapScanBuffers) {
+    // debug: WWHD_TRACE_SWAP=n logs the guest call chain of the first n swaps
+    static int trace = getenv("WWHD_TRACE_SWAP") ? atoi(getenv("WWHD_TRACE_SWAP")) : 0;
+    if (trace > 0) {
+        trace--;
+        char buf[256];
+        int n = snprintf(buf, sizeof buf, "[gx2] swap from lr=%08X", c->lr);
+        uint32_t sp = c->r[1];
+        for (int i = 0; i < 8 && sp; i++) {
+            uint32_t prev = ld32(sp);
+            if (!prev || prev <= sp) break;
+            n += snprintf(buf + n, sizeof buf - n, " <- %08X", ld32(prev + 4));
+            sp = prev;
+        }
+        LOG("%s", buf);
+    }
     emit_host(OP_SWAP, {});
     {
         std::lock_guard<std::mutex> lk(g_flip_mutex);
@@ -443,15 +462,14 @@ HLE(gx2, GX2SwapScanBuffers) {
 HLE(gx2, GX2GetSwapStatus) {
     std::lock_guard<std::mutex> lk(g_flip_mutex);
     update_flips();
-    if (arg(c, 0)) st32(arg(c, 0), (uint32)g_swap_count);
-    if (arg(c, 1)) st32(arg(c, 1), (uint32)g_flip_count);
-    if (arg(c, 2)) st64(arg(c, 2), g_last_flip_time);
-    if (arg(c, 3)) st64(arg(c, 3), timebase::now());
+    if (arg(c, 0)) st32(arg(c, 0), (uint32)(g_swap_count + g_count_offset));
+    if (arg(c, 1)) st32(arg(c, 1), (uint32)(g_flip_count + g_count_offset));
+    if (arg(c, 2)) st64(arg(c, 2), timebase::to_guest(g_last_flip_time));
+    if (arg(c, 3)) st64(arg(c, 3), timebase::guest_now());
 }
 HLE(gx2, GX2SetSwapInterval) { g_swap_interval = std::max<uint32>(arg(c, 0), 1); }
 HLE(gx2, GX2WaitForVsync) {
-    BlockingScope b;
-    std::this_thread::sleep_until(g_vsync_epoch + kVsyncPeriod * (vsync_index() + 1));
+    threads::park_sleep_until(g_vsync_epoch + kVsyncPeriod * (vsync_index() + 1));
     std::lock_guard<std::mutex> lk(g_flip_mutex);
     update_flips();
     static uint64_t calls = 0;
@@ -494,5 +512,78 @@ HLE(gx2, GX2CalcFetchShaderSizeEx) {
     ret(c, std::max<uint32>(cf + n * 16, 16 + n * 16));
 }
 HLE(gx2, GX2GPUTimeToCPUTime) { ret64(c, arg64(c, 3)); }
-HLE(gx2, GX2SampleTopGPUCycle) { if (arg(c, 0)) st64(arg(c, 0), timebase::now()); }
-HLE(gx2, GX2SampleBottomGPUCycle) { if (arg(c, 0)) st64(arg(c, 0), timebase::now()); }
+HLE(gx2, GX2SampleTopGPUCycle) { if (arg(c, 0)) st64(arg(c, 0), timebase::guest_now()); }
+HLE(gx2, GX2SampleBottomGPUCycle) { if (arg(c, 0)) st64(arg(c, 0), timebase::guest_now()); }
+
+// ---------------------------------------------------------------- save states
+#include "../savestate.h"
+namespace gfx { void ss_reset_surfaces(); }
+
+// the game is frozen between frames: finish all queued GPU work and let pending flips execute, so no
+// command reads guest memory while it is replaced and the swap/flip counts agree
+void gx2_ss_drain() {
+    emit_host(OP_DRAW_DONE, {});
+    render_sync();
+    for (int i = 0; i < 300; i++) {
+        {
+            std::lock_guard<std::mutex> lk(g_flip_mutex);
+            update_flips();
+            if (g_pending_flips.empty()) return;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    LOG("[savestate] flips still pending after 300 ms");
+}
+
+void gx2_ss_save(ss::Writer& w) {
+    std::lock_guard<std::recursive_mutex> lk(g_exec_mutex);
+    w.u32(kNumRegs);
+    w.bytes(g_regs, sizeof g_regs);
+    uint32 active = 0;
+    std::vector<uint32> keys;
+    for (auto& [k, v] : g_contexts) {
+        keys.push_back(k);
+        if (g_shadow == v.data()) active = k;
+    }
+    std::sort(keys.begin(), keys.end());
+    w.u32((uint32)keys.size());
+    for (uint32 k : keys) {
+        w.u32(k);
+        w.u32((uint32)g_contexts[k].size());
+        w.bytes(g_contexts[k].data(), g_contexts[k].size() * 4);
+    }
+    w.u32(active);
+    w.u32(g_swap_interval);
+    std::lock_guard<std::mutex> fl(g_flip_mutex);
+    w.u64(g_swap_count + g_count_offset);
+}
+
+bool gx2_ss_check(ss::Reader r, std::string& why) {
+    if (r.u32() != kNumRegs) { why = "GX2 register file size differs"; return false; }
+    return r.ok;
+}
+
+void gx2_ss_load(ss::Reader& r) {
+    std::lock_guard<std::recursive_mutex> lk(g_exec_mutex);
+    r.u32();
+    r.bytes(g_regs, sizeof g_regs);
+    g_contexts.clear();
+    uint32 n = r.u32();
+    for (uint32 i = 0; i < n && r.ok; i++) {
+        uint32 k = r.u32(), words = r.u32();
+        auto& v = g_contexts[k];
+        v.resize(words);
+        r.bytes(v.data(), (size_t)words * 4);
+    }
+    uint32 active = r.u32();
+    auto it = g_contexts.find(active);
+    g_shadow = active && it != g_contexts.end() ? it->second.data() : nullptr;
+    g_shader_state_gen++;
+    g_swap_interval = std::max<uint32>(r.u32(), 1);
+    uint64_t guest_swaps = r.u64();
+    {
+        std::lock_guard<std::mutex> fl(g_flip_mutex);
+        g_count_offset = (int64_t)guest_swaps - (int64_t)g_swap_count;
+    }
+    gfx::ss_reset_surfaces();
+}

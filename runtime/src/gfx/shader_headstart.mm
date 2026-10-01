@@ -40,7 +40,7 @@ uint32_t guest_copy(std::unordered_map<std::string, uint32_t>& pool, const uint8
     std::string key((const char*)p, size);
     auto it = pool.find(key);
     if (it != pool.end()) return it->second;
-    uint32_t addr = mem::runtime_alloc(size, 0x100);
+    uint32_t addr = mem::host_alloc(size, 0x100);
     memcpy(mem::ptr(addr), p, size);
     pool.emplace(std::move(key), addr);
     return addr;

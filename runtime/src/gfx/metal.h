@@ -32,6 +32,10 @@ struct Surface {
     uint32_t dataSize = 0;     // base level size in guest memory
     bool dirty = true;         // new, or invalidated by the game: do a full check
     FormatInfo fmt;
+    // internal resolution: width/height above are the guest's (logical) size, used for every lookup and
+    // guest-memory computation; the texture may be larger. sx/sy = texture size / logical size.
+    float scale = 1.0f;        // the resolution factor the texture was made for
+    float sx = 1.0f, sy = 1.0f;
 };
 
 // A display output: the TV or the GamePad screen, each in its own window.
@@ -99,5 +103,15 @@ Surface* surface_from_color_buffer(uint32_t gx2ColorBuffer, uint32_t* firstSlice
 Surface* surface_from_depth_buffer(uint32_t gx2DepthBuffer, uint32_t* firstSlice = nullptr, uint32_t* numSlices = nullptr);
 Surface* sampled_texture(const uint32_t* texWords, bool isDepthSampler);  // from SQ_TEX_RESOURCE words
 void upload_surface(Surface* s);
+
+// internal resolution (Graphics menu / R / WWHD_RES_SCALE): render targets are allocated at this
+// multiple of their guest size; a change takes effect at the next frame (targets are resized on next use)
+float res_scale();          // the factor in effect this frame
+void set_res_scale(float f);
+void latch_res_scale();     // frame boundary: apply a requested change
+// draws `src` (whole texture, or its top-left uvMax fraction) stretched over `dst`'s rect (pixels; w=0: all)
+void resample(id<MTLTexture> src, id<MTLTexture> dst, const FormatInfo& fmt, uint32_t slices, float uMax = 1, float vMax = 1,
+              uint32_t dstW = 0, uint32_t dstH = 0);
+void forget_texture_views();  // metal_draw.mm: textures were replaced
 
 }  // namespace gfx

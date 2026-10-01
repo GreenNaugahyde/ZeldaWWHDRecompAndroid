@@ -18,6 +18,8 @@
 #include "../audio_out.h"
 #include "../runtime.h"
 
+namespace interp { const char* phase_name(); }
+
 namespace {
 
 constexpr int kMaxVoices = 96;
@@ -408,6 +410,7 @@ void frame_thread() {
         double level = (double)(audio::buffered_frames() - audio::target_frames()) / audio::target_frames();
         double stretch = 1.0 + std::clamp(level * 0.05, -0.05, 0.05);
         next += std::chrono::microseconds((int64_t)(3000 * stretch));
+        threads::service_begin();  // a save state waits until the frame is done (voices, callbacks)
         {
             std::lock_guard<std::mutex> lk(g_ax_mutex);
             process_voices();
@@ -425,6 +428,7 @@ void frame_thread() {
         output_frame(c);
         if (took) threads::release_core();
         g_aux_frame = 1 - g_aux_frame;
+        threads::service_end();
         std::this_thread::sleep_until(next);
         auto now = std::chrono::steady_clock::now();
         if (now - next > std::chrono::milliseconds(30)) next = now;  // don't try to catch up after a stall
@@ -438,6 +442,50 @@ Voice* voice(uint32_t vpb) {
 }
 
 }  // namespace
+
+// ---- save states: voices and the registered callbacks (the AX frame thread is idle meanwhile)
+#include "../savestate.h"
+void ax_ss_save(ss::Writer& w) {
+    std::lock_guard<std::mutex> lk(g_ax_mutex);
+    w.u8(g_running);
+    w.u32(g_vpb_base);
+    w.u32(kMaxVoices);
+    for (auto& v : g_voices) w.pod(v);
+    w.pod(g_app_frame_cb);
+    w.pod(g_final_mix_cb);
+    w.pod(g_aux_cb);
+    w.pod(g_aux_user);
+    w.pod(g_aux_return);
+    w.pod(g_upsample_stage);
+    w.pod(G);
+    w.u32((uint32_t)g_aux_frame);
+}
+bool ax_ss_check(ss::Reader r, std::string& why) {
+    bool running = r.u8();
+    uint32_t base = r.u32();
+    if (running && !g_running) { why = "audio is not initialized yet"; return false; }
+    if (running && base != g_vpb_base) { why = "audio voices live elsewhere in this session"; return false; }
+    return r.ok;
+}
+void ax_ss_load(ss::Reader& r) {
+    std::lock_guard<std::mutex> lk(g_ax_mutex);
+    r.u8();
+    r.u32();
+    uint32_t n = r.u32();
+    for (uint32_t i = 0; i < n && i < (uint32_t)kMaxVoices; i++) g_voices[i] = r.pod<Voice>();
+    g_app_frame_cb[0] = 0;
+    r.bytes(g_app_frame_cb, sizeof g_app_frame_cb);
+    r.bytes(g_final_mix_cb, sizeof g_final_mix_cb);
+    r.bytes(g_aux_cb, sizeof g_aux_cb);
+    r.bytes(g_aux_user, sizeof g_aux_user);
+    r.bytes(g_aux_return, sizeof g_aux_return);
+    r.bytes(g_upsample_stage, sizeof g_upsample_stage);
+    GuestBuffers g = r.pod<GuestBuffers>();
+    if (G.tv48 && g.tv48 != G.tv48) LOG("[savestate] AX buffers moved (%08X -> %08X)", g.tv48, G.tv48);
+    g_aux_frame = (int)r.u32() & 1;
+    memset(g_up_hist, 0, sizeof g_up_hist);
+    audio::flush();
+}
 
 HLE(snd_core, AXInit) {
     std::lock_guard<std::mutex> lk(g_ax_mutex);
@@ -517,7 +565,110 @@ HLE(snd_core, AXRmtGetSamplesLeft) { ret(c, 0); }
 HLE(snd_core, AXRmtGetSamples) { ret(c, 0); }
 HLE(snd_core, AXRmtAdvancePtr) { ret(c, 0); }
 
+// sound trace window, started by the capture key (input thread) and read by AX calls
+static std::mutex g_sound_trace_mutex;
+static FILE* g_sound_trace = nullptr;
+static uint64_t g_sound_trace_end = 0;
+static FILE* sound_trace_file() {  // g_ax_mutex held
+    std::lock_guard<std::mutex> lk(g_sound_trace_mutex);
+    if (g_sound_trace && timebase::now() > g_sound_trace_end) {
+        fclose(g_sound_trace);
+        g_sound_trace = nullptr;
+        LOG("[ax] sound trace written");
+    }
+    return g_sound_trace;
+}
+namespace ax {
+void start_sound_trace(const char* path, double seconds) {
+    std::lock_guard<std::mutex> lk(g_sound_trace_mutex);
+    if (g_sound_trace) fclose(g_sound_trace);
+    g_sound_trace = fopen(path, "w");
+    g_sound_trace_end = timebase::now() + (uint64_t)(seconds * timebase::kTicksPerSec);
+    if (g_sound_trace) {
+        fprintf(g_sound_trace, "# voice starts for %.0f s (time, frame phase, voice, sample data, guest call chain)\n", seconds);
+        fflush(g_sound_trace);
+    }
+    LOG("[ax] recording sound activity to %s", path);
+}
+}  // namespace ax
+
+// one line per voice start while the sound trace runs: time, frame phase, voice, sample data, call chain
+static void trace_voice_start(Cpu* c, uint32_t voice_addr, uint32_t samples) {
+    FILE* f = sound_trace_file();
+    if (!f) return;
+    char buf[400];
+    int n = snprintf(buf, sizeof buf, "%10.3f ms  %-10s voice %08X samples %08X  lr=%08X",
+                     timebase::now() * 1000.0 / timebase::kTicksPerSec, interp::phase_name(), voice_addr, samples, c->lr);
+    for (uint32_t sp = c->r[1], i = 0; i < 9 && sp; i++) {
+        uint32_t prev = ld32(sp);
+        if (!prev || prev <= sp) break;
+        n += snprintf(buf + n, sizeof buf - n, " <- %08X", ld32(prev + 4));
+        sp = prev;
+    }
+    fprintf(f, "%s\n", buf);
+    fflush(f);
+}
+
+// debug: WWHD_AX_STATS=1 logs calls per second of the voice API every 5 s
+enum { kAxStatCount = 15 };
+static const char* kAxStatNames[kAxStatCount] = {"AXAcquireVoiceEx", "AXFreeVoice", "AXSetVoiceState", "AXSetVoiceOffsets", "AXSetVoiceLoop", "AXSetVoiceEndOffsetEx", "AXSetVoiceLoopOffsetEx", "AXSetVoiceSrcRatio", "AXSetVoiceSrc", "AXSetVoiceVe", "AXSetVoiceDeviceMix", "AXSetVoiceAdpcm", "AXSetVoiceAdpcmLoop", "AXSetVoiceType", "AXSetVoicePriority"};
+static std::atomic<uint32_t> g_ax_stats[kAxStatCount];
+static void ax_stat(int i) {
+    static const bool on = getenv("WWHD_AX_STATS") != nullptr;
+    if (!on) return;
+    g_ax_stats[i]++;
+    static std::atomic<uint64_t> t0{timebase::now()};
+    uint64_t t = timebase::now(), s0 = t0.load();
+    if (t - s0 > 5 * timebase::kTicksPerSec && t0.compare_exchange_strong(s0, t)) {
+        char buf[600];
+        int n = snprintf(buf, sizeof buf, "[ax] calls/s (%s):", interp::phase_name());
+        for (int k = 0; k < kAxStatCount; k++) {
+            uint32_t v = g_ax_stats[k].exchange(0);
+            if (v) n += snprintf(buf + n, sizeof buf - n, " %s=%.1f", kAxStatNames[k] + 2, v * (double)timebase::kTicksPerSec / (double)(t - s0));
+        }
+        LOG("%s", buf);
+    }
+}
+
+// test aid: WWHD_SOUND_TRACE=file records voice starts for the first 60 s after the first voice
+static void sound_trace_env() {
+    static bool done = false;
+    if (done) return;
+    done = true;
+    if (const char* e = getenv("WWHD_SOUND_TRACE")) ax::start_sound_trace(e, 60.0);
+}
+
 HLE(snd_core, AXAcquireVoiceEx) {
+    ax_stat(0);
+    sound_trace_env();
+    {
+        // debug: WWHD_VOICE_RATE=1 logs voice acquisitions per second every 5 s
+        static const bool rate = getenv("WWHD_VOICE_RATE") != nullptr;
+        if (rate) {
+            static uint64_t n = 0, t0 = timebase::now();
+            n++;
+            uint64_t t = timebase::now();
+            if (t - t0 > 5 * timebase::kTicksPerSec) {
+                LOG("[ax] %.1f voices/s (%s)", n * (double)timebase::kTicksPerSec / (double)(t - t0), interp::phase_name());
+                n = 0;
+                t0 = t;
+            }
+        }
+        // debug: WWHD_TRACE_VOICE=n logs voice acquisitions with the frame phase (frame interpolation)
+        static int trace = getenv("WWHD_TRACE_VOICE") ? atoi(getenv("WWHD_TRACE_VOICE")) : 0;
+        if (trace > 0) {
+            trace--;
+            char buf[256];
+            int n = snprintf(buf, sizeof buf, "[ax] acquire voice (%s) lr=%08X", interp::phase_name(), c->lr);
+            for (uint32_t sp = c->r[1], i = 0; i < 7 && sp; i++) {
+                uint32_t prev = ld32(sp);
+                if (!prev || prev <= sp) break;
+                n += snprintf(buf + n, sizeof buf - n, " <- %08X", ld32(prev + 4));
+                sp = prev;
+            }
+            LOG("%s", buf);
+        }
+    }
     // (priority, callbackEx, userParam)
     std::lock_guard<std::mutex> lk(g_ax_mutex);
     for (Voice& v : g_voices) {
@@ -538,6 +689,7 @@ HLE(snd_core, AXAcquireVoiceEx) {
     ret(c, 0);
 }
 HLE(snd_core, AXFreeVoice) {
+    ax_stat(1);
     std::lock_guard<std::mutex> lk(g_ax_mutex);
     if (Voice* v = voice(arg(c, 0))) {
         v->acquired = false;
@@ -546,18 +698,24 @@ HLE(snd_core, AXFreeVoice) {
     }
 }
 HLE(snd_core, AXSetVoiceState) {
+    ax_stat(2);
     std::lock_guard<std::mutex> lk(g_ax_mutex);
     if (Voice* v = voice(arg(c, 0))) {
-        if (v->state != 1 && (arg(c, 1) & 0xFFFF) == 1 && v->type == 0) g_sfx_started++;
+        if (v->state != 1 && (arg(c, 1) & 0xFFFF) == 1) {
+            if (v->type == 0) g_sfx_started++;
+            trace_voice_start(c, arg(c, 0), v->samples);
+        }
         v->state = arg(c, 1) & 0xFFFF;
         st32(v->vpb + kVpbState, v->state);
     }
 }
 HLE(snd_core, AXSetVoiceType) {
+    ax_stat(13);
     std::lock_guard<std::mutex> lk(g_ax_mutex);
     if (Voice* v = voice(arg(c, 0))) v->type = (uint16_t)arg(c, 1);
 }
 HLE(snd_core, AXSetVoiceOffsets) {
+    ax_stat(3);
     // AXPBOFFSET: +0 format, +2 loop, +4 loopOffset, +8 endOffset, +C currentOffset, +10 samples (relative to samples)
     std::lock_guard<std::mutex> lk(g_ax_mutex);
     Voice* v = voice(arg(c, 0));
@@ -566,6 +724,7 @@ HLE(snd_core, AXSetVoiceOffsets) {
     v->format = ld16(o);
     v->loop = ld16(o + 2);
     v->samples = ld32(o + 0x10);
+    trace_voice_start(c, arg(c, 0), v->samples);  // new sample data on a voice = a (re)started sound
     uint32_t b = base_units(v->format, v->samples);
     v->loop_abs = b + ld32(o + 4);
     v->end_abs = b + ld32(o + 8);
@@ -586,11 +745,13 @@ HLE(snd_core, AXGetVoiceOffsets) {
     st32(o + 0x10, v->samples);
 }
 HLE(snd_core, AXSetVoiceLoop) {
+    ax_stat(4);
     std::lock_guard<std::mutex> lk(g_ax_mutex);
     if (Voice* v = voice(arg(c, 0))) { v->loop = (uint16_t)arg(c, 1); write_offsets(*v); }
 }
 // "Ex" offsets are relative to a new sample base
 HLE(snd_core, AXSetVoiceEndOffsetEx) {
+    ax_stat(5);
     std::lock_guard<std::mutex> lk(g_ax_mutex);
     if (Voice* v = voice(arg(c, 0))) {
         v->samples = arg(c, 2);
@@ -599,6 +760,7 @@ HLE(snd_core, AXSetVoiceEndOffsetEx) {
     }
 }
 HLE(snd_core, AXSetVoiceLoopOffsetEx) {
+    ax_stat(6);
     std::lock_guard<std::mutex> lk(g_ax_mutex);
     if (Voice* v = voice(arg(c, 0))) {
         v->samples = arg(c, 2);
@@ -617,6 +779,7 @@ HLE(snd_core, AXGetVoiceLoopCount) {
     ret(c, v ? v->loop_count : 0);
 }
 HLE(snd_core, AXSetVoiceSrcRatio) {
+    ax_stat(7);
     std::lock_guard<std::mutex> lk(g_ax_mutex);
     if (Voice* v = voice(arg(c, 0))) {
         double r = c->f[1].ps0 * 65536.0;
@@ -625,6 +788,7 @@ HLE(snd_core, AXSetVoiceSrcRatio) {
     ret(c, 0);
 }
 HLE(snd_core, AXSetVoiceSrc) {
+    ax_stat(8);
     // AXPBSRC: +0 ratioHi, +2 ratioLo, +4 currentFrac, +6 history[4]
     std::lock_guard<std::mutex> lk(g_ax_mutex);
     uint32_t s = arg(c, 1);
@@ -643,6 +807,7 @@ HLE(snd_core, AXSetVoiceSrcType) {
     }
 }
 HLE(snd_core, AXSetVoiceVe) {
+    ax_stat(9);
     // AXPBVE: +0 currentVolume u16, +2 currentDelta s16
     std::lock_guard<std::mutex> lk(g_ax_mutex);
     if (Voice* v = voice(arg(c, 0))) {
@@ -651,6 +816,7 @@ HLE(snd_core, AXSetVoiceVe) {
     }
 }
 HLE(snd_core, AXSetVoiceDeviceMix) {
+    ax_stat(10);
     // (vpb, device, deviceIndex, AXCHMIX* mix): per channel, 4 buses of {vol u16, delta s16}
     std::lock_guard<std::mutex> lk(g_ax_mutex);
     Voice* v = voice(arg(c, 0));
@@ -666,6 +832,7 @@ HLE(snd_core, AXSetVoiceDeviceMix) {
     ret(c, 0);
 }
 HLE(snd_core, AXSetVoiceAdpcm) {
+    ax_stat(11);
     // AXPBADPCM: a[16], gain, pred_scale, yn1, yn2
     std::lock_guard<std::mutex> lk(g_ax_mutex);
     uint32_t a = arg(c, 1);
@@ -677,6 +844,7 @@ HLE(snd_core, AXSetVoiceAdpcm) {
     }
 }
 HLE(snd_core, AXSetVoiceAdpcmLoop) {
+    ax_stat(12);
     // AXPBADPCMLOOP: loop_pred_scale, loop_yn1, loop_yn2
     std::lock_guard<std::mutex> lk(g_ax_mutex);
     uint32_t a = arg(c, 1);
@@ -741,7 +909,8 @@ HLE(snd_core, AXComputeLpfCoefs) {
     st16(arg(c, 2), r);
 }
 // the remote speaker and voice priorities don't affect TV output
-HLE(snd_core, AXSetVoicePriority) {}
+HLE(snd_core, AXSetVoicePriority) {
+    ax_stat(14);}
 HLE(snd_core, AXSetVoiceMixerSelect) { ret(c, 0); }
 HLE(snd_core, AXSetVoiceRmtOn) {}
 HLE(snd_core, AXSetVoiceRmtIIR) {}

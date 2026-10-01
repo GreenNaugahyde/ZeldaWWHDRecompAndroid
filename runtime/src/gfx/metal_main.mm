@@ -12,6 +12,9 @@
 #include "runtime.h"
 #include "input.h"
 
+// gameplay mods (runtime/src/mods): HUD drawn into the TV image
+namespace mods { void draw_overlay(id<MTLCommandBuffer> cmd, id<MTLTexture> tex); }
+
 namespace gfx {
 Renderer R;
 bool log_this_frame();
@@ -91,7 +94,10 @@ static void create_window() {
         beginActivityWithOptions:NSActivityUserInitiated | NSActivityLatencyCritical | NSActivityIdleDisplaySleepDisabled
                           reason:@"game running"];
     (void)activity;
-    [NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
+    // scripted test runs (WWHD_NO_HOST_INPUT) run as a background app: no Dock icon, never takes the
+    // keyboard focus from the user's game
+    [NSApp setActivationPolicy:getenv("WWHD_NO_HOST_INPUT") ? NSApplicationActivationPolicyAccessory
+                                                           : NSApplicationActivationPolicyRegular];
     NSWindow* tv = make_window(R.tv, @"The Legend of Zelda: The Wind Waker HD (recompiled)", nil, 1280, 720, NSMakePoint(0, 0));
     install_menu(tv);
     [tv center];
@@ -104,8 +110,12 @@ static void create_window() {
         drc.releasedWhenClosed = NO;  // closing only hides it; the Input menu can bring it back
         if (!input::pro_controller()) [drc orderFront:nil];  // Pro Controller: GamePad window starts hidden
     }
-    [tv makeKeyAndOrderFront:nil];
-    [NSApp activateIgnoringOtherApps:YES];
+    if (getenv("WWHD_NO_HOST_INPUT")) {
+        [tv orderBack:nil];  // scripted test run: stay behind, don't take focus
+    } else {
+        [tv makeKeyAndOrderFront:nil];
+        [NSApp activateIgnoringOtherApps:YES];
+    }
     input::init();
 }
 
@@ -122,10 +132,35 @@ vertex VOut present_vs(uint vid [[vertex_id]], constant float4& rect [[buffer(0)
     o.pos = float4(ndc.x * 2.0 - 1.0, 1.0 - ndc.y * 2.0, 0.0, 1.0);
     return o;
 }
-fragment float4 present_fs(VOut in [[stage_in]], texture2d<float> tex [[texture(0)]], sampler s [[sampler(0)]]) {
-    return float4(tex.sample(s, in.uv).rgb, 1.0);
+// optional edge smoothing (FXAA, the classic console variant), evaluated on the source picture's
+// texel grid while scaling it to the window
+static float luma(float3 c) { return dot(c, float3(0.299, 0.587, 0.114)); }
+static float3 fxaa(texture2d<float> t, sampler s, float2 uv) {
+    float2 rcp = 1.0 / float2(t.get_width(), t.get_height());
+    float3 nw = t.sample(s, uv + float2(-1, -1) * rcp).rgb, ne = t.sample(s, uv + float2(1, -1) * rcp).rgb;
+    float3 sw = t.sample(s, uv + float2(-1, 1) * rcp).rgb, se = t.sample(s, uv + float2(1, 1) * rcp).rgb;
+    float3 m = t.sample(s, uv).rgb;
+    float lnw = luma(nw), lne = luma(ne), lsw = luma(sw), lse = luma(se), lm = luma(m);
+    float lmin = min(lm, min(min(lnw, lne), min(lsw, lse))), lmax = max(lm, max(max(lnw, lne), max(lsw, lse)));
+    if (lmax - lmin < max(0.0312, lmax * 0.125)) return m;  // no edge here
+    float2 dir = float2(-((lnw + lne) - (lsw + lse)), (lnw + lsw) - (lne + lse));
+    float reduce = max((lnw + lne + lsw + lse) * (0.25 / 8.0), 1.0 / 128.0);
+    dir = clamp(dir / (min(abs(dir.x), abs(dir.y)) + reduce), -8.0, 8.0) * rcp;
+    float3 a = 0.5 * (t.sample(s, uv + dir * (1.0 / 3.0 - 0.5)).rgb + t.sample(s, uv + dir * (2.0 / 3.0 - 0.5)).rgb);
+    float3 b = a * 0.5 + 0.25 * (t.sample(s, uv - dir * 0.5).rgb + t.sample(s, uv + dir * 0.5).rgb);
+    float lb = luma(b);
+    return (lb < lmin || lb > lmax) ? a : b;
+}
+fragment float4 present_fs(VOut in [[stage_in]], texture2d<float> tex [[texture(0)]], sampler s [[sampler(0)]],
+                           constant int& aa [[buffer(0)]]) {
+    return float4(aa ? fxaa(tex, s, in.uv) : tex.sample(s, in.uv).rgb, 1.0);
 }
 )";
+
+// enhancement, toggled in game (Graphics menu or 8; WWHD_FXAA=1 starts with it on)
+static std::atomic<bool> g_fxaa{getenv("WWHD_FXAA") != nullptr};
+bool fxaa_enabled() { return g_fxaa.load(std::memory_order_relaxed); }
+void set_fxaa(bool v) { g_fxaa = v; LOG("[gfx] edge smoothing (FXAA) %s", v ? "on" : "off"); }
 
 static void create_present_pipeline() {
     NSError* err = nil;
@@ -304,20 +339,23 @@ void copy_to_scan(uint32_t cb, uint32_t target) {
     Surface* s = surface_from_color_buffer(cb);
     if (!s || !s->tex) return;
     end_encoder();
-    if (!scr.tex || scr.tex.width != s->width || scr.tex.height != s->height || scr.tex.pixelFormat != s->tex.pixelFormat) {
+    // the image as rendered (internal resolution); the present pass scales it to the window
+    NSUInteger w = s->tex.width, h = s->tex.height;
+    if (!scr.tex || scr.tex.width != w || scr.tex.height != h || scr.tex.pixelFormat != s->tex.pixelFormat) {
         MTLTextureDescriptor* d = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:s->tex.pixelFormat
-                                                                                     width:s->width
-                                                                                    height:s->height
+                                                                                     width:w
+                                                                                    height:h
                                                                                  mipmapped:NO];
-        d.usage = MTLTextureUsageShaderRead;
+        d.usage = MTLTextureUsageShaderRead | MTLTextureUsageRenderTarget;  // render target: mod overlays
         d.storageMode = MTLStorageModePrivate;
         scr.tex = [R.device newTextureWithDescriptor:d];
     }
     id<MTLBlitCommandEncoder> b = [command_buffer() blitCommandEncoder];
     [b copyFromTexture:s->tex sourceSlice:0 sourceLevel:0 sourceOrigin:MTLOriginMake(0, 0, 0)
-            sourceSize:MTLSizeMake(s->width, s->height, 1) toTexture:scr.tex destinationSlice:0 destinationLevel:0
+            sourceSize:MTLSizeMake(w, h, 1) toTexture:scr.tex destinationSlice:0 destinationLevel:0
      destinationOrigin:MTLOriginMake(0, 0, 0)];
     [b endEncoding];
+    if (target & 1) ::mods::draw_overlay(command_buffer(), scr.tex);  // HUD of gameplay mods (stamina wheel)
 }
 
 // debug: WWHD_DUMP_FRAMES=100,300 writes the TV image of those frames to frame_<n>.png
@@ -465,6 +503,25 @@ void dump_texture(id<MTLTexture> src, const char* name, bool async, bool srgbEnc
     }
 }
 
+// save states: thumbnails and test dumps of the TV image a number of frames from now
+static std::mutex g_tv_dump_mu;
+static std::vector<std::pair<uint64_t, std::string>> g_tv_dumps;
+uint64_t frame_count() { return __atomic_load_n(&R.frame, __ATOMIC_RELAXED); }
+void request_tv_dump(const std::string& path, int frames_ahead) {
+    std::lock_guard<std::mutex> lk(g_tv_dump_mu);
+    g_tv_dumps.push_back({frame_count() + frames_ahead, path});
+}
+static void service_tv_dumps() {
+    std::lock_guard<std::mutex> lk(g_tv_dump_mu);
+    for (auto it = g_tv_dumps.begin(); it != g_tv_dumps.end();)
+        if (it->first <= R.frame && R.tv.tex) {
+            dump_texture(R.tv.tex, it->second.c_str(), true, R.tv.srgb);
+            it = g_tv_dumps.erase(it);
+        } else {
+            ++it;
+        }
+}
+
 static void dump_tv(uint64_t frame) {
     char name[64];
     snprintf(name, sizeof name, "frame_%llu.png", (unsigned long long)frame);
@@ -497,6 +554,8 @@ static void present(Screen& scr) {
                                                                                          : R.presentPipeline];
     [e setVertexBytes:rect length:sizeof(rect) atIndex:0];
     [e setFragmentTexture:scr.tex atIndex:0];
+    int aa = fxaa_enabled() ? 1 : 0;
+    [e setFragmentBytes:&aa length:sizeof aa atIndex:0];
     [e setFragmentSamplerState:R.linearClamp atIndex:0];
     [e drawPrimitives:MTLPrimitiveTypeTriangleStrip vertexStart:0 vertexCount:4];
     [e endEncoding];
@@ -521,7 +580,9 @@ void swap() {
     end_encoder();
     if (log_this_frame()) LOG("[frame] end %llu", (unsigned long long)R.frame);
     R.frame++;
+    latch_res_scale();
     if (g_dump_frames.count(R.frame)) dump_tv(R.frame);
+    service_tv_dumps();
     const char* capture_begin_frame();
     static std::string pendingCapture;  // the TV image is dumped once the captured frame has been drawn
     if (!pendingCapture.empty()) {

@@ -7,6 +7,28 @@ emulation).
 
 How it works and how it differs from running the game in Cemu: [docs/how-it-works.md](docs/how-it-works.md).
 
+## What's new (since the first release)
+
+- **60 fps.** Two modes in the Graphics menu:
+  - **60 fps (key 6)**: frame interpolation. The game logic keeps its original 30 steps per second;
+    every second frame is drawn halfway between two steps (camera, models, particles, sea, wave
+    crests, grass and trees, cloth, weather, lighting). Input, sound and menus behave as at 30 fps.
+  - **True 60 (key 7, experimental)**: Link and the follow camera run their logic at 60 steps per
+    second (for the actions that have been converted and measured against the original); everything
+    else runs at 30 and is interpolated.
+- **Higher internal resolution** (1x / 1.5x / 2x / 3x, key R) and **edge smoothing** (FXAA, key 8).
+- **Save states**: a Save States menu with 5 slots (Shift+F1–F5 save, F1–F5 load), kept across
+  sessions in `~/Library/Application Support/wwhd/states/`.
+- **Controls window** (Input › Controls…): a drawing of the Wii U GamePad or Pro Controller; click
+  a button to remap it to a key or a controller input, live feedback of pressed buttons and stick
+  positions, conflict warnings.
+- **Optional gameplay mods** (Gameplay menu, all off by default): climb any wall, direct right-stick
+  camera, mouse camera, first person on the mouse wheel, quick doors, fast scene changes.
+- **Fixes**: shadow streaks, flicker after loading, doubled wave sounds at 60 fps, camera issues.
+- **Tools**: function naming against the GameCube decompilation (`tools/decomp/`), a differential
+  harness that verifies hand-written source against the recompiled original (`tools/verify/`), and
+  the 60 fps conversion tools (`tools/true60/`). See "Optional: decompilation tools" below.
+
 ## Legal notice
 
 This is an unofficial fan project. It is not affiliated with, endorsed or sponsored by Nintendo.
@@ -71,6 +93,8 @@ GamePad window to use the touch screen. Saves go to `save/`.
 
 ### Controls
 
+Default keyboard layout:
+
 | Keyboard | Wii U GamePad |
 |---|---|
 | W A S D | left stick (move) |
@@ -83,15 +107,40 @@ GamePad window to use the touch screen. Saves go to `save/`.
 | Left Shift | ZL (target) |
 | C | ZR |
 | Enter / Tab | + / − |
+| H | Home |
 | 1 2 3 4 | D-pad up / down / left / right |
 | X / V | left / right stick click |
 
-The **Graphics** menu in the menu bar switches fixes and enhancements while playing (the TV
-window title shows what is active): ambient-occlusion mode (**O** cycles), full-size occlusion
-depth (**M**), 16x anisotropic filtering (**N**), and a frame capture for debugging (**P** or
-fn+F12, written to `captures/`; captures contain game imagery, so keep them to yourself).
+**Input › Controls…** remaps everything on a drawing of the controller: click a button, stick
+direction or stick click, then press a key or a controller button / stick direction (each input
+has a key, an alternate key and a controller binding); Esc cancels, right-click clears. Pressed
+buttons light up and the sticks show their deflection, so you can test the mapping; a key bound
+twice is marked with a warning. Changes apply immediately, also while playing. A dead zone for
+controller sticks and an option to invert the camera's up/down are at the bottom, with **Reset to
+Defaults…**. The mapping is saved to `~/Library/Application Support/WWHD/controls.json`
+(`WWHD_CONTROLS=<file>` uses another file); deleting it restores the defaults. The app's
+single-key shortcuts (R, O, M, N, 6–9, P, F1–F5, F12) and Esc can't be bound.
 
-Game controllers (Xbox, PlayStation, Switch Pro, MFi) work too; buttons map by position.
+The **Graphics** menu in the menu bar switches fixes and enhancements while playing (the TV
+window title shows what is active and the current frame rate): 60 fps by frame interpolation
+(**6**), true 60 fps (**7**, experimental), internal resolution 1x / 1.5x / 2x / 3x (**R**
+cycles; the game renders at 1280x720, 2x renders at 2560x1440), edge smoothing (FXAA, **8**),
+ambient-occlusion mode (**O** cycles), full-size occlusion depth (**M**), 16x anisotropic
+filtering (**N**), and a frame capture for debugging (**P** or fn+F12, written to `captures/`;
+captures contain game imagery, so keep them to yourself).
+
+The **Gameplay** menu has optional changes to how the game plays, all off by default: climb any
+wall (with a stamina wheel; B or A lets go), a direct right-stick camera (no easing, adjustable
+speed), a mouse camera (click the picture to capture the pointer, Esc releases it), first person
+on the mouse wheel, quick doors and fast scene changes.
+
+The **Save States** menu saves the whole running game to one of 5 slots and loads it back
+(**Shift+F1–F5** save, **F1–F5** load); each slot shows its time and area. Slots are kept in
+`~/Library/Application Support/wwhd/states/` (about 270 MB each) and survive restarts; a slot
+made by an incompatible build is refused. Loading works once the game has reached gameplay.
+
+Game controllers (Xbox, PlayStation, Switch Pro, MFi) work too; by default buttons map by
+position (the bottom face button is the Wii U's B), and they can be remapped in the Controls window.
 The **Input** menu switches whether keyboard and controllers act as the Wii U GamePad (default)
 or as a Wii U Pro Controller (`WWHD_PRO_CONTROLLER=1` starts in that mode); with the Pro
 Controller, the GamePad window keeps its screen and touch input.
@@ -102,7 +151,12 @@ When the game asks for text (e.g. your name), a macOS text field opens.
 - Shaders are translated on first use and cached in `~/Library/Caches/wwhd/shaders.bin`; later
   runs replay that cache at startup.
 - Useful environment variables: `WWHD_NO_AUDIO=1`, `WWHD_NO_GAMEPAD=1` (no second window),
-  `WWHD_AUDIO_VOLUME=0..1`, `WWHD_SHADER_CACHE=<file>|0`, `WWHD_AO_MODE=0..2`, `WWHD_AO_HIRES=0|1`, `WWHD_ANISO=0|1` (start values for the Graphics menu).
+  `WWHD_AUDIO_VOLUME=0..1`, `WWHD_SHADER_CACHE=<file>|0`, `WWHD_AO_MODE=0..2`, `WWHD_AO_HIRES=0|1`, `WWHD_ANISO=0|1`, `WWHD_RES_SCALE=1|1.5|2|3`,
+  `WWHD_FXAA=0|1`, `WWHD_INTERP=1`, `WWHD_TRUE60=1` (start values for the Graphics menu);
+  `WWHD_SHADOW_SCALE=n` gives the shadow maps their own resolution factor; `WWHD_STATE_DIR=<dir>`
+  stores save states elsewhere.
+- A game halt writes `captures/crash-<time>.log` with the guest call chain (useful for bug reports;
+  it contains only addresses and function names).
 - Debugging aids (frame/draw dumps, traces, scheduler statistics) are documented next to their
   code: grep for `WWHD_` in `runtime/src`.
 
@@ -127,12 +181,17 @@ python3 tools/shaderprep.py build                                          # -> 
 picks up `game/shadercache/headstart.bin` automatically (`WWHD_HEADSTART=<file>|0` overrides it).
 See the comment at the top of `tools/shaderprep.py` for the file formats.
 
-## Optional: decompilation tools (`decomp` branch)
+## Optional: decompilation tools
 
-The `decomp` branch adds `tools/decomp/`, which names WWHD functions by matching them against
-the [zeldaret/tww](https://github.com/zeldaret/tww) GameCube decompilation (CC0), and a frame
-interpolation prototype built on those names (`tools/recomp/hooks.txt`, `runtime/src/interp.cpp`).
+`tools/decomp/` names WWHD functions by matching them against the
+[zeldaret/tww](https://github.com/zeldaret/tww) GameCube decompilation (CC0); the 60 fps features
+are built on those names (`tools/recomp/hooks.txt`, `runtime/src/interp*.cpp`, `runtime/src/true60*.cpp`).
 Findings are in `docs/decomp-notes.md`.
+
+`tools/verify/` is a differential test harness for a functionally verified decompilation: it runs
+hand-written C++ next to the recompiled original on generated and recorded inputs and compares
+return values, memory effects and call sequences (see `tools/verify/README.md`). The verified
+source itself is derived from the game and is **not** part of this repository.
 
 ```sh
 git clone https://github.com/zeldaret/tww tww     # git-ignored reference checkout
@@ -147,7 +206,8 @@ README. `build/names.tsv` is derived from the game and stays on your machine.
 ## Status
 
 The opening of the game (title, file select, intro, Outset Island) is tested and matches Cemu
-side by side, at a steady 30 fps (the console's frame rate). Known gaps: geometry shaders and rectangle
+side by side, at a steady 30 fps (the console's frame rate) and at 60 fps with interpolation;
+true 60 is experimental. Known gaps: geometry shaders and rectangle
 primitives are not implemented yet (not encountered so far), shadow edges are harder than on
 the console, startup sometimes sits on a black screen for up to a minute before the logo
 (a timing-dependent wait during audio initialization, under investigation), and later parts of

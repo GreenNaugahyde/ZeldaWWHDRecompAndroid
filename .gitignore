@@ -37,3 +37,7 @@ headstart.bin
 *.log
 *.metal
 *.tsv
+# verified decompiled source (derived from the game): never published
+/wwhd_src/
+# local coordination board
+/task.md

@@ -1,8 +1,10 @@
 // Internal runtime API shared by the loader, dispatcher, threads and HLE libraries.
 #pragma once
+#include <chrono>
 #include <cstdint>
 #include <cstdio>
 #include <string>
+#include <vector>
 
 #include "ppc.h"
 
@@ -12,6 +14,9 @@ constexpr uint32_t kMem2Start = 0x10000000;   // app data + heap (MEM2)
 constexpr uint32_t kMem2End = 0x50000000;
 constexpr uint32_t kRuntimeStart = 0x60000000; // runtime-owned guest objects (stacks, OS structs)
 constexpr uint32_t kRuntimeEnd = 0x70000000;
+constexpr uint32_t kHostStart = 0x68000000;    // ... of them host-only (not part of save states)
+constexpr uint32_t kFixedStart = 0x6FFF0000;   // fixed slots for small buffers the guest may keep pointers to
+constexpr uint32_t kFixedSize = 0x10000;
 constexpr uint32_t kFgBucket = 0xE0000000;     // foreground bucket
 constexpr uint32_t kFgBucketSize = 0x02800000;
 constexpr uint32_t kMem1 = 0xF4000000;         // MEM1, 32 MiB
@@ -19,8 +24,18 @@ constexpr uint32_t kMem1Size = 0x02000000;
 constexpr uint32_t kHleFuncBase = 0xC2000000;  // synthetic addresses of host functions
 
 void init();
-// bump allocator for runtime-owned guest memory (never freed)
+// bump allocator for runtime-owned guest memory (never freed). Guest-visible objects (the game may
+// keep pointers to them) go through runtime_alloc and are part of save states; scratch memory that
+// only host code uses (shader copies, service thread stacks) through host_alloc.
 uint32_t runtime_alloc(uint32_t size, uint32_t align = 16);
+uint32_t host_alloc(uint32_t size, uint32_t align = 16);
+// fixed 0x100-byte guest buffer number `id` (lazily used features: same address in every session)
+enum FixedSlot : uint32_t { kFixInterpEye = 0, kFixInterpMtx, kFixFxMidPos, kFixLinkScratch, kFixCount };
+inline uint32_t fixed_slot(FixedSlot id) { return kFixedStart + 0x100 * id; }
+uint32_t runtime_top();
+void raise_runtime_top(uint32_t top);
+struct AllocRec { uint32_t addr, size; uint64_t tag; };
+std::vector<AllocRec> runtime_alloc_log();  // sorted by address
 inline uint8_t* ptr(uint32_t ea) { return PPC_MEM_BASE + ea; }
 inline uint32_t guest(const void* p) { return (uint32_t)((const uint8_t*)p - PPC_MEM_BASE); }
 std::string read_cstr(uint32_t ea);
@@ -74,12 +89,33 @@ Cpu* current();          // Cpu of the calling host thread (null if not a guest 
 uint32_t current_thread();  // guest OSThread* of the calling thread
 // a Cpu + guest stack for host-created threads that need to call guest code (alarms, audio)
 Cpu* make_service_cpu(const char* name, uint32_t stack_size = 0x10000);
+// service threads bracket their guest work (callbacks, guest memory access) with these, so a save
+// state can wait until they are idle; service_begin blocks while the game is frozen
+void service_begin();
+void service_end();
+// a blocking sleep that counts as parked for save states (OSSleepTicks, GX2WaitForVsync)
+void park_sleep_until(std::chrono::steady_clock::time_point t);
+
+// ---- save states (savestate.cpp) ----
+// Freeze every other guest thread at a parked point; the caller (the game's main thread, between
+// frames) gives up its core meanwhile. False (and `busy` names the culprits) if they did not all
+// park within the timeout; thaw() must be called either way.
+// entry_mode: threads still running after entry_after_ms park at a guest function entry
+// (1: any such thread, 2: only at the place a loaded snapshot has them)
+bool quiesce(int timeout_ms, std::string& busy, int entry_mode = 0, int entry_after_ms = 0);
+void thaw();
 }  // namespace threads
 
 // ---- time ----
 namespace timebase {
 constexpr uint64_t kTicksPerSec = 62156250ull;  // Espresso bus clock / 4
-uint64_t now();  // guest ticks since boot
+uint64_t now();  // host ticks since boot (monotonic; host-side timing)
+// guest-visible time (OSGetTime, mftb, alarms): host time plus an offset that a loaded save state
+// sets so the guest's clock continues from the moment it was saved
+uint64_t guest_now();
+uint64_t to_guest(uint64_t host_ticks);
+uint64_t to_host(uint64_t guest_ticks);
+void set_guest_now(uint64_t guest_ticks);
 }
 
 // ---- HLE registration ----

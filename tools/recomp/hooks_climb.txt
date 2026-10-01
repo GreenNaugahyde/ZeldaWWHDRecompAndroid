@@ -1,0 +1,8 @@
+# "Climb any wall" mod (runtime/src/mods/climb.cpp): plain steep walls read as ivy while it is on
+023E3850  # daPy_lk_c::setFrontWallType: second pass with plain walls as ivy when the game found nothing to do
+02429408  # daPy_lk_c::setMoveBGCorrectClimb: every climbing step (stamina / B: the wall reads as plain, Link lets go)
+024EF080  # dBgS::GetWallCode: plain wall -> code 1 (ivy) while converting
+0240CDD0  # daPy_lk_c::execute: stamina, re-grab block, HUD state
+@023E39EC  # setFrontWallType: |normal.y| > 0.05 compare (steep walls pass)
+@02429570  # setMoveBGCorrectClimb: |normal.y| > 0.05 compare (steep walls pass)
+@02429C04  # checkBgClimbMove: after the ledge GroundCross (top of the wall): search further in on converted walls

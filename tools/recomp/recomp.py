@@ -56,6 +56,23 @@ class Recompiler:
         for i, slot in enumerate(sorted(s for s, v in self.imports.items() if v[2] == "d")):
             self.data_import_addr[slot] = DATA_IMPORT_BASE + i * DATA_IMPORT_STRIDE
         self._imm_overrides()
+        # game functions replaced by runtime hooks (tools/recomp/hooks.txt: one hex address per line)
+        # plus optional extra lists (hooks_*.txt, e.g. debug probes)
+        import glob
+        here = os.path.dirname(os.path.abspath(__file__))
+        self.hooks = set()
+        # "@ADDR": instruction-level hook; site_ADDR(c) runs just before the instruction at ADDR
+        # (also when ADDR is reached by a branch), so it can adjust what that instruction uses
+        self.sites = set()
+        for hp in [os.path.join(here, "hooks.txt")] + sorted(glob.glob(os.path.join(here, "hooks_*.txt"))):
+            if not os.path.exists(hp):
+                continue
+            for line in open(hp):
+                line = line.split("#")[0].strip()
+                if line.startswith("@"):
+                    self.sites.add(int(line[1:], 16))
+                elif line:
+                    self.hooks.add(int(line, 16))
         self._fixpoint()
 
     def _imm_overrides(self):
@@ -161,14 +178,24 @@ class Recompiler:
             body.append((a, w, s))
         # restrict: guest memory never aliases the register file, so the compiler may keep
         # registers in host registers across guest loads/stores
-        out = ["void f_%08X(Cpu* __restrict c) {" % start, "    PPC_ENTER(0x%08Xu);" % start]
+        hooked = start in self.hooks
+        fname = "f_%08X_orig" % start if hooked else "f_%08X" % start
+        out = []
+        if hooked:
+            # runtime hook: callers reach hook_X, which may call the original code (f_X_orig)
+            out.append("void f_%08X(Cpu* __restrict c) { hook_%08X(c); }\n" % (start, start))
+        out += ["void %s(Cpu* __restrict c) {" % fname, "    PPC_ENTER(0x%08Xu);" % start]
         for a, w, s in body:
             if a in self.labels:
                 out.append("L_%08X: ;" % a)
+            if a in self.sites:
+                out.append("    site_%08X(c);" % a)
             out.append("    %s /* %08X: %08X */" % (s, a, w))
         # fall through into the next function
         if self.cur_end < self.p.text_hi:
-            out.append("    MUSTTAIL return f_%08X(c);" % self.cur_end)
+            # code falling into a hooked function continues with its original code
+            nxt = "f_%08X_orig" % self.cur_end if self.cur_end in self.hooks else "f_%08X" % self.cur_end
+            out.append("    MUSTTAIL return %s(c);" % nxt)
         else:
             out.append("    ppc_unimplemented(c, 0x%08Xu, 0); /* fell off end of text */" % self.cur_end)
         out.append("}")
@@ -203,6 +230,12 @@ class Recompiler:
             f.write('#pragma once\n#include "ppc.h"\n\n')
             for e in self.sorted_entries:
                 f.write("void f_%08X(Cpu* __restrict c);\n" % e)
+            f.write("\n/* hooked functions: hook_X is implemented in the runtime, f_X_orig is the game's code */\n")
+            for e in sorted(self.hooks):
+                f.write("void f_%08X_orig(Cpu* __restrict c);\nvoid hook_%08X(Cpu* c);\n" % (e, e))
+            f.write("\n/* instruction-level hooks (\"@ADDR\" in hooks.txt), run before the instruction at ADDR */\n")
+            for e in sorted(self.sites):
+                f.write("void site_%08X(Cpu* c);\n" % e)
             f.write("\n/* imported functions */\n")
             for s in func_slots:
                 f.write("void %s(Cpu* c);\n" % self.imp_name(s))

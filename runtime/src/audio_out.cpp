@@ -23,6 +23,7 @@ constexpr int kTarget = kRate * 40 / 1000;
 int16_t g_ring[kCapacity * 2];
 std::atomic<uint32_t> g_read{0}, g_write{0};
 std::atomic<bool> g_started{false};
+std::atomic<bool> g_flush{false};  // consumer skips everything queued
 AudioComponentInstance g_unit = nullptr;
 
 std::atomic<uint64_t> g_underrun{0}, g_dropped{0};
@@ -57,6 +58,7 @@ void write_wav_header() {
 OSStatus render(void*, AudioUnitRenderActionFlags*, const AudioTimeStamp*, UInt32, UInt32 frames, AudioBufferList* io) {
     auto* out = (int16_t*)io->mBuffers[0].mData;
     uint32_t r = g_read.load(std::memory_order_relaxed), w = g_write.load(std::memory_order_acquire);
+    if (g_flush.exchange(false)) r = w;
     uint32_t avail = w - r, n = std::min<uint32_t>(avail, frames);
     for (uint32_t i = 0; i < n; i++) {
         uint32_t idx = (r + i) & (kCapacity - 1);
@@ -142,6 +144,8 @@ int buffered_frames() {
 }
 
 int target_frames() { return kTarget; }
+
+void flush() { g_flush = true; }
 
 void stats(uint64_t& underrun, uint64_t& dropped) {
     underrun = g_underrun;

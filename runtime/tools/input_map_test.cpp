@@ -1,0 +1,224 @@
+// Unit tests for the controls mapping (runtime/src/input_map.cpp).
+//   make -C build/cmake input_map_test && ./build/cmake/input_map_test
+#include <Carbon/Carbon.h>
+#include <unistd.h>
+
+#include <cmath>
+#include <cstdio>
+#include <cstdlib>
+#include <string>
+
+#include "input_map.h"
+
+using namespace input_map;
+
+static int g_fail = 0, g_pass = 0;
+#define CHECK(x)                                                              \
+    do {                                                                      \
+        if (x) g_pass++;                                                      \
+        else { g_fail++; fprintf(stderr, "%s:%d: FAILED: %s\n", __FILE__, __LINE__, #x); } \
+    } while (0)
+
+static input::PadState press(const Mapping& m, std::initializer_list<int> codes) {
+    bool keys[256] = {};
+    for (int c : codes) keys[c] = true;
+    return keyboard_state(m, keys);
+}
+
+static void test_defaults() {
+    Mapping m = Mapping::defaults();
+    // the hard-coded keyboard layout this replaces
+    struct { int code; uint32_t bit; } old[] = {
+        {kVK_ANSI_K, input::kA}, {kVK_Space, input::kA}, {kVK_ANSI_J, input::kB}, {kVK_ANSI_L, input::kX},
+        {kVK_ANSI_I, input::kY}, {kVK_ANSI_Q, input::kL}, {kVK_ANSI_E, input::kR}, {kVK_Shift, input::kZL},
+        {kVK_ANSI_C, input::kZR}, {kVK_Return, input::kPlus}, {kVK_Tab, input::kMinus}, {kVK_ANSI_H, input::kHome},
+        {kVK_ANSI_1, input::kUp}, {kVK_ANSI_2, input::kDown}, {kVK_ANSI_3, input::kLeft}, {kVK_ANSI_4, input::kRight},
+        {kVK_ANSI_X, input::kStickL}, {kVK_ANSI_V, input::kStickR},
+    };
+    for (auto& o : old) CHECK(press(m, {o.code}).buttons == o.bit);
+    auto s = press(m, {kVK_ANSI_W, kVK_ANSI_D});
+    CHECK(std::fabs(s.lx - 0.7071f) < 1e-4 && std::fabs(s.ly - 0.7071f) < 1e-4);
+    s = press(m, {kVK_ANSI_A});
+    CHECK(s.lx == -1 && s.ly == 0);
+    s = press(m, {kVK_ANSI_S});
+    CHECK(s.ly == -1);
+    s = press(m, {kVK_UpArrow, kVK_RightArrow});
+    CHECK(s.rx == 1 && s.ry == 1);  // right stick: no diagonal scaling (as before)
+    CHECK(press(m, {kVK_ANSI_Z}).buttons == 0);
+    // no default key is reserved; no key is used twice
+    for (int a = 0; a < kActionCount; a++)
+        for (int k : m.keys[a]) {
+            CHECK(k == kNoKey || !reserved_key(k));
+            CHECK(k == kNoKey || key_users(m, k, a).empty());
+        }
+
+    // controllers by position: Xbox A (bottom) = Wii U B, Xbox B (right) = Wii U A
+    float v[kPadCount] = {};
+    v[kPadA] = 1;
+    CHECK(controller_state(m, v).buttons == input::kB);
+    v[kPadA] = 0; v[kPadB] = 1;
+    CHECK(controller_state(m, v).buttons == input::kA);
+    v[kPadB] = 0; v[kPadLT] = 0.4f;
+    CHECK(controller_state(m, v).buttons == 0);  // half-pulled trigger below threshold
+    v[kPadLT] = 0.8f;
+    CHECK(controller_state(m, v).buttons == input::kZL);
+    v[kPadLT] = 0; v[kPadLSLeft] = 0.6f; v[kPadRSUp] = 0.3f;
+    s = controller_state(m, v);
+    CHECK(std::fabs(s.lx + 0.6f) < 1e-6 && std::fabs(s.ry - 0.3f) < 1e-6);
+}
+
+static void test_names() {
+    for (int a = 0; a < kActionCount; a++) CHECK(action_from_id(action_id(a)) == a);
+    for (int p = 1; p < kPadCount; p++) CHECK(pad_from_id(pad_id(p)) == p);
+    for (int k = 0; k < 256; k++) CHECK(key_from_id(key_id(k)) == k);
+    CHECK(key_from_id("LeftShift") == kVK_Shift);
+    CHECK(key_from_id("Nonsense") == kNoKey);
+    CHECK(action_from_id("Nonsense") == -1);
+}
+
+static void test_reserved() {
+    for (int k : std::initializer_list<int>{kVK_ANSI_O, kVK_ANSI_M, kVK_ANSI_N, kVK_ANSI_6, kVK_ANSI_7, kVK_ANSI_8, kVK_ANSI_9, kVK_ANSI_P,
+                  kVK_ANSI_R, kVK_F12, kVK_Escape})
+        CHECK(reserved_key(k) != nullptr);
+    CHECK(reserved_key(kVK_ANSI_K) == nullptr);
+    CHECK(reserved_key(kVK_ANSI_5) == nullptr);
+}
+
+static void test_conflicts() {
+    Mapping m = Mapping::defaults();
+    auto u = key_users(m, kVK_ANSI_K);
+    CHECK(u.size() == 1 && u[0] == kA);
+    CHECK(key_users(m, kVK_ANSI_K, kA).empty());
+    m.keys[kB][1] = kVK_ANSI_K;  // K on A and B
+    u = key_users(m, kVK_ANSI_K, kB);
+    CHECK(u.size() == 1 && u[0] == kA);
+    CHECK(key_users(m, kVK_ANSI_K).size() == 2);
+    CHECK(press(m, {kVK_ANSI_K}).buttons == (input::kA | input::kB));
+    auto p = pad_users(m, kPadA);
+    CHECK(p.size() == 1 && p[0] == kB);
+    CHECK(pad_users(m, kPadNone).empty());
+}
+
+static void test_json_roundtrip() {
+    Mapping m = Mapping::defaults();
+    std::string err;
+    Mapping r;
+    CHECK(from_json(to_json(m), r, &err) && err.empty());
+    CHECK(r == m);
+    // swap A and B everywhere, clear Home, change options
+    std::swap(m.keys[kA], m.keys[kB]);
+    std::swap(m.pad[kA], m.pad[kB]);
+    m.keys[kHome] = {kNoKey, kNoKey};
+    m.pad[kHome] = kPadNone;
+    m.keys[kZR] = {kVK_ANSI_C, 93};  // unnamed code survives as "Key93"
+    m.deadzone = 0.15f;
+    m.invert_camera_y = true;
+    std::string j = to_json(m);
+    CHECK(j.find("\"Key93\"") != std::string::npos);
+    CHECK(from_json(j, r, &err) && err.empty());
+    CHECK(r == m);
+    CHECK(press(r, {kVK_ANSI_K}).buttons == input::kB);
+    CHECK(press(r, {kVK_ANSI_J}).buttons == input::kA);
+    CHECK(press(r, {kVK_ANSI_H}).buttons == 0);
+    CHECK(press(r, {kVK_UpArrow}).ry == -1);  // inverted camera
+    CHECK(press(r, {kVK_ANSI_W}).ly == 1);    // move stick not inverted
+}
+
+static void test_json_partial_and_bad() {
+    Mapping r;
+    std::string err;
+    // missing inputs keep defaults; a single string is accepted for one key; null unbinds
+    CHECK(from_json(R"({"keyboard": {"A": "J", "B": ["K", "Space"]}, "controller": {"Home": null}})", r, &err));
+    CHECK(err.empty());
+    CHECK(r.keys[kA][0] == kVK_ANSI_J && r.keys[kA][1] == kNoKey);
+    CHECK(r.keys[kB][0] == kVK_ANSI_K && r.keys[kB][1] == kVK_Space);
+    CHECK(r.keys[kX] == Mapping::defaults().keys[kX]);
+    CHECK(r.pad[kHome] == kPadNone && r.pad[kA] == kPadB);
+    CHECK(r.deadzone == 0 && !r.invert_camera_y);
+    // unknown names and app shortcuts are dropped with a warning, the rest still loads
+    CHECK(from_json(R"({"keyboard": {"A": ["R", "K"], "Jump": ["J"], "B": ["Bogus"]}, "options": {"stick_deadzone": 5}})", r, &err));
+    CHECK(!err.empty());
+    CHECK(r.keys[kA][0] == kVK_ANSI_K && r.keys[kA][1] == kNoKey);
+    CHECK(r.keys[kB][0] == kNoKey);
+    CHECK(r.deadzone == 0.9f);  // clamped
+    // syntax errors fail and leave the output alone
+    Mapping before = r;
+    CHECK(!from_json("{\"keyboard\": {\"A\": [\"K\"}", r, &err) && !err.empty());
+    CHECK(!from_json("[1, 2]", r, &err));
+    CHECK(!from_json("", r, &err));
+    CHECK(!from_json("{} x", r, &err));
+    CHECK(r == before);
+    CHECK(from_json("{}", r, &err) && r == Mapping::defaults());
+}
+
+static void test_deadzone() {
+    Mapping m = Mapping::defaults();
+    m.deadzone = 0.2f;
+    float v[kPadCount] = {};
+    v[kPadLSRight] = 0.15f;
+    CHECK(controller_state(m, v).lx == 0);
+    v[kPadLSRight] = 1.0f;
+    CHECK(std::fabs(controller_state(m, v).lx - 1.0f) < 1e-6);
+    v[kPadLSRight] = 0.6f;
+    CHECK(std::fabs(controller_state(m, v).lx - 0.5f) < 1e-6);  // (0.6 - 0.2) / 0.8
+    v[kPadLSRight] = 0; v[kPadRSDown] = 0.6f;
+    m.invert_camera_y = true;
+    CHECK(std::fabs(controller_state(m, v).ry - 0.5f) < 1e-6);
+}
+
+static void test_files() {
+    char dir[] = "/tmp/input_map_test.XXXXXX";
+    CHECK(mkdtemp(dir) != nullptr);
+    std::string path = std::string(dir) + "/sub/dir/controls.json";  // directories are created
+    Mapping m = Mapping::defaults();
+    std::swap(m.keys[kA], m.keys[kB]);
+    CHECK(save_file(path, m));
+    Mapping r;
+    std::string err;
+    CHECK(load_file(path, r, &err) && r == m);
+    CHECK(!load_file(std::string(dir) + "/missing.json", r, &err));
+    // the live mapping: WWHD_CONTROLS points it at our file
+    setenv("WWHD_CONTROLS", path.c_str(), 1);
+    CHECK(default_path() == path);
+    load_startup();
+    CHECK(current() == m);
+    uint32_t g = generation();
+    set_current(Mapping::defaults());
+    CHECK(generation() != g);
+    CHECK(load_file(path, r, &err) && r == Mapping::defaults());  // saved
+    system((std::string("rm -rf ") + dir).c_str());
+}
+
+static void test_conflict_helpers() {
+    Mapping m = Mapping::defaults();
+    CHECK(conflict_count(m) == 0);
+    for (int a = 0; a < kActionCount; a++) CHECK(!has_conflict(m, a));
+    m.keys[kZR][1] = kVK_ANSI_K;  // K is also A's key
+    CHECK(has_conflict(m, kZR) && has_conflict(m, kA) && !has_conflict(m, kB));
+    CHECK(conflict_count(m) == 1);
+    m.pad[kX] = m.pad[kY];        // two actions on one controller button
+    CHECK(has_conflict(m, kX) && has_conflict(m, kY));
+    CHECK(conflict_count(m) == 2);
+    m.pad[kX] = kPadNone;
+    CHECK(!has_conflict(m, kX) && !has_conflict(m, kY) && conflict_count(m) == 1);
+    CHECK(key_short_label(kVK_Shift) == "L ⇧");
+    CHECK(key_short_label(kVK_ANSI_Keypad5) == "Num 5");
+    CHECK(key_short_label(kVK_ANSI_K) == "K");
+    CHECK(std::string(pad_short_label(kPadLT)) == "LT");
+    CHECK(std::string(pad_short_label(kPadNone)).empty());
+    for (int p = 1; p < kPadCount; p++) CHECK(*pad_short_label(p));
+}
+
+int main() {
+    test_conflict_helpers();
+    test_defaults();
+    test_names();
+    test_reserved();
+    test_conflicts();
+    test_json_roundtrip();
+    test_json_partial_and_bad();
+    test_deadzone();
+    test_files();
+    printf("input_map_test: %d passed, %d failed\n", g_pass, g_fail);
+    return g_fail ? 1 : 0;
+}

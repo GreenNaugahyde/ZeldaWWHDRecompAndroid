@@ -34,20 +34,27 @@ target_compile_options(cemu_latte PRIVATE -w -O2)
 # ---- the game executable: runtime + native GX2 + Metal renderer
 # GX2 sources are compiled into the executable (not a static library) so their
 # strong HLE definitions replace the generated weak import stubs.
-file(GLOB RUNTIME_SOURCES CONFIGURE_DEPENDS runtime/src/*.cpp runtime/src/*.c runtime/src/hle/*.cpp)
+file(GLOB RUNTIME_SOURCES CONFIGURE_DEPENDS runtime/src/*.cpp runtime/src/*.c runtime/src/hle/*.cpp runtime/src/mods/*.cpp)
 file(GLOB GX2_SOURCES CONFIGURE_DEPENDS runtime/src/gx2/*.cpp)
 file(GLOB GFX_SOURCES CONFIGURE_DEPENDS runtime/src/gfx/*.mm runtime/src/gfx/*.cpp)
 set_source_files_properties(${GX2_SOURCES} ${GFX_SOURCES} PROPERTIES COMPILE_OPTIONS "-include;${CEMU_DIR}/cemu_shim.h")
 set_source_files_properties(${GFX_SOURCES} PROPERTIES COMPILE_FLAGS "-fobjc-arc")
+# gameplay mods drawing with Metal (runtime/src/mods/*.mm)
+file(GLOB MOD_GFX_SOURCES CONFIGURE_DEPENDS runtime/src/mods/*.mm)
+set_source_files_properties(${MOD_GFX_SOURCES} PROPERTIES COMPILE_FLAGS "-fobjc-arc")
 
-add_executable(wwhd ${RUNTIME_SOURCES} ${GX2_SOURCES} ${GFX_SOURCES})
+add_executable(wwhd ${RUNTIME_SOURCES} ${GX2_SOURCES} ${GFX_SOURCES} ${MOD_GFX_SOURCES})
 target_include_directories(wwhd PRIVATE runtime/include runtime/src runtime/src/gx2)
 target_compile_options(wwhd PRIVATE -Wall -Wno-unused-function -Wno-unused-variable -ffp-contract=off)
 find_package(ZLIB REQUIRED)
 target_link_libraries(wwhd PRIVATE gamecode cemu_latte ZLIB::ZLIB
-  "-framework Metal" "-framework QuartzCore" "-framework AppKit" "-framework Foundation" "-framework ImageIO" "-framework UniformTypeIdentifiers" "-framework GameController" "-framework Carbon" "-framework AudioToolbox" "-framework CoreAudio")
+  "-framework Metal" "-framework QuartzCore" "-framework AppKit" "-framework Foundation" "-framework ImageIO" "-framework UniformTypeIdentifiers" "-framework GameController" "-framework Carbon" "-framework AudioToolbox" "-framework CoreAudio" compression)
 
 add_executable(shadertest runtime/tools/shadertest.cpp runtime/src/gx2/gx2_shader_regs.cpp)
 target_include_directories(shadertest PRIVATE runtime/include runtime/src runtime/src/gx2)
 target_link_libraries(shadertest PRIVATE cemu_latte)
 target_compile_options(shadertest PRIVATE "SHELL:-include ${CEMU_DIR}/cemu_shim.h")
+
+# controls mapping unit tests (runtime/src/input_map.cpp)
+add_executable(input_map_test runtime/tools/input_map_test.cpp runtime/src/input_map.cpp)
+target_include_directories(input_map_test PRIVATE runtime/src)

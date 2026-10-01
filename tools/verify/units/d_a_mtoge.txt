@@ -1,0 +1,5 @@
+# Verification unit: d_a_mtoge (Forsaken Fortress spikes)
+src wwhd_src/d/actor/d_a_mtoge.cpp
+
+# generated inputs: daMtoge_c::mAction indexes the 5-entry action table in execute
+field 021E039C r3+0x3BC u8 0 4

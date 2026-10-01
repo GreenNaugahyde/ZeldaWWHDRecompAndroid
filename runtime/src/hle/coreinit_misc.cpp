@@ -1,5 +1,10 @@
 // coreinit: logging, dynamic loading, system info, and small odds and ends.
 #include <cstdlib>
+#include "../true60.h"
+#include <sys/stat.h>
+#include <ctime>
+#include <vector>
+#include <algorithm>
 #include <mutex>
 #include <string>
 #include <unordered_map>
@@ -113,12 +118,60 @@ HLE(coreinit, OSConsoleWrite) {
     report(std::string((const char*)mem::ptr(arg(c, 0)), arg(c, 1)));
 }
 
+
+// On a game halt: captures/crash-<time>.log with the guest call chain (named from build/names.tsv
+// when present), the 60 fps pass state and the executing process, for reports from normal play.
+namespace interp { const char* phase_name(); }
+static void write_crash_log(Cpu* c, const std::string& file, uint32_t line, const std::string& msg) {
+    std::unordered_map<uint32_t, std::string> names;
+    std::vector<uint32_t> starts;
+    if (FILE* f = fopen("build/names.tsv", "r")) {
+        char buf[512];
+        while (fgets(buf, sizeof buf, f)) {
+            uint32_t a;
+            char nm[400];
+            if (sscanf(buf, "%x\t%399[^\t\n]", &a, nm) == 2) names[a] = nm, starts.push_back(a);
+        }
+        fclose(f);
+        std::sort(starts.begin(), starts.end());
+    }
+    auto name = [&](uint32_t pc) -> std::string {
+        auto it = std::upper_bound(starts.begin(), starts.end(), pc);
+        if (it == starts.begin()) return "?";
+        uint32_t s0 = *--it;
+        char b[32];
+        snprintf(b, sizeof b, "+0x%X", pc - s0);
+        return pc - s0 < 0x4000 ? names[s0] + b : "?";
+    };
+    mkdir("captures", 0755);
+    time_t t = time(nullptr);
+    char path[96];
+    strftime(path, sizeof path, "captures/crash-%Y%m%d-%H%M%S.log", localtime(&t));
+    FILE* f = fopen(path, "w");
+    if (!f) return;
+    fprintf(f, "halt at %s:%u: %s\n", file.c_str(), line, msg.c_str());
+    fprintf(f, "60 fps pass: %s; true 60 %s, half pass %d, executing process %08X", interp::phase_name(),
+            true60::enabled() ? "on" : "off", (int)true60::half_pass(), true60::exec_proc());
+    if (uint32_t p = true60::exec_proc()) fprintf(f, " (words %08X %08X %08X %08X)", ld32(p), ld32(p + 4), ld32(p + 8), ld32(p + 12));
+    fprintf(f, ", dt %.2f\nlr %08X %s\n", true60::dt(), c->lr, name(c->lr).c_str());
+    for (uint32_t sp = c->r[1], i = 0; i < 40 && sp; i++) {
+        uint32_t prev = ld32(sp);
+        if (!prev || prev <= sp) break;
+        uint32_t ra = ld32(prev + 4);
+        fprintf(f, "  <- %08X %s\n", ra, name(ra).c_str());
+        sp = prev;
+    }
+    fclose(f);
+    fprintf(stderr, "[crash] wrote %s\n", path);
+}
+
 HLE(coreinit, OSPanic) {
     GuestArgs a;
     a.c = c;
     a.gpr = 3;
     a.overflow = c->r[1] + 8;
     std::string msg = guest_format(mem::read_cstr(arg(c, 2)), a);
+    write_crash_log(c, mem::read_cstr(arg(c, 0)), arg(c, 1), msg);
     fatal("OSPanic at %s:%d: %s", mem::read_cstr(arg(c, 0)).c_str(), arg(c, 1), msg.c_str());
 }
 

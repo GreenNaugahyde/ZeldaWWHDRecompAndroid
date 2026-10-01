@@ -1,0 +1,90 @@
+# Verification unit: d_a_kamome (seagull)
+src wwhd_src/d/actor/d_a_kamome.cpp wwhd_src/d/actor/d_a_kamome_exec.cpp wwhd_src/d/actor/d_a_kamome_auto.cpp
+
+# stack objects passed to callees: compare the whole object (dBgS_LinChk 0x6C, sead::SafeString 8)
+# 02008FEC cBgS_LinChk::ct: constructor storage, not compared
+callee 024F1AFC r3=0x6C
+callee 02008860 r4=0x6C
+callee 02008B4C r3=0x6C
+callee 026066C4 r4=8
+
+# generated inputs: steer into the branches
+field 02185558 1047B68E i16 34 37       # REG0_S(3) == 0x23 / 0x24
+field 0218566C 104648A4 i32 98 101      # esa_check_count < 100
+field 0218566C r3+8 i16 220 222         # fpcM_GetName == fpcNm_ESA_e (0xDD)
+field 0218566C r3+0x3B4 u8 0 1          # esa->field_0x298
+field 0218566C r3+0x3BD i8 0 2          # esa->mState
+field 02185808 104648A4 i32 0 3         # esa_check_count
+field 02185960 r3+8 i16 320 322         # fpcNm_NPC_LS1_e (0x141)
+field 02185FE4 r3+8 i16 193 195         # fpcNm_KAMOME_e (0xC2)
+field 02185FE4 r3+0xB3 u8 5 8           # param & 0xF
+field 02186050 r3+8 i16 193 195
+field 02186050 r3+0xB3 u8 5 8
+field 02188D84 r3+0xB3 u8 3 8           # mType
+field 02188D84 101B7C00 u8 0 1          # hio_set
+field 02188D84 r3+0xB1 u8 254 255       # mPathIdx 0xFF
+field 02188D84 r3+0xB0 u8 254 255       # mSwitchNoPrm 0xFF
+
+# generated callee results in their real domains
+ret 02520460 0 5     # dComIfG_resLoad -> cPhs_State
+ret 025D4604 0 1     # fopAc_IsActor
+ret 02008860 0 1     # cBgS::LineCross
+
+# daKamome_Execute (d_a_kamome_exec.cpp)
+callee 02008974 r4=0x54
+callee 02008DAC r3=0x54
+callee 028E8DD0 r3=12
+field 021861D4 r3+0x3B8 u8 3 7          # mType (4 imouto, 5 imouto2, 6 heisou_control, 7 heisou, else auto)
+field 021861D4 r3+0x3C2 u8 0 1          # mSwitchNo
+field 021861D4 104648C9 u8 0 0          # l_kamomeHIO.m05
+field 021861D4 104648CA i16 1 1         # l_kamomeHIO.m06
+field 021861D4 104648CC i16 8 8         # l_kamomeHIO.m08
+field 021861D4 r3+0x416 i8 0 1          # mbUsePathMovement
+field 021861D4 r3+0x3C0 i8 0 20         # mAnimState
+field 021861D4 r3+0x3C1 i8 -1 25        # mMoveState
+field 021861D4 r3+0x3BC i32 0 2         # mGlobalTimer
+field 021861D4 r3+0x3F8 i16 0 1         # mTimers[0..5]
+field 021861D4 r3+0x3FA i16 0 1
+field 021861D4 r3+0x3FC i16 0 1
+field 021861D4 r3+0x3FE i16 0 1
+field 021861D4 r3+0x402 i16 0 1
+field 021861D4 r3+0x3C3 i8 0 1          # m2AB
+field 021861D4 r3+0x420 u8 0 1          # m308
+field 021861D4 r3+0x3BA u8 254 255      # mPathIdx
+field 021861D4 r3+0x417 i8 -1 3         # mCurPointIdx
+field 021861D4 r3+0x418 i8 -1 1         # mPathIdxIncr
+field 021861D4 r3+0x3B4 u32 0x50000000 0x50000000   # mpMorf at a fixed address
+field 021861D4 5000009C f32 3 10        # frame
+field 021861D4 50000098 f32 0 1         # rate
+field 021861D4 500000A7 u8 0 1          # state
+field 021861D4 1047B688 i16 0 0         # REG0_S(0)
+field 021861D4 1047B9EC i16 -10 -5      # REG6_S(2)
+field 021861D4 r3+0x41C u32 0x51000000 0x51000000   # mpPath
+field 021861D4 51000000 u16 0 4         # m_num
+field 021861D4 51000002 u16 65534 65535 # m_nextID
+field 021861D4 51000005 u8 0 1          # m_closed
+field 021861D4 51000008 u32 0x52000000 0x52000000   # m_points
+field 021861D4 52000003 u8 0 6          # point args
+field 021861D4 52000013 u8 0 6
+field 021861D4 52000023 u8 0 6
+field 021861D4 52000033 u8 0 6
+field 021861D4 r3+0x370 f32 0 50
+field 021861D4 r3+0x498 u32 0 0x30      # mAcch flags
+field 021861D4 101F84DC u32 0x53000000 0x53000000   # save info
+field 021861D4 53000044 f32 0 360       # time
+ret 0256019C 0 12                        # dKy_rain_check
+
+# kamome_auto_move (d_a_kamome_auto.cpp)
+callee 025D5218 r4=4
+callee 024F17D4 r3=12
+field 02189270 r3+0x3C0 i8 0 20
+field 02189270 r3+0x3B4 u32 0x50000000 0x50000000
+field 02189270 50000098 f32 0 1
+field 02189270 5000009C f32 4 10
+field 02189270 500000A7 u8 0 1
+field 02189270 r3+0x3C1 i8 0 0x19
+ret 0246B6A4 0 1      # daSea_ChkArea
+ret 025D4604 0 1      # fopAc_IsActor
+
+# cXyz::operator- returns through a hidden result pointer (r4): output storage, not compared
+callee 0201ADE0 r4=255

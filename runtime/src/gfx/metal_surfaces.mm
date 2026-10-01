@@ -1,4 +1,7 @@
 #include <tuple>
+#include <atomic>
+#include <cmath>
+#include <vector>
 // Guest surfaces <-> Metal textures: render targets, depth buffers, sampled textures.
 // Tiled layouts are decoded with the vendored LatteAddrLib.
 #include "Cafe/HW/Latte/ISA/LatteReg.h"
@@ -37,6 +40,204 @@ uint64_t next_write_seq() {
     return ++seq;
 }
 
+// ---------------------------------------------------------------- internal resolution
+// Render targets are allocated at res_scale() x their guest size. Everything that talks to the game
+// (lookups, aliasing, guest memory) uses the guest size; draws scale their viewport and scissor, and
+// shaders sample with normalized coordinates, so they see the same picture at more pixels.
+static float parse_scale(const char* e) {
+    float f = e ? (float)atof(e) : 1.0f;
+    return std::clamp(f > 0 ? f : 1.0f, 1.0f, 4.0f);
+}
+static std::atomic<float> g_res_requested{parse_scale(getenv("WWHD_RES_SCALE"))};
+static float g_res_frame = g_res_requested.load();  // render thread: the factor for this frame
+float res_scale() { return g_res_frame; }
+void set_res_scale(float f) {
+    g_res_requested = std::clamp(f, 1.0f, 4.0f);
+    LOG("[gfx] internal resolution %gx", g_res_requested.load());
+}
+void latch_res_scale() {
+    // test aid: WWHD_RES_SCALE_AT=frame:factor,... switches the factor at those frames
+    static std::vector<std::pair<uint64_t, float>> at = [] {
+        std::vector<std::pair<uint64_t, float>> v;
+        if (const char* e = getenv("WWHD_RES_SCALE_AT"))
+            for (char* p = (char*)e; *p;) {
+                uint64_t f = strtoull(p, &p, 10);
+                if (*p++ != ':') break;
+                v.push_back({f, (float)strtod(p, &p)});
+                while (*p == ',') p++;
+            }
+        return v;
+    }();
+    for (auto& [f, v] : at)
+        if (R.frame == f) set_res_scale(v);
+    g_res_frame = g_res_requested.load(std::memory_order_relaxed);
+}
+
+// the factor a render target gets. Shadow maps (depth arrays: the game's cascades) can have their
+// own factor (WWHD_SHADOW_SCALE=n; default: the same as everything else).
+static float target_scale(const Surface* s) {
+    if (s->fmt.compressed || s->mips > 1) return 1.0f;
+    static const float shadow = getenv("WWHD_SHADOW_SCALE") ? parse_scale(getenv("WWHD_SHADOW_SCALE")) : 0.0f;
+    if (shadow && s->isDepth && s->slices > 1) return shadow;
+    return res_scale();
+}
+
+static id<MTLTexture> make_texture(Surface* s, MTLTextureType type, bool forRendering, float scale) {
+    if (forRendering && type != MTLTextureType2DArray) type = MTLTextureType2D;
+    bool is1D = type == MTLTextureType1D || type == MTLTextureType1DArray;
+    uint32_t pw = s->width, ph = s->height;
+    if (scale != 1.0f && !is1D) {
+        pw = (uint32_t)std::ceil(s->width * scale - 0.01f);
+        ph = (uint32_t)std::ceil(s->height * scale - 0.01f);
+    } else {
+        scale = 1.0f;
+    }
+    MTLTextureDescriptor* td = [MTLTextureDescriptor new];
+    td.textureType = type;
+    td.pixelFormat = s->fmt.pixel;
+    td.width = pw;
+    td.height = is1D ? 1 : ph;
+    td.depth = type == MTLTextureType3D ? s->slices : 1;
+    td.arrayLength = (type == MTLTextureType2DArray || type == MTLTextureType1DArray) ? s->slices : 1;
+    if (type == MTLTextureTypeCube) td.arrayLength = 1;
+    td.mipmapLevelCount = s->mips;
+    td.usage = MTLTextureUsageShaderRead | MTLTextureUsageRenderTarget | MTLTextureUsagePixelFormatView;
+    td.storageMode = MTLStorageModePrivate;
+    if (s->fmt.compressed) td.usage = MTLTextureUsageShaderRead | MTLTextureUsagePixelFormatView;
+    id<MTLTexture> t = [R.device newTextureWithDescriptor:td];
+    if (t) {
+        s->scale = scale;
+        s->sx = (float)pw / s->width;
+        s->sy = is1D ? 1.0f : (float)ph / s->height;
+    }
+    return t;
+}
+
+// a render target made at another factor (the setting changed, or a CPU texture now rendered to):
+// reallocate it at the current one, keeping its contents (filtered)
+static Surface* rescale(Surface* s) {
+    float want = target_scale(s);
+    if (s->scale == want || !s->tex) return s;
+    id<MTLTexture> old = s->tex;
+    float osx = s->sx, osy = s->sy, oscale = s->scale;
+    id<MTLTexture> t = make_texture(s, old.textureType, true, want);
+    if (!t) { s->sx = osx; s->sy = osy; s->scale = oscale; return s; }
+    end_encoder();
+    resample(old, t, s->fmt, old.textureType == MTLTextureType2DArray ? (uint32_t)old.arrayLength : 1);
+    s->tex = t;
+    forget_texture_views();
+    if (getenv("WWHD_LOG_RESCALE"))
+        LOG("[gfx] rescaled %08X %ux%u fmt %X to %lux%lu", s->addr, s->width, s->height, s->format, (unsigned long)t.width,
+            (unsigned long)t.height);
+    return s;
+}
+
+// fullscreen-triangle copy with filtering; one pipeline per destination format
+static const char* kResampleShader = R"(
+#include <metal_stdlib>
+using namespace metal;
+struct VOut { float4 pos [[position]]; float2 uv; };
+vertex VOut rs_vs(uint vid [[vertex_id]], constant float2& uvMax [[buffer(0)]]) {
+    float2 p = float2((vid << 1) & 2, vid & 2);
+    VOut o;
+    o.pos = float4(p.x * 2.0 - 1.0, 1.0 - p.y * 2.0, 0.0, 1.0);
+    o.uv = p * uvMax;
+    return o;
+}
+fragment float4 rs_float(VOut in [[stage_in]], texture2d<float> t [[texture(0)]], sampler s [[sampler(0)]]) {
+    return t.sample(s, in.uv);
+}
+fragment uint4 rs_uint(VOut in [[stage_in]], texture2d<uint> t [[texture(0)]]) {
+    return t.read(uint2(min(in.uv * float2(t.get_width(), t.get_height()), float2(t.get_width() - 1, t.get_height() - 1))));
+}
+fragment int4 rs_sint(VOut in [[stage_in]], texture2d<int> t [[texture(0)]]) {
+    return t.read(uint2(min(in.uv * float2(t.get_width(), t.get_height()), float2(t.get_width() - 1, t.get_height() - 1))));
+}
+struct DOut { float d [[depth(any)]]; };
+fragment DOut rs_depth(VOut in [[stage_in]], depth2d<float> t [[texture(0)]]) {
+    DOut o;
+    o.d = t.read(uint2(min(in.uv * float2(t.get_width(), t.get_height()), float2(t.get_width() - 1, t.get_height() - 1))));
+    return o;
+}
+)";
+
+void resample(id<MTLTexture> src, id<MTLTexture> dst, const FormatInfo& fmt, uint32_t slices, float uMax, float vMax, uint32_t dstW,
+              uint32_t dstH) {
+    static id<MTLLibrary> lib;
+    static id<MTLSamplerState> linear;
+    static std::unordered_map<uint64_t, id<MTLRenderPipelineState>> pipes;
+    if (!lib) {
+        NSError* err = nil;
+        lib = [R.device newLibraryWithSource:[NSString stringWithUTF8String:kResampleShader] options:nil error:&err];
+        if (!lib) { LOG("[gfx] resample shader: %s", err.localizedDescription.UTF8String); return; }
+        MTLSamplerDescriptor* sd = [MTLSamplerDescriptor new];
+        sd.minFilter = sd.magFilter = MTLSamplerMinMagFilterLinear;
+        sd.sAddressMode = sd.tAddressMode = MTLSamplerAddressModeClampToEdge;
+        linear = [R.device newSamplerStateWithDescriptor:sd];
+    }
+    if (fmt.compressed) return;
+    uint64_t key = (uint64_t)dst.pixelFormat;
+    auto it = pipes.find(key);
+    if (it == pipes.end()) {
+        MTLRenderPipelineDescriptor* d = [MTLRenderPipelineDescriptor new];
+        d.vertexFunction = [lib newFunctionWithName:@"rs_vs"];
+        NSString* fs = fmt.depth ? @"rs_depth" : fmt.kind == FormatInfo::UINT ? @"rs_uint" : fmt.kind == FormatInfo::SINT ? @"rs_sint" : @"rs_float";
+        d.fragmentFunction = [lib newFunctionWithName:fs];
+        if (fmt.depth) {
+            d.depthAttachmentPixelFormat = dst.pixelFormat;
+            if (fmt.stencil) d.stencilAttachmentPixelFormat = dst.pixelFormat;
+        } else {
+            d.colorAttachments[0].pixelFormat = dst.pixelFormat;
+        }
+        NSError* err = nil;
+        id<MTLRenderPipelineState> p = [R.device newRenderPipelineStateWithDescriptor:d error:&err];
+        if (!p) LOG("[gfx] resample pipeline (pixel %lu): %s", (unsigned long)dst.pixelFormat, err.localizedDescription.UTF8String);
+        it = pipes.emplace(key, p).first;
+    }
+    if (!it->second) return;
+    static id<MTLDepthStencilState> writeDepth;
+    if (!writeDepth) {
+        MTLDepthStencilDescriptor* dd = [MTLDepthStencilDescriptor new];
+        dd.depthCompareFunction = MTLCompareFunctionAlways;
+        dd.depthWriteEnabled = YES;
+        writeDepth = [R.device newDepthStencilStateWithDescriptor:dd];
+    }
+    end_encoder();
+    for (uint32_t z = 0; z < slices; z++) {
+        id<MTLTexture> view = [src newTextureViewWithPixelFormat:src.pixelFormat textureType:MTLTextureType2D
+                                                          levels:NSMakeRange(0, 1) slices:NSMakeRange(z, 1)];
+        MTLRenderPassDescriptor* rp = [MTLRenderPassDescriptor renderPassDescriptor];
+        bool whole = !dstW || (dstW >= dst.width && dstH >= dst.height);
+        if (fmt.depth) {
+            rp.depthAttachment.texture = dst;
+            rp.depthAttachment.slice = z;
+            rp.depthAttachment.loadAction = whole ? MTLLoadActionDontCare : MTLLoadActionLoad;
+            rp.depthAttachment.storeAction = MTLStoreActionStore;
+            if (fmt.stencil) {
+                rp.stencilAttachment.texture = dst;
+                rp.stencilAttachment.slice = z;
+                rp.stencilAttachment.loadAction = whole ? MTLLoadActionClear : MTLLoadActionLoad;
+                rp.stencilAttachment.storeAction = MTLStoreActionStore;
+            }
+        } else {
+            rp.colorAttachments[0].texture = dst;
+            rp.colorAttachments[0].slice = z;
+            rp.colorAttachments[0].loadAction = whole ? MTLLoadActionDontCare : MTLLoadActionLoad;
+            rp.colorAttachments[0].storeAction = MTLStoreActionStore;
+        }
+        id<MTLRenderCommandEncoder> e = [command_buffer() renderCommandEncoderWithDescriptor:rp];
+        [e setRenderPipelineState:it->second];
+        if (fmt.depth) [e setDepthStencilState:writeDepth];
+        if (dstW) [e setViewport:MTLViewport{0, 0, (double)dstW, (double)dstH, 0, 1}];
+        float uv[2] = {uMax, vMax};
+        [e setVertexBytes:uv length:sizeof uv atIndex:0];
+        [e setFragmentTexture:view atIndex:0];
+        [e setFragmentSamplerState:linear atIndex:0];
+        [e drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3];
+        [e endEncoding];
+    }
+}
+
 Surface* find_or_create_surface(const SurfaceDesc& d, bool forRendering) {
     auto range = R.surfaces.equal_range(d.addr);
     Surface* exact = nullptr;
@@ -56,7 +257,7 @@ Surface* find_or_create_surface(const SurfaceDesc& d, bool forRendering) {
         if (s->isDepth != d.isDepth) continue;
         if (s->width == d.width && s->height == d.height && s->format == d.format && s->slices == d.slices &&
             (forRendering || s->mips >= d.mips || s->gpuWritten)) {
-            if (forRendering) return s;
+            if (forRendering) return rescale(s);
             if (!exact || s->writeSeq > exact->writeSeq) exact = s;
             continue;
         }
@@ -81,26 +282,15 @@ Surface* find_or_create_surface(const SurfaceDesc& d, bool forRendering) {
     s->swizzle = d.swizzle;
     s->isDepth = d.isDepth;
     s->fmt = format_info(d.format, d.isDepth);
-    MTLTextureType type = texture_type(d.dim, s->slices);
-    if (forRendering && type != MTLTextureType2DArray) type = MTLTextureType2D;
-    MTLTextureDescriptor* td = [MTLTextureDescriptor new];
-    td.textureType = type;
-    td.pixelFormat = s->fmt.pixel;
-    td.width = s->width;
-    td.height = (type == MTLTextureType1D || type == MTLTextureType1DArray) ? 1 : s->height;
-    td.depth = type == MTLTextureType3D ? s->slices : 1;
-    td.arrayLength = (type == MTLTextureType2DArray || type == MTLTextureType1DArray) ? s->slices : 1;
-    if (type == MTLTextureTypeCube) td.arrayLength = 1;
-    td.mipmapLevelCount = s->mips;
-    td.usage = MTLTextureUsageShaderRead | MTLTextureUsageRenderTarget | MTLTextureUsagePixelFormatView;
-    td.storageMode = MTLStorageModePrivate;
-    if (s->fmt.compressed) td.usage = MTLTextureUsageShaderRead | MTLTextureUsagePixelFormatView;
-    s->tex = [R.device newTextureWithDescriptor:td];
+    s->tex = make_texture(s.get(), texture_type(d.dim, s->slices), forRendering, forRendering ? target_scale(s.get()) : 1.0f);
     if (!s->tex) {
         LOG("[gfx] cannot create %ux%ux%u texture (format %X, pixel %lu)", s->width, s->height, s->slices, s->format,
             (unsigned long)s->fmt.pixel);
         return nullptr;
     }
+    if (forRendering && getenv("WWHD_LOG_RESCALE"))
+        LOG("[gfx] render target %08X %ux%ux%u fmt %X%s -> %lux%lu", s->addr, s->width, s->height, s->slices, s->format,
+            s->isDepth ? " depth" : "", (unsigned long)s->tex.width, (unsigned long)s->tex.height);
     Surface* raw = s.get();
     R.surfaces.emplace(d.addr, std::move(s));
     return raw;
@@ -409,11 +599,21 @@ void copy_surface_impl(uint32_t srcAddr, uint32_t srcMip, uint32_t srcSlice, uin
         Surface* dst = find_or_create_surface(dd, true);
         if (!dst || dst->fmt.pixel != src->fmt.pixel) return;
         end_encoder();
-        id<MTLBlitCommandEncoder> b = [command_buffer() blitCommandEncoder];
-        [b copyFromTexture:src->tex sourceSlice:0 sourceLevel:0 sourceOrigin:MTLOriginMake(0, 0, 0)
-                sourceSize:MTLSizeMake(std::min(w, dst->width), std::min(h, dst->height), 1)
-                 toTexture:dst->tex destinationSlice:0 destinationLevel:0 destinationOrigin:MTLOriginMake(0, 0, 0)];
-        [b endEncoding];
+        // region in guest pixels, then in each texture's pixels (both may be scaled for the internal resolution)
+        uint32_t cw = std::min(w, dst->width), ch = std::min(h, dst->height);
+        uint32_t spw = std::min<uint32_t>((uint32_t)std::lround(cw * src->sx), (uint32_t)src->tex.width);
+        uint32_t sph = std::min<uint32_t>((uint32_t)std::lround(ch * src->sy), (uint32_t)src->tex.height);
+        uint32_t dpw = std::min<uint32_t>((uint32_t)std::lround(cw * dst->sx), (uint32_t)dst->tex.width);
+        uint32_t dph = std::min<uint32_t>((uint32_t)std::lround(ch * dst->sy), (uint32_t)dst->tex.height);
+        if (spw == dpw && sph == dph) {
+            id<MTLBlitCommandEncoder> b = [command_buffer() blitCommandEncoder];
+            [b copyFromTexture:src->tex sourceSlice:0 sourceLevel:0 sourceOrigin:MTLOriginMake(0, 0, 0)
+                    sourceSize:MTLSizeMake(spw, sph, 1)
+                     toTexture:dst->tex destinationSlice:0 destinationLevel:0 destinationOrigin:MTLOriginMake(0, 0, 0)];
+            [b endEncoding];
+        } else {
+            resample(src->tex, dst->tex, dst->fmt, 1, (float)spw / src->tex.width, (float)sph / src->tex.height, dpw, dph);
+        }
         mark_gpu_written(dst);
         return;
     }
@@ -442,4 +642,15 @@ void copy_surface_impl(uint32_t srcAddr, uint32_t srcMip, uint32_t srcSlice, uin
     for (auto it = dr.first; it != dr.second; ++it) it->second->lastCheckedFrame = ~0ull;
 }
 
+}  // namespace gfx
+
+namespace gfx {
+// a save state replaced guest memory: every CPU-side texture gets a full check on next use (render
+// targets keep their GPU contents; the next frame redraws them)
+void ss_reset_surfaces() {
+    for (auto& [a, s] : R.surfaces) {
+        s->dirty = true;
+        s->lastCheckedFrame = ~0ull;
+    }
+}
 }  // namespace gfx

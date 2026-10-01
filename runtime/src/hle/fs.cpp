@@ -27,11 +27,14 @@ enum FSStatus : int32_t {
 
 struct OpenFile {
     FILE* f;
-    std::string path;
+    std::string path;  // guest path
+    std::string mode;
 };
 struct OpenDir {
     DIR* d;
-    std::string path;
+    std::string path;  // host path
+    std::string gpath;
+    uint32_t read = 0;  // entries returned so far
 };
 
 std::mutex g_fs_mutex;
@@ -81,7 +84,7 @@ int32_t open_file(const std::string& gpath, const std::string& mode, uint32_t ou
     if (!f) return FS_NOT_FOUND;
     std::lock_guard<std::mutex> lk(g_fs_mutex);
     uint32_t h = g_next_handle++;
-    g_files[h] = {f, gpath};
+    g_files[h] = {f, gpath, m};
     st32(out_handle, h);
     return FS_OK;
 }
@@ -105,7 +108,7 @@ int32_t open_dir(const std::string& gpath, uint32_t out_handle) {
     if (!d) return FS_NOT_FOUND;
     std::lock_guard<std::mutex> lk(g_fs_mutex);
     uint32_t h = g_next_handle++;
-    g_dirs[h] = {d, host_path(gpath)};
+    g_dirs[h] = {d, host_path(gpath), gpath};
     st32(out_handle, h);
     return FS_OK;
 }
@@ -193,6 +196,7 @@ HLE(coreinit, FSReadDir) {
         if (stat((it->second.path + "/" + de->d_name).c_str(), &st) != 0) continue;
         fill_stat(out, st);
         mem::write_cstr(out + 0x64, de->d_name, 256);
+        it->second.read++;
         ret(c, FS_OK);
         return;
     }
@@ -231,4 +235,75 @@ HLE(nn_save, SAVEOpenDir) {
     std::string gp = save_path(arg(c, 2), mem::read_cstr(arg(c, 3)));
     make_parent_dirs(host_path(gp) + "/");
     ret(c, open_dir(gp, arg(c, 4)));
+}
+
+// ---------------------------------------------------------------- save states: open files
+#include <algorithm>
+#include <vector>
+
+#include "../savestate.h"
+void fs_ss_save(ss::Writer& w) {
+    std::lock_guard<std::mutex> lk(g_fs_mutex);
+    w.u32(g_next_handle);
+    std::vector<uint32_t> keys;
+    for (auto& [h, f] : g_files) keys.push_back(h);
+    std::sort(keys.begin(), keys.end());
+    w.u32((uint32_t)keys.size());
+    for (uint32_t h : keys) {
+        OpenFile& f = g_files[h];
+        w.u32(h);
+        w.str(f.path);
+        w.str(f.mode);
+        w.u64((uint64_t)ftello(f.f));
+    }
+    keys.clear();
+    for (auto& [h, d] : g_dirs) keys.push_back(h);
+    std::sort(keys.begin(), keys.end());
+    w.u32((uint32_t)keys.size());
+    for (uint32_t h : keys) {
+        w.u32(h);
+        w.str(g_dirs[h].gpath);
+        w.u32(g_dirs[h].read);
+    }
+}
+
+void fs_ss_load(ss::Reader& r) {
+    std::lock_guard<std::mutex> lk(g_fs_mutex);
+    uint32_t next = r.u32();
+    for (auto& [h, f] : g_files) fclose(f.f);
+    g_files.clear();
+    for (auto& [h, d] : g_dirs) closedir(d.d);
+    g_dirs.clear();
+    uint32_t n = r.u32();
+    for (uint32_t i = 0; i < n && r.ok; i++) {
+        uint32_t h = r.u32();
+        std::string gp = r.str(), mode = r.str();
+        uint64_t pos = r.u64();
+        // reopening must not truncate or create: writers continue in update mode
+        std::string m = mode.find_first_of("wa+") != std::string::npos ? "r+b" : "rb";
+        FILE* f = fopen(host_path(gp).c_str(), m.c_str());
+        if (!f) {
+            LOG("[savestate] cannot reopen %s", gp.c_str());
+            continue;
+        }
+        fseeko(f, (off_t)pos, SEEK_SET);
+        g_files[h] = {f, gp, mode};
+    }
+    n = r.u32();
+    for (uint32_t i = 0; i < n && r.ok; i++) {
+        uint32_t h = r.u32();
+        std::string gp = r.str();
+        uint32_t read = r.u32();
+        DIR* d = opendir(host_path(gp).c_str());
+        if (!d) continue;
+        OpenDir od{d, host_path(gp), gp, 0};
+        while (od.read < read) {
+            struct dirent* de = readdir(d);
+            if (!de) break;
+            if (!strcmp(de->d_name, ".") || !strcmp(de->d_name, "..")) continue;
+            od.read++;
+        }
+        g_dirs[h] = od;
+    }
+    g_next_handle = std::max(g_next_handle, next);
 }

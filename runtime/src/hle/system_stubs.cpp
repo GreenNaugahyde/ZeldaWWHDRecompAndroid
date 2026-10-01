@@ -3,6 +3,8 @@
 #include "../runtime.h"
 #include "../input.h"
 
+namespace interp { bool repeat_input(); bool fresh_sticks(); void trace_read(const char*); }
+
 // nn::Result: bit 31 set = failure
 static constexpr uint32_t kResultOk = 0;
 static constexpr uint32_t kResultFail = 0xA0000000;
@@ -61,13 +63,36 @@ HLE(proc_ui, ProcUIProcessMessages) { ret(c, 0); }  // PROCUI_STATUS_IN_FOREGROU
 HLE(vpad, VPADRead) {
     // (chan, VPADStatus* buf, count, int32* error) -> samples written
     uint32_t chan = arg(c, 0), st = arg(c, 1), count = arg(c, 2), err = arg(c, 3);
+    // debug: WWHD_TRACE_VPAD=n logs the guest call chain of the first n reads
+    static int trace = getenv("WWHD_TRACE_VPAD") ? atoi(getenv("WWHD_TRACE_VPAD")) : 0;
+    if (trace > 0) {
+        trace--;
+        char buf[256];
+        int n = snprintf(buf, sizeof buf, "[vpad] read from lr=%08X", c->lr);
+        for (uint32_t sp = c->r[1], i = 0; i < 8 && sp; i++) {
+            uint32_t prev = ld32(sp);
+            if (!prev || prev <= sp) break;
+            n += snprintf(buf + n, sizeof buf - n, " <- %08X", ld32(prev + 4));
+            sp = prev;
+        }
+        LOG("%s", buf);
+    }
     if (chan != 0 || !st || (int32_t)count <= 0) {
         if (err) st32(err, (uint32_t)-2);  // VPAD_READ_INVALID_CONTROLLER
         ret(c, 0);
         return;
     }
     static uint32_t last_hold = 0;
-    input::PadState p = input::read();
+    interp::trace_read("VPAD");
+    // frame interpolation: the read after a logic pass repeats the last sample (interp.cpp)
+    static input::PadState last_p;
+    const bool repeat = interp::repeat_input();
+    input::PadState p = repeat ? last_p : input::read();
+    if (repeat && interp::fresh_sticks()) {  // true 60: sticks every pass, buttons on full passes
+        input::PadState f = input::read();
+        p.lx = f.lx; p.ly = f.ly; p.rx = f.rx; p.ry = f.ry;
+    }
+    last_p = p;
     if (input::pro_controller()) {  // GamePad on the table: screen and touch only
         p.buttons = 0;
         p.lx = p.ly = p.rx = p.ry = 0;
@@ -81,6 +106,7 @@ HLE(vpad, VPADRead) {
     };
     stick_dirs(p.lx, p.ly, 0x10000000, 0x08000000, 0x40000000, 0x20000000);
     stick_dirs(p.rx, p.ry, 0x01000000, 0x00800000, 0x04000000, 0x02000000);
+    if (repeat) hold = last_hold;  // buttons (and the stick-as-button bits) change on full passes only
 
     memset(mem::ptr(st), 0, 0xAC);
     st32(st + 0x00, hold);

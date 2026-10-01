@@ -758,6 +758,7 @@ static id<MTLTexture> null_texture(MTLTextureType type) {
 
 // texture view with the shader's expected type and the resource's component swizzle
 static std::unordered_map<uint64_t, id<MTLTexture>> g_views;
+void forget_texture_views() { g_views.clear(); }
 
 static id<MTLTexture> texture_view(Surface* s, MTLTextureType type, uint32_t word4) {
     LATTE_SQ_TEX_RESOURCE_WORD4_N w4;
@@ -820,8 +821,11 @@ static Surface g_hires_color, g_hires_depth;
 
 static Surface* hires_surface(Surface& dst, const Surface* like) {
     uint32_t w = like->width * 3 / 2, h = like->height * 3 / 2;
-    if (!dst.tex || dst.width != w || dst.height != h || dst.fmt.pixel != like->fmt.pixel) {
-        MTLTextureDescriptor* d = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:like->fmt.pixel width:w height:h
+    // texture: 1.5x the game's buffer as allocated (which may already be scaled for the internal resolution)
+    uint32_t pw = (uint32_t)like->tex.width * 3 / 2, ph = (uint32_t)like->tex.height * 3 / 2;
+    if (!dst.tex || dst.width != w || dst.height != h || dst.tex.width != pw || dst.tex.height != ph ||
+        dst.fmt.pixel != like->fmt.pixel) {
+        MTLTextureDescriptor* d = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:like->fmt.pixel width:pw height:ph
                                                                                  mipmapped:NO];
         d.usage = MTLTextureUsageRenderTarget | MTLTextureUsageShaderRead | MTLTextureUsagePixelFormatView;
         d.storageMode = MTLStorageModePrivate;
@@ -832,12 +836,19 @@ static Surface* hires_surface(Surface& dst, const Surface* like) {
         dst.height = h;
         dst.slices = 1;
         dst.mips = 1;
+        dst.sx = (float)pw / w;
+        dst.sy = (float)ph / h;
     }
     return &dst;
 }
 
+// pixels of the current render target per guest pixel (viewport/scissor/fragment-coordinate scale)
+static float g_target_kx = 1.0f, g_target_ky = 1.0f;
+
 static void bind_stage(id<MTLRenderCommandEncoder> enc, const uint32_t* regs, Shader* sh, bool vertex, Surface* const* colors) {
     LatteDecompilerShader* dec = sh->dec;
+    float texScale[18][2];
+    for (auto& t : texScale) t[0] = t[1] = 1.0f;
     auto& rm = dec->resourceMapping;
     uint32_t texBase = vertex ? REGADDR::SQ_TEX_RESOURCE_WORD0_N_VS : REGADDR::SQ_TEX_RESOURCE_WORD0_N_PS;
     uint32_t samplerBase = vertex ? SAMPLER_BASE_INDEX_VERTEX : SAMPLER_BASE_INDEX_PIXEL;
@@ -855,6 +866,7 @@ static void bind_stage(id<MTLRenderCommandEncoder> enc, const uint32_t* regs, Sh
             (regs[mmSQ_PGM_START_PS] << 8) == kOcclusionPS)
             s = &g_hires_color;
         id<MTLTexture> tex = s && s->tex ? texture_view(s, type, tw[4]) : nil;
+        if (s && unit < 18) { texScale[unit][0] = s->sx; texScale[unit][1] = s->sy; }
         uint32_t samplerIdx = dec->textureUnitSamplerAssignment[unit];
         DLOG("[draw]   %s tex%u %08X %ux%u fmt %X gpu=%d view=%d smp %08X %08X %08X", vertex ? "VS" : "PS", unit, tw[2] << 8,
              s ? s->width : 0, s ? s->height : 0, s ? s->format : 0, s ? s->gpuWritten : -1, tex != nil,
@@ -897,7 +909,7 @@ static void bind_stage(id<MTLRenderCommandEncoder> enc, const uint32_t* regs, Sh
         }
         if (dec->uniform.loc_pointSize >= 0) {
             float pw = (float)(regs[REGADDR::PA_SU_POINT_SIZE] & 0xFFFF) / 8.0f;
-            *at(dec->uniform.loc_pointSize) = pw == 0 ? 1.0f / 8.0f : pw;
+            *at(dec->uniform.loc_pointSize) = (pw == 0 ? 1.0f / 8.0f : pw) * g_target_kx;
         }
         uint32_t aluBase = mmSQ_ALU_CONSTANT0_0 + (vertex ? 0x400 : 0);
         uint32_t blockBase = vertex ? mmSQ_VTX_UNIFORM_BLOCK_START : mmSQ_PS_UNIFORM_BLOCK_START;
@@ -926,12 +938,15 @@ static void bind_stage(id<MTLRenderCommandEncoder> enc, const uint32_t* regs, Sh
             v[1] = vh != 0 ? 2.0f / vh : 0;
         }
         if (dec->uniform.loc_fragCoordScale >= 0) {
-            at(dec->uniform.loc_fragCoordScale)[0] = 1.0f;
-            at(dec->uniform.loc_fragCoordScale)[1] = 1.0f;
+            // the shader sees guest pixel positions
+            at(dec->uniform.loc_fragCoordScale)[0] = 1.0f / g_target_kx;
+            at(dec->uniform.loc_fragCoordScale)[1] = 1.0f / g_target_ky;
         }
         for (auto& e : dec->uniform.list_ufTexRescale) {
-            at(e.uniformLocation)[0] = 1.0f;
-            at(e.uniformLocation)[1] = 1.0f;
+            // integer texel coordinates are guest texels: scale them to the texture as allocated
+            bool ok = e.texUnit < 18;
+            at(e.uniformLocation)[0] = ok ? texScale[e.texUnit][0] : 1.0f;
+            at(e.uniformLocation)[1] = ok ? texScale[e.texUnit][1] : 1.0f;
         }
         for (int t = 0; t < 18; t++) {
             if (dec->uniform.loc_framebufferFetchSize[t] < 0) continue;
@@ -1194,12 +1209,12 @@ static void cache_load() {
             if (!get(p, end, vertex) || !get(p, end, size) || !get(p, end, fsSize) || !get(p, end, n)) break;
             if (p + size + fsSize + n * 8 > end) break;
             // the microcode goes to fresh guest memory so the normal translation path can read it
-            uint32_t prog = mem::runtime_alloc(size, 0x100);
+            uint32_t prog = mem::host_alloc(size, 0x100);
             memcpy(mem::ptr(prog), p, size);
             p += size;
             uint32_t fsProg = 0;
             if (fsSize) {
-                fsProg = mem::runtime_alloc(fsSize, 0x100);
+                fsProg = mem::host_alloc(fsSize, 0x100);
                 memcpy(mem::ptr(fsProg), p, fsSize);
                 p += fsSize;
             }
@@ -1349,21 +1364,30 @@ void draw(const uint32_t* regs, uint32_t prim, uint32_t count, uint32_t indexTyp
     for (int i = 0; i < 8; i++)
         if (mask & (1 << i)) colors[i] = color_target(regs, i, &colorSlices[i]);
     Surface* depth = LatteMRT::GetActiveDepthBufferMask(lcr) ? depth_target(regs, &depthSlice) : nullptr;
+    uint32_t guestW = colors[0] ? colors[0]->width : 0;  // the game's target size (viewport registers refer to it)
     if (g_hires_redraw) {
         g_hires_src = colors[0]->addr;
         colors[0] = hires_surface(g_hires_color, colors[0]);
         colorSlices[0] = 0;
         if (depth) { depth = hires_surface(g_hires_depth, depth); depthSlice = 0; }
     }
-    // Metal requires matching attachment sizes; drop mismatching ones
+    // Metal requires matching attachment sizes; drop mismatching ones. Sizes here are the textures'
+    // (internal resolution); kx/ky = texture pixels per guest pixel of the target.
     uint32_t w = 0, h = 0;
+    float kx = 1.0f, ky = 1.0f;
     for (auto* c : colors)
-        if (c) { w = c->width; h = c->height; break; }
-    if (depth && w && (depth->width < w || depth->height < h)) { depth = nullptr; g_skip[SK_DROPPED_DEPTH]++; }
-    if (!w && depth) { w = depth->width; h = depth->height; }
+        if (c) { w = (uint32_t)c->tex.width; h = (uint32_t)c->tex.height; kx = c->sx; ky = c->sy; break; }
+    if (depth && w && (depth->tex.width < w || depth->tex.height < h)) { depth = nullptr; g_skip[SK_DROPPED_DEPTH]++; }
+    if (!w && depth) { w = (uint32_t)depth->tex.width; h = (uint32_t)depth->tex.height; kx = depth->sx; ky = depth->sy; }
     for (auto& c : colors)
-        if (c && (c->width != w || c->height != h)) { c = nullptr; g_skip[SK_DROPPED_COLOR]++; }
+        if (c && (c->tex.width != w || c->tex.height != h)) { c = nullptr; g_skip[SK_DROPPED_COLOR]++; }
     if (!w) { g_skip[SK_NO_TARGET]++; return; }
+    if (g_hires_redraw && guestW) {  // the viewport registers describe the game's smaller buffer
+        kx = (float)colors[0]->tex.width / guestW;
+        ky = kx;
+    }
+    g_target_kx = kx;
+    g_target_ky = ky;
 
     // textures must be uploaded before the render encoder opens
     std::vector<uint32_t> indices;
@@ -1426,12 +1450,13 @@ void draw(const uint32_t* regs, uint32_t prim, uint32_t count, uint32_t indexTyp
     float zs = gx2::bitsf(regs[REGADDR::PA_CL_VPORT_ZSCALE]), zo = gx2::bitsf(regs[REGADDR::PA_CL_VPORT_ZOFFSET]);
     bool halfZ = clipCntl.get_DX_CLIP_SPACE_DEF();
     MTLViewport vp{xo - xs, yo + ys, xs * 2.0f, ys * -2.0f, halfZ ? zo : zo - zs, zs + zo};
-    const float k = g_hires_redraw ? 1.5f : 1.0f;
-    vp.originX *= k; vp.originY *= k; vp.width *= k; vp.height *= k;
+    vp.originX *= kx; vp.originY *= ky; vp.width *= kx; vp.height *= ky;
     [enc setViewport:vp];
     uint32_t tl = regs[REGADDR::PA_SC_GENERIC_SCISSOR_TL], br = regs[REGADDR::PA_SC_GENERIC_SCISSOR_BR];
-    uint32_t sx = std::min<uint32_t>((uint32_t)((tl & 0x7FFF) * k), w), sy = std::min<uint32_t>((uint32_t)(((tl >> 16) & 0x7FFF) * k), h);
-    uint32_t ex = std::min<uint32_t>((uint32_t)((br & 0x7FFF) * k), w), ey = std::min<uint32_t>((uint32_t)(((br >> 16) & 0x7FFF) * k), h);
+    auto lo = [](uint32_t v, float k, uint32_t lim) { return std::min<uint32_t>((uint32_t)std::floor(v * k + 0.01f), lim); };
+    auto hi = [](uint32_t v, float k, uint32_t lim) { return std::min<uint32_t>((uint32_t)std::ceil(v * k - 0.01f), lim); };
+    uint32_t sx = lo(tl & 0x7FFF, kx, w), sy = lo((tl >> 16) & 0x7FFF, ky, h);
+    uint32_t ex = hi(br & 0x7FFF, kx, w), ey = hi((br >> 16) & 0x7FFF, ky, h);
     if (ex <= sx || ey <= sy) { g_skip[SK_SCISSOR]++; return; }
     [enc setScissorRect:MTLScissorRect{sx, sy, ex - sx, ey - sy}];
 

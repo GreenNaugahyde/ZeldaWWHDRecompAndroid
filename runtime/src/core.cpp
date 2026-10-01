@@ -1,9 +1,11 @@
 // Guest memory, RPX loading, function dispatch, logging and HLE registry.
 #include <mach/mach.h>
 #include <mach/mach_vm.h>
+#include <mach-o/ldsyms.h>
 #include <sys/mman.h>
 #include <zlib.h>
 
+#include <algorithm>
 #include <atomic>
 #include <cstdarg>
 #include <cstdlib>
@@ -58,15 +60,46 @@ void init() {
     mprotect(PPC_MEM_BASE, 0x10000, PROT_NONE);
 }
 
-uint32_t runtime_alloc(uint32_t size, uint32_t align) {
-    uint32_t cur = g_runtime_top.load();
+static std::mutex g_alloc_log_m;
+static std::vector<AllocRec> g_alloc_log;
+
+static uint32_t bump(std::atomic<uint32_t>& top, uint32_t size, uint32_t align, uint32_t end) {
+    uint32_t cur = top.load();
     uint32_t start;
     do {
         start = (cur + align - 1) & ~(align - 1);
-        if (start + size > kRuntimeEnd) fatal("runtime guest region exhausted");
-    } while (!g_runtime_top.compare_exchange_weak(cur, start + size));
+        if (start + size > end) fatal("runtime guest region exhausted");
+    } while (!top.compare_exchange_weak(cur, start + size));
     memset(ptr(start), 0, size);
     return start;
+}
+
+__attribute__((noinline)) uint32_t runtime_alloc(uint32_t size, uint32_t align) {
+    uint32_t a = bump(g_runtime_top, size, align, kHostStart);
+    // who allocated (relative to the executable, stable across runs of one build): a loaded save
+    // state requires the same guest-visible allocations at the same addresses
+    uint64_t tag = (uint64_t)((uintptr_t)__builtin_return_address(0) - (uintptr_t)&_mh_execute_header);
+    std::lock_guard<std::mutex> lk(g_alloc_log_m);
+    g_alloc_log.push_back({a, size, tag});
+    return a;
+}
+
+static std::atomic<uint32_t> g_host_top{kHostStart};
+uint32_t host_alloc(uint32_t size, uint32_t align) { return bump(g_host_top, size, align, kFixedStart); }
+
+uint32_t runtime_top() { return g_runtime_top.load(); }
+void raise_runtime_top(uint32_t top) {
+    uint32_t cur = g_runtime_top.load();
+    while (cur < top && !g_runtime_top.compare_exchange_weak(cur, top)) {}
+}
+std::vector<AllocRec> runtime_alloc_log() {
+    std::vector<AllocRec> v;
+    {
+        std::lock_guard<std::mutex> lk(g_alloc_log_m);
+        v = g_alloc_log;
+    }
+    std::sort(v.begin(), v.end(), [](const AllocRec& a, const AllocRec& b) { return a.addr < b.addr; });
+    return v;
 }
 
 std::string read_cstr(uint32_t ea) {
@@ -167,6 +200,13 @@ PpcFunc lookup(uint32_t addr) {
     std::shared_lock lk(g_other_mutex);
     auto it = g_other.find(addr);
     return it == g_other.end() ? nullptr : it->second;
+}
+
+std::vector<std::pair<uint32_t, std::string>> host_functions() {
+    std::shared_lock lk(g_other_mutex);
+    std::vector<std::pair<uint32_t, std::string>> v(g_host_names.begin(), g_host_names.end());
+    std::sort(v.begin(), v.end());
+    return v;
 }
 
 uint32_t register_host(PpcFunc fn, const char* name) {

@@ -261,3 +261,80 @@ HLE(coreinit, DCStoreRange) {}
 HLE(coreinit, DCStoreRangeNoSync) {}
 HLE(coreinit, DCZeroRange) { memset(mem::ptr(arg(c, 0) & ~31u), 0, ((arg(c, 0) & 31) + arg(c, 1) + 31) & ~31u); }
 HLE(coreinit, OSIsAddressRangeDCValid) { ret(c, 1); }
+
+// ---------------------------------------------------------------- save states: heap bookkeeping
+#include <algorithm>
+#include <vector>
+
+#include "../savestate.h"
+void mem_ss_save(ss::Writer& w) {
+    std::lock_guard<std::mutex> lk(g_mem_mutex);
+    w.u32(g_default_heap);
+    w.u32(g_mem1_heap);
+    w.u32(g_fg_heap);
+    std::vector<uint32_t> keys;
+    for (auto& [k, h] : g_exp) keys.push_back(k);
+    std::sort(keys.begin(), keys.end());
+    w.u32((uint32_t)keys.size());
+    for (uint32_t k : keys) {
+        ExpHeap* h = g_exp[k];
+        w.u32(k);
+        w.u32(h->start);
+        w.u32(h->end);
+        w.u32((uint32_t)h->free.size());
+        for (auto& [a, n] : h->free) { w.u32(a); w.u32(n); }
+        std::vector<std::pair<uint32_t, std::pair<uint32_t, uint32_t>>> b(h->blocks.begin(), h->blocks.end());
+        std::sort(b.begin(), b.end());
+        w.u32((uint32_t)b.size());
+        for (auto& [u, v] : b) { w.u32(u); w.u32(v.first); w.u32(v.second); }
+    }
+    keys.clear();
+    for (auto& [k, h] : g_frm) keys.push_back(k);
+    std::sort(keys.begin(), keys.end());
+    w.u32((uint32_t)keys.size());
+    for (uint32_t k : keys) {
+        w.u32(k);
+        w.pod(*g_frm[k]);
+    }
+}
+
+bool mem_ss_check(ss::Reader r, std::string& why) {
+    std::lock_guard<std::mutex> lk(g_mem_mutex);
+    uint32_t d = r.u32(), m1 = r.u32(), fg = r.u32();
+    if (d != g_default_heap || m1 != g_mem1_heap || fg != g_fg_heap) { why = "the base heaps differ (different game build?)"; return false; }
+    return r.ok;
+}
+
+void mem_ss_load(ss::Reader& r) {
+    std::lock_guard<std::mutex> lk(g_mem_mutex);
+    g_default_heap = r.u32();
+    g_mem1_heap = r.u32();
+    g_fg_heap = r.u32();
+    for (auto& [k, h] : g_exp) delete h;
+    g_exp.clear();
+    uint32_t n = r.u32();
+    for (uint32_t i = 0; i < n && r.ok; i++) {
+        uint32_t k = r.u32();
+        auto* h = new ExpHeap();
+        h->start = r.u32();
+        h->end = r.u32();
+        uint32_t nf = r.u32();
+        for (uint32_t j = 0; j < nf && r.ok; j++) {
+            uint32_t a = r.u32();
+            h->free[a] = r.u32();
+        }
+        uint32_t nb = r.u32();
+        for (uint32_t j = 0; j < nb && r.ok; j++) {
+            uint32_t u = r.u32(), s = r.u32(), z = r.u32();
+            h->blocks[u] = {s, z};
+        }
+        g_exp[k] = h;
+    }
+    for (auto& [k, h] : g_frm) delete h;
+    g_frm.clear();
+    n = r.u32();
+    for (uint32_t i = 0; i < n && r.ok; i++) {
+        uint32_t k = r.u32();
+        g_frm[k] = new FrmHeap(r.pod<FrmHeap>());
+    }
+}

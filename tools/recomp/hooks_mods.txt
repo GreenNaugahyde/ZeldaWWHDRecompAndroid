@@ -1,0 +1,14 @@
+# Gameplay mods (runtime/src/mods/, Gameplay menu). Address = function entry, @ADDR = instruction hook.
+# Camera (mods/camera.cpp): dCamera_c::manualCamera (0250FDC8), the right-stick camera
+0250FDC8  # dCamera_c::manualCamera: remembers that the manual camera ran (mouse camera)
+@02510448 # manualCamera: after cLib_chaseF of the turning speed (this+0x154): direct stick / mouse yaw
+@025104A0 # manualCamera: the same on the other branch
+@0251053C # manualCamera: f28 = vertical stick rate (mouse pitch)
+@02510EA0 # manualCamera: V smoothing factor (cSAngle * f1)
+@02510EE4 # manualCamera: U smoothing factor (cSAngle * f1)
+025071FC  # dCamera_c::subjectCamera: first person is active
+0240EBB0  # daPy_Execute: Link (left click while aiming, traces)
+# Quick doors / fast scene changes (mods/turbo.cpp; extra logic steps from interp.cpp's fpcEx_Handler hook)
+0252A684  # dDoor_info_c::getDemoAction: a door event cut is running
+021C0078  # daMbdoor_c::getDemoAction
+025DC86C  # fopScnM_ChangeReq: scene change trigger (traces)
