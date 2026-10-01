@@ -1,0 +1,245 @@
+#!/usr/bin/env python3
+"""Statically recompile a Wii U RPX into C.
+
+usage: recomp.py game/code/cking.rpx OUTDIR [--insns-per-file N]
+
+Output:
+  OUTDIR/funcs.h         prototypes of every recompiled function and import
+  OUTDIR/code_NNN.c      recompiled functions
+  OUTDIR/table.c         guest address -> host function table
+  OUTDIR/imports.c       weak default implementations of imported functions
+  OUTDIR/imports.json    import slot addresses (for the runtime loader)
+  OUTDIR/report.txt      statistics and unhandled instructions
+"""
+import bisect
+import collections
+import json
+import os
+import re
+import sys
+
+sys.path.insert(0, os.path.dirname(__file__))
+from analyze import Program, sext
+from ppc2c import translate, Unhandled
+from rpx import R_PPC_ADDR16_HA, R_PPC_ADDR16_LO, R_PPC_ADDR16_HI
+
+
+def c_ident(s):
+    return re.sub(r"[^A-Za-z0-9_]", "_", s)
+
+
+def branch_target(addr, w):
+    """Static target of a non-linking b/bc, or None."""
+    op = w >> 26
+    if op == 18 and not (w & 1):
+        return (sext(w & 0x03FFFFFC, 26) + (0 if w & 2 else addr)) & 0xFFFFFFFF
+    if op == 16 and not (w & 1):
+        return (sext(w & 0xFFFC, 16) + (0 if w & 2 else addr)) & 0xFFFFFFFF
+    return None
+
+
+# imported data objects get runtime-owned storage at fixed addresses
+DATA_IMPORT_BASE = 0xC1000000
+DATA_IMPORT_STRIDE = 0x1000
+
+
+class Recompiler:
+    def __init__(self, path):
+        self.p = Program(path)
+        self.p.discover()
+        self.entries = set(self.p.entries)
+        self.imports = {}  # slot address -> (lib, name, kind)
+        self.data_import_addr = {}  # slot address -> runtime storage address
+        for sym in self.p.rpx.symbols:
+            if sym.import_lib and sym.type != 3:  # skip section symbols
+                self.imports[sym.value] = (sym.import_lib, sym.name, sym.import_kind)
+        for i, slot in enumerate(sorted(s for s, v in self.imports.items() if v[2] == "d")):
+            self.data_import_addr[slot] = DATA_IMPORT_BASE + i * DATA_IMPORT_STRIDE
+        self._imm_overrides()
+        self._fixpoint()
+
+    def _imm_overrides(self):
+        """Resolve the immediates of instructions referencing imported symbols."""
+        self.imm_override = {}
+        for sec, addr, typ, sym, add in self.p.rpx.relocs:
+            if not sym.import_lib or sec.name != ".text":
+                continue
+            s = (self.data_import_addr.get(sym.value, sym.value) + add) & 0xFFFFFFFF
+            v = {R_PPC_ADDR16_HA: ((s + 0x8000) >> 16) & 0xFFFF,
+                 R_PPC_ADDR16_LO: s & 0xFFFF,
+                 R_PPC_ADDR16_HI: s >> 16}.get(typ)
+            if v is not None:
+                self.imm_override[addr & ~3] = v
+
+    def _bounds(self):
+        self.sorted_entries = sorted(self.entries)
+
+    def func_of(self, a):
+        i = bisect.bisect_right(self.sorted_entries, a) - 1
+        return self.sorted_entries[i] if i >= 0 else None
+
+    def func_end(self, start):
+        i = bisect.bisect_right(self.sorted_entries, start)
+        return self.sorted_entries[i] if i < len(self.sorted_entries) else self.p.text_hi
+
+    def _fixpoint(self):
+        """Branch targets that land inside another function become entries."""
+        rounds = 0
+        while True:
+            self._bounds()
+            new = set()
+            for i, w in enumerate(self.p.words):
+                a = self.p.text_lo + 4 * i
+                t = branch_target(a, w)
+                if t is None or not self.p.in_text(t) or t in self.entries:
+                    continue
+                if self.func_of(t) != self.func_of(a):
+                    new.add(t)
+            rounds += 1
+            if not new:
+                break
+            self.entries |= new
+        self.fixpoint_rounds = rounds
+        self._bounds()
+
+    # --- callbacks used by ppc2c.translate ---
+    def branch(self, addr, tgt):
+        if addr in self.p.import_calls:  # tail call into an imported function
+            lib, name, slot = self.p.import_calls[addr]
+            self.used_imports.add(slot)
+            return "MUSTTAIL return %s(c);" % self.imp_name(slot)
+        if self.cur_start <= tgt < self.cur_end:
+            self.labels.add(tgt)
+            return "goto L_%08X;" % tgt
+        if tgt in self.entries:
+            return "MUSTTAIL return f_%08X(c);" % tgt
+        return "c->pc = 0x%08Xu; MUSTTAIL return ppc_dispatch(c);" % tgt
+
+    def call(self, addr, tgt):
+        if addr in self.p.import_calls:
+            lib, name, slot = self.p.import_calls[addr]
+            self.used_imports.add(slot)
+            return "%s(c);" % self.imp_name(slot)
+        if addr in self.p.undef_calls:
+            return "ppc_unimplemented(c, 0x%08Xu, 0); /* call to undefined symbol */" % addr
+        if tgt in self.entries:
+            return "f_%08X(c);" % tgt
+        return "c->pc = 0x%08Xu; ppc_dispatch(c);" % tgt
+
+    def ret(self):
+        return "return;"
+
+    def indirect_jump(self, addr):
+        jt = self.p.jump_tables.get(addr)
+        if jt:
+            base, count = jt
+            cases = []
+            for i in range(count):
+                slot = base + 4 * i
+                if self.cur_start <= slot < self.cur_end:
+                    self.labels.add(slot)
+                    cases.append("case 0x%08Xu: goto L_%08X;" % (slot, slot))
+            return "switch (c->ctr) { %s } c->pc = c->ctr; MUSTTAIL return ppc_dispatch(c);" % " ".join(cases)
+        return "c->pc = c->ctr; MUSTTAIL return ppc_dispatch(c);"
+
+    def imp_name(self, slot):
+        lib, name, kind = self.imports[slot]
+        return "imp_%s_%s" % (c_ident(lib.replace(".rpl", "")), c_ident(name))
+
+    # --- emission ---
+    def emit_function(self, start):
+        self.cur_start, self.cur_end = start, self.func_end(start)
+        self.labels = set()
+        body = []
+        for a in range(start, self.cur_end, 4):
+            w = self.p.word(a)
+            try:
+                s = translate(a, w, self)
+            except Unhandled as e:
+                self.unhandled[str(e)] += 1
+                s = "ppc_unimplemented(c, 0x%08Xu, 0x%08Xu);" % (a, w)
+            body.append((a, w, s))
+        # restrict: guest memory never aliases the register file, so the compiler may keep
+        # registers in host registers across guest loads/stores
+        out = ["void f_%08X(Cpu* __restrict c) {" % start, "    PPC_ENTER(0x%08Xu);" % start]
+        for a, w, s in body:
+            if a in self.labels:
+                out.append("L_%08X: ;" % a)
+            out.append("    %s /* %08X: %08X */" % (s, a, w))
+        # fall through into the next function
+        if self.cur_end < self.p.text_hi:
+            out.append("    MUSTTAIL return f_%08X(c);" % self.cur_end)
+        else:
+            out.append("    ppc_unimplemented(c, 0x%08Xu, 0); /* fell off end of text */" % self.cur_end)
+        out.append("}")
+        return "\n".join(out), len(body)
+
+    def run(self, outdir, per_file):
+        os.makedirs(outdir, exist_ok=True)
+        self.unhandled = collections.Counter()
+        self.used_imports = set()
+        self.imm_override = self.imm_override
+        files, cur, n = [], [], 0
+        for start in self.sorted_entries:
+            src, count = self.emit_function(start)
+            cur.append(src)
+            n += count
+            if n >= per_file:
+                files.append(cur)
+                cur, n = [], 0
+        if cur:
+            files.append(cur)
+        for i, funcs in enumerate(files):
+            with open(os.path.join(outdir, "code_%03d.c" % i), "w") as f:
+                f.write('#include "funcs.h"\n\n')
+                f.write("\n\n".join(funcs))
+                f.write("\n")
+        self.write_headers(outdir)
+        self.write_report(outdir, len(files))
+
+    def write_headers(self, outdir):
+        func_slots = sorted(s for s, (lib, name, kind) in self.imports.items() if kind == "f")
+        with open(os.path.join(outdir, "funcs.h"), "w") as f:
+            f.write('#pragma once\n#include "ppc.h"\n\n')
+            for e in self.sorted_entries:
+                f.write("void f_%08X(Cpu* __restrict c);\n" % e)
+            f.write("\n/* imported functions */\n")
+            for s in func_slots:
+                f.write("void %s(Cpu* c);\n" % self.imp_name(s))
+        with open(os.path.join(outdir, "table.c"), "w") as f:
+            f.write('#include "funcs.h"\n#include "recomp_table.h"\n\n')
+            f.write("const RecompEntry g_recomp_funcs[] = {\n")
+            for e in self.sorted_entries:
+                f.write("    {0x%08Xu, f_%08X},\n" % (e, e))
+            f.write("};\nconst unsigned g_recomp_func_count = %d;\n\n" % len(self.sorted_entries))
+            f.write("const RecompImport g_recomp_imports[] = {\n")
+            for s, (lib, name, kind) in sorted(self.imports.items()):
+                fn = self.imp_name(s) if kind == "f" else "0"
+                addr = self.data_import_addr.get(s, s)
+                f.write('    {0x%08Xu, 0x%08Xu, "%s", "%s", %d, %s},\n' % (s, addr, lib, name, kind == "f", fn))
+            f.write("};\nconst unsigned g_recomp_import_count = %d;\n" % len(self.imports))
+            f.write("const uint32_t g_recomp_entry_point = 0x%08Xu;\n" % self.p.entry)
+        with open(os.path.join(outdir, "imports.c"), "w") as f:
+            f.write('#include "funcs.h"\n\nvoid hle_unimplemented(Cpu* c, const char* lib, const char* name);\n\n')
+            for s in func_slots:
+                lib, name, _ = self.imports[s]
+                f.write('__attribute__((weak)) void %s(Cpu* c) { hle_unimplemented(c, "%s", "%s"); }\n' % (
+                    self.imp_name(s), lib, name))
+        with open(os.path.join(outdir, "imports.json"), "w") as f:
+            json.dump([{"slot": s, "lib": l, "name": n, "kind": k} for s, (l, n, k) in sorted(self.imports.items())], f, indent=1)
+
+    def write_report(self, outdir, nfiles):
+        with open(os.path.join(outdir, "report.txt"), "w") as f:
+            f.write("functions: %d\nfiles: %d\nfixpoint rounds: %d\n" % (len(self.sorted_entries), nfiles, self.fixpoint_rounds))
+            f.write("imports used: %d of %d\n" % (len(self.used_imports), len(self.imports)))
+            f.write("unhandled instruction kinds:\n")
+            for k, v in self.unhandled.most_common():
+                f.write("  %6d  %s\n" % (v, k))
+        print(open(os.path.join(outdir, "report.txt")).read())
+
+
+if __name__ == "__main__":
+    per = 30000
+    if "--insns-per-file" in sys.argv:
+        per = int(sys.argv[sys.argv.index("--insns-per-file") + 1])
+    Recompiler(sys.argv[1]).run(sys.argv[2], per)

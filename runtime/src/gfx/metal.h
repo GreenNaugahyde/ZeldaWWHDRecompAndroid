@@ -1,0 +1,103 @@
+#include <atomic>
+// Metal renderer internals (Objective-C++).
+#pragma once
+#import <Metal/Metal.h>
+#import <QuartzCore/CAMetalLayer.h>
+
+#include <cstdint>
+#include <memory>
+#include <mutex>
+#include <unordered_map>
+#include <vector>
+
+#include "formats.h"
+
+namespace gfx {
+
+// A host texture backing a guest surface (render target, depth buffer or sampled texture).
+struct Surface {
+    id<MTLTexture> tex = nil;
+    uint32_t addr = 0, mipAddr = 0;
+    uint32_t width = 0, height = 0, slices = 1, pitch = 0, mips = 1;
+    uint32_t format = 0;       // E_GX2SURFFMT
+    uint32_t dim = 1;          // E_DIM
+    uint32_t tileMode = 0;     // E_HWTILEMODE
+    uint32_t swizzle = 0;
+    bool isDepth = false;
+    bool gpuWritten = false;   // contents produced by the GPU; never reload from guest memory
+    uint64_t writeSeq = 0;     // when the GPU last wrote it (several surfaces can alias one address)
+    uint64_t contentHash = 0;  // hash of guest data at last upload
+    uint64_t lastCheckedFrame = ~0ull;
+    uint64_t sparseHash = 0;   // cheap per-frame change check (a few hundred samples)
+    uint32_t dataSize = 0;     // base level size in guest memory
+    bool dirty = true;         // new, or invalidated by the game: do a full check
+    FormatInfo fmt;
+};
+
+// A display output: the TV or the GamePad screen, each in its own window.
+struct Screen {
+    id<MTLTexture> tex = nil;          // last image copied to the scan buffer
+    CAMetalLayer* layer = nil;
+    std::atomic<bool> srgb{false};     // scan buffer is sRGB: the display applies the encoding
+    std::atomic<bool> visible{true};   // nextDrawable blocks while the window is covered
+};
+
+uint64_t next_write_seq();
+inline void mark_gpu_written(Surface* s) { s->gpuWritten = true; s->writeSeq = next_write_seq(); }
+
+struct Renderer {
+    id<MTLDevice> device = nil;
+    id<MTLCommandQueue> queue = nil;
+
+    id<MTLCommandBuffer> cmd = nil;
+    id<MTLRenderCommandEncoder> enc = nil;
+    // attachments of the open render encoder
+    Surface* passColor[8] = {};
+    Surface* passDepth = nullptr;
+    uint32_t passColorSlice[8] = {}, passDepthSlice = 0;
+
+    // guest memory visible to the GPU (no-copy buffers)
+    struct GuestRange {
+        uint32_t base, size;
+        id<MTLBuffer> buf;
+    };
+    std::vector<GuestRange> guest;
+
+    // outputs
+    Screen tv, drc;
+    id<MTLRenderPipelineState> presentPipeline = nil;
+    id<MTLRenderPipelineState> presentPipelineSRGB = nil;
+    id<MTLSamplerState> linearClamp = nil;
+
+    // surfaces keyed by guest address (several may share an address with different shapes)
+    std::unordered_multimap<uint32_t, std::unique_ptr<Surface>> surfaces;
+
+    uint64_t frame = 0;
+    uint64_t drawCount = 0;
+};
+extern Renderer R;
+
+// command buffer / encoder management
+id<MTLCommandBuffer> command_buffer();
+void end_encoder();
+
+// guest memory -> (buffer, offset); returns nil if the address is not GPU-visible
+id<MTLBuffer> guest_buffer(uint32_t addr, uint32_t* offset);
+
+// surfaces
+struct SurfaceDesc {
+    uint32_t addr = 0, mipAddr = 0, width = 0, height = 0, slices = 1, pitch = 0, mips = 1;
+    uint32_t format = 0, dim = 1, tileMode = 0, swizzle = 0;
+    bool isDepth = false;
+};
+Surface* find_or_create_surface(const SurfaceDesc& d, bool forRendering);
+// render targets; `slice` receives the array slice the view renders to
+Surface* color_target(const uint32_t* regs, int index, uint32_t* slice = nullptr);  // from CB_COLOR* registers
+Surface* depth_target(const uint32_t* regs, uint32_t* slice = nullptr);             // from DB_DEPTH_* registers
+// from GX2ColorBuffer / GX2DepthBuffer structs; optional: the view's slice range
+Surface* surface_from_color_buffer(uint32_t gx2ColorBuffer, uint32_t* firstSlice = nullptr, uint32_t* numSlices = nullptr);
+Surface* surface_from_depth_buffer(uint32_t gx2DepthBuffer, uint32_t* firstSlice = nullptr, uint32_t* numSlices = nullptr);
+Surface* sampled_texture(const uint32_t* texWords, bool isDepthSampler);  // from SQ_TEX_RESOURCE words
+void upload_surface(Surface* s);
+
+}  // namespace gfx

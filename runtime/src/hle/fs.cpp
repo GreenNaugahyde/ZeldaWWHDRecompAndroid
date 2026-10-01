@@ -1,0 +1,234 @@
+// coreinit FS and nn_save: map Wii U volume paths onto host directories.
+//   /vol/content/...  -> <game>/content/...
+//   /vol/code/...     -> <game>/code/...
+//   /vol/meta/...     -> <game>/meta/...
+//   /vol/save/...     -> <save dir>/...
+#include <dirent.h>
+#include <sys/stat.h>
+
+#include <cstdio>
+#include <mutex>
+#include <string>
+#include <unordered_map>
+
+#include "../runtime.h"
+
+namespace {
+
+enum FSStatus : int32_t {
+    FS_OK = 0,
+    FS_END = -2,
+    FS_EXISTS = -5,
+    FS_NOT_FOUND = -6,
+    FS_NOT_FILE = -7,
+    FS_NOT_DIR = -8,
+    FS_ACCESS_ERROR = -10,
+};
+
+struct OpenFile {
+    FILE* f;
+    std::string path;
+};
+struct OpenDir {
+    DIR* d;
+    std::string path;
+};
+
+std::mutex g_fs_mutex;
+std::unordered_map<uint32_t, OpenFile> g_files;
+std::unordered_map<uint32_t, OpenDir> g_dirs;
+uint32_t g_next_handle = 1;
+
+std::string host_path(const std::string& guest) {
+    std::string p = guest;
+    auto map = [&](const char* prefix, const std::string& root) -> bool {
+        size_t n = strlen(prefix);
+        if (p.compare(0, n, prefix) == 0) {
+            p = root + p.substr(n);
+            return true;
+        }
+        return false;
+    };
+    if (map("/vol/content", config::game_dir + "/content")) return p;
+    if (map("/vol/code", config::game_dir + "/code")) return p;
+    if (map("/vol/meta", config::game_dir + "/meta")) return p;
+    if (map("/vol/save", config::save_dir)) return p;
+    if (!p.empty() && p[0] != '/') return config::game_dir + "/content/" + p;  // relative to cwd (/vol/content)
+    return config::game_dir + p;
+}
+
+void make_parent_dirs(const std::string& path) {
+    for (size_t i = 1; i < path.size(); i++)
+        if (path[i] == '/') mkdir(path.substr(0, i).c_str(), 0755);
+}
+
+void fill_stat(uint32_t out, const struct stat& st) {
+    memset(mem::ptr(out), 0, 0x64);
+    bool dir = S_ISDIR(st.st_mode);
+    st32(out + 0x00, dir ? 0x80000000u : 0x01000000u);
+    st32(out + 0x04, 0x666);
+    st32(out + 0x10, dir ? 0 : (uint32_t)st.st_size);
+    st32(out + 0x14, dir ? 0 : (uint32_t)st.st_size);
+}
+
+int32_t open_file(const std::string& gpath, const std::string& mode, uint32_t out_handle) {
+    std::string hp = host_path(gpath);
+    if (mode.find_first_of("wa") != std::string::npos) make_parent_dirs(hp);
+    std::string m = mode;
+    if (m.find('b') == std::string::npos) m += "b";
+    FILE* f = fopen(hp.c_str(), m.c_str());
+    TRACE("[fs] open %s (%s) -> %s", gpath.c_str(), mode.c_str(), f ? "ok" : "not found");
+    if (!f) return FS_NOT_FOUND;
+    std::lock_guard<std::mutex> lk(g_fs_mutex);
+    uint32_t h = g_next_handle++;
+    g_files[h] = {f, gpath};
+    st32(out_handle, h);
+    return FS_OK;
+}
+
+FILE* file(uint32_t h) {
+    std::lock_guard<std::mutex> lk(g_fs_mutex);
+    auto it = g_files.find(h);
+    return it == g_files.end() ? nullptr : it->second.f;
+}
+
+int32_t stat_path(const std::string& gpath, uint32_t out) {
+    struct stat st;
+    if (stat(host_path(gpath).c_str(), &st) != 0) return FS_NOT_FOUND;
+    fill_stat(out, st);
+    return FS_OK;
+}
+
+int32_t open_dir(const std::string& gpath, uint32_t out_handle) {
+    DIR* d = opendir(host_path(gpath).c_str());
+    TRACE("[fs] opendir %s -> %s", gpath.c_str(), d ? "ok" : "not found");
+    if (!d) return FS_NOT_FOUND;
+    std::lock_guard<std::mutex> lk(g_fs_mutex);
+    uint32_t h = g_next_handle++;
+    g_dirs[h] = {d, host_path(gpath)};
+    st32(out_handle, h);
+    return FS_OK;
+}
+
+}  // namespace
+
+// ---------------------------------------------------------------- FS
+HLE(coreinit, FSInit) {}
+HLE(coreinit, FSShutdown) {}
+HLE(coreinit, FSAddClient) { ret(c, 0); }
+HLE(coreinit, FSDelClient) { ret(c, 0); }
+HLE(coreinit, FSInitCmdBlock) { memset(mem::ptr(arg(c, 0)), 0, 0xA80); }
+HLE(coreinit, FSSetCmdPriority) { ret(c, 0); }
+HLE(coreinit, FSSetStateChangeNotification) {}
+HLE(coreinit, FSGetVolumeState) { ret(c, 1); }  // FS_VOLSTATE_READY
+HLE(coreinit, FSGetLastError) { ret(c, 0); }
+HLE(coreinit, FSGetLastErrorCodeForViewer) { ret(c, 0); }
+HLE(coreinit, FSGetCwd) { mem::write_cstr(arg(c, 2), "/vol/content", arg(c, 3)); ret(c, FS_OK); }
+
+HLE(coreinit, FSOpenFile) {
+    ret(c, open_file(mem::read_cstr(arg(c, 2)), mem::read_cstr(arg(c, 3)), arg(c, 4)));
+}
+
+HLE(coreinit, FSCloseFile) {
+    std::lock_guard<std::mutex> lk(g_fs_mutex);
+    auto it = g_files.find(arg(c, 2));
+    if (it != g_files.end()) {
+        fclose(it->second.f);
+        g_files.erase(it);
+    }
+    ret(c, FS_OK);
+}
+
+HLE(coreinit, FSReadFile) {
+    uint32_t dst = arg(c, 2), size = arg(c, 3), count = arg(c, 4);
+    FILE* f = file(arg(c, 5));
+    if (!f || size == 0) { ret(c, 0); return; }
+    size_t n;
+    {
+        BlockingScope b;  // the calling thread waits for the disc; others on its core run
+        n = fread(mem::ptr(dst), 1, (size_t)size * count, f);
+    }
+    ret(c, (uint32_t)(n / size));
+}
+
+HLE(coreinit, FSWriteFile) {
+    uint32_t src = arg(c, 2), size = arg(c, 3), count = arg(c, 4);
+    FILE* f = file(arg(c, 5));
+    if (!f || size == 0) { ret(c, 0); return; }
+    size_t n;
+    {
+        BlockingScope b;
+        n = fwrite(mem::ptr(src), 1, (size_t)size * count, f);
+        fflush(f);
+    }
+    ret(c, (uint32_t)(n / size));
+}
+
+HLE(coreinit, FSSetPosFile) {
+    FILE* f = file(arg(c, 2));
+    ret(c, f && fseek(f, arg(c, 3), SEEK_SET) == 0 ? FS_OK : FS_ACCESS_ERROR);
+}
+
+HLE(coreinit, FSGetStat) { ret(c, stat_path(mem::read_cstr(arg(c, 2)), arg(c, 3))); }
+
+HLE(coreinit, FSGetStatFile) {
+    FILE* f = file(arg(c, 2));
+    struct stat st;
+    if (!f || fstat(fileno(f), &st) != 0) { ret(c, FS_NOT_FOUND); return; }
+    fill_stat(arg(c, 3), st);
+    ret(c, FS_OK);
+}
+
+HLE(coreinit, FSOpenDir) { ret(c, open_dir(mem::read_cstr(arg(c, 2)), arg(c, 3))); }
+
+HLE(coreinit, FSReadDir) {
+    uint32_t out = arg(c, 3);
+    std::lock_guard<std::mutex> lk(g_fs_mutex);
+    auto it = g_dirs.find(arg(c, 2));
+    if (it == g_dirs.end()) { ret(c, FS_NOT_DIR); return; }
+    struct dirent* de;
+    while ((de = readdir(it->second.d))) {
+        if (!strcmp(de->d_name, ".") || !strcmp(de->d_name, "..")) continue;
+        struct stat st;
+        if (stat((it->second.path + "/" + de->d_name).c_str(), &st) != 0) continue;
+        fill_stat(out, st);
+        mem::write_cstr(out + 0x64, de->d_name, 256);
+        ret(c, FS_OK);
+        return;
+    }
+    ret(c, FS_END);
+}
+
+HLE(coreinit, FSCloseDir) {
+    std::lock_guard<std::mutex> lk(g_fs_mutex);
+    auto it = g_dirs.find(arg(c, 2));
+    if (it != g_dirs.end()) {
+        closedir(it->second.d);
+        g_dirs.erase(it);
+    }
+    ret(c, FS_OK);
+}
+
+// ---------------------------------------------------------------- nn_save
+// Saves live in <save dir>/<account slot or "common">/<path>
+static std::string save_path(uint32_t slot, const std::string& p) {
+    std::string base = slot == 0xFF ? "/vol/save/common" : "/vol/save/user";
+    return base + (p.empty() || p[0] == '/' ? "" : "/") + p;
+}
+
+HLE(nn_save, SAVEInit) { ret(c, 0); }
+HLE(nn_save, SAVEShutdown) {}
+HLE(nn_save, SAVEInitSaveDir) {
+    make_parent_dirs(host_path(save_path(arg(c, 0), "x")));
+    ret(c, 0);
+}
+HLE(nn_save, SAVEFlushQuota) { ret(c, 0); }
+HLE(nn_save, SAVEOpenFile) {
+    ret(c, open_file(save_path(arg(c, 2), mem::read_cstr(arg(c, 3))), mem::read_cstr(arg(c, 4)), arg(c, 5)));
+}
+HLE(nn_save, SAVEGetStat) { ret(c, stat_path(save_path(arg(c, 2), mem::read_cstr(arg(c, 3))), arg(c, 4))); }
+HLE(nn_save, SAVEOpenDir) {
+    std::string gp = save_path(arg(c, 2), mem::read_cstr(arg(c, 3)));
+    make_parent_dirs(host_path(gp) + "/");
+    ret(c, open_dir(gp, arg(c, 4)));
+}

@@ -1,0 +1,132 @@
+// Libraries the game uses for system integration and online features.
+// Online services (Miiverse, SpotPass, accounts) report "unavailable".
+#include "../runtime.h"
+#include "../input.h"
+
+// nn::Result: bit 31 set = failure
+static constexpr uint32_t kResultOk = 0;
+static constexpr uint32_t kResultFail = 0xA0000000;
+
+// ---- nn_act (accounts)
+HLE(nn_act, Initialize__Q2_2nn3actFv) { ret(c, kResultOk); }
+HLE(nn_act, Finalize__Q2_2nn3actFv) { ret(c, kResultOk); }
+HLE(nn_act, GetSlotNo__Q2_2nn3actFv) { ret(c, 1); }
+HLE(nn_act, GetPrincipalId__Q2_2nn3actFv) { ret(c, 0); }
+HLE(nn_act, GetParentalControlSlotNoEx__Q2_2nn3actFPUcUc) { st8(arg(c, 0), 1); ret(c, kResultOk); }
+
+// ---- nn_ac (network connection)
+HLE(nn_ac, Initialize__Q2_2nn2acFv) { ret(c, kResultOk); }
+HLE(nn_ac, Finalize__Q2_2nn2acFv) { ret(c, kResultOk); }
+HLE(nn_ac, Connect__Q2_2nn2acFv) { ret(c, kResultFail); }
+HLE(nn_ac, Close__Q2_2nn2acFv) { ret(c, kResultOk); }
+HLE(nn_ac, GetLastErrorCode__Q2_2nn2acFPUi) { st32(arg(c, 0), 1100); ret(c, kResultOk); }
+
+// ---- nn_boss (SpotPass)
+HLE(nn_boss, Initialize__Q2_2nn4bossFv) { ret(c, kResultFail); }
+HLE(nn_boss, IsInitialized__Q2_2nn4bossFv) { ret(c, 0); }
+HLE(nn_boss, Finalize__Q2_2nn4bossFv) {}
+// play report (usage statistics upload): accepted and dropped
+HLE(nn_boss, __ct__Q3_2nn4boss17PlayReportSettingFv) { ret(c, arg(c, 0)); }
+HLE(nn_boss, __dt__Q3_2nn4boss17PlayReportSettingFv) {}
+HLE(nn_boss, Initialize__Q3_2nn4boss17PlayReportSettingFPvUi) {}
+HLE(nn_boss, Set__Q3_2nn4boss17PlayReportSettingFUiT1) { ret(c, 1); }
+HLE(nn_boss, __ct__Q3_2nn4boss4TaskFv) { ret(c, arg(c, 0)); }
+HLE(nn_boss, __dt__Q3_2nn4boss4TaskFv) {}
+HLE(nn_boss, Initialize__Q3_2nn4boss4TaskFPCcUi) { ret(c, kResultFail); }
+HLE(nn_boss, IsRegistered__Q3_2nn4boss4TaskCFv) { ret(c, 0); }
+HLE(nn_boss, Register__Q3_2nn4boss4TaskFRQ3_2nn4boss11TaskSetting) { ret(c, kResultFail); }
+HLE(nn_boss, StartScheduling__Q3_2nn4boss4TaskFb) { ret(c, kResultFail); }
+
+// ---- nn_olv (Miiverse)
+HLE(nn_olv, Initialize__Q2_2nn3olvFPCQ3_2nn3olv15InitializeParam) { ret(c, kResultFail); }
+HLE(nn_olv, IsInitialized__Q2_2nn3olvFv) { ret(c, 0); }
+HLE(nn_olv, Finalize__Q2_2nn3olvFv) { ret(c, kResultOk); }
+
+// ---- sockets / curl
+HLE(nsysnet, socket_lib_init) { ret(c, 0); }
+HLE(nsysnet, socket_lib_finish) { ret(c, 0); }
+HLE(nsysnet, NSSLInit) { ret(c, 0); }
+HLE(nsysnet, NSSLFinish) { ret(c, 0); }
+HLE(nlibcurl, curl_global_init_mem) { ret(c, 0); }
+HLE(nlibcurl, curl_global_cleanup) {}
+
+// ---- proc_ui (foreground/background lifecycle)
+HLE(proc_ui, ProcUIInit) {}
+HLE(proc_ui, ProcUIShutdown) {}
+HLE(proc_ui, ProcUIRegisterCallback) {}
+HLE(proc_ui, ProcUIDrawDoneRelease) {}
+HLE(proc_ui, ProcUIProcessMessages) { ret(c, 0); }  // PROCUI_STATUS_IN_FOREGROUND
+
+// ---- vpad (GamePad): keyboard / host controllers
+HLE(vpad, VPADRead) {
+    // (chan, VPADStatus* buf, count, int32* error) -> samples written
+    uint32_t chan = arg(c, 0), st = arg(c, 1), count = arg(c, 2), err = arg(c, 3);
+    if (chan != 0 || !st || (int32_t)count <= 0) {
+        if (err) st32(err, (uint32_t)-2);  // VPAD_READ_INVALID_CONTROLLER
+        ret(c, 0);
+        return;
+    }
+    static uint32_t last_hold = 0;
+    input::PadState p = input::read();
+    if (input::pro_controller()) {  // GamePad on the table: screen and touch only
+        p.buttons = 0;
+        p.lx = p.ly = p.rx = p.ry = 0;
+    }
+    uint32_t hold = p.buttons;
+    auto stick_dirs = [&](float x, float y, uint32_t up, uint32_t down, uint32_t left, uint32_t right) {
+        // stick-as-button bits with hysteresis, like the real VPAD library
+        auto dir = [&](float v, bool held, uint32_t bit) { if (v >= 0.5f || (held && v >= 0.1f)) hold |= bit; };
+        dir(-x, last_hold & left, left); if (!(hold & left)) dir(x, last_hold & right, right);
+        dir(-y, last_hold & down, down); if (!(hold & down)) dir(y, last_hold & up, up);
+    };
+    stick_dirs(p.lx, p.ly, 0x10000000, 0x08000000, 0x40000000, 0x20000000);
+    stick_dirs(p.rx, p.ry, 0x01000000, 0x00800000, 0x04000000, 0x02000000);
+
+    memset(mem::ptr(st), 0, 0xAC);
+    st32(st + 0x00, hold);
+    st32(st + 0x04, hold & ~last_hold);   // trig
+    st32(st + 0x08, last_hold & ~hold);   // release
+    last_hold = hold;
+    stf32(st + 0x0C, p.lx); stf32(st + 0x10, p.ly);
+    stf32(st + 0x14, p.rx); stf32(st + 0x18, p.ry);
+    stf32(st + 0x30, 1.0f);                                    // accXY
+    for (int i = 0; i < 3; i++) stf32(st + 0x6C + i * 0x10, 1.0f);  // dir = identity
+    // touch panel, raw coordinates as the hardware reports them (mapping from Cemu)
+    static uint16_t last_tx = 0, last_ty = 0;
+    if (p.touch) {
+        last_tx = (uint16_t)(p.tx * 3883.0f + 92.0f);
+        last_ty = (uint16_t)(4095.0f - p.ty * 3694.0f - 254.0f);
+    }
+    for (uint32_t tp = 0x52; tp <= 0x62; tp += 8) {
+        st16(st + tp + 0, last_tx);
+        st16(st + tp + 2, last_ty);
+        st16(st + tp + 4, p.touch ? 1 : 0);
+        st16(st + tp + 6, p.touch ? 0 : 3);  // validity: 0 = valid, 3 = invalid XY
+    }
+    st8(st + 0xA0, 0xFF); st8(st + 0xA3, 0xFF);                // slide volume
+    st8(st + 0xA1, 0xC0);                                      // battery full
+    if (err) st32(err, 0);
+    ret(c, 1);
+}
+// raw touch coordinates -> 1280x720 screen space
+static void tp_to_screen(uint32_t out, uint32_t raw, int w, int h) {
+    int x = std::max<int>(ld16(raw) - 92, 0), y = std::max<int>(4095 - (int)ld16(raw + 2) - 254, 0);
+    st16(out, (uint16_t)(x / 3883.0 * w));
+    st16(out + 2, (uint16_t)(y / 3694.0 * h));
+    st16(out + 4, ld16(raw + 4));
+    st16(out + 6, ld16(raw + 6));
+}
+HLE(vpad, VPADGetTPCalibratedPoint) { tp_to_screen(arg(c, 1), arg(c, 2), 1280, 720); }
+HLE(vpad, VPADGetTPCalibratedPointEx) {
+    int res = (int)arg(c, 1);  // 0 = 1920x1080, 1 = 1280x720, 2 = 854x480
+    tp_to_screen(arg(c, 2), arg(c, 3), res == 0 ? 1920 : res == 2 ? 854 : 1280, res == 0 ? 1080 : res == 2 ? 480 : 720);
+}
+HLE(vpad, VPADControlMotor) { ret(c, 0); }
+HLE(vpad, VPADStopMotor) {}
+HLE(vpadbase, VPADBASEGetHeadphoneStatus) { ret(c, 0); }
+
+// ---- padscore (Wii Remote / Pro Controller): see padscore.cpp
+
+// ---- sysapp
+HLE(sysapp, SYSLaunchSettings) { ret(c, 0); }
+HLE(sysapp, SYSLaunchAccount) { ret(c, 0); }
