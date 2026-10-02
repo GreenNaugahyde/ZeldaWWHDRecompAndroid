@@ -1189,6 +1189,15 @@ static void cache_load() {
     size_t shaders = 0, pipelines = 0;
     if (FILE* f = fopen(path.c_str(), "rb")) {
         static std::vector<uint32_t> regs(0x10000);
+        std::unordered_map<std::string, uint32_t> copies;
+        auto guest_copy = [&](const uint8_t* src, uint32_t size) {
+            uint32_t& addr = copies[std::string((const char*)src, size)];
+            if (!addr) {
+                addr = mem::host_alloc(size, 0x100);
+                memcpy(mem::ptr(addr), src, size);
+            }
+            return addr;
+        };
         g_cache_replaying = true;
         g_defer_compiles = true;
         uint32_t hdr[3];
@@ -1208,14 +1217,13 @@ static void cache_load() {
             uint32_t vertex, size, fsSize, n;
             if (!get(p, end, vertex) || !get(p, end, size) || !get(p, end, fsSize) || !get(p, end, n)) break;
             if (p + size + fsSize + n * 8 > end) break;
-            // the microcode goes to fresh guest memory so the normal translation path can read it
-            uint32_t prog = mem::host_alloc(size, 0x100);
-            memcpy(mem::ptr(prog), p, size);
+            // the microcode goes to guest memory so the normal translation path can read it; one copy per
+            // distinct program (records repeat the same few thousand programs under many register states)
+            uint32_t prog = guest_copy(p, size);
             p += size;
             uint32_t fsProg = 0;
             if (fsSize) {
-                fsProg = mem::host_alloc(fsSize, 0x100);
-                memcpy(mem::ptr(fsProg), p, fsSize);
+                fsProg = guest_copy(p, fsSize);
                 p += fsSize;
             }
             std::fill(regs.begin(), regs.end(), 0);
