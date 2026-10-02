@@ -44,6 +44,16 @@ HLE(nn_olv, Initialize__Q2_2nn3olvFPCQ3_2nn3olv15InitializeParam) { ret(c, kResu
 HLE(nn_olv, IsInitialized__Q2_2nn3olvFv) { ret(c, 0); }
 HLE(nn_olv, Finalize__Q2_2nn3olvFv) { ret(c, kResultOk); }
 
+// OliveOperationMgrThread (Miiverse requests: Tingle Bottles, posts, Yeahs) runs a state machine that
+// re-posts itself to its own message queue until Miiverse answers, which it never does here: about
+// 100k steps a second, a whole host core (on the console it only soaks up idle time on its core).
+// A 1 ms nap per step (releasing the guest core) keeps it to ~1000 steps a second.
+extern "C" void f_0203DEEC_orig(Cpu* c);
+extern "C" void hook_0203DEEC(Cpu* c) {
+    threads::park_sleep_until(std::chrono::steady_clock::now() + std::chrono::milliseconds(1));
+    f_0203DEEC_orig(c);
+}
+
 // ---- sockets / curl
 HLE(nsysnet, socket_lib_init) { ret(c, 0); }
 HLE(nsysnet, socket_lib_finish) { ret(c, 0); }
