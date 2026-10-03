@@ -150,4 +150,10 @@ void log_msg(const char* fmt, ...) __attribute__((format(printf, 1, 2)));
 namespace config {
 extern std::string game_dir;   // extracted game root (contains code/, content/, meta/)
 extern std::string save_dir;   // host directory for save data
+extern std::string cache_dir;  // host directory for shader caches ("" = platform default)
+extern std::string code_dir;   // game code compiled on the device (WWHD_DEVICE_RECOMP builds)
 }
+
+// ---- boot (main.cpp) ----
+void boot_runtime();       // memory, executable, OS layer; fatal on error
+void start_game_thread();  // runs the game's entry point on its own thread (exits the process when it returns)

@@ -8,7 +8,10 @@
 #include "Cafe/HW/Latte/LegacyShaderDecompiler/LatteDecompilerInstructions.h"
 #include "Cafe/HW/Latte/Core/FetchShader.h"
 #include "Cafe/HW/Latte/ISA/LatteInstructions.h"
+#include "Cafe/HW/Latte/Renderer/Renderer.h"
+#ifdef ENABLE_METAL
 #include "Cafe/HW/Latte/Renderer/Metal/LatteToMtl.h"
+#endif
 
 uint32 LatteShaderRecompiler_getAttributeSize(Latte::E_HWFMT format)
 {

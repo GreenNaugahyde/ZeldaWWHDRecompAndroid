@@ -1,7 +1,7 @@
 // Guest memory, RPX loading, function dispatch, logging and HLE registry.
-#include <mach/mach.h>
-#include <mach/mach_vm.h>
-#include <mach-o/ldsyms.h>
+#ifdef __APPLE__
+#include <mach-o/ldsyms.h>  // _mh_execute_header
+#endif
 #include <sys/mman.h>
 #include <zlib.h>
 
@@ -9,12 +9,14 @@
 #include <atomic>
 #include <cstdarg>
 #include <cstdlib>
+#include <cstring>
 #include <fstream>
 #include <mutex>
 #include <shared_mutex>
 #include <unordered_map>
 #include <vector>
 
+#include "platform.h"
 #include "recomp_table.h"
 #include "runtime.h"
 
@@ -22,29 +24,38 @@ bool g_trace_hle = false;
 namespace config {
 std::string game_dir = "game";
 std::string save_dir = "save";
+std::string cache_dir;
+std::string code_dir;
 }  // namespace config
 
 static std::mutex g_log_mutex;
 
-void log_msg(const char* fmt, ...) {
+static void log_v(const char* prefix, const char* fmt, va_list ap) {
+    va_list ap2;
+    va_copy(ap2, ap);
+    int n = vsnprintf(nullptr, 0, fmt, ap2);
+    va_end(ap2);
+    std::string line = prefix;
+    size_t p = line.size();
+    line.resize(p + std::max(n, 0) + 1);
+    vsnprintf(&line[p], line.size() - p, fmt, ap);
+    line.resize(p + std::max(n, 0));
     std::lock_guard<std::mutex> lk(g_log_mutex);
+    platform::log_line(line.c_str());
+}
+
+void log_msg(const char* fmt, ...) {
     va_list ap;
     va_start(ap, fmt);
-    vfprintf(stderr, fmt, ap);
+    log_v("", fmt, ap);
     va_end(ap);
-    fputc('\n', stderr);
 }
 
 void fatal(const char* fmt, ...) {
-    {
-        std::lock_guard<std::mutex> lk(g_log_mutex);
-        va_list ap;
-        va_start(ap, fmt);
-        fprintf(stderr, "FATAL: ");
-        vfprintf(stderr, fmt, ap);
-        va_end(ap);
-        fputc('\n', stderr);
-    }
+    va_list ap;
+    va_start(ap, fmt);
+    log_v("FATAL: ", fmt, ap);
+    va_end(ap);
     abort();
 }
 
@@ -53,12 +64,18 @@ namespace mem {
 static std::atomic<uint32_t> g_runtime_top{kRuntimeStart};
 
 void init() {
-    mach_vm_address_t addr = (mach_vm_address_t)PPC_MEM_BASE;
-    kern_return_t kr = mach_vm_allocate(mach_task_self(), &addr, 0x100000000ull, VM_FLAGS_FIXED);
-    if (kr != KERN_SUCCESS) fatal("cannot reserve guest address space at %p (kr=%d)", PPC_MEM_BASE, kr);
+    if (!platform::map_fixed(PPC_MEM_BASE, 0x100000000ull)) fatal("cannot reserve guest address space at %p", PPC_MEM_BASE);
     // null page guard: catches guest null-pointer accesses
     mprotect(PPC_MEM_BASE, 0x10000, PROT_NONE);
 }
+
+// start of the loaded executable (macOS) or shared library (Android)
+#ifdef __APPLE__
+static const void* image_base() { return &_mh_execute_header; }
+#else
+extern "C" char __ehdr_start;  // ELF header of this image, provided by the linker
+static const void* image_base() { return &__ehdr_start; }
+#endif
 
 static std::mutex g_alloc_log_m;
 static std::vector<AllocRec> g_alloc_log;
@@ -78,7 +95,7 @@ __attribute__((noinline)) uint32_t runtime_alloc(uint32_t size, uint32_t align) 
     uint32_t a = bump(g_runtime_top, size, align, kHostStart);
     // who allocated (relative to the executable, stable across runs of one build): a loaded save
     // state requires the same guest-visible allocations at the same addresses
-    uint64_t tag = (uint64_t)((uintptr_t)__builtin_return_address(0) - (uintptr_t)&_mh_execute_header);
+    uint64_t tag = (uint64_t)((uintptr_t)__builtin_return_address(0) - (uintptr_t)image_base());
     std::lock_guard<std::mutex> lk(g_alloc_log_m);
     g_alloc_log.push_back({a, size, tag});
     return a;

@@ -1,0 +1,585 @@
+package org.wwhdrecomp.app;
+
+import android.content.Context;
+import android.graphics.Canvas;
+import android.graphics.Paint;
+import android.graphics.RectF;
+import android.util.SparseArray;
+import android.view.MotionEvent;
+import android.view.View;
+
+import java.util.ArrayList;
+import java.util.List;
+
+/**
+ * On-screen Wii U GamePad: sticks, buttons and the GamePad touch screen, drawn over the game.
+ * Touches that hit no control and land on the GamePad image go to the game as touch-panel input.
+ */
+final class ControlsView extends View {
+    interface Listener {
+        void onControlsChanged();
+        void onMenu();
+        /** the performance overlay was dragged: its top left corner as fractions of the view size */
+        void onOverlayMoved(float fx, float fy);
+    }
+
+    private static final int KIND_BUTTON = 0, KIND_STICK = 1, KIND_DPAD = 2, KIND_MENU = 3;
+
+    private static final class Control {
+        int kind, bit;
+        String label;
+        float cx, cy, w, h;          // centre and size (buttons: w x h, sticks: w = radius)
+        boolean round, pressed;
+        float sx, sy;                // stick deflection -1..1 (+y up)
+        int dpadBits;
+        Control(int kind, int bit, String label, boolean round) {
+            this.kind = kind;
+            this.bit = bit;
+            this.label = label;
+            this.round = round;
+        }
+        boolean hit(float x, float y, float slack) {
+            if (kind == KIND_STICK || kind == KIND_DPAD) {
+                float r = w * slack;
+                return (x - cx) * (x - cx) + (y - cy) * (y - cy) <= r * r;
+            }
+            return Math.abs(x - cx) <= w / 2 * slack && Math.abs(y - cy) <= h / 2 * slack;
+        }
+    }
+
+    private final Listener listener;
+    private final List<Control> controls = new ArrayList<>();
+    private final SparseArray<Control> pointers = new SparseArray<>();
+    private int drcPointer = -1;
+    private final Paint fill = new Paint(Paint.ANTI_ALIAS_FLAG), stroke = new Paint(Paint.ANTI_ALIAS_FLAG),
+            text = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private final RectF tmp = new RectF();
+
+    // GamePad image on screen (letterboxed), for touch input; empty if hidden
+    private final RectF drcRect = new RectF();
+    private boolean controlsVisible = true;
+    private float scale = 1f, opacity = 0.45f;
+
+    ControlsView(Context c, Listener l) {
+        super(c);
+        listener = l;
+        fill.setStyle(Paint.Style.FILL);
+        stroke.setStyle(Paint.Style.STROKE);
+        text.setTextAlign(Paint.Align.CENTER);
+        text.setFakeBoldText(true);
+        controls.add(new Control(KIND_BUTTON, Native.ZL, "ZL", false));
+        controls.add(new Control(KIND_BUTTON, Native.L, "L", false));
+        controls.add(new Control(KIND_BUTTON, Native.ZR, "ZR", false));
+        controls.add(new Control(KIND_BUTTON, Native.R, "R", false));
+        controls.add(new Control(KIND_DPAD, 0, "", true));
+        controls.add(new Control(KIND_STICK, 0, "L", true));
+        controls.add(new Control(KIND_STICK, 1, "R", true));
+        controls.add(new Control(KIND_BUTTON, Native.X, "X", true));
+        controls.add(new Control(KIND_BUTTON, Native.A, "A", true));
+        controls.add(new Control(KIND_BUTTON, Native.B, "B", true));
+        controls.add(new Control(KIND_BUTTON, Native.Y, "Y", true));
+        controls.add(new Control(KIND_BUTTON, Native.MINUS, "−", true));
+        controls.add(new Control(KIND_BUTTON, Native.PLUS, "+", true));
+        controls.add(new Control(KIND_BUTTON, Native.STICK_L, "L3", true));
+        controls.add(new Control(KIND_BUTTON, Native.STICK_R, "R3", true));
+        controls.add(new Control(KIND_MENU, 0, "≡", true));
+    }
+
+    void setDrcRect(RectF r) {
+        if (r == null) drcRect.setEmpty();
+        else drcRect.set(r);
+    }
+
+    // ---- stamina wheel of the "climb any wall" mod (as runtime/src/mods/climb_hud.mm draws it on macOS)
+    private final RectF tvRect = new RectF();
+    private boolean climbHud;
+    private final Paint hudPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+
+    /** where the TV picture is (letterboxed), for overlays on the game image */
+    void setTvRect(RectF r) {
+        if (r == null) tvRect.setEmpty();
+        else tvRect.set(r);
+    }
+
+    private float[] hud = {0, 0, 0};
+    // the game updates the stamina 30 times a second: poll at that rate, redraw only on changes
+    private final Runnable pollHud = new Runnable() {
+        @Override
+        public void run() {
+            if (!climbHud) return;
+            float[] h = Native.climbHud();
+            if (!java.util.Arrays.equals(h, hud)) {
+                hud = h;
+                invalidate();
+            }
+            postDelayed(this, 33);
+        }
+    };
+
+    /** the climb mod is on: poll its stamina */
+    void setClimbHud(boolean on) {
+        if (on == climbHud) return;
+        climbHud = on;
+        removeCallbacks(pollHud);
+        if (on) post(pollHud);
+        hud = new float[] {0, 0, 0};
+        invalidate();
+    }
+
+    private void drawClimbHud(Canvas canvas) {
+        if (!climbHud || tvRect.isEmpty()) return;
+        float[] h = hud;
+        float stamina = h[0], alpha = h[1];
+        boolean exhausted = h[2] > 0.5f;
+        if (alpha <= 0) return;
+        // to the upper right of the screen centre, where the follow camera keeps Link
+        float cx = tvRect.left + 0.60f * tvRect.width(), cy = tvRect.top + 0.38f * tvRect.height();
+        float rad = 0.05f * tvRect.height();
+        hudPaint.setStyle(Paint.Style.STROKE);
+        // dark outline, then the empty ring, then the filled part clockwise from the top
+        hudPaint.setStrokeWidth(rad * 0.5f);
+        hudPaint.setColor(0xFF000000);
+        hudPaint.setAlpha((int) (255 * 0.45f * alpha));
+        canvas.drawCircle(cx, cy, rad * 0.75f, hudPaint);
+        hudPaint.setStrokeWidth(rad * 0.34f);
+        hudPaint.setColor(exhausted ? 0xFF8C140F : 0xFF1A1A1A);
+        hudPaint.setAlpha((int) (255 * 0.45f * alpha));
+        tmp.set(cx - rad * 0.75f, cy - rad * 0.75f, cx + rad * 0.75f, cy + rad * 0.75f);
+        canvas.drawArc(tmp, -90 + 360 * stamina, 360 * (1 - stamina), false, hudPaint);
+        int full;
+        if (exhausted) full = 0xFFF2331F;
+        else if (stamina < 0.3f) full = mix(0xFFF2331F, 0xFFFFCC26, stamina / 0.3f);
+        else full = 0xFF4DE659;
+        hudPaint.setColor(full);
+        hudPaint.setAlpha((int) (255 * 0.95f * alpha));
+        canvas.drawArc(tmp, -90, 360 * stamina, false, hudPaint);
+    }
+
+    // ---- performance overlay: frame rate, frame time, CPU/GPU load and temperatures (PerfStats)
+    private PerfStats perf;
+    private final Paint perfText = new Paint(Paint.ANTI_ALIAS_FLAG), perfBox = new Paint();
+    private final Runnable pollPerf = new Runnable() {
+        @Override
+        public void run() {
+            if (perf == null) return;
+            perf.update();
+            invalidate();
+            postDelayed(this, 500);
+        }
+    };
+
+    // what it shows (bits) and where (top left corner as fractions of the view; negative: default spot)
+    static final int PERF_FPS = 1, PERF_FRAME = 2, PERF_CPU = 4, PERF_GPU = 8, PERF_TEMP_CPU = 16, PERF_TEMP_GPU = 32,
+            PERF_TEMP_BAT = 64, PERF_ALL = 127;
+    private int perfItems = PERF_ALL;
+    private float perfFx = -1, perfFy = -1;
+    private final android.graphics.RectF perfRect = new android.graphics.RectF();  // as last drawn
+    private boolean perfMoveMode;
+    private int perfDragPointer = -1;
+    private float perfDragDx, perfDragDy;
+
+    void setPerfHud(boolean on) {
+        if (on == (perf != null)) return;
+        removeCallbacks(pollPerf);
+        perf = on ? new PerfStats(getContext()) : null;
+        if (on) post(pollPerf);
+        if (!on) perfMoveMode = false;
+        invalidate();
+    }
+
+    void setPerfItems(int items) {
+        perfItems = items;
+        invalidate();
+    }
+
+    void setPerfPosition(float fx, float fy) {
+        perfFx = fx;
+        perfFy = fy;
+        invalidate();
+    }
+
+    /** move mode: the overlay can be dragged even where it covers a control; a touch elsewhere ends it */
+    void setPerfMoveMode(boolean on) {
+        perfMoveMode = on && perf != null;
+        invalidate();
+    }
+
+    /** a touch going down at (x, y): true if it grabs the overlay (or ends move mode) */
+    private boolean perfTouchDown(int id, float x, float y) {
+        if (perf == null || perfDragPointer >= 0) return false;
+        boolean onOverlay = perfRect.contains(x, y);
+        if (onOverlay && (perfMoveMode || controlAt(x, y) == null)) {
+            perfDragPointer = id;
+            perfDragDx = x - perfRect.left;
+            perfDragDy = y - perfRect.top;
+            return true;
+        }
+        if (perfMoveMode && !onOverlay) {  // done moving; this touch only ends the mode
+            perfMoveMode = false;
+            invalidate();
+            return true;
+        }
+        return false;
+    }
+
+    private void perfDrag(float x, float y) {
+        float w = perfRect.width(), h = perfRect.height();
+        float left = Math.max(0, Math.min(getWidth() - w, x - perfDragDx));
+        float top = Math.max(0, Math.min(getHeight() - h, y - perfDragDy));
+        perfFx = left / Math.max(1, getWidth());
+        perfFy = top / Math.max(1, getHeight());
+        invalidate();
+    }
+
+    private static String num(float v, String fmt) { return Float.isNaN(v) || v < 0 ? "–" : String.format(java.util.Locale.ROOT, fmt, v); }
+
+    private void drawPerfHud(Canvas canvas) {
+        PerfStats p = perf;
+        if (p == null) return;
+        int it = perfItems;
+        java.util.List<String> list = new java.util.ArrayList<>();
+        if ((it & PERF_FPS) != 0)
+            list.add("FPS " + num(p.gameFps, "%.1f") + (Math.abs(p.shownFps - p.gameFps) > 0.5f ? "  shown " + num(p.shownFps, "%.0f") : ""));
+        if ((it & PERF_FRAME) != 0) list.add("Frame " + num(p.frameMs, "%.1f") + " ms  max " + num(p.frameMaxMs, "%.1f"));
+        StringBuilder load = new StringBuilder();
+        if ((it & PERF_CPU) != 0) load.append("CPU ").append(num(p.cpuPercent, "%.0f")).append("% app  ");
+        if ((it & PERF_GPU) != 0) {
+            load.append("GPU ").append(num(p.gpuPercent, "%.0f")).append("%  ");
+            if (p.fgGpuMs > 0) load.append("FG ").append(num(p.fgGpuMs, "%.1f")).append(" ms");
+        }
+        if (load.length() > 0) list.add(load.toString().trim());
+        StringBuilder temp = new StringBuilder();
+        if ((it & PERF_TEMP_CPU) != 0) temp.append("CPU ").append(num(p.cpuTemp, "%.0f")).append("  ");
+        if ((it & PERF_TEMP_GPU) != 0) temp.append("GPU ").append(num(p.gpuTemp, "%.0f")).append("  ");
+        if ((it & PERF_TEMP_BAT) != 0) temp.append("Bat ").append(num(p.batteryTemp, "%.0f"));
+        if (temp.length() > 0) list.add("°C " + temp.toString().trim());
+        if (perfMoveMode) list.add(getContext().getString(R.string.perf_move_hint));
+        if (list.isEmpty()) {
+            perfRect.setEmpty();
+            return;
+        }
+        String[] lines = list.toArray(new String[0]);
+        float density = getResources().getDisplayMetrics().density;
+        perfText.setTextSize(13 * density);
+        perfText.setTypeface(android.graphics.Typeface.MONOSPACE);
+        perfText.setColor(0xFFFFFFFF);
+        perfBox.setColor(0x99000000);
+        float pad = 6 * density, lineH = perfText.getFontSpacing(), w = 0;
+        for (String l : lines) w = Math.max(w, perfText.measureText(l));
+        float bw = w + 2 * pad, bh = lines.length * lineH + 2 * pad;
+        // default: below the top edge's system overlays, at the left; else where the user put it
+        float x = perfFx < 0 ? 12 * density : perfFx * getWidth(), y = perfFy < 0 ? 40 * density : perfFy * getHeight();
+        x = Math.max(0, Math.min(getWidth() - bw, x));
+        y = Math.max(0, Math.min(getHeight() - bh, y));
+        tmp.set(x, y, x + bw, y + bh);
+        perfRect.set(tmp);
+        canvas.drawRoundRect(tmp, 4 * density, 4 * density, perfBox);
+        if (perfMoveMode || perfDragPointer >= 0) {  // being moved: a frame around it
+            stroke.setColor(0xFFFFCC26);
+            stroke.setAlpha(255);
+            canvas.drawRoundRect(tmp, 4 * density, 4 * density, stroke);
+        }
+        for (int i = 0; i < lines.length; i++)
+            canvas.drawText(lines[i], x + pad, y + pad + (i + 1) * lineH - perfText.descent(), perfText);
+    }
+
+    private static int mix(int a, int b, float t) {
+        int r = (int) (((a >> 16) & 0xFF) * (1 - t) + ((b >> 16) & 0xFF) * t);
+        int g = (int) (((a >> 8) & 0xFF) * (1 - t) + ((b >> 8) & 0xFF) * t);
+        int bl = (int) ((a & 0xFF) * (1 - t) + (b & 0xFF) * t);
+        return 0xFF000000 | r << 16 | g << 8 | bl;
+    }
+
+    void setAppearance(boolean visible, float scale, float opacity) {
+        if (!visible && controlsVisible) releaseAll();
+        controlsVisible = visible;
+        this.scale = scale;
+        this.opacity = opacity;
+        layoutControls(getWidth(), getHeight());
+        invalidate();
+    }
+
+    boolean controlsVisible() { return controlsVisible; }
+
+    // ---- the menu button hides after a while without touches and comes back on the next touch
+    private static final long MENU_HIDE_MS = 5000;
+    private boolean menuShown = true;
+    private final Runnable hideMenu = () -> {
+        menuShown = false;
+        invalidate();
+    };
+
+    /** a touch happened: show the menu button and restart its timer; true if it was hidden */
+    private boolean touched() {
+        boolean wasHidden = !menuShown;
+        menuShown = true;
+        removeCallbacks(hideMenu);
+        postDelayed(hideMenu, MENU_HIDE_MS);
+        if (wasHidden) invalidate();
+        return wasHidden;
+    }
+
+    @Override
+    protected void onAttachedToWindow() {
+        super.onAttachedToWindow();
+        touched();
+    }
+
+    @Override
+    protected void onDetachedFromWindow() {
+        removeCallbacks(hideMenu);
+        super.onDetachedFromWindow();
+    }
+
+    int buttons() {
+        int b = 0;
+        for (Control c : controls) {
+            if (c.kind == KIND_BUTTON && c.pressed) b |= c.bit;
+            if (c.kind == KIND_DPAD) b |= c.dpadBits;
+        }
+        return b;
+    }
+    float stickX(int i) { return controls.get(5 + i).sx; }
+    float stickY(int i) { return controls.get(5 + i).sy; }
+
+    @Override
+    protected void onSizeChanged(int w, int h, int ow, int oh) {
+        layoutControls(w, h);
+    }
+
+    // positions in units of u = shorter side / 7 (landscape)
+    private void layoutControls(int W, int H) {
+        if (W == 0 || H == 0) return;
+        float u = Math.min(W, H) / 7f * scale;
+        float m = u * 0.25f;  // edge margin
+        float colL = m + u * 1.6f, colR = W - m - u * 1.6f;
+        set(0, colL, m + u * 0.4f, u * 1.6f, u * 0.65f);               // ZL
+        set(1, colL, m + u * 1.25f, u * 1.6f, u * 0.65f);              // L
+        set(2, colR, m + u * 0.4f, u * 1.6f, u * 0.65f);               // ZR
+        set(3, colR, m + u * 1.25f, u * 1.6f, u * 0.65f);              // R
+        set(4, colL, H * 0.5f - u * 0.1f, u * 0.95f, 0);               // D-pad
+        set(5, colL, H - m - u * 1.15f, u * 1.05f, 0);                 // left stick
+        set(6, colR, H - m - u * 1.15f, u * 1.05f, 0);                 // right stick
+        float fx = colR, fy = H * 0.5f - u * 0.1f, d = u * 0.78f, r = u * 0.72f;
+        set(7, fx, fy - d, r, r);                                      // X (top)
+        set(8, fx + d, fy, r, r);                                      // A (right)
+        set(9, fx, fy + d, r, r);                                      // B (bottom)
+        set(10, fx - d, fy, r, r);                                     // Y (left)
+        set(11, W * 0.5f - u * 1.1f, H - m - u * 0.35f, u * 0.6f, u * 0.6f);  // -
+        set(12, W * 0.5f + u * 1.1f, H - m - u * 0.35f, u * 0.6f, u * 0.6f);  // +
+        set(13, colL + u * 1.55f, H - m - u * 0.35f, u * 0.55f, u * 0.55f);   // L3
+        set(14, colR - u * 1.55f, H - m - u * 0.35f, u * 0.55f, u * 0.55f);   // R3
+        set(15, W * 0.5f, H - m - u * 0.35f, u * 0.6f, u * 0.6f);             // menu
+        text.setTextSize(u * 0.34f);
+        stroke.setStrokeWidth(Math.max(2f, u * 0.04f));
+    }
+
+    private void set(int i, float cx, float cy, float w, float h) {
+        Control c = controls.get(i);
+        c.cx = cx;
+        c.cy = cy;
+        c.w = w;
+        c.h = h;
+    }
+
+    private Control controlAt(float x, float y) {
+        // exact hits first, then a little slack (thumbs are imprecise)
+        for (float slack : new float[] {1f, 1.35f})
+            for (Control c : controls) {
+                if (!controlsVisible && c.kind != KIND_MENU) continue;
+                if (c.hit(x, y, slack)) return c;
+            }
+        return null;
+    }
+
+    private void updateStick(Control c, float x, float y) {
+        float dx = (x - c.cx) / c.w, dy = -(y - c.cy) / c.w;
+        float len = (float) Math.hypot(dx, dy);
+        if (len > 1) { dx /= len; dy /= len; }
+        c.sx = dx;
+        c.sy = dy;
+    }
+
+    private void updateDpad(Control c, float x, float y) {
+        float dx = x - c.cx, dy = y - c.cy, dead = c.w * 0.25f;
+        int b = 0;
+        if (dx < -dead && Math.abs(dy) < Math.abs(dx) * 2.4f) b |= Native.LEFT;
+        if (dx > dead && Math.abs(dy) < Math.abs(dx) * 2.4f) b |= Native.RIGHT;
+        if (dy < -dead && Math.abs(dx) < Math.abs(dy) * 2.4f) b |= Native.UP;
+        if (dy > dead && Math.abs(dx) < Math.abs(dy) * 2.4f) b |= Native.DOWN;
+        c.dpadBits = b;
+    }
+
+    private void release(Control c) {
+        c.pressed = false;
+        c.sx = c.sy = 0;
+        c.dpadBits = 0;
+    }
+
+    private void releaseAll() {
+        for (Control c : controls) release(c);
+        pointers.clear();
+        if (drcPointer >= 0) Native.setTouch(false, 0, 0);
+        drcPointer = -1;
+    }
+
+    private boolean inDrc(float x, float y) { return !drcRect.isEmpty() && drcRect.contains(x, y); }
+
+    private void touchDrc(boolean down, float x, float y) {
+        float tx = (x - drcRect.left) / drcRect.width(), ty = (y - drcRect.top) / drcRect.height();
+        Native.setTouch(down, Math.max(0, Math.min(1, tx)), Math.max(0, Math.min(1, ty)));
+    }
+
+    @Override
+    public boolean onTouchEvent(MotionEvent e) {
+        int action = e.getActionMasked();
+        int idx = e.getActionIndex();
+        boolean changed = false;
+        boolean menuWasHidden = touched();
+        switch (action) {
+            case MotionEvent.ACTION_DOWN:
+            case MotionEvent.ACTION_POINTER_DOWN: {
+                int id = e.getPointerId(idx);
+                float x = e.getX(idx), y = e.getY(idx);
+                if (perfTouchDown(id, x, y)) break;
+                Control c = controlAt(x, y);
+                if (c != null) {
+                    if (c.kind == KIND_MENU) {
+                        if (!menuWasHidden) listener.onMenu();  // a touch on the hidden button only shows it
+                        return true;
+                    }
+                    pointers.put(id, c);
+                    if (c.kind == KIND_STICK) updateStick(c, x, y);
+                    else if (c.kind == KIND_DPAD) updateDpad(c, x, y);
+                    else c.pressed = true;
+                    changed = true;
+                } else if (drcPointer < 0 && inDrc(x, y)) {
+                    drcPointer = id;
+                    touchDrc(true, x, y);
+                }
+                break;
+            }
+            case MotionEvent.ACTION_MOVE:
+                for (int i = 0; i < e.getPointerCount(); i++) {
+                    int id = e.getPointerId(i);
+                    float x = e.getX(i), y = e.getY(i);
+                    if (id == perfDragPointer) {
+                        perfDrag(x, y);
+                        continue;
+                    }
+                    if (id == drcPointer) {
+                        touchDrc(true, x, y);
+                        continue;
+                    }
+                    Control c = pointers.get(id);
+                    if (c == null) continue;
+                    if (c.kind == KIND_STICK) updateStick(c, x, y);
+                    else if (c.kind == KIND_DPAD) updateDpad(c, x, y);
+                    else if (c.kind == KIND_BUTTON) {
+                        // sliding between buttons (e.g. across the face buttons) moves the press
+                        Control now = controlAt(x, y);
+                        if (now != null && now != c && now.kind == KIND_BUTTON) {
+                            release(c);
+                            now.pressed = true;
+                            pointers.put(id, now);
+                        }
+                    }
+                    changed = true;
+                }
+                break;
+            case MotionEvent.ACTION_UP:
+            case MotionEvent.ACTION_POINTER_UP:
+            case MotionEvent.ACTION_CANCEL: {
+                if (action == MotionEvent.ACTION_CANCEL) {
+                    releaseAll();
+                    perfDragPointer = -1;
+                    changed = true;
+                    break;
+                }
+                int id = e.getPointerId(idx);
+                if (id == perfDragPointer) {
+                    perfDragPointer = -1;
+                    listener.onOverlayMoved(perfFx, perfFy);
+                    invalidate();
+                    break;
+                }
+                if (id == drcPointer) {
+                    touchDrc(false, e.getX(idx), e.getY(idx));
+                    drcPointer = -1;
+                }
+                Control c = pointers.get(id);
+                if (c != null) {
+                    release(c);
+                    pointers.remove(id);
+                    changed = true;
+                }
+                break;
+            }
+            default:
+                break;
+        }
+        if (changed) {
+            listener.onControlsChanged();
+            invalidate();
+        }
+        return true;
+    }
+
+    @Override
+    protected void onDraw(Canvas canvas) {
+        drawClimbHud(canvas);
+        drawPerfHud(canvas);
+        int a = (int) (255 * opacity);
+        for (Control c : controls) {
+            if (!controlsVisible && c.kind != KIND_MENU) continue;
+            if (c.kind == KIND_MENU && !menuShown) continue;
+            boolean active = c.pressed || c.dpadBits != 0 || c.sx != 0 || c.sy != 0;
+            fill.setColor(active ? 0xFFFFFFFF : 0xFF202020);
+            fill.setAlpha(active ? Math.min(255, a + 60) : a / 2);
+            stroke.setColor(0xFFFFFFFF);
+            stroke.setAlpha(a);
+            text.setColor(active ? 0xFF000000 : 0xFFFFFFFF);
+            text.setAlpha(Math.min(255, a + 40));
+            switch (c.kind) {
+                case KIND_STICK: {
+                    canvas.drawCircle(c.cx, c.cy, c.w, fill);
+                    canvas.drawCircle(c.cx, c.cy, c.w, stroke);
+                    float kx = c.cx + c.sx * c.w * 0.6f, ky = c.cy - c.sy * c.w * 0.6f;
+                    fill.setColor(0xFFFFFFFF);
+                    fill.setAlpha(a);
+                    canvas.drawCircle(kx, ky, c.w * 0.42f, fill);
+                    break;
+                }
+                case KIND_DPAD: {
+                    float s = c.w * 0.36f;
+                    drawDpadArm(canvas, c, 0, -1, s, (c.dpadBits & Native.UP) != 0, a);
+                    drawDpadArm(canvas, c, 0, 1, s, (c.dpadBits & Native.DOWN) != 0, a);
+                    drawDpadArm(canvas, c, -1, 0, s, (c.dpadBits & Native.LEFT) != 0, a);
+                    drawDpadArm(canvas, c, 1, 0, s, (c.dpadBits & Native.RIGHT) != 0, a);
+                    break;
+                }
+                default: {
+                    if (c.round) {
+                        float r = Math.min(c.w, c.h) / 2;
+                        canvas.drawCircle(c.cx, c.cy, r, fill);
+                        canvas.drawCircle(c.cx, c.cy, r, stroke);
+                    } else {
+                        tmp.set(c.cx - c.w / 2, c.cy - c.h / 2, c.cx + c.w / 2, c.cy + c.h / 2);
+                        canvas.drawRoundRect(tmp, c.h / 2, c.h / 2, fill);
+                        canvas.drawRoundRect(tmp, c.h / 2, c.h / 2, stroke);
+                    }
+                    canvas.drawText(c.label, c.cx, c.cy - (text.descent() + text.ascent()) / 2, text);
+                }
+            }
+        }
+    }
+
+    private void drawDpadArm(Canvas canvas, Control c, int dx, int dy, float s, boolean on, int a) {
+        float x = c.cx + dx * s * 1.25f, y = c.cy + dy * s * 1.25f;
+        tmp.set(x - s * 0.62f, y - s * 0.62f, x + s * 0.62f, y + s * 0.62f);
+        fill.setColor(on ? 0xFFFFFFFF : 0xFF202020);
+        fill.setAlpha(on ? Math.min(255, a + 60) : a / 2);
+        canvas.drawRoundRect(tmp, s * 0.2f, s * 0.2f, fill);
+        canvas.drawRoundRect(tmp, s * 0.2f, s * 0.2f, stroke);
+    }
+}

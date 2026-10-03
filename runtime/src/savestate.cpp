@@ -24,9 +24,15 @@
 // MEM1; all-zero 64 KiB chunks are left out).
 #include "savestate.h"
 
+#ifdef __APPLE__
 #include <compression.h>
 #include <mach-o/ldsyms.h>
 #include <mach-o/loader.h>
+#else
+#include <elf.h>
+#include <link.h>
+#include <zlib.h>  // blocks are deflated instead of LZ4 (states don't move between platforms)
+#endif
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -178,7 +184,11 @@ std::string state_dir() {
     static const std::string dir = [] {
         std::string d;
         if (const char* e = getenv("WWHD_STATE_DIR")) d = e;
+#ifdef __APPLE__
         else d = std::string(getenv("HOME") ? getenv("HOME") : ".") + "/Library/Application Support/wwhd/states";
+#else
+        else d = config::save_dir.substr(0, config::save_dir.find_last_of('/')) + "/states";  // next to save/
+#endif
         for (size_t i = 1; i <= d.size(); i++)
             if (i == d.size() || d[i] == '/') mkdir(d.substr(0, i).c_str(), 0755);
         return d;
@@ -189,6 +199,7 @@ std::string slot_path(int slot, const char* ext = "bin") { return state_dir() + 
 
 void build_uuid(uint8_t out[16]) {
     memset(out, 0, 16);
+#ifdef __APPLE__
     const auto* h = (const mach_header_64*)&_mh_execute_header;
     const uint8_t* p = (const uint8_t*)(h + 1);
     for (uint32_t i = 0; i < h->ncmds; i++) {
@@ -196,6 +207,72 @@ void build_uuid(uint8_t out[16]) {
         if (lc->cmd == LC_UUID) { memcpy(out, ((const uuid_command*)lc)->uuid, 16); return; }
         p += lc->cmdsize;
     }
+#else
+    // the GNU build id of the image containing this function
+    dl_iterate_phdr(
+        [](dl_phdr_info* info, size_t, void* data) -> int {
+            uintptr_t self = (uintptr_t)&build_uuid;
+            bool mine = false;
+            for (int i = 0; i < info->dlpi_phnum; i++) {
+                const auto& ph = info->dlpi_phdr[i];
+                uintptr_t a = info->dlpi_addr + ph.p_vaddr;
+                if (ph.p_type == PT_LOAD && self >= a && self < a + ph.p_memsz) mine = true;
+            }
+            if (!mine) return 0;
+            for (int i = 0; i < info->dlpi_phnum; i++) {
+                const auto& ph = info->dlpi_phdr[i];
+                if (ph.p_type != PT_NOTE) continue;
+                const uint8_t* p = (const uint8_t*)(info->dlpi_addr + ph.p_vaddr);
+                const uint8_t* end = p + ph.p_memsz;
+                while (p + sizeof(ElfW(Nhdr)) <= end) {
+                    const auto* n = (const ElfW(Nhdr)*)p;
+                    const uint8_t* desc = p + sizeof *n + ((n->n_namesz + 3) & ~3u);
+                    if (n->n_type == NT_GNU_BUILD_ID) {
+                        memcpy(data, desc, std::min<size_t>(16, n->n_descsz));
+                        return 1;
+                    }
+                    p = desc + ((n->n_descsz + 3) & ~3u);
+                }
+            }
+            return 1;
+        },
+        out);
+#endif
+}
+
+// mincore() takes char* on macOS, unsigned char* on Linux
+int page_residency(void* p, size_t n, char* vec) {
+#ifdef __APPLE__
+    return mincore(p, n, vec);
+#else
+    return mincore(p, n, (unsigned char*)vec);
+#endif
+}
+
+// one block of the slot file; 0 if it doesn't get smaller
+size_t compress_block(uint8_t* dst, size_t dstSize, const uint8_t* src, size_t n, void* scratch) {
+#ifdef __APPLE__
+    return compression_encode_buffer(dst, dstSize, src, n, (uint8_t*)scratch, COMPRESSION_LZ4);
+#else
+    uLongf out = dstSize;
+    return compress2(dst, &out, src, n, 1) == Z_OK ? out : 0;
+#endif
+}
+size_t decompress_block(uint8_t* dst, size_t n, const uint8_t* src, size_t srcSize, void* scratch) {
+#ifdef __APPLE__
+    return compression_decode_buffer(dst, n, src, srcSize, (uint8_t*)scratch, COMPRESSION_LZ4);
+#else
+    uLongf out = n;
+    return uncompress(dst, &out, src, srcSize) == Z_OK ? out : 0;
+#endif
+}
+size_t scratch_size(bool encode) {
+#ifdef __APPLE__
+    return encode ? compression_encode_scratch_buffer_size(COMPRESSION_LZ4) : compression_decode_scratch_buffer_size(COMPRESSION_LZ4);
+#else
+    (void)encode;
+    return 1;
+#endif
 }
 
 uint64_t game_id() {
@@ -241,7 +318,7 @@ void capture_memory(Writer& w) {
         for (uint32_t off = 0; off < g.size; off += kChunk) {
             uint8_t* p = mem::ptr(g.base + off);
             // untouched pages are zero: skip them without reading (reading would commit them)
-            if (mincore(p, kChunk, vec.data()) == 0) {
+            if (page_residency(p, kChunk, vec.data()) == 0) {
                 bool touched = false;
                 for (size_t i = 0; i < kChunk / (size_t)getpagesize(); i++) touched |= vec[i] != 0;
                 if (!touched) continue;
@@ -269,7 +346,7 @@ void restore_memory(const Snapshot& s) {
                 memcpy(p, it->second, kChunk);
                 continue;
             }
-            if (mincore(p, kChunk, vec.data()) == 0) {
+            if (page_residency(p, kChunk, vec.data()) == 0) {
                 bool touched = false;
                 for (size_t i = 0; i < kChunk / (size_t)getpagesize(); i++) touched |= vec[i] != 0;
                 if (!touched) continue;
@@ -293,13 +370,12 @@ bool write_slot(int slot, const Header& h0, const std::vector<uint8_t>& payload)
     unsigned nt = std::max(1u, std::min(8u, std::thread::hardware_concurrency()));
     for (unsigned t = 0; t < nt; t++)
         pool.emplace_back([&] {
-            std::vector<uint8_t> scratch(compression_encode_scratch_buffer_size(COMPRESSION_LZ4));
+            std::vector<uint8_t> scratch(scratch_size(true));
             for (size_t i; (i = next++) < nblocks;) {
                 size_t raw = std::min<size_t>(kBlock, payload.size() - i * kBlock);
                 std::vector<uint8_t>& o = out[i];
                 o.resize(8 + raw + raw / 8 + 1024);
-                size_t n = compression_encode_buffer(o.data() + 8, o.size() - 8, payload.data() + i * kBlock, raw, scratch.data(),
-                                                     COMPRESSION_LZ4);
+                size_t n = compress_block(o.data() + 8, o.size() - 8, payload.data() + i * kBlock, raw, scratch.data());
                 uint32_t hdr[2] = {(uint32_t)raw, (uint32_t)n};
                 if (!n || n >= raw) {  // incompressible: stored
                     memcpy(o.data() + 8, payload.data() + i * kBlock, raw);
@@ -357,12 +433,12 @@ std::shared_ptr<Snapshot> read_slot(int slot, std::string& why) {
     unsigned nt = std::max(1u, std::min(8u, std::thread::hardware_concurrency()));
     for (unsigned t = 0; t < nt; t++)
         pool.emplace_back([&] {
-            std::vector<uint8_t> scratch(compression_decode_scratch_buffer_size(COMPRESSION_LZ4));
+            std::vector<uint8_t> scratch(scratch_size(false));
             for (size_t i; (i = next++) < blocks.size();) {
                 uint8_t* dst = s->payload.data() + i * (size_t)kBlock;
                 if ((size_t)i * kBlock + raws[i] > s->payload.size()) { bad = true; continue; }
                 if (!comps[i]) { memcpy(dst, blocks[i].data(), raws[i]); continue; }
-                size_t n = compression_decode_buffer(dst, raws[i], blocks[i].data(), comps[i], scratch.data(), COMPRESSION_LZ4);
+                size_t n = decompress_block(dst, raws[i], blocks[i].data(), comps[i], scratch.data());
                 if (n != raws[i]) bad = true;
             }
         });

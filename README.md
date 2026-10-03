@@ -1,229 +1,191 @@
-# The Legend of Zelda: The Wind Waker HD — native macOS port
+# TLoZ:TWW HD Recompiled — Android
 
-A static recompilation of the Wii U version (USA) for Apple Silicon Macs. The game's PowerPC
-code is translated to C ahead of time, the Cafe OS libraries the game uses are reimplemented
-natively, and GX2 graphics are implemented directly on Metal (no Cemu runtime, no GPU command
-emulation).
+An Android port of the [ZeldaWWHDRecomp](https://github.com/ZeldaWWHDRecomp/ZeldaWWHDRecomp) project:
+The Legend of Zelda: The Wind Waker HD (Wii U, USA version) as a native app for 64-bit ARM Android
+devices. The game's PowerPC code is recompiled to native ARM code, the Wii U system libraries the
+game uses are reimplemented, and its graphics run directly on Vulkan. There is no emulator in
+between.
 
-How it works and how it differs from running the game in Cemu: [docs/how-it-works.md](docs/how-it-works.md).
+**The app contains no game files.** You bring your own copy of the game: a disc image (`.wud` or
+`.wux`) dumped from your own Wii U disc, with its keys. On the first start the app extracts the game
+from it and builds the game code on your device.
 
-## What's new (since the first release)
+The original project (macOS, the 60 fps modes, decompilation tools) is described in
+[docs/original-readme.md](docs/original-readme.md); how the recompilation works in
+[docs/how-it-works.md](docs/how-it-works.md).
 
-- **60 fps.** Two modes in the Graphics menu:
-  - **60 fps (key 6)**: frame interpolation. The game logic keeps its original 30 steps per second;
-    every second frame is drawn halfway between two steps (camera, models, particles, sea, wave
-    crests, grass and trees, cloth, weather, lighting). Input, sound and menus behave as at 30 fps.
-  - **True 60 (key 7, experimental)**: Link and the follow camera run their logic at 60 steps per
-    second (for the actions that have been converted and measured against the original); everything
-    else runs at 30 and is interpolated.
-- **Higher internal resolution** (1x / 1.5x / 2x / 3x, key R) and **edge smoothing** (FXAA, key 8).
-- **Save states**: a Save States menu with 5 slots (Shift+F1–F5 save, F1–F5 load), kept across
-  sessions in `~/Library/Application Support/wwhd/states/`.
-- **Controls window** (Input › Controls…): a drawing of the Wii U GamePad or Pro Controller; click
-  a button to remap it to a key or a controller input, live feedback of pressed buttons and stick
-  positions, conflict warnings.
-- **Optional gameplay mods** (Gameplay menu, all off by default): climb any wall, direct right-stick
-  camera, mouse camera, first person on the mouse wheel, quick doors, fast scene changes.
-- **Fixes**: shadow streaks, flicker after loading, doubled wave sounds at 60 fps, camera issues.
-- **Tools**: function naming against the GameCube decompilation (`tools/decomp/`), a differential
-  harness that verifies hand-written source against the recompiled original (`tools/verify/`), and
-  the 60 fps conversion tools (`tools/true60/`). See "Optional: decompilation tools" below.
+## What this fork adds
 
-## Legal notice
+- **Android port**: Vulkan renderer, AAudio sound, touch screen, game controllers and hardware
+  keyboards.
+- **An APK without game code**: on the first start the app extracts the game from your disc image
+  and recompiles its code on the device with LLVM (about 5 minutes, once). Later starts load the
+  compiled code in about half a second. The work continues in the background with a progress
+  notification, and resumes where it stopped if the app is closed.
+- **Frame generation** with Lossless Scaling's LSFG 3 (see below): 60, 90 or 120 fps.
+- **An in-game options menu** in the style of the game's own menus, with tabs for saves, graphics,
+  mods and controls, usable by touch and with a controller (see below).
+- **Save states**: five slots with a picture, time and place of each state.
+- **Import and export** of the game save and the save states to a folder of your choice.
+- **Performance overlay**: frame rate, frame time, CPU and GPU load, CPU, GPU and battery
+  temperatures; you choose the values and drag it where you want it.
+- **Display options**: rendering resolution from 0.5× to 3×, aspect ratio (bars, stretched, or
+  filling the screen), screen layouts for the TV and GamePad pictures (GamePad inset, side by side,
+  TV only, GamePad with TV inset). All of them apply immediately, without a restart.
+- **On-screen controls** for the whole GamePad, which hide while a controller is in use.
+- **The original project's gameplay mods** on Android: climb any wall, direct right-stick camera,
+  first person on R3, quick doors, fast scene changes.
+- **Fixes**: correct lighting on the first visit to a scene with an empty shader cache.
+- **No internet access**: the app doesn't request it, and its manifest explicitly excludes it.
 
-This is an unofficial fan project. It is not affiliated with, endorsed or sponsored by Nintendo.
-"The Legend of Zelda", "The Wind Waker", "Wii U" and related names are trademarks of their
-respective owners and are used here only to describe what this software is compatible with.
+## Getting started
 
-This repository contains **no game code, no game assets and no keys**: no executable, no
-recompiled or disassembled game code, no textures, models, audio, shaders, screenshots or other
-material from the game, and no console encryption keys. It contains only the tools and the
-runtime written for this project (plus the third-party code listed under Credits).
+You need:
 
-To use it you need your own, legally obtained copy of the game, dumped from your own Wii U disc
-and console. Everything game-specific (the extracted files, the recompiled code in `build/gen/`,
-shader caches) is generated locally on your machine from your dump, and must not be
-redistributed. The `.gitignore` keeps all of it out of the repository.
+- an Android 11 (or newer) device with a 64-bit ARM processor and Vulkan 1.1, about 2 GB of free
+  storage and, for the one-time compile, about 2 GB of free memory;
+- your own dump of The Wind Waker HD (USA): the disc image (`.wux` or `.wud`), its disc key (a
+  `.key` file with the image's name) and the Wii U common key (`common.key`).
 
-## Requirements
+None of these are included or provided here.
 
-- macOS on Apple Silicon
-- Xcode command line tools (`xcode-select --install`)
-- CMake 3.20 or newer
-- Python 3 with `pycryptodome` (disc extraction): `pip3 install pycryptodome`
-- optional: `capstone` (`pip3 install capstone`) for the disassembler helper `tools/ppcdis.py`
-- optional, decompilation tools only: `ninja` and the requirements of the zeldaret/tww build
-  (see below)
+1. Put the image and both keys in one folder on your device.
+2. Install the APK and start it. Choose **Extract from your disc image…** and select that folder.
+3. The app extracts the game files (a few seconds to minutes), then prepares the game code for
+   your device (about 5 minutes, depends on your hardware). You can leave the app meanwhile and read a Wind Waker walkthrough guide. A notification shows the progress and keeps the process alive.
+4. The game starts. The first visit to each place may stutter briefly while its shaders compile as usual.
+   After that they are cached.
 
-You also need, from your own console and disc:
+## Controls
 
-- a disc image of The Wind Waker HD (USA) in `.wud` or `.wux` format;
-- its disc key (16 bytes) in a `.key` file next to the image, with the same base name;
-- the Wii U common key, either in a file `common.key` (16 raw bytes or 32 hex digits) next to
-  the image or in the current directory, or in the `WIIU_COMMON_KEY` environment variable
-  (32 hex digits).
+The **on-screen controls** cover the Wii U GamePad: both sticks, the D-pad, A/B/X/Y, L/R/ZL/ZR,
+−/+ and the stick clicks (L3/R3). The
+controls hide while a game controller is in use and come back on the next touch.
 
-None of these are included or will be provided.
+**Game controllers** map by button position, as the game uses them: the bottom face button is the
+Wii U's B, the right one A, the left one Y and the top one X; Select is −, Start is +.
+
+**Keyboards**: WASD move, the arrow keys turn the camera, K or Space = A, J = B, L = X, I = Y, Q/E =
+L/R, Left Shift = ZL, C = ZR, Enter = +, Tab = −, H = HOME, 1–4 = D-pad, X/V = stick clicks.
+
+## The options menu
+
+The game keeps running while the menu is open, and changes apply at once.
+
+**How to open it**
+
+- touch: the ≡ button at the bottom of the screen, or Android's Back.
+- controller: **hold Select** (View, Share, −: whatever the controller calls it) for a moment, or
+  press **Home / Guide** (the logo button, where the controller passes it to apps). A short press
+  of Select is still the game's − button. The same buttons close the menu again.
+
+**With a controller**: L / R switch tabs, the D-pad moves and changes values, and as in the game
+the **right** face button selects and the **bottom** one goes back. (On an Xbox-style controller
+that is B to select and A to go back; on a PlayStation controller Circle selects and Cross goes
+back.)
+
+**The tabs**
+
+- **Saves**: five save state slots with Save and Load (a state can only be loaded during
+  gameplay, for example the save select screen or anywhere in the game, and only with the build that saved it); exporting and importing saves. An imported game
+  save restarts the game.  
+- **Graphics**: rendering resolution, frame generation, aspect ratio, screen layout, ambient
+  occlusion, full-size occlusion depth, 16× anisotropic filtering, the performance overlay, and
+  deleting the shader cache (restarts the game as on its first start).
+- **Mods**: the gameplay mods, all off by default.
+- **Controls**: on-screen controls on or off, their size, and whether the controls act as a Wii U
+  GamePad or a Pro Controller.
+
+About (with the licenses) and Quit are always on the left.
+
+## Frame generation (Lossless Scaling)
+
+Frame generation adds frames between the game's 30 frames per second: ×2 = 60 fps, ×3 = 90 fps,
+×4 = 120 fps, on a screen with that refresh rate. It uses the frame generation network of
+[Lossless Scaling](https://store.steampowered.com/app/993090/Lossless_Scaling/) (LSFG 3), which is
+not part of this app: it needs the usual **`Lossless.dll`** from a Lossless Scaling installation on
+Windows (in the program's folder in your Steam library).
+
+Lossless Scaling costs a few euros on Steam, and its developer has earned every one of them. **Buy
+it, don't pirate it like Gonzo** would. And never share the DLL with others.
+
+1. Copy `Lossless.dll` to your device.
+2. In the menu, open Graphics › Frame generation › **Select Lossless.dll** and pick the file.
+3. The app checks it, copies it into its private storage and switches frame generation on.
+
+The app was developed and tested with a `Lossless.dll` of 7,521,280 bytes; its shaders' SHA-1
+fingerprint is `fc6092a72b94003fac3d68e9a7b54954422db757`. A different version with the same shader
+layout is accepted with a warning, since it may compute something else and show wrong frames; a
+version with a different layout is rejected with the reason. If frame generation can't start on a
+device, its page in the menu says why.
+
+Options: multiplier, network (performance, or quality at about 40% more GPU time), flow scale
+(resolution of the motion estimate; lower is faster, 50% is the default) and UI detection (keeps
+menus and text from warping). Generated frames show the game about one frame later. On the tested Snapdragon
+7+ Gen 3 (2560×1600, performance network, 50% flow scale): about 7 ms of GPU time per game
+frame for ×2, 9 ms for ×3; ×4 needs a 25% flow scale.
+
+`runtime/src/vk/lsfg.cpp` is an independent implementation that runs the DLL's shaders; how they
+connect was worked out from the DLL itself. It contains no code from other LSFG projects.
 
 ## Building
 
-```sh
-# 1. extract the game into game/ (game.wux with game.key next to it, plus your common key)
-python3 tools/wudextract.py game.wux extract game
-#    -> game/code/cking.rpx, game/content/..., game/meta/...
+You need the Android SDK (platform 36), NDK 27.2.12479018, JDK 17, CMake 3.20+, Ninja, git and
+Python 3.
 
-# 2. recompile the game code to C (writes build/gen/; stays on your machine)
-python3 tools/recomp/recomp.py game/code/cking.rpx build/gen
-
-# 3. build
-cmake -S . -B build/cmake && make -C build/cmake -j$(sysctl -n hw.ncpu) wwhd
-```
-
-The build fails with a clear message if `build/gen` has not been generated. The runtime checks at
-startup that `game/code/cking.rpx` matches the recompiled code.
-
-## Playing
+**The APK without game code** builds LLVM for Android once (about 20
+minutes on a 12-core PC, 2 GB in `build/llvm`), then the app:
 
 ```sh
-./build/cmake/wwhd                 # options: --game DIR (default game), --save DIR (default save)
+tools/android/build-llvm.sh          # -> build/llvm/install (LLVM 20.1.8: AArch64 code generation, ORC JIT)
+cd android
+echo "sdk.dir=$HOME/Android/Sdk" > local.properties
+./gradlew assembleRelease -PwwhdDeviceRecomp -PwwhdVersionCode=3 -PwwhdVersionName=0.3
 ```
 
-Two windows open: the TV and the GamePad screen (map, items, menus). Click and drag in the
-GamePad window to use the touch screen. Saves go to `save/`.
-
-### Controls
-
-Default keyboard layout:
-
-| Keyboard | Wii U GamePad |
-|---|---|
-| W A S D | left stick (move) |
-| arrow keys | right stick (camera) |
-| K or Space | A |
-| J | B |
-| L | X |
-| I | Y |
-| Q / E | L / R |
-| Left Shift | ZL (target) |
-| C | ZR |
-| Enter / Tab | + / − |
-| H | Home |
-| 1 2 3 4 | D-pad up / down / left / right |
-| X / V | left / right stick click |
-
-**Input › Controls…** remaps everything on a drawing of the controller: click a button, stick
-direction or stick click, then press a key or a controller button / stick direction (each input
-has a key, an alternate key and a controller binding); Esc cancels, right-click clears. Pressed
-buttons light up and the sticks show their deflection, so you can test the mapping; a key bound
-twice is marked with a warning. Changes apply immediately, also while playing. A dead zone for
-controller sticks and an option to invert the camera's up/down are at the bottom, with **Reset to
-Defaults…**. The mapping is saved to `~/Library/Application Support/WWHD/controls.json`
-(`WWHD_CONTROLS=<file>` uses another file); deleting it restores the defaults. The app's
-single-key shortcuts (R, O, M, N, 6–9, P, F1–F5, F12) and Esc can't be bound.
-
-The **Graphics** menu in the menu bar switches fixes and enhancements while playing (the TV
-window title shows what is active and the current frame rate): 60 fps by frame interpolation
-(**6**), true 60 fps (**7**, experimental), internal resolution 1x / 1.5x / 2x / 3x (**R**
-cycles; the game renders at 1280x720, 2x renders at 2560x1440), edge smoothing (FXAA, **8**),
-ambient-occlusion mode (**O** cycles), full-size occlusion depth (**M**), 16x anisotropic
-filtering (**N**), and a frame capture for debugging (**P** or fn+F12, written to `captures/`;
-captures contain game imagery, so keep them to yourself).
-
-The **Gameplay** menu has optional changes to how the game plays, all off by default: climb any
-wall (with a stamina wheel; B or A lets go), a direct right-stick camera (no easing, adjustable
-speed), a mouse camera (click the picture to capture the pointer, Esc releases it), first person
-on the mouse wheel, quick doors and fast scene changes.
-
-The **Save States** menu saves the whole running game to one of 5 slots and loads it back
-(**Shift+F1–F5** save, **F1–F5** load); each slot shows its time and area. Slots are kept in
-`~/Library/Application Support/wwhd/states/` (about 270 MB each) and survive restarts; a slot
-made by an incompatible build is refused. Loading works once the game has reached gameplay.
-
-Game controllers (Xbox, PlayStation, Switch Pro, MFi) work too; by default buttons map by
-position (the bottom face button is the Wii U's B), and they can be remapped in the Controls window.
-The **Input** menu switches whether keyboard and controllers act as the Wii U GamePad (default)
-or as a Wii U Pro Controller (`WWHD_PRO_CONTROLLER=1` starts in that mode); with the Pro
-Controller, the GamePad window keeps its screen and touch input.
-When the game asks for text (e.g. your name), a macOS text field opens.
-
-## Notes
-
-- Shaders are translated on first use and cached in `~/Library/Caches/wwhd/shaders.bin`; later
-  runs replay that cache at startup.
-- Useful environment variables: `WWHD_NO_AUDIO=1`, `WWHD_NO_GAMEPAD=1` (no second window),
-  `WWHD_AUDIO_VOLUME=0..1`, `WWHD_SHADER_CACHE=<file>|0`, `WWHD_AO_MODE=0..2`, `WWHD_AO_HIRES=0|1`, `WWHD_ANISO=0|1`, `WWHD_RES_SCALE=1|1.5|2|3`,
-  `WWHD_FXAA=0|1`, `WWHD_INTERP=1`, `WWHD_TRUE60=1` (start values for the Graphics menu);
-  `WWHD_SHADOW_SCALE=n` gives the shadow maps their own resolution factor; `WWHD_STATE_DIR=<dir>`
-  stores save states elsewhere.
-- A game halt writes `captures/crash-<time>.log` with the guest call chain (useful for bug reports;
-  it contains only addresses and function names).
-- Debugging aids (frame/draw dumps, traces, scheduler statistics) are documented next to their
-  code: grep for `WWHD_` in `runtime/src`.
-
-## Optional: shader head start
-
-The first time a shader is needed it is translated and compiled, which can cause short hitches.
-A "head start" pre-translates shaders from the game's own shader archives so later sessions
-start with them. It is built locally from your files and is never distributed; without it the
-game simply translates shaders on first use.
-
-Building it needs a state template (the GPU register states each shader was used with), which
-is recorded from your own play: play for a while (the further you get, the more it covers),
-then
+Sign it with your own release key.  
 
 ```sh
-python3 tools/shaderprep.py template ~/Library/Caches/wwhd/shaders.bin   # -> game/shadercache/template.bin
-python3 tools/shaderprep.py build                                          # -> game/shadercache/headstart.bin
-./build/cmake/wwhd --warm-shaders    # optional: compile everything once to fill the macOS shader cache
+keytool -genkeypair -keystore ~/.android/wwhd-release.jks -storetype PKCS12 -alias wwhd \
+        -keyalg RSA -keysize 4096 -validity 10000 -dname "CN=Your name"
+cat > android/keystore.properties <<EOF
+storeFile=/home/you/.android/wwhd-release.jks
+storePassword=...
+keyAlias=wwhd
+keyPassword=...
+EOF
 ```
 
-`--merge game/shadercache/template.bin` adds a later session to an existing template. The runtime
-picks up `game/shadercache/headstart.bin` automatically (`WWHD_HEADSTART=<file>|0` overrides it).
-See the comment at the top of `tools/shaderprep.py` for the file formats.
+`android/keystore.properties`, `*.jks` and `*.keystore` are in `.gitignore`; never commit them.
+Raise the version code with every APK you share. Release builds ignore the testing launch extras
+(`WWHD_*`, `gameDir`).
 
-## Optional: decompilation tools
+## Legal notice
 
-`tools/decomp/` names WWHD functions by matching them against the
-[zeldaret/tww](https://github.com/zeldaret/tww) GameCube decompilation (CC0); the 60 fps features
-are built on those names (`tools/recomp/hooks.txt`, `runtime/src/interp*.cpp`, `runtime/src/true60*.cpp`).
-Findings are in `docs/decomp-notes.md`.
+This is an unofficial fan project. It is not affiliated with, endorsed or sponsored by Nintendo or
+by the developer of Lossless Scaling. "The Legend of Zelda", "The Wind Waker", "Wii U" and related
+names are trademarks of their respective owners and are used here only to describe what this
+software is compatible with.
 
-`tools/verify/` is a differential test harness for a functionally verified decompilation: it runs
-hand-written C++ next to the recompiled original on generated and recorded inputs and compares
-return values, memory effects and call sequences (see `tools/verify/README.md`). The verified
-source itself is derived from the game and is **not** part of this repository.
-
-```sh
-git clone https://github.com/zeldaret/tww tww     # git-ignored reference checkout
-python3 tools/decomp/match.py game/code/cking.rpx tww build/names.tsv
-```
-
-The assert, string and actor-profile stages only need the decompilation's sources. The
-call-graph stage additionally needs the decompilation built (`tww/build/GZLE01`), which in turn
-needs `ninja` and your own GameCube disc image of The Wind Waker (USA) as described in the tww
-README. `build/names.tsv` is derived from the game and stays on your machine.
-
-## Status
-
-The opening of the game (title, file select, intro, Outset Island) is tested and matches Cemu
-side by side, at a steady 30 fps (the console's frame rate) and at 60 fps with interpolation;
-true 60 is experimental. Known gaps: geometry shaders and rectangle
-primitives are not implemented yet (not encountered so far), shadow edges are harder than on
-the console, startup sometimes sits on a black screen for up to a minute before the logo
-(a timing-dependent wait during audio initialization, under investigation), and later parts of
-the game are untested.
+This repository and the APK contain **no game code, no game assets, no keys and
+no part of Lossless Scaling**. To use the app you need your own, legally obtained copy of the game,
+dumped from your own Wii U disc and console, and for frame generation your own copy of Lossless
+Scaling. Everything game-specific (the extracted files, the compiled game code, shader caches) is
+created on your device from your own legal dump and must not be redistributed. 
 
 ## License
 
 The code of this project is licensed under the Mozilla Public License 2.0 (see `LICENSE`).
-Vendored third-party code keeps its own license: Cemu (MPL-2.0), metal-cpp (Apache-2.0) and
-{fmt} (MIT); see Credits. The game itself is Nintendo's property and is not included.
+Third-party code keeps its own license: Cemu (MPL-2.0), {fmt} (MIT), glslang (BSD-3-Clause and
+others), the Vulkan Memory Allocator (MIT), and in the APK without game code
+[LLVM](https://llvm.org) and the NDK's libc++ (Apache-2.0 with LLVM Exceptions). The app shows all
+of these licenses under About.
 
 ## Credits
 
-GPU address library, shader decompiler and a few reference structures are vendored from
-[Cemu](https://github.com/cemu-project/Cemu) (MPL-2.0, see `runtime/third_party/cemu/LICENSE.txt`);
-`tools/wudextract.py`, `runtime/src/espresso_fp.c` and parts of the OS layer are ported from or
-follow Cemu as noted in those files. Also vendored: [metal-cpp](https://developer.apple.com/metal/cpp/)
-(Apache-2.0, `runtime/third_party/metal-cpp/LICENSE.txt`) and [{fmt}](https://github.com/fmtlib/fmt)
-(MIT, `runtime/third_party/fmt/LICENSE`).
+This fork is built on [ZeldaWWHDRecomp](https://github.com/ZeldaWWHDRecomp/ZeldaWWHDRecomp), which
+did the recompilation, the Wii U system libraries and the original Metal renderer for macOS. The GPU
+address library, shader decompiler and a few reference structures are vendored from
+[Cemu](https://github.com/cemu-project/Cemu) (MPL-2.0); `tools/wudextract.py` and parts of the OS
+layer are ported from or follow Cemu as noted in those files. Frame generation uses the shaders of
+[Lossless Scaling](https://store.steampowered.com/app/993090/Lossless_Scaling/) from your own copy.

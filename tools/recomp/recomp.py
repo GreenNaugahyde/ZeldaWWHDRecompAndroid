@@ -127,6 +127,8 @@ class Recompiler:
             return "MUSTTAIL return %s(c);" % self.imp_name(slot)
         if self.cur_start <= tgt < self.cur_end:
             self.labels.add(tgt)
+            if tgt <= addr:
+                self.loop_heads.add(tgt)
             return "goto L_%08X;" % tgt
         if tgt in self.entries:
             return "MUSTTAIL return f_%08X(c);" % tgt
@@ -155,6 +157,8 @@ class Recompiler:
                 slot = base + 4 * i
                 if self.cur_start <= slot < self.cur_end:
                     self.labels.add(slot)
+                    if slot <= addr:
+                        self.loop_heads.add(slot)
                     cases.append("case 0x%08Xu: goto L_%08X;" % (slot, slot))
             return "switch (c->ctr) { %s } c->pc = c->ctr; MUSTTAIL return ppc_dispatch(c);" % " ".join(cases)
         return "c->pc = c->ctr; MUSTTAIL return ppc_dispatch(c);"
@@ -167,6 +171,7 @@ class Recompiler:
     def emit_function(self, start):
         self.cur_start, self.cur_end = start, self.func_end(start)
         self.labels = set()
+        self.loop_heads = set()  # targets of backward branches
         body = []
         for a in range(start, self.cur_end, 4):
             w = self.p.word(a)
@@ -186,7 +191,11 @@ class Recompiler:
             out.append("void f_%08X(Cpu* __restrict c) { hook_%08X(c); }\n" % (start, start))
         out += ["void %s(Cpu* __restrict c) {" % fname, "    PPC_ENTER(0x%08Xu);" % start]
         for a, w, s in body:
-            if a in self.labels:
+            if a in self.loop_heads:
+                # guest loops may wait for another core's store (spin locks, flags): without this the
+                # C compiler is free to load once and spin forever
+                out.append("L_%08X: PPC_LOOP_HEAD();" % a)
+            elif a in self.labels:
                 out.append("L_%08X: ;" % a)
             if a in self.sites:
                 out.append("    site_%08X(c);" % a)
@@ -241,17 +250,17 @@ class Recompiler:
                 f.write("void %s(Cpu* c);\n" % self.imp_name(s))
         with open(os.path.join(outdir, "table.c"), "w") as f:
             f.write('#include "funcs.h"\n#include "recomp_table.h"\n\n')
-            f.write("const RecompEntry g_recomp_funcs[] = {\n")
+            f.write("static const RecompEntry funcs[] = {\n")
             for e in self.sorted_entries:
                 f.write("    {0x%08Xu, f_%08X},\n" % (e, e))
-            f.write("};\nconst unsigned g_recomp_func_count = %d;\n\n" % len(self.sorted_entries))
-            f.write("const RecompImport g_recomp_imports[] = {\n")
+            f.write("};\nconst RecompEntry* g_recomp_funcs = funcs;\nunsigned g_recomp_func_count = %d;\n\n" % len(self.sorted_entries))
+            f.write("static const RecompImport imports[] = {\n")
             for s, (lib, name, kind) in sorted(self.imports.items()):
                 fn = self.imp_name(s) if kind == "f" else "0"
                 addr = self.data_import_addr.get(s, s)
                 f.write('    {0x%08Xu, 0x%08Xu, "%s", "%s", %d, %s},\n' % (s, addr, lib, name, kind == "f", fn))
-            f.write("};\nconst unsigned g_recomp_import_count = %d;\n" % len(self.imports))
-            f.write("const uint32_t g_recomp_entry_point = 0x%08Xu;\n" % self.p.entry)
+            f.write("};\nconst RecompImport* g_recomp_imports = imports;\nunsigned g_recomp_import_count = %d;\n" % len(self.imports))
+            f.write("uint32_t g_recomp_entry_point = 0x%08Xu;\n" % self.p.entry)
         with open(os.path.join(outdir, "imports.c"), "w") as f:
             f.write('#include "funcs.h"\n\nvoid hle_unimplemented(Cpu* c, const char* lib, const char* name);\n\n')
             for s in func_slots:

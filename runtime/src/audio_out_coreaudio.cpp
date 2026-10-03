@@ -152,4 +152,6 @@ void stats(uint64_t& underrun, uint64_t& dropped) {
     dropped = g_dropped;
 }
 
+void set_paused(bool) {}  // macOS keeps playing in the background
+
 }  // namespace audio

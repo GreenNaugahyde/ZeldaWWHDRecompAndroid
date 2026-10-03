@@ -23,6 +23,9 @@ shaders/
 draw_*.png
 captures/
 # never commit game data, keys or anything derived from the game
+android/keystore.properties
+*.jks
+*.keystore
 *.key
 *.wud
 *.wux
@@ -37,7 +40,11 @@ headstart.bin
 *.log
 *.metal
 *.tsv
+# Lossless Scaling DLL (user-supplied, proprietary)
+Lossless.dll
 # verified decompiled source (derived from the game): never published
 /wwhd_src/
 # local coordination board
 /task.md
+# personal notes and to-do lists, not part of the repository
+/notes/

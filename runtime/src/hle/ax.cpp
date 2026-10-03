@@ -16,6 +16,7 @@
 #include <vector>
 
 #include "../audio_out.h"
+#include "../platform.h"
 #include "../runtime.h"
 
 namespace interp { const char* phase_name(); }
@@ -402,7 +403,7 @@ void output_frame(Cpu* c) {
 
 void frame_thread() {
     Cpu* c = threads::make_service_cpu("AX frame", 0x20000);
-    pthread_setname_np("AX frame");
+    platform::set_thread_name("AX frame");
     threads::set_service_core(0);  // the game's audio threads live on core 0
     auto next = std::chrono::steady_clock::now();
     while (g_running) {

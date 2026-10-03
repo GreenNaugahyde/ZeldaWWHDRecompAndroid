@@ -125,3 +125,27 @@ scheduler, the GX2 implementation, and the Metal renderer.
 - **Accuracy model.** Both emulate behaviour, not timing cycles. Cemu approximates timing with
   instruction quanta; this port models timing at the API level (vsync, flips, GPU completion,
   thread priorities).
+
+## Android
+
+The Android build runs the same recompiled code, OS layer and GX2 implementation. Only the host
+side changes:
+
+- **Graphics.** A Vulkan renderer (`runtime/src/vk/`) replaces the Metal one, with the same
+  surface model, aliasing rules and caches. Shaders go through the same vendored Cemu decompiler,
+  using its GLSL emitter in Vulkan mode (one descriptor set per stage, as in Cemu's Vulkan
+  renderer). glslang compiles the GLSL to SPIR-V on worker threads, and the driver's pipeline
+  cache persists across launches.
+- **Guest memory and the GPU.** Metal binds guest memory to the GPU without copies. Android GPUs
+  can't import arbitrary host memory, so vertex, index and uniform data is copied into transient
+  buffers per draw. Large vertex buffers are copied once per submission.
+- **Textures.** Most mobile GPUs lack BC compression, so BC textures are decoded on the CPU when
+  uploaded. A texture that is also a bound render target is sampled through a copy (Vulkan
+  forbids that feedback loop; Metal used framebuffer fetch).
+- **Address space.** Many Android kernels give apps a 39-bit address space, so the 4 GiB guest
+  window sits at `0x1000000000` instead of `0x200000000000` (`PPC_MEM_BASE` in
+  `runtime/include/ppc.h`; the generated code picks it up when compiled for Android).
+- **Platform.** AAudio replaces CoreAudio. A Java activity (`android/`) owns the window and input:
+  it composes the TV and GamePad images into one screen, draws the on-screen GamePad, maps game
+  controllers and keyboards, and shows the text-entry dialog. It talks to the runtime through a
+  few JNI calls (`runtime/src/android/jni_main.cpp`).

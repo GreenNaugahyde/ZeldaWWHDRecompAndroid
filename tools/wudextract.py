@@ -10,7 +10,7 @@ usage:
   wudextract.py IMAGE extract OUTDIR [GLOB ...]
 
 Keys (none are included in this repository; dump them from your own console):
-  - the disc key is read from IMAGE with the extension replaced by .key (16 bytes);
+  - the disc key is read from IMAGE with the extension replaced by .key (16 raw bytes or 32 hex digits);
   - the Wii U common key is read from the WIIU_COMMON_KEY environment variable (32 hex digits),
     or from a file common.key (16 raw bytes or 32 hex digits) next to IMAGE or in the current
     directory.
@@ -174,7 +174,9 @@ class FST:
 
 
 def open_disc(path):
-    key = open(os.path.splitext(path)[0] + ".key", "rb").read(16)
+    key_path = os.path.splitext(path)[0] + ".key"
+    with open(key_path, "rb") as f:
+        key = parse_key(f.read(), key_path)  # 16 raw bytes or 32 hex digits
     wud = Wud(path)
     if struct.unpack(">I", wud.read(SECTOR * 2, 4))[0] != 0xCC549EB9:
         raise ValueError("not a Wii U disc image")

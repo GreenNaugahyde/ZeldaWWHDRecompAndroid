@@ -7,6 +7,7 @@
 //                     background once their shaders are compiled (like the user cache's)
 //   type 3 (speculative): other archive programs with states of the same shader family; only
 //                     `wwhd --warm-shaders` compiles them, to fill the macOS Metal shader cache
+// (Shared by the Metal and Vulkan renderers; Vulkan ignores the type 2 records, see vk/vk_draw.cpp.)
 // `wwhd --warm-shaders` compiles all three kinds.
 // WWHD_HEADSTART=<file> overrides the location, WWHD_HEADSTART=0 disables it.
 #include <chrono>
@@ -17,15 +18,15 @@
 #include <zlib.h>
 
 #include "Cafe/HW/Latte/ISA/RegDefines.h"
-#include "metal.h"
 #include "runtime.h"
 
 namespace gfx {
 
-bool headstart_translate(const uint32_t* regs, bool vertex, bool compileNow);  // metal_draw.mm
-size_t headstart_compiling();                                                   // metal_draw.mm
-bool headstart_queue_pipeline(const uint8_t* raw, size_t size);                 // metal_draw.mm
-size_t headstart_build_pipelines(int maxInFlight, size_t& built, size_t& dropped);  // metal_draw.mm
+// implemented by the renderer (metal_draw.mm / vk/vk_draw.cpp)
+bool headstart_translate(const uint32_t* regs, bool vertex, bool compileNow);
+size_t headstart_compiling();
+bool headstart_queue_pipeline(const uint8_t* raw, size_t size);
+size_t headstart_build_pipelines(int maxInFlight, size_t& built, size_t& dropped);
 
 namespace {
 constexpr uint32_t kRecShader = 1, kRecPipeline = 2, kRecSpeculative = 3;

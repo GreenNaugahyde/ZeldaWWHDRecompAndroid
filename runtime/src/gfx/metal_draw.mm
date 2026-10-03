@@ -1208,16 +1208,28 @@ static void cache_load() {
             uint32_t vertex, size, fsSize, n;
             if (!get(p, end, vertex) || !get(p, end, size) || !get(p, end, fsSize) || !get(p, end, n)) break;
             if (p + size + fsSize + n * 8 > end) break;
-            // the microcode goes to fresh guest memory so the normal translation path can read it
-            uint32_t prog = mem::host_alloc(size, 0x100);
+            // the microcode goes to guest memory so the normal translation path can read it. One
+            // host-only scratch buffer is reused: translation keeps no pointer into it, and a buffer
+            // per record would run out of guest memory for a large cache (100k+ variants)
+            static uint32_t scratch = 0, scratchSize = 0;
+            uint32_t need = ((size + 0xFF) & ~0xFFu) + fsSize;
+            if (need > scratchSize) {
+                scratchSize = std::max<uint32_t>(need * 2, 0x10000);
+                scratch = mem::host_alloc(scratchSize, 0x100);
+            }
+            uint32_t prog = scratch;
             memcpy(mem::ptr(prog), p, size);
             p += size;
             uint32_t fsProg = 0;
             if (fsSize) {
-                fsProg = mem::host_alloc(fsSize, 0x100);
+                fsProg = scratch + ((size + 0xFF) & ~0xFFu);
                 memcpy(mem::ptr(fsProg), p, fsSize);
                 p += fsSize;
             }
+            // program_hash remembers hashes by address within a frame: forget the scratch buffer's
+            // (see vk/vk_draw.cpp)
+            g_program_hashes.erase(prog);
+            if (fsSize) g_program_hashes.erase(fsProg);
             std::fill(regs.begin(), regs.end(), 0);
             for (uint32_t i = 0; i < n; i++) {
                 uint32_t r, val;

@@ -3,7 +3,10 @@
 #include "Cafe/HW/Latte/Core/LatteCachedFBO.h"
 #include "Cafe/HW/Latte/Core/LatteShader.h"
 #include "Cafe/HW/Latte/ISA/RegDefines.h"
+#include "Cafe/HW/Latte/Renderer/Renderer.h"
+#ifdef ENABLE_METAL
 #include "Cafe/HW/Latte/Renderer/Metal/LatteToMtl.h"
+#endif
 #include "Cafe/HW/Latte/LegacyShaderDecompiler/LatteDecompiler.h"
 #include "Cafe/HW/Latte/Core/FetchShader.h"
 
@@ -119,6 +122,7 @@ Latte::E_GX2SURFFMT LatteMRT::GetDepthBufferFormat(const LatteContextRegister& l
 	return Latte::E_GX2SURFFMT::D16_UNORM;
 }
 
+#ifdef ENABLE_METAL
 MTL::VertexFormat GetMtlVertexFormat(Latte::E_HWFMT format)
 {
     switch (format)
@@ -171,7 +175,9 @@ MTL::VertexFormat GetMtlVertexFormat(Latte::E_HWFMT format)
 		return MTL::VertexFormatInvalid;
 	}
 }
+#endif
 
+// byte size of a vertex fetch format (API independent)
 uint32 GetMtlVertexFormatSize(Latte::E_HWFMT format)
 {
     switch (format)
@@ -408,11 +414,11 @@ static void InitUniformLayoutFromDecompiler(
     shader->uniform.uniformRangeSize = offsets.offset_endOfBlock;
 }
 
-// resource mapping + uniform layout, as LatteShader_CreateShaderFromDecompilerOutput does for Metal
+// resource mapping + uniform layout, as LatteShader_CreateShaderFromDecompilerOutput does for Metal / Vulkan
 LatteDecompilerShader* FinishDecompiledShader(LatteDecompilerOutput_t& decompilerOutput)
 {
 	LatteDecompilerShader* shader = decompilerOutput.shader;
-	shader->resourceMapping = decompilerOutput.resourceMappingMTL;
+	shader->resourceMapping = g_renderer->GetType() == RendererAPI::Metal ? decompilerOutput.resourceMappingMTL : decompilerOutput.resourceMappingVK;
 	shader->textureUnitMask2 = decompilerOutput.textureUnitMask;
 	shader->streamoutBufferWriteMask = decompilerOutput.streamoutBufferWriteMask;
 	shader->hasStreamoutBufferWrite = decompilerOutput.streamoutBufferWriteMask.any();

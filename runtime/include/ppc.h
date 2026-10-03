@@ -1,7 +1,9 @@
 /* Espresso (Wii U PowerPC) CPU state and helpers used by recompiled code.
  *
  * Guest memory is a 4 GiB window mapped at a fixed host address, so a guest
- * effective address converts to a host pointer with a single add.
+ * effective address converts to a host pointer with a single add. Android
+ * kernels often give apps only a 39-bit (512 GiB) address space, so the window
+ * sits lower there.
  */
 #pragma once
 #include <math.h>
@@ -12,7 +14,11 @@
 extern "C" {
 #endif
 
+#if defined(__ANDROID__)
+#define PPC_MEM_BASE ((uint8_t*)0x1000000000ull)
+#else
 #define PPC_MEM_BASE ((uint8_t*)0x200000000000ull)
+#endif
 
 typedef struct Cpu {
     uint32_t r[32];
@@ -40,6 +46,9 @@ double ppc_fres(double x);
 double ppc_frsqrte(double x);
 
 #define MUSTTAIL __attribute__((musttail))
+/* compiler barrier at loop heads: guest memory is re-read every iteration, so a guest busy-wait
+   sees stores from other threads (no hardware fence; the guest's own sync instructions provide those) */
+#define PPC_LOOP_HEAD() __asm__ __volatile__("" ::: "memory")
 
 /* optional guest function-entry trace (runtime switch, see runtime/src/trace.cpp) */
 extern int g_ppc_trace;

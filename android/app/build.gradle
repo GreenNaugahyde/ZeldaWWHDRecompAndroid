@@ -1,0 +1,83 @@
+// The app bundles libwwhd.so, built by the repository's top-level CMakeLists.txt. That needs the
+// recompiled game code in build/gen (tools/recomp/recomp.py) first.
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'org.wwhdrecomp.app'
+    compileSdk 36
+    ndkVersion '27.2.12479018'
+
+    defaultConfig {
+        applicationId 'org.wwhdrecomp.app'
+        minSdk 30          // Vulkan 1.1, AAudio, 39-bit+ address space handling
+        targetSdk 36
+        // -PwwhdVersionCode / -PwwhdVersionName for a release; raise the code with every APK you share
+        versionCode((project.findProperty('wwhdVersionCode') ?: '2') as int)
+        versionName project.findProperty('wwhdVersionName') ?: '0.2'
+        ndk {
+            abiFilters 'arm64-v8a'
+        }
+        externalNativeBuild {
+            cmake {
+                targets 'wwhd'
+                arguments '-DANDROID_STL=c++_static'
+                // -PwwhdGenDir=<dir>: recompiled code somewhere other than build/gen
+                if (project.hasProperty('wwhdGenDir')) arguments "-DGEN_DIR=${project.property('wwhdGenDir')}"
+                // -PwwhdGenObjects=<dir>: game code from the LLVM recompiler's objects (testing)
+                if (project.hasProperty('wwhdGenObjects')) arguments "-DGEN_OBJECTS=${project.property('wwhdGenObjects')}"
+                // -PwwhdDeviceRecomp: no game code in the APK; the app recompiles it on the device
+                if (project.hasProperty('wwhdDeviceRecomp')) arguments '-DWWHD_DEVICE_RECOMP=ON'
+            }
+        }
+    }
+
+    // A release key for APKs you share (-PwwhdDeviceRecomp: no game code in them): android/keystore.properties
+    // with storeFile, storePassword, keyAlias, keyPassword. Never commit it or the key; keep both backed
+    // up (an app signed with another key can't update it). Without the file, release builds use the
+    // local debug key (fine for personal builds of your own game).
+    def keystoreProps = rootProject.file('keystore.properties')
+    signingConfigs {
+        if (keystoreProps.exists()) {
+            release {
+                def p = new Properties()
+                keystoreProps.withInputStream { p.load(it) }
+                storeFile file(p.getProperty('storeFile'))
+                storePassword p.getProperty('storePassword')
+                keyAlias p.getProperty('keyAlias')
+                keyPassword p.getProperty('keyPassword')
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            signingConfig keystoreProps.exists() ? signingConfigs.release : signingConfigs.debug
+            externalNativeBuild { cmake { arguments '-DCMAKE_BUILD_TYPE=Release' } }
+        }
+        debug {
+            // the runtime is unusably slow at -O0; keep debug info but optimize
+            externalNativeBuild { cmake { arguments '-DCMAKE_BUILD_TYPE=RelWithDebInfo' } }
+        }
+    }
+
+    externalNativeBuild {
+        cmake {
+            path file('../../CMakeLists.txt')
+            buildStagingDirectory file('../../build/android-cxx')
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    packaging {
+        jniLibs {
+            useLegacyPackaging false   // stored uncompressed and mapped directly from the APK
+        }
+    }
+}

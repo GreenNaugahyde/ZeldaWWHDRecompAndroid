@@ -1,0 +1,217 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">TLoZ:TWW HD Recompiled</string>
+
+    <string name="setup_text">The game files were not found or don\'t match this build.\n\nThis app contains only the recompiled code built from your own copy of the game; it needs the extracted game files from the same dump. Extract them on a computer (see README.md: tools/wudextract.py), then copy the resulting folder (with code/, content/ and meta/ inside) to:\n\n%1$s\n\nFor example: adb push game /sdcard/Android/data/org.wwhdrecomp.app/files/\n\nProblem: %2$s</string>
+    <string name="setup_retry">Check again</string>
+    <string name="setup_welcome">Welcome!\n\nThis app contains no game files. It plays your own copy of The Legend of Zelda: The Wind Waker HD for Wii U (USA version).\n\nPut these three files in one folder on this device, then choose that folder:\n•  your disc image (.wux or .wud)\n•  its disc key (the image\'s name with .key)\n•  the console\'s common key (common.key)\n\nThe app then extracts the game files (about 1.7 GB) and prepares the game code for this device (about 5 minutes, once).</string>
+    <string name="setup_problem">The game files found don\'t work: %1$s</string>
+    <string name="setup_extract">Extract from your disc image…</string>
+    <string name="extract_missing">Choose the folder that holds your disc image, its disc key and the console\'s common key:\n\n%1$s the image (.wux or .wud)\n%2$s its disc key (the image\'s name with .key)\n%3$s common.key</string>
+    <string name="extract_bad_key">A key file must hold 16 bytes or 32 hex digits.</string>
+    <string name="extract_running">Extracting the game from your disc image…</string>
+    <string name="extract_detail">%1$d of %2$d MB (%3$.0f MB/s)</string>
+    <string name="extract_detail_short">%1$d of %2$d MB</string>
+    <string name="work_channel">Game setup</string>
+    <string name="work_extracting">Extracting the game files</string>
+    <string name="work_compiling">Preparing the game code</string>
+    <string name="space_title">Not enough free storage</string>
+    <string name="space_text">This step needs about %1$d MB of free storage; %2$d MB are free. Free up some space and try again.</string>
+    <string name="extract_failed">Extraction failed: %1$s</string>
+    <string name="compile_running">Preparing the game code for this device…\n\nThis happens once and takes about five minutes. You can leave the app meanwhile: it continues in the background (see the notification), and if it is closed, it continues where it stopped.</string>
+    <string name="compile_detail">%1$d of %2$d parts (%3$d:%4$02d)</string>
+    <string name="compile_failed">Preparing the game code failed: %1$s</string>
+    <string name="menu_about">About and licenses</string>
+    <string name="compile_continue">Continue</string>
+    <string name="compile_stopping">Stopping…</string>
+    <string name="compile_cancelled">Preparing the game code was cancelled. It continues where it stopped when you start again.</string>
+
+    <string name="menu_resolution">Resolution: %1$s</string>
+    <string name="res_title">Rendering resolution</string>
+    <string name="res_original">Original (%1$s)</string>
+    <string name="res_scaled_up">%1$s× (%2$s, more GPU load)</string>
+    <string name="res_scaled_down">%1$s× (%2$s, less GPU load)</string>
+    <string name="res_restart">The new resolution takes effect when the game restarts. Progress since your last save is lost.</string>
+    <string name="res_restart_now">Restart now</string>
+    <string name="res_restart_later">Later</string>
+    <string name="menu_fg">Frame generation: %1$s</string>
+    <string name="menu_states">Save states…</string>
+    <string name="states_title">Save states</string>
+    <string name="state_slot">Slot %1$d %2$s</string>
+    <string name="state_empty">— empty</string>
+    <string name="state_incompatible">%1$s (from another build, can\'t be loaded)</string>
+    <string name="state_save">Save here</string>
+    <string name="state_load">Load</string>
+    <string name="state_overwrite">Replace the state in slot %1$d?</string>
+    <string name="menu_mods">Gameplay mods…</string>
+    <string name="menu_aspect">Aspect ratio: %1$s</string>
+    <string name="aspect_title">Aspect ratio of the picture</string>
+    <string-array name="aspect_modes">
+        <item>Original 16:9 (bars)</item>
+        <item>Stretch to screen</item>
+        <item>Fill screen (cut edges)</item>
+    </string-array>
+    <string name="menu_backup">Import / export saves…</string>
+    <string name="backup_title">Import / export saves</string>
+    <string name="backup_export">Export to a folder…</string>
+    <string name="backup_import">Import from a folder…</string>
+    <string name="backup_export_title">Export</string>
+    <string name="backup_game_save">Game save</string>
+    <string name="backup_states">Save states (%1$d MB)</string>
+    <string name="backup_choose_folder">Choose folder…</string>
+    <string name="backup_exporting">Exporting…</string>
+    <string name="backup_exported">Exported to the folder \"%1$s\".</string>
+    <string name="backup_scanning">Looking for saves…</string>
+    <string name="backup_nothing">No game save (cking.sav) or save states (slot1–5.bin) found in this folder.</string>
+    <string name="backup_import_title">Import (replaces what is there)</string>
+    <string name="backup_import_save">Game save (from %1$s)</string>
+    <string name="backup_import_states">Save states: slot %1$s</string>
+    <string name="backup_import_go">Import</string>
+    <string name="backup_importing">Importing…</string>
+    <string name="backup_imported_states">Save states imported. States from another build of the app can\'t be loaded.</string>
+    <string name="backup_imported_save">Game save imported. The game restarts now to use it (the previous save is kept in save-before-import).</string>
+    <string name="backup_failed">Failed: %1$s</string>
+    <string name="mods_title">Gameplay mods</string>
+    <string name="mod_direct_camera">Direct right-stick camera (no easing): %1$s</string>
+    <string name="mod_camera_speed">Direct camera speed: %1$.1f×</string>
+    <string name="mod_speed_title">Direct camera speed</string>
+    <string name="mod_speed_item">%1$.1f×</string>
+    <string name="mod_first_person">First person on R3: %1$s</string>
+    <string name="mod_climb">Climb any wall (stamina wheel; B or A lets go): %1$s</string>
+    <string name="mod_quick_doors">Quick doors (4× speed): %1$s</string>
+    <string name="mod_fast_scenes">Fast scene changes (4× speed): %1$s</string>
+    <string name="fg_title">Frame generation (Lossless Scaling)</string>
+    <string name="fg_about">Adds interpolated frames between the game\'s 30 fps frames, using the frame generation of Lossless Scaling. It needs your own copy of Lossless.dll from your Lossless Scaling installation (Steam: steamapps/common/Lossless Scaling). Copy it to this device and choose it here. Generated frames show the game about one frame later.</string>
+    <string name="fg_no_dll">needs Lossless.dll</string>
+    <string name="fg_choose_dll">Choose Lossless.dll…</string>
+    <string name="fg_replace_dll">Choose another Lossless.dll…</string>
+    <string name="fg_remove_dll">Remove Lossless.dll</string>
+    <string name="fg_enabled">Frame generation: %1$s</string>
+    <string name="fg_multiplier">Multiplier: ×%1$d (%2$d fps)</string>
+    <string name="fg_multiplier_title">Frames per game frame</string>
+    <string name="fg_multiplier_item">×%1$d (%2$d fps)</string>
+    <string name="fg_mode">Network: %1$s</string>
+    <string name="fg_performance">Performance</string>
+    <string name="fg_quality">Quality (more GPU load)</string>
+    <string name="fg_flow_scale">Flow scale: %1$d%%</string>
+    <string name="fg_flow_title">Motion estimate resolution</string>
+    <string name="fg_flow_item">%1$d%%</string>
+    <string name="fg_ui_detection">UI detection: %1$s</string>
+    <string name="fg_bad_dll">This file can\'t be used: %1$s</string>
+    <string name="fg_dll_untested">Lossless.dll is installed and frame generation is on, but this version of its shaders hasn\'t been tested with the app: generated frames may look wrong. If they do, select another Lossless.dll (the README names the tested one).</string>
+    <string name="fg_dll_tested_hint">Installed: a tested version</string>
+    <string name="fg_dll_untested_hint">Installed: an untested version (frames may look wrong)</string>
+    <string name="fg_not_working">not working</string>
+    <string name="fg_error">Frame generation isn\'t working: %1$s</string>
+    <string name="fg_dll_ok">Lossless.dll is ready and frame generation is on.</string>
+    <string name="menu_layout">Screen layout: %1$s</string>
+    <string name="menu_controls_hide">Hide on-screen controls</string>
+    <string name="menu_controls_show">Show on-screen controls</string>
+    <string name="menu_controls_size">On-screen controls size</string>
+    <string name="menu_controller">Controls act as: %1$s</string>
+    <string name="controller_gamepad">Wii U GamePad</string>
+    <string name="controller_pro">Wii U Pro Controller</string>
+    <string name="menu_ao">Ambient occlusion: %1$s</string>
+    <string name="menu_ao_hires">Full-size occlusion depth: %1$s</string>
+    <string name="menu_aniso">16x anisotropic filtering: %1$s</string>
+    <string name="menu_perf_hud">Performance overlay (FPS, load, temperatures): %1$s…</string>
+    <string name="perf_title">Performance overlay</string>
+    <string name="perf_show">Show the overlay</string>
+    <string name="perf_fps">Frame rate</string>
+    <string name="perf_frame">Frame time</string>
+    <string name="perf_cpu">CPU load (this app)</string>
+    <string name="perf_gpu">GPU load (and frame generation time)</string>
+    <string name="perf_temp_cpu">CPU temperature</string>
+    <string name="perf_temp_gpu">GPU temperature</string>
+    <string name="perf_temp_bat">Battery temperature</string>
+    <string name="perf_done">Done</string>
+    <string name="perf_move">Move overlay</string>
+    <string name="perf_reset">Reset position</string>
+    <string name="perf_move_hint">Drag to move · tap elsewhere when done</string>
+    <!-- the in-game menu (OptionsMenu) -->
+    <string name="opt_saves">Saves</string>
+    <string name="opt_slot">Save state %1$d</string>
+    <string name="opt_slot_empty">Empty</string>
+    <string name="opt_slot_incompatible">%1$s · from another build, can\'t be loaded</string>
+    <string name="opt_slot_save">Save</string>
+    <string name="opt_slot_load">Load</string>
+    <string name="opt_export">Export saves</string>
+    <string name="opt_export_hint">Copy your game save and save states to a folder</string>
+    <string name="opt_import">Import saves</string>
+    <string name="opt_import_hint">Restore them from a folder; an imported game save restarts the game</string>
+    <string name="opt_graphics">Graphics</string>
+    <string name="opt_mods">Mods</string>
+    <string name="opt_controls">Controls</string>
+    <string name="opt_back">Back</string>
+    <string name="opt_ok">OK</string>
+    <string name="opt_cancel">Cancel</string>
+    <string name="opt_on">ON</string>
+    <string name="opt_off">OFF</string>
+    <string name="opt_pad_hint">Controller: hold Select or press Home to open and close · L / R switch tabs · D-pad moves and changes values · right button selects · bottom button goes back</string>
+    <string name="opt_resolution">Rendering resolution</string>
+    <string name="opt_framegen">Frame generation</string>
+    <string name="opt_aspect">Aspect ratio</string>
+    <string name="opt_layout">Screen layout</string>
+    <string name="opt_ao">Ambient occlusion</string>
+    <string name="opt_ao_hires">Full-size occlusion depth</string>
+    <string name="opt_aniso">16× anisotropic filtering</string>
+    <string name="opt_perf">Performance overlay</string>
+    <string name="opt_perf_hint">FPS, load and temperatures</string>
+    <string name="opt_fg_choose_dll">Select Lossless.dll</string>
+    <string name="opt_fg_multiplier">Multiplier</string>
+    <string name="opt_fg_multiplier_hint">Frames shown per game frame</string>
+    <string name="opt_fg_network">Network</string>
+    <string name="opt_fg_flow">Flow scale</string>
+    <string name="opt_fg_flow_hint">Resolution of the motion estimate: lower is faster</string>
+    <string name="opt_fg_ui">UI detection</string>
+    <string name="opt_fg_ui_hint">Keeps menus and text sharp</string>
+    <string name="opt_fg_replace_dll">Select Lossless.dll</string>
+    <string name="opt_fg_remove_dll">Remove Lossless.dll</string>
+    <string name="opt_fg_remove_confirm">Remove Lossless.dll from the app? Frame generation is switched off until you choose it again.</string>
+    <string name="opt_perf_move">Move the overlay</string>
+    <string name="opt_perf_move_hint">Closes the menu: drag the overlay with a finger, tap elsewhere when done</string>
+    <string name="opt_perf_reset">Reset its position</string>
+    <string name="opt_capture">Capture a frame</string>
+    <string name="opt_capture_hint">For debugging: written to the app\'s folder</string>
+    <string name="opt_mod_direct_camera">Direct right-stick camera</string>
+    <string name="opt_mod_direct_camera_hint">No easing: the camera follows the stick at once</string>
+    <string name="opt_mod_camera_speed">Direct camera speed</string>
+    <string name="opt_mod_first_person">First person on R3</string>
+    <string name="opt_mod_climb">Climb any wall</string>
+    <string name="opt_mod_climb_hint">With a stamina wheel; B or A lets go</string>
+    <string name="opt_mod_quick_doors">Quick doors</string>
+    <string name="opt_mod_fast_scenes">Fast scene changes</string>
+    <string name="opt_mod_speed_hint">4× speed</string>
+    <string name="opt_onscreen">On-screen controls</string>
+    <string name="opt_onscreen_size">On-screen controls size</string>
+    <string name="opt_controller">Controls act as</string>
+    <string name="opt_states">Save states</string>
+    <string name="opt_backup">Import / export saves</string>
+    <string name="opt_shaders">Delete shader cache</string>
+    <string name="opt_shaders_hint">Restarts the game as on its first start</string>
+    <string name="opt_about">About</string>
+    <string name="opt_quit">Quit</string>
+    <string name="menu_capture">Capture frame (debugging)</string>
+    <string name="menu_clear_shaders">Delete shader cache…</string>
+    <string name="clear_shaders_text">The game restarts without its shader cache, as on the first start: shaders are compiled again as scenes appear, so the first visit to each scene loads slower and may stutter. Saves, save states and settings stay. (Unsaved progress is lost.)</string>
+    <string name="clear_shaders_restart">Delete and restart</string>
+    <string name="menu_quit">Quit</string>
+    <string name="on">on</string>
+    <string name="off">off</string>
+    <string name="layout_title">Screen layout</string>
+    <string name="ao_title">Ambient occlusion</string>
+    <string name="text_title">Enter text</string>
+    <string name="text_message">Up to %1$d characters.</string>
+
+    <string-array name="layouts">
+        <item>TV with GamePad inset</item>
+        <item>TV and GamePad side by side</item>
+        <item>TV only</item>
+        <item>GamePad with TV inset</item>
+    </string-array>
+    <string-array name="ao_modes">
+        <item>Original (as on Wii U)</item>
+        <item>Centre fix</item>
+        <item>Centre + noise fix</item>
+    </string-array>
+</resources>

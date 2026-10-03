@@ -18,6 +18,7 @@ namespace mods { void draw_overlay(id<MTLCommandBuffer> cmd, id<MTLTexture> tex)
 namespace gfx {
 Renderer R;
 bool log_this_frame();
+const char* backend_name() { return "Metal"; }
 
 // ---------------------------------------------------------------- windows
 }  // namespace gfx
@@ -248,6 +249,9 @@ void flush() {
         R.cmd = nil;
     }
 }
+
+// Metal binds guest memory directly: the GPU must be done before the game reuses it
+void draw_done() { wait_idle(); }
 
 void wait_idle() {
     end_encoder();

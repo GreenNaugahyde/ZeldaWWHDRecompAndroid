@@ -1,5 +1,4 @@
 #include <pthread.h>
-#include <pthread/qos.h>
 #include <condition_variable>
 #include <deque>
 // GX2 core: command execution, display lists, context states, draws, clears,
@@ -15,6 +14,7 @@
 #include "gx2_cmd.h"
 #include "gx2_regs.h"
 #include "gx2_texture_regs.h"
+#include "platform.h"
 #include "runtime.h"
 
 using namespace Latte;
@@ -65,7 +65,7 @@ static void execute_one(Op op, const uint32* p, uint32 n);
 
 // ---------------------------------------------------------------- render thread
 // Like the real GPU, command execution runs asynchronously to the game: GX2 calls append to a
-// queue that a render thread turns into Metal work. WWHD_NO_RENDER_THREAD=1 executes inline.
+// queue that a render thread turns into GPU work (Metal or Vulkan). WWHD_NO_RENDER_THREAD=1 executes inline.
 static const bool g_render_thread = getenv("WWHD_NO_RENDER_THREAD") == nullptr;
 static std::mutex g_q_mutex;
 static std::condition_variable g_q_cv, g_q_done_cv;
@@ -74,8 +74,8 @@ static bool g_q_waiting = false;
 static uint64_t g_fence_issued = 0, g_fence_done = 0;
 
 static void render_thread_main() {
-    pthread_setname_np("GX2 render");
-    if (!getenv("WWHD_NO_QOS")) pthread_set_qos_class_self_np(QOS_CLASS_USER_INTERACTIVE, 0);
+    platform::set_thread_name("GX2 render");
+    platform::set_thread_high_priority();
     for (;;) {
         {
             std::unique_lock<std::mutex> lk(g_q_mutex);
@@ -236,7 +236,7 @@ static void execute_one(Op op, const uint32* p, uint32 n) {
     case OP_INVALIDATE: gfx::invalidate(p[0], p[1], p[2]); break;
     case OP_EXPAND_COLOR: case OP_EXPAND_DEPTH: break;  // MSAA/HiZ decompression: nothing to do on the host
     case OP_FLUSH: gfx::flush(); break;
-    case OP_DRAW_DONE: gfx::wait_idle(); break;
+    case OP_DRAW_DONE: gfx::draw_done(); break;
     case OP_SWAP: gfx::swap(); break;
     case OP_SETUP_CONTEXT:
         g_contexts[p[0]].assign(kNumRegs, 0);
@@ -325,7 +325,7 @@ static void update_flips() {  // g_flip_mutex held
 
 HLE(gx2, GX2Init) {
     set_default_state();
-    LOG("[gx2] initialized (native GX2 -> Metal)");
+    LOG("[gx2] initialized (native GX2 -> %s)", gfx::backend_name());
 }
 
 HLE(gx2, GX2SetupContextStateEx) {
@@ -421,10 +421,15 @@ HLE(gx2, GX2Invalidate) { emit(OP_INVALIDATE, {arg(c, 0), arg(c, 1), arg(c, 2)})
 
 // ---------------------------------------------------------------- submission and presentation
 HLE(gx2, GX2Flush) { emit_host(OP_FLUSH, {}); }
+// GX2DrawDone calls and the time the game spent in them, for the periodic frame report
+static std::atomic<uint64_t> g_drawdone_calls{0}, g_drawdone_us{0};
 HLE(gx2, GX2DrawDone) {
     BlockingScope b;
+    auto t0 = std::chrono::steady_clock::now();
     emit_host(OP_DRAW_DONE, {});
     render_sync();
+    g_drawdone_calls++;
+    g_drawdone_us += (uint64_t)std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - t0).count();
     ret(c, 1);
 }
 HLE(gx2, GX2SwapScanBuffers) {
@@ -455,7 +460,8 @@ HLE(gx2, GX2SwapScanBuffers) {
         auto now = std::chrono::steady_clock::now();
         double s = std::chrono::duration<double>(now - last).count();
         last = now;
-        LOG("[gx2] frame %llu, %.1f swaps/s, swap interval %u", (unsigned long long)g_swap_count, 300 / s, g_swap_interval);
+        LOG("[gx2] frame %llu, %.1f swaps/s, swap interval %u; GX2DrawDone %.1f/frame, %.1f ms/frame", (unsigned long long)g_swap_count,
+            300 / s, g_swap_interval, g_drawdone_calls.exchange(0) / 300.0, g_drawdone_us.exchange(0) / 300.0 / 1000.0);
         if (getenv("WWHD_SCHED_STATS")) threads::report_sched();
     }
 }
@@ -482,7 +488,7 @@ HLE(gx2, GX2WaitForVsync) {
 // the renderer presents whatever was copied to the TV target.
 // (buffer, size, mode, surfaceFormat, bufferingMode): an sRGB format means scan-out applies the encoding
 HLE(gx2, GX2SetTVBuffer) {
-    LOG("[gx2] TV buffer format %X", arg(c, 3));
+    LOG("[gx2] TV buffer format %X, mode %u (1-2 480p, 3 720p, 5-7 1080p), %u buffers", arg(c, 3), arg(c, 2), arg(c, 4));
     gfx::set_tv_format(arg(c, 3), true);
 }
 HLE(gx2, GX2SetDRCBuffer) { gfx::set_tv_format(arg(c, 3), false); }

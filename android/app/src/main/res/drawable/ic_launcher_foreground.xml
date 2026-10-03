@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Foreground of the launcher icon: an original cel-shaded seascape drawn for this project (sky, sun,
+     cloud, sea; boat, wind gust, wave) -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android" xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="108dp" android:height="108dp" android:viewportWidth="108" android:viewportHeight="108">
+    <path android:strokeColor="#FFFFFF" android:strokeWidth="2.6" android:strokeLineCap="round" android:strokeLineJoin="round" android:pathData="M17,63C24,61 31,62 35,57C39,52 38,46.5 33.5,47C29.5,47.5 30,52 33.5,51.5" />
+    <path android:fillColor="#D9ECF7" android:pathData="M53.4,45Q44,56 53.4,66Z" />
+    <path android:fillColor="#FFFBF0" android:pathData="M56.6,40Q72,52 56.6,66Z" />
+    <path android:fillColor="#6B4423" android:pathData="M54.2,37h1.6v31h-1.6z" />
+    <path android:fillColor="#E0452B" android:pathData="M55,37L45.5,39.2L55,41.4Z" />
+    <path android:fillColor="#B8452E" android:pathData="M35,68L76,66Q72,79 56,79.5Q41,79.5 35,68Z" />
+    <path android:fillColor="#7E2A1C" android:pathData="M38.5,70.6L73,69L72.4,71.6L39.4,73.2Z" />
+    <path android:fillColor="#1C63BD" android:pathData="M16,77q7,-4 14,0t14,0t14,0t14,0t14,0t14,0v20h-84z" />
+    <path android:strokeColor="#F2FBFF" android:strokeWidth="2.2" android:strokeLineCap="round" android:strokeLineJoin="round" android:pathData="M16,77q7,-4 14,0t14,0t14,0t14,0t14,0t14,0" />
+</vector>
