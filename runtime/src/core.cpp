@@ -1,8 +1,10 @@
 // Guest memory, RPX loading, function dispatch, logging and HLE registry.
+#ifdef __APPLE__
 #include <mach/mach.h>
 #include <mach/mach_vm.h>
 #include <mach-o/ldsyms.h>
-#include <sys/mman.h>
+#endif
+#include "platform/host.h"
 #include <zlib.h>
 
 #include <algorithm>
@@ -53,11 +55,23 @@ namespace mem {
 static std::atomic<uint32_t> g_runtime_top{kRuntimeStart};
 
 void init() {
+#ifdef __APPLE__
     mach_vm_address_t addr = (mach_vm_address_t)PPC_MEM_BASE;
     kern_return_t kr = mach_vm_allocate(mach_task_self(), &addr, 0x100000000ull, VM_FLAGS_FIXED);
     if (kr != KERN_SUCCESS) fatal("cannot reserve guest address space at %p (kr=%d)", PPC_MEM_BASE, kr);
     // null page guard: catches guest null-pointer accesses
     mprotect(PPC_MEM_BASE, 0x10000, PROT_NONE);
+#elif defined(_WIN32)
+    void* p = VirtualAlloc(PPC_MEM_BASE, 0x100000000ull, MEM_RESERVE | MEM_COMMIT | MEM_WRITE_WATCH, PAGE_READWRITE);
+    if(p != PPC_MEM_BASE) fatal("cannot reserve guest address space (error=%lu)",GetLastError());
+    DWORD old; if(!VirtualProtect(PPC_MEM_BASE,0x10000,PAGE_NOACCESS,&old)) fatal("cannot protect guest null page");
+#else
+    // Never replace existing mappings: requesting a hint and checking the result is safe on
+    // systems whose headers lack MAP_FIXED_NOREPLACE.
+    void* p = mmap(PPC_MEM_BASE,0x100000000ull,PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_ANONYMOUS,-1,0);
+    if(p != PPC_MEM_BASE) { if(p!=MAP_FAILED)munmap(p,0x100000000ull); fatal("cannot reserve guest address space at %p",PPC_MEM_BASE); }
+    if(mprotect(PPC_MEM_BASE,0x10000,PROT_NONE))fatal("cannot protect guest null page");
+#endif
 }
 
 static std::mutex g_alloc_log_m;
@@ -78,7 +92,7 @@ __attribute__((noinline)) uint32_t runtime_alloc(uint32_t size, uint32_t align) 
     uint32_t a = bump(g_runtime_top, size, align, kHostStart);
     // who allocated (relative to the executable, stable across runs of one build): a loaded save
     // state requires the same guest-visible allocations at the same addresses
-    uint64_t tag = (uint64_t)((uintptr_t)__builtin_return_address(0) - (uintptr_t)&_mh_execute_header);
+    uint64_t tag = (uint64_t)((uintptr_t)__builtin_return_address(0) - host::executable_base());
     std::lock_guard<std::mutex> lk(g_alloc_log_m);
     g_alloc_log.push_back({a, size, tag});
     return a;

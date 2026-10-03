@@ -1,9 +1,11 @@
 #include <atomic>
 // Per-thread ring buffer of guest function entries, for debugging.
 // Enable with WWHD_TRACE_FUNCS=1; dump with `kill -USR1 <pid>` or at fatal errors.
-#include <pthread.h>
+#include "platform/host.h"
 #include <signal.h>
+#ifndef _WIN32
 #include <unistd.h>
+#endif
 
 #include <mutex>
 #include <vector>
@@ -42,7 +44,7 @@ extern "C" void ppc_trace_enter(uint32_t addr) {
         Cpu* c = threads::current();
         if (c && c->r[3] == g_watch_r3 && g_watch_r3_count++ < 3000) {
             char name[32] = {};
-            pthread_getname_np(pthread_self(), name, sizeof name);
+            host::get_thread_name(name, sizeof name);
             log_msg("[watch3] %-14s f_%08X lr=%08X r4=%08X r5=%08X", name, addr, c->lr, c->r[4], c->r[5]);
         }
     }
@@ -51,7 +53,7 @@ extern "C" void ppc_trace_enter(uint32_t addr) {
         if (c && (g_watch_reg < 0 || c->r[g_watch_reg] == g_watch_val)) {
             g_watch_count++;
             char tn[32] = {};
-            pthread_getname_np(pthread_self(), tn, sizeof tn);
+            host::get_thread_name(tn, sizeof tn);
             log_msg("[watch] %s %08X lr=%08X r3=%08X r4=%08X r5=%08X r6=%08X r7=%08X r8=%08X | r28=%08X r29=%08X r30=%08X r31=%08X",
                     tn, addr, c->lr, c->r[3], c->r[4], c->r[5], c->r[6], c->r[7], c->r[8], c->r[28], c->r[29], c->r[30], c->r[31]);
             if (const char* e = getenv("WWHD_WATCH_DUMP")) {  // "reg": hex dump 0x100 bytes at r<reg>
@@ -72,7 +74,7 @@ extern "C" void ppc_trace_enter(uint32_t addr) {
     }
     if (!t_ring) {
         t_ring = new Ring();
-        pthread_getname_np(pthread_self(), t_ring->name, sizeof t_ring->name);
+        host::get_thread_name(t_ring->name, sizeof t_ring->name);
         std::lock_guard<std::mutex> lk(g_rings_mutex);
         g_rings.push_back(t_ring);
     }
@@ -93,7 +95,7 @@ void trace_dump(FILE* f, unsigned last) {
 static void on_usr1(int) {
     FILE* f = fopen("trace_dump.txt", "w");
     if (f) { trace_dump(f, 4000); fclose(f); }
-    write(2, "[trace] wrote trace_dump.txt\n", 29);
+    fputs("[trace] wrote trace_dump.txt\n",stderr);
 }
 
 __attribute__((constructor)) static void trace_init() {
@@ -110,6 +112,8 @@ __attribute__((constructor)) static void trace_init() {
     if (getenv("WWHD_NAN_PROBE")) g_ppc_trace = 1;
     if (getenv("WWHD_TRACE_FUNCS")) {
         g_ppc_trace = 1;
+#ifndef _WIN32
         signal(SIGUSR1, on_usr1);
+#endif
     }
 }

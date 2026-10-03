@@ -23,7 +23,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <unordered_map>
-#include <sys/stat.h>
+#include <filesystem>
 #include <bit>
 #include <vector>
 
@@ -420,7 +420,8 @@ extern "C" void hook_025DF940(Cpu* c) {
         if (g_cam_nan || (!nan_before && cam_has_nan(proc))) {
             static int logged = 0;
             if (logged++ < 20) {
-                mkdir("captures", 0755);
+                std::error_code directory_error;
+                std::filesystem::create_directory("captures", directory_error);
                 if (FILE* f = fopen("captures/true60-nan.log", "a")) {
                     fprintf(f, "pass %llu: 60 Hz camera step produced NaN (sphere %d, caller %08X); restored, 30 Hz for 60 passes\n",
                             (unsigned long long)g_pass, (int)g_cam_nan, g_cam_nan_lr);

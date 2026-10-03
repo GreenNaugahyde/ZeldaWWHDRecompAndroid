@@ -24,12 +24,19 @@
 // MEM1; all-zero 64 KiB chunks are left out).
 #include "savestate.h"
 
+#ifdef __APPLE__
 #include <compression.h>
 #include <mach-o/ldsyms.h>
 #include <mach-o/loader.h>
-#include <sys/mman.h>
+#else
+#include <lz4.h>
+#endif
+#include "platform/host.h"
+#include "gfx/renderer.h"
 #include <sys/stat.h>
+#ifndef _WIN32
 #include <unistd.h>
+#endif
 
 #include <algorithm>
 #include <atomic>
@@ -62,17 +69,18 @@ void gx2_ss_save(ss::Writer& w);
 bool gx2_ss_check(ss::Reader r, std::string& why);
 void gx2_ss_load(ss::Reader& r);
 namespace interp { void ss_reset(); }
-namespace gfx {
-uint64_t frame_count();
-void request_tv_dump(const std::string& path, int frames_ahead);
-}
+namespace aspect { void ss_reset(); }
 namespace dispatch { std::vector<std::pair<uint32_t, std::string>> host_functions(); }
 
 namespace ss {
 namespace {
 
 constexpr char kMagic[8] = {'W', 'W', 'H', 'D', 'S', 'T', 'A', 'T'};
+#ifdef __APPLE__
 constexpr uint32_t kVersion = 1;
+#else
+constexpr uint32_t kVersion = 2; // liblz4 raw blocks, not Apple COMPRESSION_LZ4 framing
+#endif
 constexpr uint32_t kChunk = 0x10000;
 constexpr uint32_t kBlock = 8 << 20;  // compression block (raw bytes)
 
@@ -178,9 +186,14 @@ std::string state_dir() {
     static const std::string dir = [] {
         std::string d;
         if (const char* e = getenv("WWHD_STATE_DIR")) d = e;
-        else d = std::string(getenv("HOME") ? getenv("HOME") : ".") + "/Library/Application Support/wwhd/states";
-        for (size_t i = 1; i <= d.size(); i++)
-            if (i == d.size() || d[i] == '/') mkdir(d.substr(0, i).c_str(), 0755);
+        else {
+#ifdef __APPLE__
+            d=std::string(getenv("HOME")?getenv("HOME"):".")+"/Library/Application Support/wwhd/states";
+#else
+            d=host::config_dir()+"/states";
+#endif
+        }
+        std::error_code ec; std::filesystem::create_directories(d,ec);
         return d;
     }();
     return dir;
@@ -189,6 +202,7 @@ std::string slot_path(int slot, const char* ext = "bin") { return state_dir() + 
 
 void build_uuid(uint8_t out[16]) {
     memset(out, 0, 16);
+#ifdef __APPLE__
     const auto* h = (const mach_header_64*)&_mh_execute_header;
     const uint8_t* p = (const uint8_t*)(h + 1);
     for (uint32_t i = 0; i < h->ncmds; i++) {
@@ -196,6 +210,16 @@ void build_uuid(uint8_t out[16]) {
         if (lc->cmd == LC_UUID) { memcpy(out, ((const uuid_command*)lc)->uuid, 16); return; }
         p += lc->cmdsize;
     }
+#else
+    // Hash the complete executable so an incompatible rebuild is never accepted merely because
+    // its CPU structure size happens to match. Addresses are ASLR independent.
+    uint64_t first=0xcbf29ce484222325ull,second=0x84222325cbf29ce4ull;
+    FILE* f=fopen(host::executable_path().c_str(),"rb");
+    if(!f) { LOG("[savestate] cannot identify executable; state compatibility is unavailable"); return; }
+    unsigned char buf[65536];size_t n;
+    while((n=fread(buf,1,sizeof buf,f)))for(size_t i=0;i<n;i++){first=(first^buf[i])*0x100000001b3ull;second=(second+buf[i])*0x100000001b3ull;}
+    fclose(f);memcpy(out,&first,8);memcpy(out+8,&second,8);
+#endif
 }
 
 uint64_t game_id() {
@@ -231,7 +255,6 @@ std::string stage_name() {
 void capture_memory(Writer& w) {
     auto rs = regions();
     w.u32((uint32_t)rs.size());
-    std::vector<char> vec(kChunk / getpagesize() + 1);
     for (auto& g : rs) {
         w.u32(g.base);
         w.u32(g.size);
@@ -241,11 +264,7 @@ void capture_memory(Writer& w) {
         for (uint32_t off = 0; off < g.size; off += kChunk) {
             uint8_t* p = mem::ptr(g.base + off);
             // untouched pages are zero: skip them without reading (reading would commit them)
-            if (mincore(p, kChunk, vec.data()) == 0) {
-                bool touched = false;
-                for (size_t i = 0; i < kChunk / (size_t)getpagesize(); i++) touched |= vec[i] != 0;
-                if (!touched) continue;
-            }
+            if (!host::memory_touched(p,kChunk)) continue;
             const uint64_t* q = (const uint64_t*)p;
             bool zero = true;
             for (size_t i = 0; i < kChunk / 8 && zero; i++) zero = q[i] == 0;
@@ -259,7 +278,6 @@ void capture_memory(Writer& w) {
 }
 
 void restore_memory(const Snapshot& s) {
-    std::vector<char> vec(kChunk / getpagesize() + 1);
     for (auto& g : s.regs) {
         for (uint32_t off = 0; off < g.size; off += kChunk) {
             uint32_t a = g.base + off;
@@ -269,11 +287,7 @@ void restore_memory(const Snapshot& s) {
                 memcpy(p, it->second, kChunk);
                 continue;
             }
-            if (mincore(p, kChunk, vec.data()) == 0) {
-                bool touched = false;
-                for (size_t i = 0; i < kChunk / (size_t)getpagesize(); i++) touched |= vec[i] != 0;
-                if (!touched) continue;
-            }
+            if (!host::memory_touched(p,kChunk)) continue;
             const uint64_t* q = (const uint64_t*)p;
             for (size_t i = 0; i < kChunk / 8; i++)
                 if (q[i]) { memset(p, 0, kChunk); break; }
@@ -293,13 +307,18 @@ bool write_slot(int slot, const Header& h0, const std::vector<uint8_t>& payload)
     unsigned nt = std::max(1u, std::min(8u, std::thread::hardware_concurrency()));
     for (unsigned t = 0; t < nt; t++)
         pool.emplace_back([&] {
+#ifdef __APPLE__
             std::vector<uint8_t> scratch(compression_encode_scratch_buffer_size(COMPRESSION_LZ4));
+#endif
             for (size_t i; (i = next++) < nblocks;) {
                 size_t raw = std::min<size_t>(kBlock, payload.size() - i * kBlock);
                 std::vector<uint8_t>& o = out[i];
                 o.resize(8 + raw + raw / 8 + 1024);
-                size_t n = compression_encode_buffer(o.data() + 8, o.size() - 8, payload.data() + i * kBlock, raw, scratch.data(),
-                                                     COMPRESSION_LZ4);
+#ifdef __APPLE__
+                size_t n = compression_encode_buffer(o.data() + 8, o.size() - 8, payload.data() + i * kBlock, raw, scratch.data(), COMPRESSION_LZ4);
+#else
+                size_t n = (size_t)LZ4_compress_default((const char*)payload.data()+i*kBlock,(char*)o.data()+8,(int)raw,(int)o.size()-8);
+#endif
                 uint32_t hdr[2] = {(uint32_t)raw, (uint32_t)n};
                 if (!n || n >= raw) {  // incompressible: stored
                     memcpy(o.data() + 8, payload.data() + i * kBlock, raw);
@@ -317,8 +336,8 @@ bool write_slot(int slot, const Header& h0, const std::vector<uint8_t>& payload)
     bool ok = fwrite(&h, sizeof h, 1, f) == 1;
     for (auto& o : out) ok = ok && fwrite(o.data(), 1, o.size(), f) == o.size();
     ok = fclose(f) == 0 && ok;
-    if (ok) ok = rename(tmp.c_str(), slot_path(slot).c_str()) == 0;
-    else unlink(tmp.c_str());
+    if (ok) ok = host::replace_file(tmp,slot_path(slot));
+    else remove(tmp.c_str());
     return ok;
 }
 
@@ -357,12 +376,19 @@ std::shared_ptr<Snapshot> read_slot(int slot, std::string& why) {
     unsigned nt = std::max(1u, std::min(8u, std::thread::hardware_concurrency()));
     for (unsigned t = 0; t < nt; t++)
         pool.emplace_back([&] {
+#ifdef __APPLE__
             std::vector<uint8_t> scratch(compression_decode_scratch_buffer_size(COMPRESSION_LZ4));
+#endif
             for (size_t i; (i = next++) < blocks.size();) {
                 uint8_t* dst = s->payload.data() + i * (size_t)kBlock;
                 if ((size_t)i * kBlock + raws[i] > s->payload.size()) { bad = true; continue; }
                 if (!comps[i]) { memcpy(dst, blocks[i].data(), raws[i]); continue; }
+#ifdef __APPLE__
                 size_t n = compression_decode_buffer(dst, raws[i], blocks[i].data(), comps[i], scratch.data(), COMPRESSION_LZ4);
+#else
+                int decoded = LZ4_decompress_safe((const char*)blocks[i].data(),(char*)dst,(int)comps[i],(int)raws[i]);
+                size_t n = decoded<0?0:(size_t)decoded;
+#endif
                 if (n != raws[i]) bad = true;
             }
         });
@@ -500,7 +526,7 @@ bool do_save(int slot) {
     threads::thaw();
     double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
     LOG("[savestate] slot %d: captured %.1f MB in %.1f ms (stage %s)", slot, payload->b.size() / 1048576.0, ms, stage.c_str());
-    gfx::request_tv_dump(slot_path(slot, "png"), 0);
+    render::request_tv_dump(slot_path(slot, "png"), 0);
     // compress and write in the background; the game continues
     std::thread([slot, h, payload, stage] {
         auto t1 = std::chrono::steady_clock::now();
@@ -561,6 +587,7 @@ bool do_load(const std::shared_ptr<Snapshot>& s) {
     r = s->section(kSecGx2);
     gx2_ss_load(r);
     interp::ss_reset();
+    aspect::ss_reset();
     r = s->section(kSecThreads);
     threads_ss_load(r);  // last: wakes the parked threads (they continue after the thaw)
     threads::thaw();
@@ -615,7 +642,11 @@ SlotInfo slot_info(int slot) {
     if (info.compatible || memcmp(h.magic, kMagic, 8) == 0) {
         time_t t = (time_t)h.created;
         struct tm tmv;
+#ifdef _WIN32
+        localtime_s(&tmv,&t);
+#else
         localtime_r(&t, &tmv);
+#endif
         char buf[64];
         strftime(buf, sizeof buf, "%b %d %H:%M:%S", &tmv);
         info.when = buf;
@@ -664,7 +695,7 @@ void service(Cpu* c) {
     static const std::vector<Timed> save_at = parse_timed("WWHD_STATE_SAVE_AT"), load_at = parse_timed("WWHD_STATE_LOAD_AT");
     if (!save_at.empty() || !load_at.empty()) {
         static uint64_t last = 0;
-        uint64_t f = gfx::frame_count();
+        uint64_t f = render::frame_count();
         for (auto& t : save_at)
             if (t.frame > last && t.frame <= f) request_save(t.slot);
         for (auto& t : load_at)
@@ -678,7 +709,7 @@ void service(Cpu* c) {
             g_save_req = 0;
             g_attempts = 0;
             for (int k = 1; k <= dump; k++)
-                gfx::request_tv_dump("state_save" + std::to_string(slot) + "_" + std::to_string(k) + ".png", k);
+                render::request_tv_dump("state_save" + std::to_string(slot) + "_" + std::to_string(k) + ".png", k);
         }
         return;
     }
@@ -695,7 +726,7 @@ void service(Cpu* c) {
         g_loading = false;
         g_attempts = 0;
         for (int k = 1; k <= dump; k++)
-            gfx::request_tv_dump("state_load" + std::to_string(s->slot) + "_" + std::to_string(k) + ".png", k);
+            render::request_tv_dump("state_load" + std::to_string(s->slot) + "_" + std::to_string(k) + ".png", k);
     }
 }
 

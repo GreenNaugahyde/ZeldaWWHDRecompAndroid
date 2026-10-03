@@ -35,6 +35,7 @@ struct Surface {
     // internal resolution: width/height above are the guest's (logical) size, used for every lookup and
     // guest-memory computation; the texture may be larger. sx/sy = texture size / logical size.
     float scale = 1.0f;        // the resolution factor the texture was made for
+    float ax = 1.0f, ay = 1.0f;  // ... and the aspect-ratio factors (screen-shaped targets, metal_surfaces.mm)
     float sx = 1.0f, sy = 1.0f;
 };
 
@@ -108,7 +109,10 @@ void upload_surface(Surface* s);
 // multiple of their guest size; a change takes effect at the next frame (targets are resized on next use)
 float res_scale();          // the factor in effect this frame
 void set_res_scale(float f);
-void latch_res_scale();     // frame boundary: apply a requested change
+void latch_res_scale();     // frame boundary: apply a requested change (resolution and aspect ratio)
+// aspect ratio of the TV picture the game is drawing from the next frame on (aspect.cpp via the swap
+// command); screen-shaped render targets are made that much wider/taller than their guest size
+void set_frame_aspect(float a);
 // draws `src` (whole texture, or its top-left uvMax fraction) stretched over `dst`'s rect (pixels; w=0: all)
 void resample(id<MTLTexture> src, id<MTLTexture> dst, const FormatInfo& fmt, uint32_t slices, float uMax = 1, float vMax = 1,
               uint32_t dstW = 0, uint32_t dstH = 0);

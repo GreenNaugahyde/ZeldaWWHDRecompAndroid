@@ -1,6 +1,13 @@
 // Minimal replacements for Cemu's common definitions used by the vendored files.
 // Force-included when compiling files under third_party/cemu.
 #pragma once
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#include <intrin.h>
+#endif
 #include <algorithm>
 #include <array>
 #include <bit>
@@ -50,7 +57,9 @@ inline sint32 _swapEndianS32(sint32 v) { return (sint32)__builtin_bswap32((uint3
 
 #include "Common/betype.h"
 #include "Common/enumFlags.h"
+#ifndef _WIN32
 using DWORD = uint32_t;
+#endif
 
 #define DEFINE_ENUM_FLAG_OPERATORS(T)                                                                                          \
     inline T operator~(T a) { return static_cast<T>(~static_cast<std::underlying_type_t<T>>(a)); }                              \
@@ -61,11 +70,13 @@ using DWORD = uint32_t;
     inline T& operator&=(T& a, T b) { return a = a & b; }                                                                      \
     inline T& operator^=(T& a, T b) { return a = a ^ b; }
 
+#ifndef _WIN32
 inline unsigned char _BitScanReverse(DWORD* index, uint32_t mask) {
     if (!mask) return 0;
     *index = 31 - __builtin_clz(mask);
     return 1;
 }
+#endif
 
 template <typename T>
 inline T GetBits(T value, uint32 index, uint32 numBits) { return (value >> index) & ((1 << numBits) - 1); }

@@ -1373,6 +1373,7 @@ void draw(const uint32_t* regs, uint32_t prim, uint32_t count, uint32_t indexTyp
         if (mask & (1 << i)) colors[i] = color_target(regs, i, &colorSlices[i]);
     Surface* depth = LatteMRT::GetActiveDepthBufferMask(lcr) ? depth_target(regs, &depthSlice) : nullptr;
     uint32_t guestW = colors[0] ? colors[0]->width : 0;  // the game's target size (viewport registers refer to it)
+    uint32_t guestH = colors[0] ? colors[0]->height : 0;
     if (g_hires_redraw) {
         g_hires_src = colors[0]->addr;
         colors[0] = hires_surface(g_hires_color, colors[0]);
@@ -1392,7 +1393,7 @@ void draw(const uint32_t* regs, uint32_t prim, uint32_t count, uint32_t indexTyp
     if (!w) { g_skip[SK_NO_TARGET]++; return; }
     if (g_hires_redraw && guestW) {  // the viewport registers describe the game's smaller buffer
         kx = (float)colors[0]->tex.width / guestW;
-        ky = kx;
+        ky = (float)colors[0]->tex.height / guestH;  // differs from kx at other aspect ratios
     }
     g_target_kx = kx;
     g_target_ky = ky;

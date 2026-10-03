@@ -7,29 +7,23 @@
 #include <ctime>
 
 #include "../savestate.h"
+#include "../aspect.h"
+#include "renderer.h"
+#include "runtime.h"
 
+// graphics options and capture go to the renderer in use (Metal or Vulkan: renderer.h)
 namespace gfx {
-int ao_mode();
-void set_ao_mode(int m);
-bool aniso_enabled();
-void set_aniso(bool v);
-void request_capture();
-bool ao_hires_enabled();
-bool fxaa_enabled();
-void set_fxaa(bool v);
-void set_ao_hires(bool v);
 bool drc_window_available();
 bool drc_window_shown();
 void show_drc_window(bool on);
-float res_scale();
-void set_res_scale(float f);
+void install_display_menu(NSMenu* bar);
 }  // namespace gfx
 
 // internal resolution steps (Graphics menu; R cycles)
 static const float kResScales[] = {1.0f, 1.5f, 2.0f, 3.0f};
 static float g_res_shown = 0;  // last value set from the UI (res_scale() lags a frame)
-static float current_res_scale() { return g_res_shown ? g_res_shown : gfx::res_scale(); }
-static void set_res(float f) { g_res_shown = f; gfx::set_res_scale(f); }
+static float current_res_scale() { return g_res_shown ? g_res_shown : render::res_scale(); }
+static void set_res(float f) { g_res_shown = f; render::set_res_scale(f); }
 static void cycle_res() {
     float cur = current_res_scale();
     size_t n = sizeof kResScales / sizeof *kResScales, i = 0;
@@ -52,17 +46,54 @@ static NSWindow* g_tv;
 static double g_fps = 0;  // frames presented per second, measured over the last half second
 static NSString* const kTitle = @"The Legend of Zelda: The Wind Waker HD (recompiled)";
 
-// the TV title summarises the active options so a key press is visible without opening the menu
+// the TV title summarises the active options so a key press is visible without opening the menu;
+// it starts with the renderer in use (and notes a fallback or a choice waiting for a restart)
 static void update_title() {
     static const char* ao[3] = {"original", "centre fix", "centre + noise fix"};
     NSString* res = current_res_scale() != 1.0f ? [NSString stringWithFormat:@" \u00b7 %gx res", current_res_scale()] : @"";
-    NSString* t = [NSString stringWithFormat:@"%@ \u2014 %.0f fps%@ \u00b7 AO: %s%s \u00b7 AF: %s%s%s", kTitle, g_fps, res, ao[gfx::ao_mode()],
-                                             gfx::ao_hires_enabled() ? " + full-size depth" : "",
-                                             gfx::aniso_enabled() ? "16x" : "game",
-                                             interp::mode() == 2 ? " \u00b7 true 60" : interp::mode() == 1 ? " \u00b7 60 fps" : "", gfx::fxaa_enabled() ? " \u00b7 FXAA" : ""];
+    if (aspect::mode() != aspect::kOriginal) res = [res stringByAppendingFormat:@" \u00b7 %s", aspect::mode_name(aspect::mode())];
+    NSString* rnd = @(render::api_name(render::active()));
+    if (render::active() != render::requested())
+        rnd = [rnd stringByAppendingFormat:@" (%s unavailable)", render::api_name(render::requested())];
+    else if (render::restart_pending())
+        rnd = [rnd stringByAppendingFormat:@" (%s after restart)", render::api_name(render::preferred())];
+    // the middle dots of the optional parts are NSStrings: %s would read UTF-8 as Mac Roman ("¬∑")
+    NSString* t = [NSString stringWithFormat:@"%@ \u2014 %@ \u00b7 %.0f fps%@ \u00b7 AO: %s%s \u00b7 AF: %s%@%@", kTitle, rnd, g_fps, res,
+                                             ao[render::ao_mode()], render::ao_hires() ? " + full-size depth" : "",
+                                             render::aniso() ? "16x" : "game",
+                                             interp::mode() == 2 ? @" \u00b7 true 60" : interp::mode() == 1 ? @" \u00b7 60 fps" : @"", render::fxaa() ? @" \u00b7 FXAA" : @""];
     std::string msg = ss::last_message();  // save state confirmations
-    if (!msg.empty()) t = [NSString stringWithFormat:@"%@ — %s", kTitle, msg.c_str()];
+    if (!msg.empty()) t = [NSString stringWithFormat:@"%@ \u2014 %@ \u2014 %s", kTitle, rnd, msg.c_str()];
+    if (getenv("WWHD_LOG_TITLE") && ![t isEqualToString:g_tv.title]) {  // tests: the window title as it changes
+        NSString* noFps = [t stringByReplacingOccurrencesOfString:[NSString stringWithFormat:@"%.0f fps", g_fps] withString:@"N fps"];
+        static NSString* last;
+        if (![noFps isEqualToString:last]) LOG("[display] title: %s", noFps.UTF8String);
+        last = noFps;
+    }
     [g_tv setTitle:t];
+}
+
+// Graphics > Renderer: saved for the next start; offers to restart right away
+static void choose_renderer(render::Api a) {
+    if (a == render::preferred()) return;
+    render::set_preferred(a);
+    update_title();
+    if (a == render::active()) return;  // back to the renderer in use: nothing to restart
+    if (getenv("WWHD_NO_HOST_INPUT")) return;  // test runs: no dialogs
+    NSAlert* alert = [NSAlert new];
+    alert.messageText = [NSString stringWithFormat:@"The game will use %s after a restart.", render::api_name(a)];
+    alert.informativeText = @"Restart now? Progress since your last save (in-game save or save state) is lost.";
+    [alert addButtonWithTitle:@"Restart Now"];
+    [alert addButtonWithTitle:@"Later"];
+    [alert beginSheetModalForWindow:g_tv completionHandler:^(NSModalResponse r) {
+        if (r != NSAlertFirstButtonReturn) return;
+        if (!render::restart()) {
+            NSAlert* e = [NSAlert new];
+            e.messageText = @"The game could not restart itself.";
+            e.informativeText = @"Quit and start it again to switch the renderer.";
+            [e beginSheetModalForWindow:g_tv completionHandler:nil];
+        }
+    }];
 }
 
 // Save States menu: items are rebuilt each time it opens (slot time and area)
@@ -103,9 +134,10 @@ static WWStateMenu* g_state_menu;
 @end
 
 @implementation WWGraphicsMenu
-- (void)setAO:(NSMenuItem*)item { gfx::set_ao_mode((int)item.tag); update_title(); }
-- (void)toggleAniso:(NSMenuItem*)item { gfx::set_aniso(!gfx::aniso_enabled()); update_title(); }
-- (void)capture:(NSMenuItem*)item { gfx::request_capture(); }
+- (void)setAO:(NSMenuItem*)item { render::set_ao_mode((int)item.tag); update_title(); }
+- (void)toggleAniso:(NSMenuItem*)item { render::set_aniso(!render::aniso()); update_title(); }
+- (void)capture:(NSMenuItem*)item { render::request_capture(); }
+- (void)setRenderer:(NSMenuItem*)item { choose_renderer((render::Api)item.tag); }
 - (void)recordSound:(NSMenuItem*)item { gfx::menu_hotkey(kVK_ANSI_9); }
 - (void)setController:(NSMenuItem*)item {
     input::set_pro_controller(item.tag == 1);
@@ -113,13 +145,26 @@ static WWStateMenu* g_state_menu;
 }
 - (void)toggleInterp:(NSMenuItem*)item { interp::set_mode(interp::mode() == item.tag ? 0 : (int)item.tag); update_title(); }
 - (void)toggleDrcWindow:(NSMenuItem*)item { gfx::show_drc_window(!gfx::drc_window_shown()); }
-- (void)toggleFxaa:(NSMenuItem*)item { gfx::set_fxaa(!gfx::fxaa_enabled()); update_title(); }
-- (void)toggleHires:(NSMenuItem*)item { gfx::set_ao_hires(!gfx::ao_hires_enabled()); update_title(); }
+- (void)toggleFxaa:(NSMenuItem*)item { render::set_fxaa(!render::fxaa()); update_title(); }
+- (void)toggleHires:(NSMenuItem*)item { render::set_ao_hires(!render::ao_hires()); update_title(); }
 - (void)setRes:(NSMenuItem*)item { set_res(kResScales[item.tag]); update_title(); }
+- (void)setAspect:(NSMenuItem*)item { aspect::set_mode((int)item.tag); update_title(); }
 - (BOOL)validateMenuItem:(NSMenuItem*)item {
     if (item.action == @selector(setRes:))
         item.state = fabsf(kResScales[item.tag] - current_res_scale()) < 0.01f ? NSControlStateValueOn : NSControlStateValueOff;
-    if (item.action == @selector(setAO:)) item.state = item.tag == gfx::ao_mode() ? NSControlStateValueOn : NSControlStateValueOff;
+    if (item.action == @selector(setAspect:)) item.state = item.tag == aspect::mode() ? NSControlStateValueOn : NSControlStateValueOff;
+    if (item.action == @selector(setAO:)) {
+        item.state = item.tag == render::ao_mode() ? NSControlStateValueOn : NSControlStateValueOff;
+        return render::feature_available(render::kFeatureAO);
+    }
+    if (item.action == @selector(setRenderer:)) {
+        render::Api a = (render::Api)item.tag;
+        item.state = a == render::preferred() ? NSControlStateValueOn : NSControlStateValueOff;
+        NSString* name = a == render::Api::Vulkan ? @"    Vulkan (MoltenVK)" : @"    Metal";
+        item.title = a == render::active() ? [name stringByAppendingString:@"  \u2014 in use"] : name;
+        if (!render::compiled(a)) return NO;
+        return YES;
+    }
     if (item.action == @selector(setController:))
         item.state = (item.tag == 1) == input::pro_controller() ? NSControlStateValueOn : NSControlStateValueOff;
     if (item.action == @selector(toggleInterp:)) item.state = interp::mode() == item.tag ? NSControlStateValueOn : NSControlStateValueOff;
@@ -127,9 +172,19 @@ static WWStateMenu* g_state_menu;
         item.state = gfx::drc_window_shown() ? NSControlStateValueOn : NSControlStateValueOff;
         return gfx::drc_window_available();
     }
-    if (item.action == @selector(toggleFxaa:)) item.state = gfx::fxaa_enabled() ? NSControlStateValueOn : NSControlStateValueOff;
-    if (item.action == @selector(toggleHires:)) item.state = gfx::ao_hires_enabled() ? NSControlStateValueOn : NSControlStateValueOff;
-    if (item.action == @selector(toggleAniso:)) item.state = gfx::aniso_enabled() ? NSControlStateValueOn : NSControlStateValueOff;
+    if (item.action == @selector(toggleFxaa:)) {
+        item.state = render::fxaa() ? NSControlStateValueOn : NSControlStateValueOff;
+        return render::feature_available(render::kFeatureFXAA);
+    }
+    if (item.action == @selector(toggleHires:)) {
+        item.state = render::ao_hires() ? NSControlStateValueOn : NSControlStateValueOff;
+        return render::feature_available(render::kFeatureAOHires);
+    }
+    if (item.action == @selector(toggleAniso:)) {
+        item.state = render::aniso() ? NSControlStateValueOn : NSControlStateValueOff;
+        return render::feature_available(render::kFeatureAniso);
+    }
+    if (item.action == @selector(capture:)) return render::feature_available(render::kFeatureCapture);
     return YES;
 }
 @end
@@ -189,11 +244,29 @@ void install_menu(NSWindow* tv) {
 
     NSMenuItem* gfxItem = [bar addItemWithTitle:@"Graphics" action:nil keyEquivalent:@""];
     NSMenu* g = [[NSMenu alloc] initWithTitle:@"Graphics"];
+    if (render::can_choose()) {
+        // both renderers are built in: the choice is saved and used from the next start
+        [g addItemWithTitle:@"Renderer (takes effect after a restart)" action:nil keyEquivalent:@""].enabled = NO;
+        NSString* why = render::fallback_reason().empty() ? @"" : [NSString stringWithFormat:@"\nThis start: %s", render::fallback_reason().c_str()];
+        add(g, @"    Metal", @selector(setRenderer:), @"", (NSInteger)render::Api::Metal).toolTip =
+            @"Apple's Metal: the original renderer, all features";
+        add(g, @"    Vulkan (MoltenVK)", @selector(setRenderer:), @"", (NSInteger)render::Api::Vulkan).toolTip =
+            [@"Vulkan through MoltenVK (needs: brew install vulkan-loader molten-vk glslang). Falls back to Metal if it cannot start." stringByAppendingString:why];
+        [g addItem:[NSMenuItem separatorItem]];
+    }
     [g addItemWithTitle:@"Internal resolution (R cycles)" action:nil keyEquivalent:@""].enabled = NO;
     add(g, @"    1x (1280x720, as on Wii U)", @selector(setRes:), @"R", 0);
     add(g, @"    1.5x (1920x1080)", @selector(setRes:), @"R", 1);
     add(g, @"    2x (2560x1440)", @selector(setRes:), @"R", 2);
     add(g, @"    3x (3840x2160)", @selector(setRes:), @"R", 3);
+    [g addItem:[NSMenuItem separatorItem]];
+    [g addItemWithTitle:@"Aspect ratio" action:nil keyEquivalent:@""].enabled = NO;
+    add(g, @"    16:9 (original)", @selector(setAspect:), @"", aspect::kOriginal);
+    add(g, @"    Match window", @selector(setAspect:), @"", aspect::kWindow).toolTip =
+        @"The picture takes the shape of the TV window (or the screen in full screen): wider shows more to the sides";
+    add(g, @"    16:10", @selector(setAspect:), @"", aspect::k16x10);
+    add(g, @"    21:9", @selector(setAspect:), @"", aspect::k21x9);
+    add(g, @"    32:9", @selector(setAspect:), @"", aspect::k32x9);
     [g addItem:[NSMenuItem separatorItem]];
     [g addItemWithTitle:@"Ambient occlusion (O cycles)" action:nil keyEquivalent:@""].enabled = NO;
     add(g, @"    Original (as on Wii U)", @selector(setAO:), @"O", 0);
@@ -206,7 +279,9 @@ void install_menu(NSWindow* tv) {
     add(g, @"60 fps: frame interpolation (6)", @selector(toggleInterp:), @"6", 1);
     add(g, @"60 fps: true 60, game logic at 60 steps/s (7, experimental)", @selector(toggleInterp:), @"7", 2);
     [g addItem:[NSMenuItem separatorItem]];
-    add(g, @"Capture frame for debugging (P)", @selector(capture:), @"P");
+    add(g, @"Capture frame for debugging (P)", @selector(capture:), @"P").toolTip =
+        render::active() == render::Api::Vulkan ? @"Shortcut in game: P. Vulkan: the TV, GamePad and window pictures (the draw log is Metal only)"
+                                                 : @"Shortcut in game: P";
     add(g, @"Record 3 s of sound activity (9)", @selector(recordSound:), @"9");
     gfxItem.submenu = g;
 
@@ -216,9 +291,10 @@ void install_menu(NSWindow* tv) {
     add(in, @"    Wii U GamePad", @selector(setController:), @"", 0);
     add(in, @"    Wii U Pro Controller", @selector(setController:), @"", 1);
     [in addItem:[NSMenuItem separatorItem]];
-    add(in, @"Show GamePad window", @selector(toggleDrcWindow:), @"");
+    add(in, @"Show GamePad screen (\u2318G)", @selector(toggleDrcWindow:), @"");
     [in addItem:gfx::controls_menu_item()];
     inItem.submenu = in;
+    install_display_menu(bar);  // Display: full screen, scaling, GamePad screen mode (display.mm)
 
     // Gameplay: optional mods, all off by default (runtime/src/mods/). One line per option.
     NSMenuItem* gpItem = [bar addItemWithTitle:@"Gameplay" action:nil keyEquivalent:@""];
@@ -271,14 +347,14 @@ void install_menu(NSWindow* tv) {
 // single-key shortcuts from the game window; true if the key was used
 bool menu_hotkey(uint16_t code) {
     switch (code) {
-    case kVK_ANSI_O: set_ao_mode((ao_mode() + 1) % 3); break;
-    case kVK_ANSI_N: set_aniso(!aniso_enabled()); break;
-    case kVK_ANSI_M: set_ao_hires(!ao_hires_enabled()); break;
+    case kVK_ANSI_O: if (render::feature_available(render::kFeatureAO)) render::set_ao_mode((render::ao_mode() + 1) % 3); break;
+    case kVK_ANSI_N: if (render::feature_available(render::kFeatureAniso)) render::set_aniso(!render::aniso()); break;
+    case kVK_ANSI_M: if (render::feature_available(render::kFeatureAOHires)) render::set_ao_hires(!render::ao_hires()); break;
     case kVK_ANSI_6: interp::set_mode(interp::mode() == 1 ? 0 : 1); break;
     case kVK_ANSI_7: interp::set_mode(interp::mode() == 2 ? 0 : 2); break;
-    case kVK_ANSI_8: set_fxaa(!fxaa_enabled()); break;
+    case kVK_ANSI_8: if (render::feature_available(render::kFeatureFXAA)) render::set_fxaa(!render::fxaa()); break;
     case kVK_ANSI_R: cycle_res(); break;
-    case kVK_ANSI_P: case kVK_F12: request_capture(); return true;
+    case kVK_ANSI_P: case kVK_F12: render::request_capture(); return true;
     case kVK_F1: case kVK_F2: case kVK_F3: case kVK_F4: case kVK_F5: {
         int slot = code == kVK_F1 ? 1 : code == kVK_F2 ? 2 : code == kVK_F3 ? 3 : code == kVK_F4 ? 4 : 5;
         if ([NSEvent modifierFlags] & NSEventModifierFlagShift) ss::request_save(slot);

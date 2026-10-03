@@ -1,12 +1,17 @@
 // Guest threads run on host pthreads. OS synchronization objects live in guest
 // memory (the game allocates them) and are backed by host objects keyed by
 // their guest address.
+#ifndef _WIN32
 #include <dlfcn.h>
+#endif
+#ifdef __APPLE__
 #include <mach/mach.h>
-#include <pthread.h>
+#endif
+#include "platform/host.h"
+#ifdef __APPLE__
 #include <pthread/qos.h>
-#include <sched.h>
-#include <unistd.h>
+#endif
+
 
 #include <algorithm>
 #include <array>
@@ -74,7 +79,11 @@ struct HostThread {
     uint32_t exit_value = 0;
     uint32_t entry = 0, argc = 0, argv = 0;
     uint32_t core = 1;  // emulated core this thread is bound to (for OSGetCoreId)
+#ifdef _WIN32
+    HANDLE pt = nullptr;
+#else
     pthread_t pt{};
+#endif
     // scheduling
     int prio = 16;            // lower runs first; service threads (alarms, audio) use -1
     bool holds_core = false;
@@ -85,8 +94,10 @@ struct HostThread {
     // statistics
     std::chrono::steady_clock::time_point acquired;
     std::atomic<uint64_t> held_ns{0}, wait_ns{0};
+#ifdef __APPLE__
     mach_port_t mach = 0;     // for CPU time statistics
     uint64_t last_cpu_us = 0;
+#endif
     // save states: whether the thread is parked at a point where its whole state is its Cpu plus
     // guest memory plus the HLE objects (see park_wait)
     std::atomic<int> wst{0};   // kRunning, kParked or kRequester
@@ -234,7 +245,7 @@ namespace threads { void report_sched(); }
 // debug: WWHD_WATCH_MEM=addr|*ptr+off[,...] polls guest words and logs every change together with
 // where each guest thread is (lr), to find who writes a flag
 static void mem_watch_thread() {
-    pthread_setname_np("mem watch");
+    host::set_thread_name("mem watch");
     struct W { bool deref; uint32_t a, off; uint32_t last; bool init = false; };
     std::vector<W> ws;
     const char* e = getenv("WWHD_WATCH_MEM");
@@ -272,7 +283,7 @@ static void mem_watch_thread() {
     }
 }
 static void sched_tick_thread() {
-    pthread_setname_np("sched tick");
+    host::set_thread_name("sched tick");
     static const bool timed_stats = getenv("WWHD_SCHED_STATS") && atoi(getenv("WWHD_SCHED_STATS")) == 2;
     auto next_report = std::chrono::steady_clock::now() + std::chrono::seconds(5);
     for (;;) {
@@ -308,6 +319,7 @@ void report_sched() {
         std::string name = mem::read_cstr(ld32(t->guest + osthread::kName));
         // actual CPU time the host gave this thread (vs. time it held its emulated core)
         double cpu = 0;
+#ifdef __APPLE__
         if (t->mach) {
             thread_basic_info_data_t info;
             mach_msg_type_number_t cnt = THREAD_BASIC_INFO_COUNT;
@@ -318,6 +330,7 @@ void report_sched() {
                 t->last_cpu_us = us;
             }
         }
+ #endif
         char buf[192];
         snprintf(buf, sizeof buf, " [%s c%u p%d run %.0f%% cpu %.0f%% wait %.0f%%]", name.empty() ? "main" : name.c_str(), t->core,
                  t->prio, 100.0 * h / span, cpu, 100.0 * w / span);
@@ -408,6 +421,7 @@ static uint32_t classify_ra(uintptr_t ra) {
     auto it = g_ra_cache.find(ra);
     if (it != g_ra_cache.end()) return it->second;
     uint32_t v = 0;
+ #ifndef _WIN32
     Dl_info di;
     if (dladdr((void*)ra, &di) && di.dli_sname) {
         const char* n = di.dli_sname;
@@ -420,6 +434,7 @@ static uint32_t classify_ra(uintptr_t ra) {
             v = 1;
         }
     }
+ #endif
     g_ra_cache[ra] = v;
     return v;
 }
@@ -435,8 +450,19 @@ __attribute__((noinline)) static void try_entry_park(HostThread* t, Cpu* c) {
         if (!g_frozen || t == g_frz_owner) return;
     }
     if (mode == 2 && (!t->has_target || c->r[1] != t->tgt_r1 || c->lr != t->tgt_lr)) return;
+#ifdef _WIN32
+    // Entry parking requires host-frame symbol classification; Windows stack unwinding needs
+    // a dedicated implementation. Ordinary waits remain saveable; never guess a safe frame.
+    return;
+    uintptr_t hi=0,lo=0;
+#elif defined(__APPLE__)
     pthread_t self = pthread_self();
     uintptr_t hi = (uintptr_t)pthread_get_stackaddr_np(self), lo = hi - pthread_get_stacksize_np(self);
+#else
+    pthread_attr_t attr; pthread_getattr_np(pthread_self(),&attr);
+    void* stack; size_t size; pthread_attr_getstack(&attr,&stack,&size);pthread_attr_destroy(&attr);
+    uintptr_t lo=(uintptr_t)stack, hi=lo+size;
+#endif
     uintptr_t fp = (uintptr_t)__builtin_frame_address(0);
     uint32_t fn = 0;
     for (int depth = 0; fp >= lo && fp < hi; depth++) {
@@ -447,8 +473,12 @@ __attribute__((noinline)) static void try_entry_park(HostThread* t, Cpu* c) {
             static const bool dbg = getenv("WWHD_STATE_DEBUG") != nullptr;
             static std::atomic<int> logged{0};
             if (dbg && logged++ < 20) {
+#ifdef _WIN32
+                const char* n = "?";
+#else
                 Dl_info di;
                 const char* n = dladdr((void*)ra, &di) && di.dli_sname ? di.dli_sname : "?";
+#endif
                 LOG("[savestate] %s: no entry park, host frame %s (depth %d)", threads::thread_name(t).c_str(), n, depth);
             }
             return;
@@ -469,7 +499,8 @@ __attribute__((noinline)) static void try_entry_park(HostThread* t, Cpu* c) {
 }
 
 namespace threads {
-void park_sleep_until(std::chrono::steady_clock::time_point tp) {
+void park_sleep_until(std::chrono::steady_clock::time_point tp, bool precise,
+                      void (*before_resume)()) {
     HostThread* t = t_self;
     if (t) {
         t->wait_kind = W_SLEEP;
@@ -477,8 +508,21 @@ void park_sleep_until(std::chrono::steady_clock::time_point tp) {
         t->wst.store(kParked);
     }
     block_begin();
-    std::this_thread::sleep_until(tp);
+    if (precise) {
+        // macOS sleep timers can resume about 1 ms after the requested vsync.
+        // Keep the guest core released during this bounded final interval.
+        constexpr auto spinWindow = std::chrono::milliseconds(2);
+        const auto sleepDeadline = tp - spinWindow;
+        if (std::chrono::steady_clock::now() < sleepDeadline)
+            std::this_thread::sleep_until(sleepDeadline);
+        while (std::chrono::steady_clock::now() < tp) {}
+    } else {
+        std::this_thread::sleep_until(tp);
+    }
     if (t) park_gate(t);
+    // The freeze gate marks the thread busy before host-only completion work.
+    // Keep its guest core released until that work finishes; never call guest code.
+    if (before_resume) before_resume();
     block_end();
 }
 void service_begin() {
@@ -497,11 +541,15 @@ static void* thread_main(void* p) {
     t_self = ht;
     t_cpu = &ht->cpu;
     std::string name = mem::read_cstr(ld32(ht->guest + osthread::kName));
-    pthread_setname_np(name.empty() ? "guest" : name.c_str());
+    host::set_thread_name(name.empty() ? "guest" : name.c_str());
+#ifdef __APPLE__
     ht->mach = pthread_mach_thread_np(pthread_self());
+#endif
     // keep guest threads on performance cores: the default QoS lets macOS park them on efficiency
     // cores, which showed up as the main thread holding its core without getting CPU time
+#ifdef __APPLE__
     if (!getenv("WWHD_NO_QOS")) pthread_set_qos_class_self_np(QOS_CLASS_USER_INTERACTIVE, 0);
+#endif
     LOG("[thread] start \"%s\" core %d prio %d affinity %X", name.c_str(), ht->core, (int)ld32(ht->guest + osthread::kBasePrio),
         ld32(ht->guest + osthread::kAffinity));
     uint32_t rv = 0;
@@ -524,12 +572,20 @@ static void* thread_main(void* p) {
     return nullptr;
 }
 
+#ifdef _WIN32
+static DWORD WINAPI windows_thread_main(void* p) { thread_main(p); return 0; }
+#endif
 static void start_host_thread(HostThread* ht) {
+#ifdef _WIN32
+    ht->pt=CreateThread(nullptr,64<<20,windows_thread_main,ht,STACK_SIZE_PARAM_IS_A_RESERVATION,nullptr);
+    if(!ht->pt)fatal("cannot create guest thread (error=%lu)",GetLastError());
+#else
     pthread_attr_t attr;
     pthread_attr_init(&attr);
     pthread_attr_setstacksize(&attr, 64 << 20);  // deep guest call chains recurse on the host stack
     pthread_create(&ht->pt, &attr, thread_main, ht);
     pthread_attr_destroy(&attr);
+#endif
 }
 
 static void init_cpu(Cpu& c, uint32_t stack_top) {
@@ -596,7 +652,11 @@ void run_main(const LoadedModule& m, int argc, uint32_t argv) {
     ht->suspend = 0;
     ht->started = true;
     start_host_thread(ht);
+#ifdef _WIN32
+    WaitForSingleObject(ht->pt,INFINITE); CloseHandle(ht->pt); ht->pt=nullptr;
+#else
     pthread_join(ht->pt, nullptr);
+#endif
 }
 
 Cpu* make_service_cpu(const char* name, uint32_t stack_size) {
@@ -614,7 +674,9 @@ Cpu* make_service_cpu(const char* name, uint32_t stack_size) {
     ht->started = true;
     ht->wait_kind = W_SERVICE;
     ht->wst.store(kParked);  // idle until service_begin
+#ifdef __APPLE__
     if (!getenv("WWHD_NO_QOS")) pthread_set_qos_class_self_np(QOS_CLASS_USER_INTERACTIVE, 0);
+#endif
     return &ht->cpu;
 }
 }  // namespace threads
@@ -668,7 +730,7 @@ HLE(coreinit, OSGetCoreId) { ret(c, t_self ? t_self->core : 1); }
 HLE(coreinit, OSYieldThread) {
     // let other ready threads of the same (or higher) priority on this core run
     BlockingScope b;
-    sched_yield();
+    std::this_thread::yield();
 }
 HLE(coreinit, OSSleepTicks) {
     threads::park_sleep_until(std::chrono::steady_clock::now() + ticks_to_ns(arg64(c, 3)));
@@ -996,7 +1058,7 @@ static bool g_alarm_thread_started = false;
 
 static void alarm_thread() {
     Cpu* c = threads::make_service_cpu("alarm", 0x20000);
-    pthread_setname_np("alarm");
+    host::set_thread_name("alarm");
     std::unique_lock<std::mutex> lk(g_alarm_mutex);
     for (;;) {
         if (g_alarm_queue.empty()) { g_alarm_cv.wait(lk); continue; }
@@ -1090,7 +1152,11 @@ HLE(coreinit, OSTicksToCalendarTime) {
     (void)ticks;
     time_t t = time(nullptr);
     struct tm tmv;
+#ifdef _WIN32
+    localtime_s(&tmv,&t);
+#else
     localtime_r(&t, &tmv);
+#endif
     uint32_t v[10] = {(uint32_t)tmv.tm_sec, (uint32_t)tmv.tm_min, (uint32_t)tmv.tm_hour, (uint32_t)tmv.tm_mday,
                       (uint32_t)tmv.tm_mon, (uint32_t)(tmv.tm_year + 1900), (uint32_t)tmv.tm_wday,
                       (uint32_t)tmv.tm_yday, 0, 0};
@@ -1530,7 +1596,7 @@ void threads_ss_load(ss::Reader& r) {
 }
 
 static void thread_dump_loop(int secs) {
-    pthread_setname_np("thread dump");
+    host::set_thread_name("thread dump");
     static const char* kinds[] = {"-", "mutex", "event", "msg-send", "msg-recv", "sleepq", "join", "rdv", "sleep", "service", "entry"};
     for (;;) {
         std::this_thread::sleep_for(std::chrono::seconds(secs));

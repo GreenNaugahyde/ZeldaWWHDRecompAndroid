@@ -9,6 +9,11 @@ struct GX2DepthBuffer;
 }
 
 namespace gx2 {
+struct ShaderKeyDirtyStats {
+    uint64_t changedBatches = 0, baselineWouldBumps = 0, actualBumps = 0;
+    uint64_t avoidedBumps = 0, maskedWords = 0;
+};
+ShaderKeyDirtyStats shader_key_dirty_stats(); // Render-thread diagnostics.
 uint32_t color_buffer_address(const GX2::GX2ColorBuffer* cb);
 LatteFetchShader* build_fetch_shader(uint32_t program);  // from our encoded fetch "program"
 }  // namespace gx2
@@ -29,6 +34,9 @@ void clear_depth_stencil(const uint32_t* regs, uint32_t depthBuffer, float depth
 void copy_surface(uint32_t src, uint32_t srcMip, uint32_t srcSlice, uint32_t dst, uint32_t dstMip, uint32_t dstSlice);
 void copy_to_scan(uint32_t colorBuffer, uint32_t target);  // target: 1 = TV, 4 = DRC (GamePad)
 void swap();                     // present the TV scan buffer
+void set_frame_aspect(float a);  // aspect ratio of the TV picture from the next frame on (aspect.cpp)
+// render thread: a target of this guest size is made wider/taller this frame (kx, ky != 1)
+bool target_aspect_factors(uint32_t w, uint32_t h, float& kx, float& ky);
 uint64_t frames_completed();     // swaps whose GPU work has finished
 void with_autorelease_pool(void (*fn)());  // render thread: drain Objective-C temporaries per batch
 void set_tv_format(uint32_t gx2Format, bool tv);  // GX2SetTVBuffer / GX2SetDRCBuffer

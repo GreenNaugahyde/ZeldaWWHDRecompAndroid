@@ -11,6 +11,8 @@
 #include "mods.h"
 #include "runtime.h"
 
+namespace gfx { bool drc_overlay_hit(void* window, double x, double y); }  // gfx/display.mm
+
 namespace mods {
 namespace {
 NSWindow* __weak g_tv;
@@ -70,7 +72,9 @@ void mouse_init(void* tv_window) {
         if (!mouse_camera()) return e;
         if (!mouse_captured()) {
             // a click into the game picture captures the pointer (the title bar stays usable)
-            if (e.type == NSEventTypeLeftMouseDown && in_tv(e) && NSPointInRect(e.locationInWindow, g_tv.contentView.frame)) {
+            // (except on the GamePad picture-in-picture, where a click is a touch)
+            if (e.type == NSEventTypeLeftMouseDown && in_tv(e) && NSPointInRect(e.locationInWindow, g_tv.contentView.frame) &&
+                !gfx::drc_overlay_hit((__bridge void*)g_tv, e.locationInWindow.x, e.locationInWindow.y)) {
                 capture();
                 return nil;
             }

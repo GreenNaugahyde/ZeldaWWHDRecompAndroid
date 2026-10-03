@@ -412,7 +412,8 @@ static void InitUniformLayoutFromDecompiler(
 LatteDecompilerShader* FinishDecompiledShader(LatteDecompilerOutput_t& decompilerOutput)
 {
 	LatteDecompilerShader* shader = decompilerOutput.shader;
-	shader->resourceMapping = decompilerOutput.resourceMappingMTL;
+	shader->resourceMapping = g_renderer->GetType() == RendererAPI::Vulkan
+        ? decompilerOutput.resourceMappingVK : decompilerOutput.resourceMappingMTL;
 	shader->textureUnitMask2 = decompilerOutput.textureUnitMask;
 	shader->streamoutBufferWriteMask = decompilerOutput.streamoutBufferWriteMask;
 	shader->hasStreamoutBufferWrite = decompilerOutput.streamoutBufferWriteMask.any();

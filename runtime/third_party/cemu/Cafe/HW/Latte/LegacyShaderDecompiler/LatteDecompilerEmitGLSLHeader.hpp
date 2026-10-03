@@ -1,6 +1,6 @@
 #pragma once
 
-namespace LatteDecompiler
+namespace LatteDecompilerGLSL
 {
 	void _emitUniformVariables(LatteDecompilerShaderContext* decompilerContext, RendererAPI rendererType, LatteDecompilerOutputUniformOffsets& uniformOffsets)
 	{

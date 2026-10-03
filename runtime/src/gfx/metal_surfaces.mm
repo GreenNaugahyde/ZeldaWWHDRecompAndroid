@@ -49,7 +49,8 @@ static float parse_scale(const char* e) {
     return std::clamp(f > 0 ? f : 1.0f, 1.0f, 4.0f);
 }
 static std::atomic<float> g_res_requested{parse_scale(getenv("WWHD_RES_SCALE"))};
-static float g_res_frame = g_res_requested.load();  // render thread: the factor for this frame
+static float g_res_frame = g_res_requested.load();
+static void latch_aspect();  // render thread: the factor for this frame
 float res_scale() { return g_res_frame; }
 void set_res_scale(float f) {
     g_res_requested = std::clamp(f, 1.0f, 4.0f);
@@ -71,6 +72,34 @@ void latch_res_scale() {
     for (auto& [f, v] : at)
         if (R.frame == f) set_res_scale(v);
     g_res_frame = g_res_requested.load(std::memory_order_relaxed);
+    latch_aspect();
+}
+
+// ---------------------------------------------------------------- aspect ratio
+// The game renders a 16:9 screen (1280x720 guest pixels). At another aspect ratio (aspect.cpp) the
+// game's projections are widened (or made taller) and every screen-shaped render target is allocated
+// that much wider (taller) than its guest size: draws keep their guest viewports, which cover the
+// whole texture, so the picture comes out at the new shape without the game knowing. kx/ky: texture
+// pixels per guest pixel on top of the internal resolution, (A / (16/9), 1) for wider screens,
+// (1, (16/9) / A) for narrower ones. Latched at the frame boundary like the resolution.
+static std::atomic<float> g_aspect_requested{16.0f / 9.0f};
+static float g_aspect_kx = 1.0f, g_aspect_ky = 1.0f;  // render thread: factors for this frame
+void set_frame_aspect(float a) { g_aspect_requested.store(a, std::memory_order_relaxed); }
+static void latch_aspect() {
+    float a = g_aspect_requested.load(std::memory_order_relaxed), base = 16.0f / 9.0f;
+    float kx = a >= base ? a / base : 1.0f, ky = a >= base ? 1.0f : base / a;
+    if (kx != g_aspect_kx || ky != g_aspect_ky) LOG("[gfx] aspect %.4f: screen targets x%.4f wide, x%.4f tall", a, kx, ky);
+    g_aspect_kx = kx;
+    g_aspect_ky = ky;
+}
+// the game's screen-sized buffers and their reductions (1920x1080 ... 60x33); not the GamePad's
+// (854x480, shown in its own window), not shadow maps, mip chains or textures
+static bool screen_shaped(const Surface* s) {
+    if (s->fmt.compressed || s->mips > 1 || s->slices > 1 || s->width < 32) return false;
+    for (uint32_t w = 854, h = 480; w >= 32; w >>= 1, h >>= 1)
+        if ((s->width == w || s->width == w + 1) && s->height == h) return false;
+    float r = (float)s->width * 9.0f / ((float)s->height * 16.0f);
+    return r > 0.97f && r < 1.03f;
 }
 
 // the factor a render target gets. Shadow maps (depth arrays: the game's cascades) can have their
@@ -81,16 +110,32 @@ static float target_scale(const Surface* s) {
     if (shadow && s->isDepth && s->slices > 1) return shadow;
     return res_scale();
 }
+bool target_aspect_factors(uint32_t w, uint32_t h, float& kx, float& ky) {
+    Surface s;
+    s.width = w;
+    s.height = h;
+    bool on = screen_shaped(&s) && (g_aspect_kx != 1.0f || g_aspect_ky != 1.0f);
+    kx = on ? g_aspect_kx : 1.0f;
+    ky = on ? g_aspect_ky : 1.0f;
+    return on;
+}
+// extra horizontal / vertical factor for the aspect ratio
+static void target_aspect(const Surface* s, float& kx, float& ky) {
+    bool on = screen_shaped(s);
+    kx = on ? g_aspect_kx : 1.0f;
+    ky = on ? g_aspect_ky : 1.0f;
+}
 
-static id<MTLTexture> make_texture(Surface* s, MTLTextureType type, bool forRendering, float scale) {
+static id<MTLTexture> make_texture(Surface* s, MTLTextureType type, bool forRendering, float scale, float ax = 1.0f, float ay = 1.0f) {
     if (forRendering && type != MTLTextureType2DArray) type = MTLTextureType2D;
     bool is1D = type == MTLTextureType1D || type == MTLTextureType1DArray;
     uint32_t pw = s->width, ph = s->height;
-    if (scale != 1.0f && !is1D) {
-        pw = (uint32_t)std::ceil(s->width * scale - 0.01f);
-        ph = (uint32_t)std::ceil(s->height * scale - 0.01f);
+    if ((scale != 1.0f || ax != 1.0f || ay != 1.0f) && !is1D) {
+        pw = (uint32_t)std::ceil(s->width * scale * ax - 0.01f);
+        ph = (uint32_t)std::ceil(s->height * scale * ay - 0.01f);
     } else {
         scale = 1.0f;
+        ax = ay = 1.0f;
     }
     MTLTextureDescriptor* td = [MTLTextureDescriptor new];
     td.textureType = type;
@@ -107,6 +152,8 @@ static id<MTLTexture> make_texture(Surface* s, MTLTextureType type, bool forRend
     id<MTLTexture> t = [R.device newTextureWithDescriptor:td];
     if (t) {
         s->scale = scale;
+        s->ax = ax;
+        s->ay = ay;
         s->sx = (float)pw / s->width;
         s->sy = is1D ? 1.0f : (float)ph / s->height;
     }
@@ -116,12 +163,13 @@ static id<MTLTexture> make_texture(Surface* s, MTLTextureType type, bool forRend
 // a render target made at another factor (the setting changed, or a CPU texture now rendered to):
 // reallocate it at the current one, keeping its contents (filtered)
 static Surface* rescale(Surface* s) {
-    float want = target_scale(s);
-    if (s->scale == want || !s->tex) return s;
+    float want = target_scale(s), ax, ay;
+    target_aspect(s, ax, ay);
+    if ((s->scale == want && s->ax == ax && s->ay == ay) || !s->tex) return s;
     id<MTLTexture> old = s->tex;
-    float osx = s->sx, osy = s->sy, oscale = s->scale;
-    id<MTLTexture> t = make_texture(s, old.textureType, true, want);
-    if (!t) { s->sx = osx; s->sy = osy; s->scale = oscale; return s; }
+    float osx = s->sx, osy = s->sy, oscale = s->scale, oax = s->ax, oay = s->ay;
+    id<MTLTexture> t = make_texture(s, old.textureType, true, want, ax, ay);
+    if (!t) { s->sx = osx; s->sy = osy; s->scale = oscale; s->ax = oax; s->ay = oay; return s; }
     end_encoder();
     resample(old, t, s->fmt, old.textureType == MTLTextureType2DArray ? (uint32_t)old.arrayLength : 1);
     s->tex = t;
@@ -282,7 +330,9 @@ Surface* find_or_create_surface(const SurfaceDesc& d, bool forRendering) {
     s->swizzle = d.swizzle;
     s->isDepth = d.isDepth;
     s->fmt = format_info(d.format, d.isDepth);
-    s->tex = make_texture(s.get(), texture_type(d.dim, s->slices), forRendering, forRendering ? target_scale(s.get()) : 1.0f);
+    float ax = 1.0f, ay = 1.0f;
+    if (forRendering) target_aspect(s.get(), ax, ay);
+    s->tex = make_texture(s.get(), texture_type(d.dim, s->slices), forRendering, forRendering ? target_scale(s.get()) : 1.0f, ax, ay);
     if (!s->tex) {
         LOG("[gfx] cannot create %ux%ux%u texture (format %X, pixel %lu)", s->width, s->height, s->slices, s->format,
             (unsigned long)s->fmt.pixel);

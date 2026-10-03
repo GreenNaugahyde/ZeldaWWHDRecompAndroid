@@ -1,5 +1,7 @@
-#include <pthread.h>
+#include "../platform/host.h"
+#ifdef __APPLE__
 #include <pthread/qos.h>
+#endif
 #include <condition_variable>
 #include <deque>
 // GX2 core: command execution, display lists, context states, draws, clears,
@@ -15,7 +17,13 @@
 #include "gx2_cmd.h"
 #include "gx2_regs.h"
 #include "gx2_texture_regs.h"
+#ifdef WWHD_HAS_VULKAN
+#include "shader_key_dirty.h"
+#include "gfx/vulkan/api.h"
+#endif
 #include "runtime.h"
+#include "../aspect.h"
+#include "gfx/renderer.h"
 
 using namespace Latte;
 
@@ -35,6 +43,22 @@ uint32* regs() { return g_regs; }
 extern "C" { uint64_t g_shader_state_gen = 1; }
 
 static bool shader_irrelevant(uint32 reg) {
+#ifdef WWHD_HAS_VULKAN
+    // Vulkan resolves texture addresses freshly in bind_stage. These words do
+    // not participate in shader translation; keep Metal's broader dirty gate.
+    static const bool addressMemo = [] {
+        const char* e = getenv("WWHD_VK_SHADER_ADDRESS_MEMO");
+        return render::vulkan() && e && !strcmp(e, "1");
+    }();
+    if (addressMemo)
+        for (uint32 base : {uint32(REGADDR::SQ_TEX_RESOURCE_WORD0_N_PS),
+                            uint32(REGADDR::SQ_TEX_RESOURCE_WORD0_N_VS),
+                            uint32(REGADDR::SQ_TEX_RESOURCE_WORD0_N_GS)})
+            if (reg >= base && reg < base + 7 * 18) {
+                uint32 word = (reg - base) % 7;
+                if (word == 2 || word == 3) return true;
+            }
+#endif
     if (reg >= mmSQ_ALU_CONSTANT0_0 && reg < mmSQ_ALU_CONSTANT0_0 + 0x1000) return true;
     for (uint32 base : {(uint32)mmSQ_VTX_UNIFORM_BLOCK_START, (uint32)mmSQ_PS_UNIFORM_BLOCK_START, (uint32)mmSQ_GS_UNIFORM_BLOCK_START})
         if (reg >= base && reg < base + 7 * 16) return true;
@@ -44,10 +68,90 @@ static bool shader_irrelevant(uint32 reg) {
     }
     return false;
 }
+static ShaderKeyDirtyStats shaderKeyDirtyStats;
+ShaderKeyDirtyStats shader_key_dirty_stats() { return shaderKeyDirtyStats; }
+
+#ifdef WWHD_HAS_VULKAN
+static void apply_small_regs(uint32 first, const uint32* v, uint32 n) {
+    static const bool keyDirty = [] {
+        const char* e = getenv("WWHD_VK_SHADER_KEY_DIRTY");
+        return e && !strcmp(e, "1");
+    }();
+    static const bool collectStats = getenv("WWHD_VK_STATS") != nullptr;
+    bool changed = false, baselineBump = false, actualBump = false;
+    uint64_t maskedWords = 0;
+    for (uint32 i = 0; i < n; ++i) {
+        const uint32 reg = first + i, value = v[i], old = g_regs[reg];
+        if (old != value) {
+            changed = true;
+            if ((collectStats || !actualBump) && !shader_irrelevant(reg)) {
+                baselineBump = true;
+                uint32 mask;
+                if (keyDirty && vulkan_shader_key_mask(reg, mask) && !((old ^ value) & mask)) {
+                    if (collectStats) ++maskedWords;
+                } else actualBump = true;
+            }
+            g_regs[reg] = value;
+        }
+        // Shadow can differ even when registers already match: draw mutates
+        // primitive type directly, and context setup initializes only shadow.
+        if (g_shadow) g_shadow[reg] = value;
+    }
+    if (actualBump) ++g_shader_state_gen;
+    if (changed && collectStats) {
+        ++shaderKeyDirtyStats.changedBatches;
+        shaderKeyDirtyStats.baselineWouldBumps += baselineBump;
+        shaderKeyDirtyStats.actualBumps += actualBump;
+        shaderKeyDirtyStats.avoidedBumps += baselineBump && !actualBump;
+        shaderKeyDirtyStats.maskedWords += maskedWords;
+    }
+}
+#endif
 
 static void apply_regs(uint32 first, const uint32* v, uint32 n) {
     if (first + n > kNumRegs) return;
+#ifdef WWHD_HAS_VULKAN
+    // Vulkan renderer only (the Metal renderer keeps the original bulk path)
+    static const bool fusedSmall = [] {
+        const char* e = getenv("WWHD_VK_FUSE_SMALL_REGS");
+        // Enabled by default; explicit zero retains the original bulk path.
+        return render::vulkan() && (!e || strcmp(e, "0") != 0);
+    }();
+    if (fusedSmall && n <= 16) {
+        apply_small_regs(first, v, n);
+        return;
+    }
+#endif
     if (memcmp(&g_regs[first], v, n * 4) != 0) {
+#ifdef WWHD_HAS_VULKAN
+        static const bool keyDirty = [] {
+            const char* value = getenv("WWHD_VK_SHADER_KEY_DIRTY");
+            return render::vulkan() && value && !strcmp(value, "1");
+        }();
+        static const bool collectStats = render::vulkan() && getenv("WWHD_VK_STATS") != nullptr;
+        if(keyDirty || collectStats) {
+            bool baselineBump = false, actualBump = false;
+            uint64_t maskedWords = 0;
+            for(uint32 i = 0; i < n; ++i) {
+                uint32 reg = first + i;
+                if(g_regs[reg] == v[i] || shader_irrelevant(reg)) continue;
+                baselineBump = true;
+                uint32 mask;
+                if(keyDirty && vulkan_shader_key_mask(reg, mask) && !((g_regs[reg] ^ v[i]) & mask)) {
+                    if(collectStats) ++maskedWords;
+                } else actualBump = true;
+                if(actualBump && !collectStats) break;
+            }
+            if(actualBump) ++g_shader_state_gen;
+            if(collectStats) {
+                ++shaderKeyDirtyStats.changedBatches;
+                shaderKeyDirtyStats.baselineWouldBumps += baselineBump;
+                shaderKeyDirtyStats.actualBumps += actualBump;
+                shaderKeyDirtyStats.avoidedBumps += baselineBump && !actualBump;
+                shaderKeyDirtyStats.maskedWords += maskedWords;
+            }
+        } else
+#endif
         for (uint32 i = 0; i < n; i++)
             if (g_regs[first + i] != v[i] && !shader_irrelevant(first + i)) { g_shader_state_gen++; break; }
         memcpy(&g_regs[first], v, n * 4);
@@ -74,8 +178,10 @@ static bool g_q_waiting = false;
 static uint64_t g_fence_issued = 0, g_fence_done = 0;
 
 static void render_thread_main() {
-    pthread_setname_np("GX2 render");
+    host::set_thread_name("GX2 render");
+#ifdef __APPLE__
     if (!getenv("WWHD_NO_QOS")) pthread_set_qos_class_self_np(QOS_CLASS_USER_INTERACTIVE, 0);
+#endif
     for (;;) {
         {
             std::unique_lock<std::mutex> lk(g_q_mutex);
@@ -86,7 +192,7 @@ static void render_thread_main() {
         }
         {
             std::lock_guard<std::recursive_mutex> lk(g_exec_mutex);
-            gfx::with_autorelease_pool([] { execute(g_q_work.data(), (uint32)g_q_work.size()); });
+            render::with_autorelease_pool([] { execute(g_q_work.data(), (uint32)g_q_work.size()); });
         }
         g_q_work.clear();
     }
@@ -133,7 +239,7 @@ void emit(Op op, const uint32* payload, uint32 n) {
         return;
     }
     std::lock_guard<std::recursive_mutex> lk(g_exec_mutex);
-    execute_one(op, payload, n);
+    host::with_autorelease_pool([&] { execute_one(op, payload, n); });
 }
 
 // host-only commands never go into display lists
@@ -143,8 +249,21 @@ static void emit_host(Op op, std::initializer_list<uint32> payload) {
         return;
     }
     std::lock_guard<std::recursive_mutex> lk(g_exec_mutex);
-    execute_one(op, payload.begin(), (uint32)payload.size());
+    host::with_autorelease_pool([&] { execute_one(op, payload.begin(), (uint32)payload.size()); });
 }
+
+#ifdef WWHD_HAS_VULKAN
+void checkpoint_vulkan_caches() {
+    // Wait for queued work, then exclude further renderer mutations while the
+    // SDL thread writes the final cache checkpoint during orderly shutdown.
+    render_sync();
+    std::lock_guard<std::recursive_mutex> lk(g_exec_mutex);
+    host::with_autorelease_pool([] {
+        gfxvk::wait_idle();
+        gfxvk::save_renderer_caches();
+    });
+}
+#endif
 
 void set_regs(uint32 first, const uint32* values, uint32 count) {
     if (!count) return;
@@ -201,25 +320,25 @@ static void execute_one(Op op, const uint32* p, uint32 n) {
     switch (op) {
     case OP_NOP: break;
     case OP_SET_REGS: apply_regs(p[0], p + 1, n - 1); break;
-    case OP_DRAW: gfx::draw(g_regs, p[0], p[1], 0, 0, p[2], p[3]); break;
-    case OP_DRAW_INDEXED: gfx::draw(g_regs, p[0], p[1], p[2], p[3], p[4], p[5]); break;
+    case OP_DRAW: render::draw(g_regs, p[0], p[1], 0, 0, p[2], p[3]); break;
+    case OP_DRAW_INDEXED: render::draw(g_regs, p[0], p[1], p[2], p[3], p[4], p[5]); break;
     case OP_CLEAR_COLOR: {
         const uint32* q = p + kColorBufferWords;
         float rgba[4] = {bitsf(q[0]), bitsf(q[1]), bitsf(q[2]), bitsf(q[3])};
-        gfx::clear_color(g_regs, unpack_struct(p, kColorBufferWords, 0), rgba);
+        render::clear_color(g_regs, unpack_struct(p, kColorBufferWords, 0), rgba);
         break;
     }
     case OP_CLEAR_DEPTH: {
         const uint32* q = p + kDepthBufferWords;
-        gfx::clear_depth_stencil(g_regs, unpack_struct(p, kDepthBufferWords, 0), bitsf(q[0]), q[1], q[2]);
+        render::clear_depth_stencil(g_regs, unpack_struct(p, kDepthBufferWords, 0), bitsf(q[0]), q[1], q[2]);
         break;
     }
     case OP_CLEAR_BUFFERS: {
         uint32 cb = unpack_struct(p, kColorBufferWords, 0), db = unpack_struct(p + kColorBufferWords, kDepthBufferWords, 1);
         const uint32* q = p + kColorBufferWords + kDepthBufferWords;
         float rgba[4] = {bitsf(q[0]), bitsf(q[1]), bitsf(q[2]), bitsf(q[3])};
-        gfx::clear_color(g_regs, cb, rgba);
-        gfx::clear_depth_stencil(g_regs, db, bitsf(q[4]), q[5], q[6]);
+        render::clear_color(g_regs, cb, rgba);
+        render::clear_depth_stencil(g_regs, db, bitsf(q[4]), q[5], q[6]);
         break;
     }
     case OP_COPY_SURFACE: {
@@ -227,17 +346,37 @@ static void execute_one(Op op, const uint32* p, uint32 n) {
         const uint32* q = p + kSurfaceWords;
         uint32 dst = unpack_struct(q + 2, kSurfaceWords, 1);
         const uint32* r = q + 2 + kSurfaceWords;
-        gfx::copy_surface(src, q[0], q[1], dst, r[0], r[1]);
+        render::copy_surface(src, q[0], q[1], dst, r[0], r[1]);
         break;
     }
-    case OP_COPY_TO_SCAN: gfx::copy_to_scan(unpack_struct(p, kColorBufferWords, 0), p[kColorBufferWords]); break;
+    case OP_COPY_TO_SCAN: render::copy_to_scan(unpack_struct(p, kColorBufferWords, 0), p[kColorBufferWords]); break;
     case OP_CALL: execute((const uint32*)mem::ptr(p[0]), p[1] / 4); break;
     case OP_SET_CONTEXT: set_context(p[0]); break;
-    case OP_INVALIDATE: gfx::invalidate(p[0], p[1], p[2]); break;
+    case OP_INVALIDATE: render::invalidate(p[0], p[1], p[2]); break;
     case OP_EXPAND_COLOR: case OP_EXPAND_DEPTH: break;  // MSAA/HiZ decompression: nothing to do on the host
-    case OP_FLUSH: gfx::flush(); break;
-    case OP_DRAW_DONE: gfx::wait_idle(); break;
-    case OP_SWAP: gfx::swap(); break;
+    case OP_FLUSH: render::guest_flush(); break;  // Vulkan: asynchronous submission
+    case OP_DRAW_DONE: render::wait_idle(); break;
+    case OP_SWAP:
+        if (n) render::set_frame_aspect(gx2::bitsf(p[0]));  // aspect ratio from the next frame on (aspect.cpp)
+        render::swap();
+        break;
+    case OP_SET_PROJ_REGS: {
+        uint32 v[16];
+        memcpy(v, p + 1, sizeof v);
+        float kx, ky;
+        if (n == 17 && render::target_aspect_factors(g_regs[mmCB_COLOR0_TILE] & 0xFFFF, g_regs[mmCB_COLOR0_FRAG], kx, ky))
+            for (int i = 0; i < 4; i++) {  // rows x and y: the 16:9 layout space centred in the wider picture
+                v[i] = fbits(bitsf(v[i]) / kx);
+                v[4 + i] = fbits(bitsf(v[4 + i]) / ky);
+            }
+        apply_regs(p[0], v, std::min<uint32>(n - 1, 16));
+        break;
+    }
+    case OP_LAYOUT_ROOT: {
+        float kx, ky;
+        aspect::layout_root_target(p[0], render::target_aspect_factors(g_regs[mmCB_COLOR0_TILE] & 0xFFFF, g_regs[mmCB_COLOR0_FRAG], kx, ky));
+        break;
+    }
     case OP_SETUP_CONTEXT:
         g_contexts[p[0]].assign(kNumRegs, 0);
         g_shadow = g_contexts[p[0]].data();
@@ -309,12 +448,26 @@ static uint64_t g_last_flip_time = 0;  // timebase
 static int64_t g_count_offset = 0;     // guest-visible swap/flip counts minus ours (set by a loaded save state)
 
 static uint64_t vsync_index() { return (std::chrono::steady_clock::now() - g_vsync_epoch) / kVsyncPeriod; }
+#ifdef WWHD_HAS_VULKAN
+// Vulkan diagnostics (docs/vulkan.md); never with the Metal renderer
+static bool uncapped_benchmark() {
+    static const bool enabled = [] {
+        const char* value = getenv("WWHD_VK_UNCAPPED");
+        return render::vulkan() && value && !strcmp(value, "1");
+    }();
+    return enabled;
+}
+#endif
 
 static void update_flips() {  // g_flip_mutex held
     uint64_t now = vsync_index();
     while (!g_pending_flips.empty()) {
         uint64_t at = std::max(g_pending_flips.front().vsync + 1, g_last_flip_vsync + interp::effective_swap_interval(g_swap_interval));
-        if (at > now || gfx::frames_completed() < g_pending_flips.front().swap) break;
+#ifdef WWHD_HAS_VULKAN
+        if ((!uncapped_benchmark() && at > now) || render::frames_completed() < g_pending_flips.front().swap) break;
+#else
+        if (at > now || render::frames_completed() < g_pending_flips.front().swap) break;
+#endif
         at = now;
         g_pending_flips.pop_front();
         g_last_flip_vsync = at;
@@ -322,10 +475,31 @@ static void update_flips() {  // g_flip_mutex held
         g_flip_count++;
     }
 }
+#ifdef WWHD_HAS_VULKAN
+static void ready_flip_before_resume() {
+    bool needsSync;
+    {
+        std::lock_guard<std::mutex> lk(g_flip_mutex);
+        if(g_pending_flips.empty()) return;
+        const auto& front = g_pending_flips.front();
+        const uint64_t at = std::max(front.vsync + 1,
+            g_last_flip_vsync + interp::effective_swap_interval(g_swap_interval));
+        if(at > vsync_index()) return;
+        needsSync = render::frames_completed() < front.swap;
+    }
+    if(needsSync) render_sync(); // Core already released; no flip lock held.
+    std::lock_guard<std::mutex> lk(g_flip_mutex);
+    update_flips();
+}
+#endif
 
 HLE(gx2, GX2Init) {
     set_default_state();
-    LOG("[gx2] initialized (native GX2 -> Metal)");
+    LOG("[gx2] initialized (native GX2 -> %s)", render::api_name(render::active()));
+#ifdef WWHD_HAS_VULKAN
+    if(uncapped_benchmark())
+        LOG("[gx2 benchmark] uncapped guest flips; GPU completion ordering retained; frame-based simulation accelerates while timebase/audio clocks remain real-time");
+#endif
 }
 
 HLE(gx2, GX2SetupContextStateEx) {
@@ -443,7 +617,10 @@ HLE(gx2, GX2SwapScanBuffers) {
         }
         LOG("%s", buf);
     }
-    emit_host(OP_SWAP, {});
+    float a = aspect::on_swap();  // aspect ratio of the next frame (game projections, render targets)
+    uint32 ab;
+    memcpy(&ab, &a, 4);
+    emit_host(OP_SWAP, {ab});
     {
         std::lock_guard<std::mutex> lk(g_flip_mutex);
         update_flips();
@@ -469,7 +646,69 @@ HLE(gx2, GX2GetSwapStatus) {
 }
 HLE(gx2, GX2SetSwapInterval) { g_swap_interval = std::max<uint32>(arg(c, 0), 1); }
 HLE(gx2, GX2WaitForVsync) {
-    threads::park_sleep_until(g_vsync_epoch + kVsyncPeriod * (vsync_index() + 1));
+#ifdef WWHD_HAS_VULKAN
+    if(uncapped_benchmark()) {
+        BlockingScope b;
+        // The queue fence follows earlier swaps, whose presentation path waits
+        // for GPU completion. Never wait while holding the flip mutex.
+        render_sync();
+        std::lock_guard<std::mutex> lk(g_flip_mutex);
+        update_flips();
+        return;
+    }
+    static const bool readyFlipWait = [] {
+        const char* value = getenv("WWHD_VK_READY_FLIP_WAIT");
+        return render::vulkan() && value && !strcmp(value, "1");
+    }();
+    if(readyFlipWait) {
+        bool eligible = false, needsSync = false;
+        {
+            std::lock_guard<std::mutex> lk(g_flip_mutex);
+            if(!g_pending_flips.empty()) {
+                const auto& front = g_pending_flips.front();
+                const uint64_t at = std::max(front.vsync + 1,
+                    g_last_flip_vsync + interp::effective_swap_interval(g_swap_interval));
+                eligible = at <= vsync_index();
+                if(eligible) needsSync = render::frames_completed() < front.swap;
+            }
+        }
+        if(eligible) {
+            if(needsSync) {
+                BlockingScope b;
+                render_sync(); // Queued swap completion; never hold flip mutex.
+            }
+            std::lock_guard<std::mutex> lk(g_flip_mutex);
+            update_flips(); // Retains minimum interval and FIFO GPU guards.
+            return;
+        }
+    }
+#endif
+    static const bool preciseSleep = [] {
+#ifdef WWHD_HAS_VULKAN
+        // Vulkan renderer's pacing (docs/vulkan.md); the Metal renderer keeps plain sleeping
+        if (!render::vulkan()) return false;
+        const char* value = getenv("WWHD_VSYNC_PRECISE");
+#ifdef __APPLE__
+        // Avoid the measured macOS sleep overshoot; explicit zero opts out.
+        return !value || atoi(value) != 0;
+#else
+        return value && atoi(value) != 0;
+#endif
+#else
+        return false;
+#endif
+    }();
+    const auto deadline = g_vsync_epoch + kVsyncPeriod * (vsync_index() + 1);
+#ifdef WWHD_HAS_VULKAN
+    static const bool readyFlipPark = [] {
+        const char* value = getenv("WWHD_VK_READY_FLIP_PARK");
+        return render::vulkan() && value && !strcmp(value, "1");
+    }();
+    threads::park_sleep_until(deadline, preciseSleep,
+        readyFlipPark ? ready_flip_before_resume : nullptr);
+#else
+    threads::park_sleep_until(deadline, preciseSleep);
+#endif
     std::lock_guard<std::mutex> lk(g_flip_mutex);
     update_flips();
     static uint64_t calls = 0;
@@ -483,9 +722,9 @@ HLE(gx2, GX2WaitForVsync) {
 // (buffer, size, mode, surfaceFormat, bufferingMode): an sRGB format means scan-out applies the encoding
 HLE(gx2, GX2SetTVBuffer) {
     LOG("[gx2] TV buffer format %X", arg(c, 3));
-    gfx::set_tv_format(arg(c, 3), true);
+    render::set_tv_format(arg(c, 3), true);
 }
-HLE(gx2, GX2SetDRCBuffer) { gfx::set_tv_format(arg(c, 3), false); }
+HLE(gx2, GX2SetDRCBuffer) { render::set_tv_format(arg(c, 3), false); }
 HLE(gx2, GX2SetTVScale) {}
 HLE(gx2, GX2SetDRCScale) {}
 HLE(gx2, GX2SetTVEnable) {}
@@ -517,7 +756,6 @@ HLE(gx2, GX2SampleBottomGPUCycle) { if (arg(c, 0)) st64(arg(c, 0), timebase::gue
 
 // ---------------------------------------------------------------- save states
 #include "../savestate.h"
-namespace gfx { void ss_reset_surfaces(); }
 
 // the game is frozen between frames: finish all queued GPU work and let pending flips execute, so no
 // command reads guest memory while it is replaced and the swap/flip counts agree
@@ -585,5 +823,5 @@ void gx2_ss_load(ss::Reader& r) {
         std::lock_guard<std::mutex> fl(g_flip_mutex);
         g_count_offset = (int64_t)guest_swaps - (int64_t)g_swap_count;
     }
-    gfx::ss_reset_surfaces();
+    render::ss_reset();  // the renderer forgets surface contents and shader memos (Vulkan)
 }

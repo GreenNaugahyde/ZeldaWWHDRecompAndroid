@@ -5,7 +5,7 @@
 // every k-th call; WWHD_TAP_AFTER=n starts once the game's step counter g_Counter.mCounter0
 // reaches n) to <dir>/<ADDR>/<n>.tap: entry registers, its own loads and stores, every call it
 // makes with the registers before and after, exit registers.
-#include <sys/stat.h>
+#include <filesystem>
 
 #include <algorithm>
 #include <cstdio>
@@ -45,7 +45,7 @@ void init() {
     if (const char* e = getenv("WWHD_TAP_EVERY")) g_every = std::max(1, atoi(e));
     if (const char* e = getenv("WWHD_TAP_AFTER")) g_after = (uint32_t)strtoul(e, nullptr, 10);
     if (g_dir) {
-        mkdir(g_dir, 0755);
+        std::error_code ec; std::filesystem::create_directories(g_dir,ec);
         fprintf(stderr, "[tap] recording to %s (%u calls per function, every %u)\n", g_dir, g_max, g_every);
     }
 }
@@ -90,7 +90,7 @@ extern "C" void tap_end(Cpu* c) {
     event(r, TAP_END, 0, 0, 0, c);
     char dir[512], path[600];
     snprintf(dir, sizeof dir, "%s/%08X", g_dir, r->func);
-    mkdir(dir, 0755);
+    std::error_code ec; std::filesystem::create_directories(dir,ec);
     snprintf(path, sizeof path, "%s/%05u.tap", dir, r->seq);
     if (FILE* f = fopen(path, "wb")) {
         fwrite(r->buf.data(), 1, r->buf.size(), f);

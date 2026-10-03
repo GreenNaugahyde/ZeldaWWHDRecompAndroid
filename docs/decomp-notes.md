@@ -742,3 +742,64 @@ to 7.36°/step over 10 steps and eases out over 4 steps plus a tail; the direct 
 60, 30 steps/s: 220.8°/s at full deflection). Link's house door, A press → control inside: 170
 frames; quick doors 78; fast scene changes 166; both 74 (the ≈34-frame wait for the new scene's
 archives is not shortened).
+
+## Aspect ratio (runtime/src/aspect.cpp, Graphics menu "Aspect ratio", `WWHD_ASPECT`)
+
+The game draws a 16:9 screen of 1280x720 guest pixels. Other aspect ratios keep the guest sizes and
+change three things.
+
+**3D projection and culling** (all from the main camera, `camera_class` / `view_class`):
+
+| WWHD | What | Notes |
+|---|---|---|
+| `1004AAF0` | `16/9` constant | only read by `camera_execute` (`024FFA94`) and `init_phase2` (`025020D8`); Cemu's resolution pack patches this one (plus `101417D0` and `10165898`, see below) |
+| `024FFA3C` | `camera_execute` | `view.mAspect` (+0xD8) = constant, every logic step (`@024FFA98`) |
+| `024FFC40` | `camera_draw` | `C_MTXPerspective(proj, mFovy, mAspect, mNear, mFar)` at `024FFD60` |
+| `024F8068` | `view_setup` | `mDoLib_clipper::setup(mFovy, mAspect, mNear, far)` at `024F811C` / `024F8168`: the frustum all culling uses (`fopAcM_cullingCheck`, `daBg_Draw`, grass, trees via `J3DUClipper`) |
+| `025ADB04` | `dScnName_c::setView` | the file-select scene's own perspective (`025ADB38`) |
+
+Hor+ for wider screens (same vertical field of view), Vert+ for narrower ones (same horizontal
+field of view, `fovy' = 2 atan(tan(fovy/2) * (16/9)/A)`). Only standard values are replaced (16/9
+or one we stored), so special aspects (demo cameras) pass through. Particles read `view.mAspect`
+(JPADrawInfo) and see the new value.
+
+**Render targets** (metal_surfaces.mm): screen-shaped buffers (w/h within 3% of 16:9, 1920x1080
+down to 60x33, not the GamePad's 854x480 chain, no arrays/mips) are allocated `A/(16/9)` times wider
+(or `(16/9)/A` taller) on top of the internal resolution. Viewports/scissors and texture coordinates
+already go through the per-surface `sx`/`sy`, so every full-screen pass lines up. The factor is
+switched one swap after the game's projection (the painter draws the previous pass's lists).
+
+**HD layouts (nw4f `nw::lyt`)**, found by the uniform uploads of the lyt shader:
+
+| WWHD | Function | Notes |
+|---|---|---|
+| `0272DB10` | layout layer projection setup | per `Layout`/`LayoutBack` layer: `sead::OrthoProjection` +0x610, +0x6BC (+-640 x +-360; fields near +0x94, far +0x98, top +0x9C, bottom +0xA0, left +0xA4, right +0xA8, dirty bytes +0/+1), `sead::PerspectiveProjection` +0x768 (fovy 40, aspect 16/9 = `101417D0`, set by `0274E04C`). The layer's DrawInfo (layer+0x548) keeps its own copy of the perspective matrix; changing these objects later has no effect. |
+| `02874038` | `nw::lyt::DrawInfo::LoadProjectionMtx` | `GX2SetVertexUniformReg(uProjection, 16, DrawInfo+0)` |
+| `02874074` | `DrawInfo::LoadMtxModelView` | 12 floats at DrawInfo+0x70, flag +0xB6 |
+| `028766CC` | `nw::lyt::Pane::CalculateMtx` | vtable slot (Pane vtable `101805D4`), recursive over children |
+| `02877100` | `nw::lyt::Pane::Draw` | plain panes (layout roots) |
+| `028F8250` | `nw::font` text draw | content+4 -> projection, content+8 -> view; uploads proj x view |
+
+Layouts are drawn with a perspective camera (fovy 40, the layout plane at z = -989 so 1 unit = 1
+pixel). `nw::lyt::Pane`: +0x00 sibling link, +0x08 vtable, +0x0C parent, +0x10 child count,
++0x14 child list sentinel, +0x1C translate, +0x28 rotate, +0x34 scale, +0x3C size, +0x44 flags,
++0x45 alpha, +0x48 global matrix (3x4), +0x80 name.
+The HUD is `Main_00` (root children N_TV_00 / N_DRC_00 / N_Default_00 hearts, N_HeartPos_01,
+L_Rupy_00, L_CompassClock_00, L_DungeonKey_00, N_SwimTimePos_00, L_Time_00, L_BossHP_00,
+L_EnemyHP_00, L_Arrow_00, L_BatteryVol1_00, L_RupySwordCounter_00) plus `CommandGuide_00`
+(buttons, N_All_00 at 509,238) and `PlaceName_00` (N_All_00 at -597,291); layouts are in
+`Common/Pack/permanent_2d_<lang>.pack` (SARC of Yaz0 SARCs).
+
+Which screen a layout goes to can't be told on the game side: TV and GamePad layouts share the
+layers' DrawInfos, and the lists are recorded on threads that never bind the target (agl binds it
+elsewhere). The render thread knows: the hooks tag the projection upload (`OP_SET_PROJ_REGS`) and
+each root draw (`OP_LAYOUT_ROOT`) in the GX2 command stream. For TV-shaped targets the projection's
+x/y rows are divided by `kx`/`ky` (layouts keep their proportions, centred); the root's screen is
+reported back for the next frame's anchoring. While a TV layout's root computes its matrices (dirty
+bit 0x10 of +0x44 forced so the offsets are applied), root children more than 300 units from the
+centre move out by the extra half width, `L_EnemyHP_00` and `L_CommandA_00` (placed at an actor's
+projected position) and roots the game moved off 0,0 are scaled by `kx`, and leaf panes covering the
+whole 1280x720 screen (backgrounds, fades) are stretched. Values are changed only for the call.
+
+Not handled: bloom/blur kernels sized in guest texels are `kx` times wider horizontally;
+`10165898` (agl perspective, fovy 45, near 0.1) is left at 16:9 (use unknown).

@@ -5,7 +5,7 @@
 // (main + 3 aux). The game's aux effects (reverb...) and final-mix callbacks run on the
 // result, which is upsampled to 48 kHz and sent to the host as stereo.
 // Behaviour follows Cemu's snd_core (ax_mix.cpp, ax_ist.cpp, ax_aux.cpp).
-#include <pthread.h>
+#include "../platform/host.h"
 
 #include <algorithm>
 #include <atomic>
@@ -402,7 +402,7 @@ void output_frame(Cpu* c) {
 
 void frame_thread() {
     Cpu* c = threads::make_service_cpu("AX frame", 0x20000);
-    pthread_setname_np("AX frame");
+    host::set_thread_name("AX frame");
     threads::set_service_core(0);  // the game's audio threads live on core 0
     auto next = std::chrono::steady_clock::now();
     while (g_running) {

@@ -1,20 +1,32 @@
 // Wind Waker HD recompiled: entry point.
+#ifndef _WIN32
 #include <execinfo.h>
 #include <signal.h>
 #include <unistd.h>
+#endif
+#include "platform/host.h"
 
 #include <cstring>
 #include <string>
 #include <thread>
 
+#include "gfx/renderer.h"
 #include "gx2/gx2.h"
 #include "recomp_table.h"
 #include "runtime.h"
+
+#ifdef WWHD_HAS_VULKAN
+namespace gfxvk { int renderer_smoke_test(); }
+#endif
+#ifdef WWHD_HAS_METAL
+int gfx_headstart_warm();  // gfx/shader_headstart.mm
+#endif
 
 void mem_setup_heaps(uint32_t data_end);
 void trace_dump(FILE* f, unsigned last);
 void mem_init_data_imports(uint32_t alloc_slot, uint32_t alloc_ex_slot, uint32_t free_slot);
 
+#ifndef _WIN32
 static void crash_handler(int sig, siginfo_t* si, void*) {
     uintptr_t a = (uintptr_t)si->si_addr;
     uintptr_t base = (uintptr_t)PPC_MEM_BASE;
@@ -60,6 +72,16 @@ static void install_crash_handler() {
     sigaction(SIGFPE, &sa, nullptr);
 }
 
+#else
+static LONG WINAPI crash_handler(EXCEPTION_POINTERS* ex) {
+    auto code=ex->ExceptionRecord->ExceptionCode;
+    fprintf(stderr,"CRASH: Windows exception %08lX at %p\n",code,ex->ExceptionRecord->ExceptionAddress);
+    if(Cpu* c=threads::current())fprintf(stderr,"guest lr=%08X ctr=%08X\n",c->lr,c->ctr);
+    if(g_ppc_trace) { FILE* f=fopen("trace_dump.txt","w"); if(f){trace_dump(f,3000);fclose(f);} }
+    return EXCEPTION_EXECUTE_HANDLER;
+}
+static void install_crash_handler() { SetUnhandledExceptionFilter(crash_handler); }
+#endif
 static void init_data_imports() {
     uint32_t alloc = 0, alloc_ex = 0, free_ = 0;
     for (unsigned i = 0; i < g_recomp_import_count; i++) {
@@ -77,13 +99,38 @@ static void init_data_imports() {
 
 int main(int argc, char** argv) {
     bool warm_shaders = false;
+#ifdef WWHD_HAS_VULKAN
+    bool renderer_smoke = false;
+#endif
     for (int i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "--game") && i + 1 < argc) config::game_dir = argv[++i];
         else if (!strcmp(argv[i], "--save") && i + 1 < argc) config::save_dir = argv[++i];
         else if (!strcmp(argv[i], "--trace")) g_trace_hle = true;
         else if (!strcmp(argv[i], "--warm-shaders")) warm_shaders = true;
+#ifdef WWHD_HAS_VULKAN
+        else if (!strcmp(argv[i], "--renderer-smoke")) renderer_smoke = true;
+#endif
     }
     install_crash_handler();
+    // Metal or Vulkan: --renderer=, WWHD_RENDERER_RUNTIME, Graphics > Renderer (gfx/renderer.h)
+    render::choose(argc, argv);
+#ifdef WWHD_HAS_VULKAN
+    if(renderer_smoke) {
+        // GPU self-test of the Vulkan renderer (no game files): always Vulkan, no fallback
+        int result = 1;
+        host::with_autorelease_pool([&] {
+            render::g_backend = &render::vulkan_backend();
+            try {
+                render::g_backend->init();
+            } catch (const std::exception& e) {
+                fprintf(stderr, "[renderer smoke] FAIL: Vulkan could not start: %s\n", e.what());
+                return;
+            }
+            result = gfxvk::renderer_smoke_test();
+        });
+        return result;
+    }
+#endif
     mem::init();
 
     LoadedModule m{};
@@ -103,11 +150,15 @@ int main(int argc, char** argv) {
     mem::write_cstr(arg0, "cking.rpx", 16);
     st32(argv_arr, arg0);
     // the game runs on its own threads; the process main thread belongs to the window system
-    gfx::init();
+    render::init();
     if (warm_shaders) {
         // compile the shader head start once (fills the macOS Metal shader cache), then quit
-        int gfx_headstart_warm();
-        return gfx_headstart_warm();
+#ifdef WWHD_HAS_METAL
+        if (render::active() == render::Api::Metal) return gfx_headstart_warm();
+#endif
+        fprintf(stderr, "--warm-shaders fills the Metal shader cache; the %s renderer compiles shaders on first use.\n",
+                render::api_name(render::active()));
+        return 1;
     }
     static LoadedModule mod = m;
     static uint32_t args = argv_arr;
@@ -116,6 +167,6 @@ int main(int argc, char** argv) {
         LOG("[boot] game main thread returned");
         std::exit(0);
     }).detach();
-    gfx::run_main_loop();
+    render::run_main_loop();
     return 0;
 }

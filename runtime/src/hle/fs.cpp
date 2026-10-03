@@ -3,8 +3,7 @@
 //   /vol/code/...     -> <game>/code/...
 //   /vol/meta/...     -> <game>/meta/...
 //   /vol/save/...     -> <save dir>/...
-#include <dirent.h>
-#include <sys/stat.h>
+#include "../platform/filesystem.h"
 
 #include <cstdio>
 #include <mutex>
@@ -61,8 +60,7 @@ std::string host_path(const std::string& guest) {
 }
 
 void make_parent_dirs(const std::string& path) {
-    for (size_t i = 1; i < path.size(); i++)
-        if (path[i] == '/') mkdir(path.substr(0, i).c_str(), 0755);
+    std::error_code ec; std::filesystem::create_directories(std::filesystem::path(path).parent_path(),ec);
 }
 
 void fill_stat(uint32_t out, const struct stat& st) {
@@ -169,7 +167,7 @@ HLE(coreinit, FSWriteFile) {
 
 HLE(coreinit, FSSetPosFile) {
     FILE* f = file(arg(c, 2));
-    ret(c, f && fseek(f, arg(c, 3), SEEK_SET) == 0 ? FS_OK : FS_ACCESS_ERROR);
+    ret(c, f && host::file_seek(f,arg(c,3),SEEK_SET) == 0 ? FS_OK : FS_ACCESS_ERROR);
 }
 
 HLE(coreinit, FSGetStat) { ret(c, stat_path(mem::read_cstr(arg(c, 2)), arg(c, 3))); }
@@ -254,7 +252,7 @@ void fs_ss_save(ss::Writer& w) {
         w.u32(h);
         w.str(f.path);
         w.str(f.mode);
-        w.u64((uint64_t)ftello(f.f));
+        w.u64((uint64_t)host::file_tell(f.f));
     }
     keys.clear();
     for (auto& [h, d] : g_dirs) keys.push_back(h);
@@ -286,7 +284,7 @@ void fs_ss_load(ss::Reader& r) {
             LOG("[savestate] cannot reopen %s", gp.c_str());
             continue;
         }
-        fseeko(f, (off_t)pos, SEEK_SET);
+        host::file_seek(f,pos,SEEK_SET);
         g_files[h] = {f, gp, mode};
     }
     n = r.u32();

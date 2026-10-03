@@ -1,7 +1,8 @@
 // Controls mapping model, JSON persistence and evaluation (see input_map.h).
 #include "input_map.h"
 
-#include <Carbon/Carbon.h>  // kVK_* key codes
+#include "platform/keycodes.h"
+#include "platform/host.h"
 #include <sys/stat.h>
 
 #include <algorithm>
@@ -503,8 +504,7 @@ bool load_file(const std::string& path, Mapping& out, std::string* error) {
 }
 
 static void mkdirs(const std::string& dir) {
-    for (size_t i = 1; i <= dir.size(); i++)
-        if (i == dir.size() || dir[i] == '/') mkdir(dir.substr(0, i).c_str(), 0755);
+    std::error_code ec; std::filesystem::create_directories(dir,ec);
 }
 
 bool save_file(const std::string& path, const Mapping& m) {
@@ -516,7 +516,7 @@ bool save_file(const std::string& path, const Mapping& m) {
     std::string text = to_json(m);
     bool ok = fwrite(text.data(), 1, text.size(), f) == text.size();
     ok = fclose(f) == 0 && ok;
-    if (ok) ok = rename(tmp.c_str(), path.c_str()) == 0;  // atomic: never a half-written file
+    if (ok) ok = host::replace_file(tmp,path);  // atomic: never a half-written file
     if (!ok) remove(tmp.c_str());
     return ok;
 }
@@ -524,8 +524,7 @@ bool save_file(const std::string& path, const Mapping& m) {
 std::string default_path() {
     // WWHD_CONTROLS=<file> uses another controls file (tests)
     if (const char* e = getenv("WWHD_CONTROLS"); e && *e) return e;
-    const char* home = getenv("HOME");
-    return std::string(home ? home : ".") + "/Library/Application Support/WWHD/controls.json";
+    return host::config_dir() + "/controls.json";
 }
 
 // ---- live mapping

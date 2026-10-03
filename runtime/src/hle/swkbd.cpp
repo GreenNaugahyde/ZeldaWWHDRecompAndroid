@@ -2,7 +2,8 @@
 // (or WWHD_SWKBD_TEXT for unattended runs) instead of the GamePad keyboard.
 #include <atomic>
 #include <mutex>
-#include <unistd.h>
+#include <chrono>
+#include <thread>
 
 #include "../input.h"
 #include "../runtime.h"
@@ -89,7 +90,7 @@ void text_changed(Cpu* c) {
 
 void sleep_ms(int ms) {
     BlockingScope b;
-    usleep(ms * 1000);
+    std::this_thread::sleep_for(std::chrono::milliseconds(ms));
 }
 
 }  // namespace

@@ -94,7 +94,8 @@ Cpu* make_service_cpu(const char* name, uint32_t stack_size = 0x10000);
 void service_begin();
 void service_end();
 // a blocking sleep that counts as parked for save states (OSSleepTicks, GX2WaitForVsync)
-void park_sleep_until(std::chrono::steady_clock::time_point t);
+void park_sleep_until(std::chrono::steady_clock::time_point t,
+                      bool precise = false, void (*before_resume)() = nullptr);
 
 // ---- save states (savestate.cpp) ----
 // Freeze every other guest thread at a parked point; the caller (the game's main thread, between

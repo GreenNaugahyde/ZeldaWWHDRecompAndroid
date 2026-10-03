@@ -3834,7 +3834,7 @@ void LatteDecompiler_emitGLSLShader(LatteDecompilerShaderContext* shaderContext,
 	src->addFmt(_CRLF);
 #endif
 	// header part (definitions for inputs and outputs)
-	LatteDecompiler::emitHeader(shaderContext);
+	LatteDecompilerGLSL::emitHeader(shaderContext);
 	// helper functions
 	LatteDecompiler_emitGLSLHelperFunctions(shaderContext, src);
 	// start of main

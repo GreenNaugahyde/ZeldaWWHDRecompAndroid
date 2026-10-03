@@ -126,18 +126,19 @@ Derived from the generated C of the whole program:
 ## Writing candidate source (`include/gabi.h`)
 
 ```cpp
-struct daExample_c : fopAc_ac_c {        // WWHD layout, be<T> fields, explicit padding
+struct daMtoge_c : fopAc_ac_c {          // WWHD layout, be<T> fields, explicit padding
     /* 0x3B4 */ gptr<J3DModel> mpModel;
-    /* 0x3C0 */ be<f32> mValue;
+    /* 0x3C0 */ be<f32> mHeightOffset;
 };
-WWHD_OFFSET(daExample_c, mValue, 0x3C0);
+WWHD_OFFSET(daMtoge_c, mHeightOffset, 0x3C0);
 
-/* 0x0ADDRESS */
-BOOL daExample_step(daExample_c* i_this) {
-    WWHD_FUNC(0x0ADDRESS, BOOL, i_this);   // first statement: address, return type, arguments
-    ...                                    // the function body, written by hand
+/* 021E01B8 */
+BOOL daMtoge_actionUp(daMtoge_c* i_this) {
+    WWHD_FUNC(0x021E01B8, BOOL, i_this);   // first statement: address, return type, arguments
+    cLib_chaseF(&i_this->speedF, 30.0f, 4.0f);
+    ...
 }
-VERIFY(0x0ADDRESS, daExample_step);
+VERIFY(0x021E01B8, daMtoge_actionUp);
 ```
 
 ### API

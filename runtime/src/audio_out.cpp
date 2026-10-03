@@ -3,7 +3,11 @@
 // WWHD_NO_AUDIO=1 skips opening the device (the mix still runs and can be dumped).
 #include "audio_out.h"
 
+#if defined(__APPLE__) && !defined(WWHD_SDL_HOST)
 #include <AudioToolbox/AudioToolbox.h>
+#else
+#include <SDL3/SDL.h>
+#endif
 
 #include <atomic>
 #include <cstdio>
@@ -24,7 +28,11 @@ int16_t g_ring[kCapacity * 2];
 std::atomic<uint32_t> g_read{0}, g_write{0};
 std::atomic<bool> g_started{false};
 std::atomic<bool> g_flush{false};  // consumer skips everything queued
+#if defined(__APPLE__) && !defined(WWHD_SDL_HOST)
 AudioComponentInstance g_unit = nullptr;
+#else
+SDL_AudioStream* g_unit = nullptr;
+#endif
 
 std::atomic<uint64_t> g_underrun{0}, g_dropped{0};
 
@@ -55,8 +63,7 @@ void write_wav_header() {
     fflush(g_dump);
 }
 
-OSStatus render(void*, AudioUnitRenderActionFlags*, const AudioTimeStamp*, UInt32, UInt32 frames, AudioBufferList* io) {
-    auto* out = (int16_t*)io->mBuffers[0].mData;
+void pull(int16_t* out,uint32_t frames) {
     uint32_t r = g_read.load(std::memory_order_relaxed), w = g_write.load(std::memory_order_acquire);
     if (g_flush.exchange(false)) r = w;
     uint32_t avail = w - r, n = std::min<uint32_t>(avail, frames);
@@ -70,8 +77,20 @@ OSStatus render(void*, AudioUnitRenderActionFlags*, const AudioTimeStamp*, UInt3
         g_underrun += frames - n;
     }
     g_read.store(r + n, std::memory_order_release);
-    return noErr;
 }
+#if defined(__APPLE__) && !defined(WWHD_SDL_HOST)
+OSStatus render(void*,AudioUnitRenderActionFlags*,const AudioTimeStamp*,UInt32,UInt32 frames,AudioBufferList* io) {
+    pull((int16_t*)io->mBuffers[0].mData,frames);return noErr;
+}
+#else
+void SDLCALL render(void*,SDL_AudioStream* stream,int additional,int) {
+    // SDL requests input bytes in our configured S16/stereo format. Keep the callback bounded.
+    int16_t samples[1024*2];
+    while(additional>0) { uint32_t frames=std::min(additional/4,1024);if(!frames)break;
+      pull(samples,frames);if(!SDL_PutAudioStreamData(stream,samples,(int)frames*4))break;additional-=(int)frames*4;
+    }
+}
+#endif
 
 }  // namespace
 
@@ -86,6 +105,7 @@ void init() {
     }
     if (getenv("WWHD_NO_AUDIO")) return;
 
+#if defined(__APPLE__) && !defined(WWHD_SDL_HOST)
     AudioComponentDescription desc{};
     desc.componentType = kAudioUnitType_Output;
     desc.componentSubType = kAudioUnitSubType_DefaultOutput;
@@ -116,6 +136,15 @@ void init() {
         return;
     }
     LOG("[audio] CoreAudio output started (48 kHz stereo)");
+#else
+    if(!SDL_InitSubSystem(SDL_INIT_AUDIO)){LOG("[audio] SDL audio initialization: %s",SDL_GetError());return;}
+    SDL_AudioSpec spec{SDL_AUDIO_S16,2,kRate};
+    g_unit=SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK,&spec,render,nullptr);
+    if(!g_unit){LOG("[audio] no output device: %s",SDL_GetError());return;}
+    if(const char* v=getenv("WWHD_AUDIO_VOLUME"))SDL_SetAudioStreamGain(g_unit,(float)atof(v));
+    if(!SDL_ResumeAudioStreamDevice(g_unit)){LOG("[audio] failed to start: %s",SDL_GetError());SDL_DestroyAudioStream(g_unit);g_unit=nullptr;return;}
+    LOG("[audio] SDL output started (48 kHz stereo)");
+#endif
 }
 
 void push(const int16_t* stereo, int frames) {

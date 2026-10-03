@@ -13,7 +13,7 @@
 
 #include "input.h"
 #include "input_map.h"
-#include "metal.h"
+#include "renderer.h"
 #include "../runtime.h"
 
 #include <vector>
@@ -243,7 +243,7 @@ namespace interp { void set_mode(int m); uint64_t logic_steps(); }
 namespace input {
 static void apply_scenario(PadState& s) {
     static const Scenario sc;
-    if (!sc.origin || gfx::R.frame < sc.origin) return;
+    if (!sc.origin || render::frame_count() < sc.origin) return;
     // scenario time = game time: full logic steps / 30 (frame-time hitches don't shift the input)
     static const uint64_t s0 = [] {
         LOG("[test] origin at guest time %.4f s, logic step %llu", (double)timebase::now() / timebase::kTicksPerSec,
@@ -253,7 +253,7 @@ static void apply_scenario(PadState& s) {
     double t = (double)(interp::logic_steps() - s0) / 30.0;
     static std::atomic<bool> mode_set{false}, ended{false};
     static std::atomic<int> dbg{0};
-    if (getenv("WWHD_TEST_DEBUG") && dbg++ % 30 == 0) LOG("[test] t=%.3f frame %llu", t, (unsigned long long)gfx::R.frame);
+    if (getenv("WWHD_TEST_DEBUG") && dbg++ % 30 == 0) LOG("[test] t=%.3f frame %llu", t, (unsigned long long)render::frame_count());
     if (sc.mode >= 0 && t >= sc.mode_at && !mode_set.exchange(true)) {
         LOG("[test] t=%.3f s: 60 fps mode %d", t, sc.mode);
         interp::set_mode(sc.mode);
@@ -285,17 +285,17 @@ PadState read() {
     if (!keys.empty()) {
         memset(g_script_keys, 0, sizeof g_script_keys);
         for (auto& p : keys)
-            if (gfx::R.frame >= p.from && gfx::R.frame <= p.to)
+            if (render::frame_count() >= p.from && render::frame_count() <= p.to)
                 for (int c : p.codes) g_script_keys[c] = true;
     }
     PadState k = keyboard_state(!no_host), s = g_pad;
     if (no_host) s = PadState{};
     for (auto& p : script)
-        if (gfx::R.frame >= p.from && gfx::R.frame <= p.to) s.buttons |= p.bits;
+        if (render::frame_count() >= p.from && render::frame_count() <= p.to) s.buttons |= p.bits;
     for (auto& p : sticks)
-        if (gfx::R.frame >= p.from && gfx::R.frame <= p.to) { s.lx = p.x; s.ly = p.y; }
+        if (render::frame_count() >= p.from && render::frame_count() <= p.to) { s.lx = p.x; s.ly = p.y; }
     for (auto& p : rsticks)
-        if (gfx::R.frame >= p.from && gfx::R.frame <= p.to) { s.rx = p.x; s.ry = p.y; }
+        if (render::frame_count() >= p.from && render::frame_count() <= p.to) { s.rx = p.x; s.ry = p.y; }
     apply_scenario(s);
     s.buttons |= k.buttons;
     if (k.lx || k.ly) { s.lx = k.lx; s.ly = k.ly; }
@@ -307,7 +307,7 @@ PadState read() {
     static const bool log_buttons = getenv("WWHD_LOG_BUTTONS") != nullptr;
     static uint32_t last_buttons = 0;
     if (log_buttons && s.buttons != last_buttons) {
-        LOG("[input] frame %llu buttons %04X", (unsigned long long)gfx::R.frame, s.buttons);
+        LOG("[input] frame %llu buttons %04X", (unsigned long long)render::frame_count(), s.buttons);
         last_buttons = s.buttons;
     }
     mods::filter_pad(s);  // gameplay mods: mouse camera, wheel -> R3

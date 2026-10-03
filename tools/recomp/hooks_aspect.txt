@@ -1,0 +1,11 @@
+# Aspect ratio (runtime/src/aspect.cpp). Address = function entry, @ADDR = instruction hook.
+@024FFA98 # camera_execute: stfs f0 -> view.mAspect (16/9 constant 1004AAF0)
+@025020E0 # init_phase2 (camera creation): the same
+@024FFD60 # camera_draw: bl C_MTXPerspective (f1 fovy, f2 aspect)
+@024F811C # view_setup: bl mDoLib_clipper::setup (f1 fovy, f2 aspect)
+@024F8168 # view_setup: the same (other far plane)
+@025ADB38 # dScnName_c::setView: bl C_MTXPerspective (file select scene)
+02874038  # nw::lyt::DrawInfo::LoadProjectionMtx: TV layouts drawn undistorted, centred
+028766CC  # nw::lyt::Pane::CalculateMtx: edge anchoring of TV layout panes
+02877100  # nw::lyt::Pane::Draw: which screen each layout root is drawn to
+028F8250  # nw::font text draw (projection matrix pointer at content+4): TV text drawn undistorted, centred

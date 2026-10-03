@@ -1,7 +1,7 @@
 // shim: render-target helpers used by the decompiler (implemented in latte_mrt.cpp)
 #pragma once
 #include "Cafe/HW/Latte/ISA/LatteReg.h"
-class LatteDecompilerShader;
+struct LatteDecompilerShader;
 class LatteMRT {
 public:
     static uint8 GetActiveColorBufferMask(const LatteDecompilerShader* pixelShader, const struct LatteContextRegister& lcr);

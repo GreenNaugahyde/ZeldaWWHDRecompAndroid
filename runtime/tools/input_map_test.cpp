@@ -1,7 +1,8 @@
 // Unit tests for the controls mapping (runtime/src/input_map.cpp).
 //   make -C build/cmake input_map_test && ./build/cmake/input_map_test
-#include <Carbon/Carbon.h>
-#include <unistd.h>
+#include "platform/keycodes.h"
+#include <filesystem>
+#include <chrono>
 
 #include <cmath>
 #include <cstdio>
@@ -167,8 +168,9 @@ static void test_deadzone() {
 }
 
 static void test_files() {
-    char dir[] = "/tmp/input_map_test.XXXXXX";
-    CHECK(mkdtemp(dir) != nullptr);
+    std::string dir=(std::filesystem::temp_directory_path()/("input_map_test."+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()))).string();
+    std::error_code ec;
+    CHECK(std::filesystem::create_directory(dir,ec));
     std::string path = std::string(dir) + "/sub/dir/controls.json";  // directories are created
     Mapping m = Mapping::defaults();
     std::swap(m.keys[kA], m.keys[kB]);
@@ -178,7 +180,11 @@ static void test_files() {
     CHECK(load_file(path, r, &err) && r == m);
     CHECK(!load_file(std::string(dir) + "/missing.json", r, &err));
     // the live mapping: WWHD_CONTROLS points it at our file
+#ifdef _WIN32
+    _putenv_s("WWHD_CONTROLS",path.c_str());
+#else
     setenv("WWHD_CONTROLS", path.c_str(), 1);
+#endif
     CHECK(default_path() == path);
     load_startup();
     CHECK(current() == m);
@@ -186,7 +192,7 @@ static void test_files() {
     set_current(Mapping::defaults());
     CHECK(generation() != g);
     CHECK(load_file(path, r, &err) && r == Mapping::defaults());  // saved
-    system((std::string("rm -rf ") + dir).c_str());
+    std::filesystem::remove_all(dir,ec);
 }
 
 static void test_conflict_helpers() {

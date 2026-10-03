@@ -1,7 +1,7 @@
 // coreinit: logging, dynamic loading, system info, and small odds and ends.
 #include <cstdlib>
 #include "../true60.h"
-#include <sys/stat.h>
+#include <filesystem>
 #include <ctime>
 #include <vector>
 #include <algorithm>
@@ -143,7 +143,7 @@ static void write_crash_log(Cpu* c, const std::string& file, uint32_t line, cons
         snprintf(b, sizeof b, "+0x%X", pc - s0);
         return pc - s0 < 0x4000 ? names[s0] + b : "?";
     };
-    mkdir("captures", 0755);
+    std::error_code ec; std::filesystem::create_directories("captures",ec);
     time_t t = time(nullptr);
     char path[96];
     strftime(path, sizeof path, "captures/crash-%Y%m%d-%H%M%S.log", localtime(&t));

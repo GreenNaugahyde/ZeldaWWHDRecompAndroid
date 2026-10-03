@@ -2,12 +2,30 @@
 
 A static recompilation of the Wii U version (USA) for Apple Silicon Macs. The game's PowerPC
 code is translated to C ahead of time, the Cafe OS libraries the game uses are reimplemented
-natively, and GX2 graphics are implemented directly on Metal (no Cemu runtime, no GPU command
-emulation).
+natively, and GX2 graphics are implemented directly on Metal or Vulkan (no Cemu runtime, no GPU
+command emulation).
 
 How it works and how it differs from running the game in Cemu: [docs/how-it-works.md](docs/how-it-works.md).
 
-## What's new (since the first release)
+## What's new in this update
+
+- **Vulkan renderer** (by OpenAI Codex), built into the same app next to Metal. Pick one in
+  **Graphics › Renderer**; the choice is saved and used from the next start ("Restart Now"
+  relaunches right away). Both share the same windows, menus, display modes, controls and mods.
+  If Vulkan can't start (no Vulkan loader or MoltenVK installed), the game falls back to Metal and
+  says why. Details: [docs/vulkan.md](docs/vulkan.md).
+- **Full screen and GamePad screen modes** (Display menu): full screen for the TV window (⌘F),
+  picture scaling (smooth, sharp, integer), and the GamePad screen as its own window, a
+  picture-in-picture overlay, an automatic overlay that pops up when the GamePad picture changes,
+  or off (⌘G shows/hides it).
+- **Aspect ratio** (Graphics › Aspect ratio): 16:9 (original), match the window, 16:10, 21:9 or
+  32:9. Wider screens see more to the sides (same vertical view); the HUD stays at the edges and
+  menus stay centred.
+- **Fixes**: misplaced Yes/No cursor in text boxes at 16:10, quitting with ⌘Q could hang, garbled
+  characters in the window title. Community fixes from pull requests #1 and #2 (Miiverse manager
+  throttling, shared shader-cache memory) are included.
+
+## Earlier updates
 
 - **60 fps.** Two modes in the Graphics menu:
   - **60 fps (key 6)**: frame interpolation. The game logic keeps its original 30 steps per second;
@@ -67,6 +85,10 @@ None of these are included or will be provided.
 
 ## Building
 
+For the Vulkan renderer also: `brew install vulkan-headers vulkan-loader molten-vk glslang` (the
+build needs them; the app still runs with Metal on a Mac without them). `-DWWHD_RENDERER=METAL`
+builds a Metal-only app without any Vulkan dependency.
+
 ```sh
 # 1. extract the game into game/ (game.wux with game.key next to it, plus your common key)
 python3 tools/wudextract.py game.wux extract game
@@ -87,6 +109,9 @@ startup that `game/code/cking.rpx` matches the recompiled code.
 ```sh
 ./build/cmake/wwhd                 # options: --game DIR (default game), --save DIR (default save)
 ```
+
+`--renderer=metal` or `--renderer=vulkan` (or `WWHD_RENDERER_RUNTIME=metal|vulkan`) overrides the
+saved renderer choice for one start.
 
 Two windows open: the TV and the GamePad screen (map, items, menus). Click and drag in the
 GamePad window to use the touch screen. Saves go to `save/`.
@@ -126,7 +151,7 @@ window title shows what is active and the current frame rate): 60 fps by frame i
 (**6**), true 60 fps (**7**, experimental), internal resolution 1x / 1.5x / 2x / 3x (**R**
 cycles; the game renders at 1280x720, 2x renders at 2560x1440), edge smoothing (FXAA, **8**),
 ambient-occlusion mode (**O** cycles), full-size occlusion depth (**M**), 16x anisotropic
-filtering (**N**), and a frame capture for debugging (**P** or fn+F12, written to `captures/`;
+filtering (**N**), the aspect ratio, the renderer (Metal or Vulkan), and a frame capture for debugging (**P** or fn+F12, written to `captures/`;
 captures contain game imagery, so keep them to yourself).
 
 The **Gameplay** menu has optional changes to how the game plays, all off by default: climb any
@@ -146,11 +171,22 @@ or as a Wii U Pro Controller (`WWHD_PRO_CONTROLLER=1` starts in that mode); with
 Controller, the GamePad window keeps its screen and touch input.
 When the game asks for text (e.g. your name), a macOS text field opens.
 
+The **Display** menu: full screen for the TV window (**⌘F**, **⌃⌘F** or the green button; the
+pointer hides after 2 s without movement), picture scaling (smooth, sharp, or integer scale) and
+where the GamePad screen goes: a separate window (which can be put on another display, also in
+full screen there), a picture-in-picture overlay in a corner of the TV picture (size, corner and
+opacity selectable; click it to touch), an automatic overlay that appears for a few seconds when
+the GamePad picture changes a lot (a page or menu switches; **⌘G** keeps it up), or off.
+**⌘G** shows/hides the GamePad screen in any mode. Window positions, full screen, these choices
+and the renderer are remembered in `~/Library/Application Support/wwhd/display.plist`
+(delete it to reset).
+
 ## Notes
 
 - Shaders are translated on first use and cached in `~/Library/Caches/wwhd/shaders.bin`; later
   runs replay that cache at startup.
 - Useful environment variables: `WWHD_NO_AUDIO=1`, `WWHD_NO_GAMEPAD=1` (no second window),
+  `WWHD_DRC_MODE=window|pip|auto|off`, `WWHD_ASPECT=16:9|window|16:10|21:9|32:9|<w:h>`,
   `WWHD_AUDIO_VOLUME=0..1`, `WWHD_SHADER_CACHE=<file>|0`, `WWHD_AO_MODE=0..2`, `WWHD_AO_HIRES=0|1`, `WWHD_ANISO=0|1`, `WWHD_RES_SCALE=1|1.5|2|3`,
   `WWHD_FXAA=0|1`, `WWHD_INTERP=1`, `WWHD_TRUE60=1` (start values for the Graphics menu);
   `WWHD_SHADOW_SCALE=n` gives the shadow maps their own resolution factor; `WWHD_STATE_DIR=<dir>`
@@ -216,14 +252,14 @@ the game are untested.
 ## License
 
 The code of this project is licensed under the Mozilla Public License 2.0 (see `LICENSE`).
-Vendored third-party code keeps its own license: Cemu (MPL-2.0), metal-cpp (Apache-2.0) and
-{fmt} (MIT); see Credits. The game itself is Nintendo's property and is not included.
+Vendored third-party code keeps its own license: Cemu (MPL-2.0), metal-cpp (Apache-2.0) and {fmt} (MIT); see Credits. The game itself is Nintendo's property and is not included.
 
 ## Credits
 
 GPU address library, shader decompiler and a few reference structures are vendored from
 [Cemu](https://github.com/cemu-project/Cemu) (MPL-2.0, see `runtime/third_party/cemu/LICENSE.txt`);
 `tools/wudextract.py`, `runtime/src/espresso_fp.c` and parts of the OS layer are ported from or
-follow Cemu as noted in those files. Also vendored: [metal-cpp](https://developer.apple.com/metal/cpp/)
+follow Cemu as noted in those files (in the Vulkan renderer: the vertex-format table and the
+shader parser glue). Also vendored: [metal-cpp](https://developer.apple.com/metal/cpp/)
 (Apache-2.0, `runtime/third_party/metal-cpp/LICENSE.txt`) and [{fmt}](https://github.com/fmtlib/fmt)
 (MIT, `runtime/third_party/fmt/LICENSE`).

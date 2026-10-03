@@ -19,167 +19,15 @@ namespace gfx {
 Renderer R;
 bool log_this_frame();
 
-// ---------------------------------------------------------------- windows
-}  // namespace gfx
-
-// GamePad screen: the mouse stands in for the touch panel
-@interface WWDrcView : NSView
-@end
-@implementation WWDrcView
-- (BOOL)acceptsFirstMouse:(NSEvent*)e { return YES; }
-- (void)touch:(NSEvent*)e down:(bool)down {
-    NSPoint p = [self convertPoint:e.locationInWindow fromView:nil];
-    NSSize sz = self.bounds.size;
-    // the image is letterboxed to 16:9 inside the view
-    float a = 854.0f / 480.0f, w = sz.width, h = sz.height, x0 = 0, y0 = 0;
-    if (w / h > a) { x0 = (w - h * a) / 2; w = h * a; } else { y0 = (h - w / a) / 2; h = w / a; }
-    float x = (p.x - x0) / w, y = 1.0f - (p.y - y0) / h;
-    input::set_touch(down, std::clamp(x, 0.0f, 1.0f), std::clamp(y, 0.0f, 1.0f));
-}
-- (void)mouseDown:(NSEvent*)e { [self touch:e down:true]; }
-- (void)mouseDragged:(NSEvent*)e { [self touch:e down:true]; }
-- (void)mouseUp:(NSEvent*)e { [self touch:e down:false]; }
-@end
-
-namespace gfx {
-
-void install_menu(NSWindow* tv);  // menu.mm
-
-// GamePad window, shown/hidden from the Input menu (the game keeps rendering its image either way)
-static NSWindow* g_drc_window = nil;
-bool drc_window_available() { return g_drc_window != nil; }
-bool drc_window_shown() { return g_drc_window.visible; }
-void show_drc_window(bool on) {
-    if (!g_drc_window) return;
-    if (on) [g_drc_window orderFront:nil];
-    else [g_drc_window orderOut:nil];
-}
-
-
-static NSWindow* make_window(Screen& scr, NSString* title, NSView* view, int w, int h, NSPoint origin) {
-    NSWindow* win = [[NSWindow alloc] initWithContentRect:NSMakeRect(origin.x, origin.y, w, h)
-                                                styleMask:NSWindowStyleMaskTitled | NSWindowStyleMaskClosable |
-                                                          NSWindowStyleMaskResizable | NSWindowStyleMaskMiniaturizable
-                                                  backing:NSBackingStoreBuffered
-                                                    defer:NO];
-    [win setTitle:title];
-    if (view) [win setContentView:view];
-    view = [win contentView];
-    [view setWantsLayer:YES];
-    scr.layer = [CAMetalLayer layer];
-    scr.layer.device = R.device;
-    scr.layer.pixelFormat = MTLPixelFormatBGRA8Unorm;
-    scr.layer.framebufferOnly = YES;
-    scr.layer.contentsScale = [win backingScaleFactor];
-    scr.layer.drawableSize = CGSizeMake(w * scr.layer.contentsScale, h * scr.layer.contentsScale);
-    scr.layer.maximumDrawableCount = 3;
-    [view setLayer:scr.layer];
-    Screen* sp = &scr;
-    [[NSNotificationCenter defaultCenter] addObserverForName:NSWindowDidChangeOcclusionStateNotification
-                                                      object:win queue:nil usingBlock:^(NSNotification*) {
-        sp->visible = (win.occlusionState & NSWindowOcclusionStateVisible) != 0;
-    }];
-    [[NSNotificationCenter defaultCenter] addObserverForName:NSWindowDidResizeNotification
-                                                      object:win queue:nil usingBlock:^(NSNotification*) {
-        NSSize sz = view.bounds.size;
-        sp->layer.drawableSize = CGSizeMake(sz.width * sp->layer.contentsScale, sz.height * sp->layer.contentsScale);
-    }];
-    return win;
-}
-
-static void create_window() {
-    [NSApplication sharedApplication];
-    // a game: no App Nap / timer coalescing, even when the window is in the background
-    static id activity = [[NSProcessInfo processInfo]
-        beginActivityWithOptions:NSActivityUserInitiated | NSActivityLatencyCritical | NSActivityIdleDisplaySleepDisabled
-                          reason:@"game running"];
-    (void)activity;
-    // scripted test runs (WWHD_NO_HOST_INPUT) run as a background app: no Dock icon, never takes the
-    // keyboard focus from the user's game
-    [NSApp setActivationPolicy:getenv("WWHD_NO_HOST_INPUT") ? NSApplicationActivationPolicyAccessory
-                                                           : NSApplicationActivationPolicyRegular];
-    NSWindow* tv = make_window(R.tv, @"The Legend of Zelda: The Wind Waker HD (recompiled)", nil, 1280, 720, NSMakePoint(0, 0));
-    install_menu(tv);
-    [tv center];
-    if (!getenv("WWHD_NO_GAMEPAD")) {
-        // GamePad screen to the right of the TV window
-        NSRect f = tv.frame;
-        NSWindow* drc = make_window(R.drc, @"GamePad", [[WWDrcView alloc] initWithFrame:NSMakeRect(0, 0, 427, 240)], 427, 240,
-                                    NSMakePoint(NSMaxX(f) + 8, NSMinY(f)));
-        g_drc_window = drc;
-        drc.releasedWhenClosed = NO;  // closing only hides it; the Input menu can bring it back
-        if (!input::pro_controller()) [drc orderFront:nil];  // Pro Controller: GamePad window starts hidden
-    }
-    if (getenv("WWHD_NO_HOST_INPUT")) {
-        [tv orderBack:nil];  // scripted test run: stay behind, don't take focus
-    } else {
-        [tv makeKeyAndOrderFront:nil];
-        [NSApp activateIgnoringOtherApps:YES];
-    }
-    input::init();
-}
-
-// ---------------------------------------------------------------- presentation shader
-static const char* kPresentShader = R"(
-#include <metal_stdlib>
-using namespace metal;
-struct VOut { float4 pos [[position]]; float2 uv; };
-vertex VOut present_vs(uint vid [[vertex_id]], constant float4& rect [[buffer(0)]]) {
-    float2 p = float2((vid << 1) & 2, vid & 2);          // fullscreen triangle strip corners
-    VOut o;
-    o.uv = p * 0.5;                                       // 0..1 (flipped below)
-    float2 ndc = rect.xy + p * 0.5 * rect.zw;
-    o.pos = float4(ndc.x * 2.0 - 1.0, 1.0 - ndc.y * 2.0, 0.0, 1.0);
-    return o;
-}
-// optional edge smoothing (FXAA, the classic console variant), evaluated on the source picture's
-// texel grid while scaling it to the window
-static float luma(float3 c) { return dot(c, float3(0.299, 0.587, 0.114)); }
-static float3 fxaa(texture2d<float> t, sampler s, float2 uv) {
-    float2 rcp = 1.0 / float2(t.get_width(), t.get_height());
-    float3 nw = t.sample(s, uv + float2(-1, -1) * rcp).rgb, ne = t.sample(s, uv + float2(1, -1) * rcp).rgb;
-    float3 sw = t.sample(s, uv + float2(-1, 1) * rcp).rgb, se = t.sample(s, uv + float2(1, 1) * rcp).rgb;
-    float3 m = t.sample(s, uv).rgb;
-    float lnw = luma(nw), lne = luma(ne), lsw = luma(sw), lse = luma(se), lm = luma(m);
-    float lmin = min(lm, min(min(lnw, lne), min(lsw, lse))), lmax = max(lm, max(max(lnw, lne), max(lsw, lse)));
-    if (lmax - lmin < max(0.0312, lmax * 0.125)) return m;  // no edge here
-    float2 dir = float2(-((lnw + lne) - (lsw + lse)), (lnw + lsw) - (lne + lse));
-    float reduce = max((lnw + lne + lsw + lse) * (0.25 / 8.0), 1.0 / 128.0);
-    dir = clamp(dir / (min(abs(dir.x), abs(dir.y)) + reduce), -8.0, 8.0) * rcp;
-    float3 a = 0.5 * (t.sample(s, uv + dir * (1.0 / 3.0 - 0.5)).rgb + t.sample(s, uv + dir * (2.0 / 3.0 - 0.5)).rgb);
-    float3 b = a * 0.5 + 0.25 * (t.sample(s, uv - dir * 0.5).rgb + t.sample(s, uv + dir * 0.5).rgb);
-    float lb = luma(b);
-    return (lb < lmin || lb > lmax) ? a : b;
-}
-fragment float4 present_fs(VOut in [[stage_in]], texture2d<float> tex [[texture(0)]], sampler s [[sampler(0)]],
-                           constant int& aa [[buffer(0)]]) {
-    return float4(aa ? fxaa(tex, s, in.uv) : tex.sample(s, in.uv).rgb, 1.0);
-}
-)";
+// windows, full screen, the present shader and the composition of the screens: display.mm
+void display_init();
+void present_screens();
+void request_present_dump(const std::string& path);
 
 // enhancement, toggled in game (Graphics menu or 8; WWHD_FXAA=1 starts with it on)
 static std::atomic<bool> g_fxaa{getenv("WWHD_FXAA") != nullptr};
 bool fxaa_enabled() { return g_fxaa.load(std::memory_order_relaxed); }
 void set_fxaa(bool v) { g_fxaa = v; LOG("[gfx] edge smoothing (FXAA) %s", v ? "on" : "off"); }
-
-static void create_present_pipeline() {
-    NSError* err = nil;
-    id<MTLLibrary> lib = [R.device newLibraryWithSource:[NSString stringWithUTF8String:kPresentShader] options:nil error:&err];
-    if (!lib) fatal("present shader: %s", err.localizedDescription.UTF8String);
-    MTLRenderPipelineDescriptor* d = [MTLRenderPipelineDescriptor new];
-    d.vertexFunction = [lib newFunctionWithName:@"present_vs"];
-    d.fragmentFunction = [lib newFunctionWithName:@"present_fs"];
-    d.colorAttachments[0].pixelFormat = MTLPixelFormatBGRA8Unorm;
-    R.presentPipeline = [R.device newRenderPipelineStateWithDescriptor:d error:&err];
-    if (!R.presentPipeline) fatal("present pipeline: %s", err.localizedDescription.UTF8String);
-    d.colorAttachments[0].pixelFormat = MTLPixelFormatBGRA8Unorm_sRGB;
-    R.presentPipelineSRGB = [R.device newRenderPipelineStateWithDescriptor:d error:&err];
-    if (!R.presentPipelineSRGB) fatal("present pipeline: %s", err.localizedDescription.UTF8String);
-    MTLSamplerDescriptor* sd = [MTLSamplerDescriptor new];
-    sd.minFilter = sd.magFilter = MTLSamplerMinMagFilterLinear;
-    sd.sAddressMode = sd.tAddressMode = MTLSamplerAddressModeClampToEdge;
-    R.linearClamp = [R.device newSamplerStateWithDescriptor:sd];
-}
 
 // ---------------------------------------------------------------- guest memory
 static void map_guest_range(uint32_t base, uint32_t size) {
@@ -265,8 +113,7 @@ void init() {
     R.device = MTLCreateSystemDefaultDevice();
     if (!R.device) fatal("no Metal device");
     R.queue = [R.device newCommandQueue];
-    create_window();
-    create_present_pipeline();
+    display_init();
     // GPU-visible guest memory: MEM2 (code data + heaps), runtime objects, foreground bucket, MEM1
     map_guest_range(0x10000000, 0x40000000);
     map_guest_range(0x60000000, 0x10000000);
@@ -530,36 +377,11 @@ static void dump_tv(uint64_t frame) {
         snprintf(name, sizeof name, "frame_%llu_drc.png", (unsigned long long)frame);
         dump_texture(R.drc.tex, name, true, R.drc.srgb);
     }
-}
-
-// draw a screen's image into its window, letterboxed to keep the aspect ratio
-static void present(Screen& scr) {
-    if (!scr.layer || !scr.tex) return;
-    MTLPixelFormat want = scr.srgb ? MTLPixelFormatBGRA8Unorm_sRGB : MTLPixelFormatBGRA8Unorm;
-    if (scr.layer.pixelFormat != want) scr.layer.pixelFormat = want;
-    id<CAMetalDrawable> drawable = scr.visible ? [scr.layer nextDrawable] : nil;
-    if (!drawable) return;
-    MTLRenderPassDescriptor* rp = [MTLRenderPassDescriptor renderPassDescriptor];
-    rp.colorAttachments[0].texture = drawable.texture;
-    rp.colorAttachments[0].loadAction = MTLLoadActionClear;
-    rp.colorAttachments[0].clearColor = MTLClearColorMake(0, 0, 0, 1);
-    rp.colorAttachments[0].storeAction = MTLStoreActionStore;
-    id<MTLRenderCommandEncoder> e = [command_buffer() renderCommandEncoderWithDescriptor:rp];
-    float dw = drawable.texture.width, dh = drawable.texture.height;
-    float sa = (float)scr.tex.width / scr.tex.height, da = dw / dh;
-    float rect[4] = {0, 0, 1, 1};
-    if (da > sa) { rect[2] = sa / da; rect[0] = (1 - rect[2]) / 2; }
-    else { rect[3] = da / sa; rect[1] = (1 - rect[3]) / 2; }
-    [e setRenderPipelineState:drawable.texture.pixelFormat == MTLPixelFormatBGRA8Unorm_sRGB ? R.presentPipelineSRGB
-                                                                                         : R.presentPipeline];
-    [e setVertexBytes:rect length:sizeof(rect) atIndex:0];
-    [e setFragmentTexture:scr.tex atIndex:0];
-    int aa = fxaa_enabled() ? 1 : 0;
-    [e setFragmentBytes:&aa length:sizeof aa atIndex:0];
-    [e setFragmentSamplerState:R.linearClamp atIndex:0];
-    [e drawPrimitives:MTLPrimitiveTypeTriangleStrip vertexStart:0 vertexCount:4];
-    [e endEncoding];
-    [command_buffer() presentDrawable:drawable];
+    static const bool present = getenv("WWHD_DUMP_PRESENT") != nullptr;
+    if (present) {
+        snprintf(name, sizeof name, "frame_%llu_present.png", (unsigned long long)frame);
+        request_present_dump(name);
+    }
 }
 
 void with_autorelease_pool(void (*fn)()) {
@@ -588,13 +410,13 @@ void swap() {
     if (!pendingCapture.empty()) {
         dump_texture(R.tv.tex, (pendingCapture + "/tv.png").c_str(), true, R.tv.srgb);
         if (R.drc.tex) dump_texture(R.drc.tex, (pendingCapture + "/gamepad.png").c_str(), true, R.drc.srgb);
+        request_present_dump(pendingCapture + "/present.png");  // the TV window as shown (overlay, bars)
         LOG("[gfx] capture written to %s", pendingCapture.c_str());
         pendingCapture.clear();
     }
     if (const char* dir = capture_begin_frame()) pendingCapture = dir;
     @autoreleasepool {
-        present(R.tv);
-        present(R.drc);
+        present_screens();
         [command_buffer() addCompletedHandler:^(id<MTLCommandBuffer>) { g_frames_completed++; }];
         flush();
     }

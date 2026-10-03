@@ -36,6 +36,9 @@ enum Op : uint32_t {
     OP_SWAP,            // present
     OP_SETUP_CONTEXT,   // GX2ContextState*: allocate shadow state and make it current
     OP_FENCE,           // fence id: the game thread waits until the render thread got here
+    // aspect ratio (aspect.cpp), appended to keep the numbers of recorded display lists
+    OP_SET_PROJ_REGS,   // first register, 16 values: a layout projection matrix (narrowed when drawing to the TV)
+    OP_LAYOUT_ROOT,     // nw::lyt root pane: drawn into the target bound now (which screen it goes to)
     OP_COUNT
 };
 
