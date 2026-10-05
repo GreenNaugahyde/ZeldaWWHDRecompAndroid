@@ -181,3 +181,4 @@
 02019788  # cM_rnd: WWHD_RND_TRACE (interp_fx.cpp)
 02019918  # cM_rndFX: WWHD_RND_TRACE
 02018D40  # cM3dGSph::SetC: NaN centre in a 60 Hz camera step is skipped and the step undone (true60.cpp)
+0203DEEC  # OliveOperationMgr message handler: throttled while Miiverse is unavailable (hle/system_stubs.cpp)

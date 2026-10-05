@@ -160,6 +160,16 @@ static uint64_t program_hash(uint32_t addr, uint32_t size) {
     return e.hash;
 }
 
+// ---------------------------------------------------------------- compile completion
+// Compiles publish their result and signal this; wait_compiled sleeps on it instead of polling
+// (from the original project): it wakes as soon as the compile finishes.
+static std::mutex g_compile_m;
+static std::condition_variable g_compile_cv;
+static void compile_done() {
+    { std::lock_guard<std::mutex> lk(g_compile_m); }
+    g_compile_cv.notify_all();
+}
+
 // ---------------------------------------------------------------- background compiles
 // Shader modules and pipelines are created on worker threads (WWHD_SYNC_SHADERS=1 creates them
 // inline instead); draws that need one still compiling wait a bounded time, then are skipped.
@@ -309,6 +319,7 @@ static void compile_now(Module* m, uint64_t hash, uint64_t key, bool vertex, con
         if (!compile_glsl(src.c_str(), vertex, spirv, log)) {
             report_compile_error(src, key, log);
             m->state.store(CS_FAILED, std::memory_order_release);
+            compile_done();
             return;
         }
         std::lock_guard<std::mutex> lk(g_spv_mutex);
@@ -326,10 +337,12 @@ static void compile_now(Module* m, uint64_t hash, uint64_t key, bool vertex, con
     if (vkCreateShaderModule(R.device, &ci, nullptr, &m->module) != VK_SUCCESS) {
         LOG("[gfx] shader %016llx: vkCreateShaderModule failed", (unsigned long long)key);
         m->state.store(CS_FAILED, std::memory_order_release);
+        compile_done();
         return;
     }
     g_t_spirv_us += (uint64_t)((now_ms() - t0) * 1000);
     m->state.store(CS_READY, std::memory_order_release);
+    compile_done();
 }
 
 // attach the shader to the module for its translation, compiling that module if it is new
@@ -756,9 +769,13 @@ static bool wait_compiled(const std::atomic<int>& st) {
     static const double budgetMs = getenv("WWHD_COMPILE_WAIT_MS") ? atof(getenv("WWHD_COMPILE_WAIT_MS")) : 8.0;
     if (st.load(std::memory_order_acquire) == CS_READY) return true;
     if (g_building_ahead) return false;
+    auto pending = [&] { return st.load(std::memory_order_acquire) == CS_PENDING; };
     if (g_wait_whole) {  // a safety limit only: compiles take milliseconds to a few hundred
         double t0 = now_ms();
-        while (st.load(std::memory_order_acquire) == CS_PENDING && now_ms() - t0 < 2000) usleep(100);
+        {
+            std::unique_lock<std::mutex> lk(g_compile_m);
+            g_compile_cv.wait_for(lk, std::chrono::seconds(2), [&] { return !pending(); });
+        }
         g_waited_ms[g_wait_kind] += now_ms() - t0;
         g_waited_n[g_wait_kind]++;
         return st.load(std::memory_order_acquire) == CS_READY;
@@ -767,9 +784,9 @@ static bool wait_compiled(const std::atomic<int>& st) {
     static double spent = 0;
     if (frame != R.frame) { frame = R.frame; spent = 0; }
     double t0 = now_ms();
-    while (st.load(std::memory_order_acquire) == CS_PENDING) {
-        if (spent + (now_ms() - t0) >= budgetMs) break;
-        usleep(100);
+    if (pending() && spent < budgetMs) {
+        std::unique_lock<std::mutex> lk(g_compile_m);
+        g_compile_cv.wait_for(lk, std::chrono::microseconds((int64_t)((budgetMs - spent) * 1000)), [&] { return !pending(); });
     }
     spent += now_ms() - t0;
     return st.load(std::memory_order_acquire) == CS_READY;
@@ -937,6 +954,7 @@ static Pipeline* get_pipeline(const uint32_t* regs, Shader* vs, Shader* ps, Latt
         if (r != VK_SUCCESS) LOG("[gfx] pipeline creation failed: VkResult %d", (int)r);
         else g_pipelines_created++;
         pl->status.store(r == VK_SUCCESS ? CS_READY : CS_FAILED, std::memory_order_release);
+        compile_done();
     };
     if (g_sync_shaders) {
         build();
@@ -1774,12 +1792,22 @@ static void cache_load() {
 // build queued pipelines whose shaders have finished compiling, at most `budget` of them and only
 // while fewer than `maxInFlight` compiles are running; recipes that can't be resolved are dropped
 static size_t g_recipes_built, g_recipes_dropped;
+// Each call checks at most kChecksPerCall recipes (unless the budget is unlimited) and resumes from a
+// cursor on the next: the queue holds hundreds of thousands at startup, and walking all of it every
+// frame (three lookups each) was most of the render thread's time (from the original project).
 static void build_pending_pipelines(int budget, int maxInFlight) {
     if (g_pending_pipelines.empty()) return;
     static std::vector<uint32_t> regs(0x10000);
+    static size_t cursor = 0;
+    constexpr size_t kChecksPerCall = 2048;
+    size_t checks = budget == INT_MAX ? g_pending_pipelines.size() : kChecksPerCall;  // unlimited: one pass
     g_cache_replaying = true;
     g_building_ahead = true;
-    for (size_t i = 0; i < g_pending_pipelines.size() && budget > 0 && g_compiles_in_flight < maxInFlight;) {
+    if (cursor >= g_pending_pipelines.size()) cursor = 0;
+    for (size_t i = cursor; !g_pending_pipelines.empty() && checks > 0 && budget > 0 && g_compiles_in_flight < maxInFlight;
+         checks--) {
+        if (i >= g_pending_pipelines.size()) i = 0;  // wrap around to the start
+        cursor = i;
         PipelineRecipe& r = g_pending_pipelines[i];
         auto vi = g_shaders.find(r.vsKey), pi = g_shaders.find(r.psKey);
         auto fi = g_fetch.find(r.fsKey);
