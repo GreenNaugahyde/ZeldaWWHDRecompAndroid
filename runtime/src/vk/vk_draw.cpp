@@ -101,19 +101,32 @@ static uint64_t hash_bytes(const void* data, size_t n, uint64_t h = 0x9E3779B97F
 static uint64_t g_bytes_vtx, g_bytes_vtx_shared, g_bytes_ubo, g_bytes_vars;
 
 // shader programs rarely change in place: cache their hash per address, revalidated once per frame
+// with a sample of the program (its start, middle and end), fully every 32 frames or when the
+// sample changed (as textures are checked)
 struct ProgramHash {
     uint32_t size;
-    uint64_t hash;
-    uint64_t frame;
+    uint64_t hash, sample;
+    uint64_t frame, fullFrame;
 };
 static std::unordered_map<uint32_t, ProgramHash> g_program_hashes;
+static uint64_t program_sample(const uint8_t* p, uint32_t size) {
+    if (size <= 192) return hash_bytes(p, size);
+    uint64_t h = hash_bytes(p, 64);
+    h = hash_bytes(p + (size / 2 & ~7u), 64, h);
+    return hash_bytes(p + size - 64, 64, h);
+}
 static uint64_t program_hash(uint32_t addr, uint32_t size) {
     auto& e = g_program_hashes[addr];
-    if (e.size != size || e.frame != R.frame) {
+    if (e.size == size && e.frame == R.frame) return e.hash;
+    const uint8_t* p = (const uint8_t*)mem::ptr(addr);
+    uint64_t sample = program_sample(p, size);
+    if (e.size != size || sample != e.sample || R.frame - e.fullFrame >= 32) {
         e.size = size;
-        e.hash = hash_bytes(mem::ptr(addr), size);
-        e.frame = R.frame;
+        e.hash = hash_bytes(p, size);
+        e.sample = sample;
+        e.fullFrame = R.frame;
     }
+    e.frame = R.frame;
     return e.hash;
 }
 
@@ -1373,6 +1386,23 @@ static void bind_stage(VkCommandBuffer cmd, VkPipelineLayout layout, const uint3
 }
 
 // ---------------------------------------------------------------- render pass
+// ---------------------------------------------------------------- redundant state filter
+// State recorded by the draws of the current render pass: commands that would set it to what it
+// already is are skipped (each one costs the driver at the next draw). Only draws record state inside
+// their render passes (presentation and the other passes begin their own), so the cache starts over
+// whenever a draw render pass begins.
+struct DrawState {
+    VkPipeline pipeline = VK_NULL_HANDLE;
+    uint32_t stencil[6] = {};
+    float blend[4] = {}, bias[3] = {};
+    VkViewport viewport{};
+    VkRect2D scissor{};
+    VkBuffer vb[16] = {};
+    VkDeviceSize vbOffset[16] = {};
+    bool valid = false;
+};
+static DrawState g_ds;
+
 static bool ensure_pass(Surface* const* colors, const uint32_t* colorSlices, Surface* depth, uint32_t depthSlice, uint32_t w,
                         uint32_t h, const PassFormats& pf) {
     if (R.pass) {
@@ -1407,6 +1437,8 @@ static bool ensure_pass(Surface* const* colors, const uint32_t* colorSlices, Sur
     bi.framebuffer = get_framebuffer(rp, views, n, w, h);
     bi.renderArea = {{0, 0}, {w, h}};
     vkCmdBeginRenderPass(command_buffer(), &bi, VK_SUBPASS_CONTENTS_INLINE);
+    g_ds = DrawState{};  // dynamic state and bindings recorded from here on are tracked again
+    g_ds.valid = true;
     R.pass = rp;
     for (int i = 0; i < 8; i++) {
         R.passColor[i] = colors[i];
@@ -1463,9 +1495,16 @@ static bool build_indices(uint32_t prim, uint32_t count, uint32_t indexType, uin
     default:
         return false;  // rects and adjacency primitives: not supported yet
     }
-    if (indexAddr) {
+    if (indexAddr) {  // the common case: lists and strips, converted in tight loops
         out.resize(count);
-        for (uint32_t i = 0; i < count; i++) out[i] = idx(i);
+        uint32_t* o = out.data();
+        const void* src = mem::ptr(indexAddr);
+        switch (indexType) {
+        case 0: { auto* s16 = (const uint16_t*)src; for (uint32_t i = 0; i < count; i++) o[i] = s16[i]; break; }
+        case 1: memcpy(o, src, (size_t)count * 4); break;
+        case 9: { auto* s32 = (const uint32_t*)src; for (uint32_t i = 0; i < count; i++) o[i] = __builtin_bswap32(s32[i]); break; }
+        default: { auto* s16 = (const uint16_t*)src; for (uint32_t i = 0; i < count; i++) o[i] = __builtin_bswap16(s16[i]); break; }
+        }
     }
     return true;
 }
@@ -1890,7 +1929,10 @@ void draw(const uint32_t* regs, uint32_t prim, uint32_t count, uint32_t indexTyp
 
     if (!ensure_pass(colors, colorSlices, depth, depthSlice, w, h, st.pass)) { g_skip[SK_PASS]++; return; }
     VkCommandBuffer cmd = command_buffer();
-    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipe->pipeline);
+    if (!g_ds.valid || g_ds.pipeline != pipe->pipeline) {
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipe->pipeline);
+        g_ds.pipeline = pipe->pipeline;
+    }
 
     LATTE_DB_STENCILREFMASK sf;
     LATTE_DB_STENCILREFMASK_BF sbk;
@@ -1900,20 +1942,31 @@ void draw(const uint32_t* regs, uint32_t prim, uint32_t count, uint32_t indexTyp
     LATTE_DB_DEPTH_CONTROL dc;
     memcpy(&dc, &st.depthControl, 4);
     bool backSeparate = dc.get_BACK_STENCIL_ENABLE();
-    vkCmdSetStencilReference(cmd, VK_STENCIL_FACE_FRONT_BIT, sf.get_STENCILREF_F());
-    vkCmdSetStencilReference(cmd, VK_STENCIL_FACE_BACK_BIT, sbk.get_STENCILREF_B());
-    vkCmdSetStencilCompareMask(cmd, VK_STENCIL_FACE_FRONT_BIT, sf.get_STENCILMASK_F());
-    vkCmdSetStencilWriteMask(cmd, VK_STENCIL_FACE_FRONT_BIT, sf.get_STENCILWRITEMASK_F());
-    vkCmdSetStencilCompareMask(cmd, VK_STENCIL_FACE_BACK_BIT, backSeparate ? sbk.get_STENCILMASK_B() : sf.get_STENCILMASK_F());
-    vkCmdSetStencilWriteMask(cmd, VK_STENCIL_FACE_BACK_BIT, backSeparate ? sbk.get_STENCILWRITEMASK_B() : sf.get_STENCILWRITEMASK_F());
-    vkCmdSetBlendConstants(cmd, (const float*)&regs[REGADDR::CB_BLEND_RED]);
+    const uint32_t stencil[6] = {sf.get_STENCILREF_F(), sbk.get_STENCILREF_B(), sf.get_STENCILMASK_F(), sf.get_STENCILWRITEMASK_F(),
+                                 backSeparate ? sbk.get_STENCILMASK_B() : sf.get_STENCILMASK_F(),
+                                 backSeparate ? sbk.get_STENCILWRITEMASK_B() : sf.get_STENCILWRITEMASK_F()};
+    if (!g_ds.valid || memcmp(stencil, g_ds.stencil, sizeof stencil) != 0) {
+        vkCmdSetStencilReference(cmd, VK_STENCIL_FACE_FRONT_BIT, stencil[0]);
+        vkCmdSetStencilReference(cmd, VK_STENCIL_FACE_BACK_BIT, stencil[1]);
+        vkCmdSetStencilCompareMask(cmd, VK_STENCIL_FACE_FRONT_BIT, stencil[2]);
+        vkCmdSetStencilWriteMask(cmd, VK_STENCIL_FACE_FRONT_BIT, stencil[3]);
+        vkCmdSetStencilCompareMask(cmd, VK_STENCIL_FACE_BACK_BIT, stencil[4]);
+        vkCmdSetStencilWriteMask(cmd, VK_STENCIL_FACE_BACK_BIT, stencil[5]);
+        memcpy(g_ds.stencil, stencil, sizeof stencil);
+    }
+    if (!g_ds.valid || memcmp(&regs[REGADDR::CB_BLEND_RED], g_ds.blend, sizeof g_ds.blend) != 0) {
+        vkCmdSetBlendConstants(cmd, (const float*)&regs[REGADDR::CB_BLEND_RED]);
+        memcpy(g_ds.blend, &regs[REGADDR::CB_BLEND_RED], sizeof g_ds.blend);
+    }
+    float bias[3] = {0, 0, 0};  // constant, clamp, slope
     if (pm.get_OFFSET_FRONT_ENABLED()) {
-        float scale = gx2::bitsf(regs[REGADDR::PA_SU_POLY_OFFSET_FRONT_SCALE]) / 16.0f;
-        float offset = gx2::bitsf(regs[REGADDR::PA_SU_POLY_OFFSET_FRONT_OFFSET]);
-        float clampv = R.features.depthBiasClamp ? gx2::bitsf(regs[REGADDR::PA_SU_POLY_OFFSET_CLAMP]) : 0.0f;
-        vkCmdSetDepthBias(cmd, offset, clampv, scale);
-    } else {
-        vkCmdSetDepthBias(cmd, 0, 0, 0);
+        bias[2] = gx2::bitsf(regs[REGADDR::PA_SU_POLY_OFFSET_FRONT_SCALE]) / 16.0f;
+        bias[0] = gx2::bitsf(regs[REGADDR::PA_SU_POLY_OFFSET_FRONT_OFFSET]);
+        bias[1] = R.features.depthBiasClamp ? gx2::bitsf(regs[REGADDR::PA_SU_POLY_OFFSET_CLAMP]) : 0.0f;
+    }
+    if (!g_ds.valid || memcmp(bias, g_ds.bias, sizeof bias) != 0) {
+        vkCmdSetDepthBias(cmd, bias[0], bias[1], bias[2]);
+        memcpy(g_ds.bias, bias, sizeof bias);
     }
 
     float xs = gx2::bitsf(regs[REGADDR::PA_CL_VPORT_XSCALE]), xo = gx2::bitsf(regs[REGADDR::PA_CL_VPORT_XOFFSET]);
@@ -1925,9 +1978,15 @@ void draw(const uint32_t* regs, uint32_t prim, uint32_t count, uint32_t indexTyp
     if (vp.width <= 0) { vp.x += vp.width; vp.width = std::max(-vp.width, 1.0f); }
     vp.minDepth = std::clamp(vp.minDepth, 0.0f, 1.0f);
     vp.maxDepth = std::clamp(vp.maxDepth, 0.0f, 1.0f);
-    vkCmdSetViewport(cmd, 0, 1, &vp);
+    if (!g_ds.valid || memcmp(&vp, &g_ds.viewport, sizeof vp) != 0) {
+        vkCmdSetViewport(cmd, 0, 1, &vp);
+        g_ds.viewport = vp;
+    }
     VkRect2D scissor{{(int32_t)sx, (int32_t)sy}, {ex - sx, ey - sy}};
-    vkCmdSetScissor(cmd, 0, 1, &scissor);
+    if (!g_ds.valid || memcmp(&scissor, &g_ds.scissor, sizeof scissor) != 0) {
+        vkCmdSetScissor(cmd, 0, 1, &scissor);
+        g_ds.scissor = scissor;
+    }
 
     // vertex buffers
     for (auto& g : fs->bufferGroups) {
@@ -1936,7 +1995,13 @@ void draw(const uint32_t* regs, uint32_t prim, uint32_t count, uint32_t indexTyp
         if (!addr || addr + (uint64_t)size > 0x100000000ull) continue;
         Upload u = vertex_buffer(addr, size);
         VkDeviceSize off = u.offset;
-        vkCmdBindVertexBuffers(cmd, (uint32_t)g.attributeBufferIndex, 1, &u.buf, &off);
+        uint32_t slot = (uint32_t)g.attributeBufferIndex;
+        if (slot < 16 && g_ds.valid && g_ds.vb[slot] == u.buf && g_ds.vbOffset[slot] == off) continue;
+        vkCmdBindVertexBuffers(cmd, slot, 1, &u.buf, &off);
+        if (slot < 16) {
+            g_ds.vb[slot] = u.buf;
+            g_ds.vbOffset[slot] = off;
+        }
     }
     bind_stage(cmd, pipe->layout, regs, vs, true, vtex, targetScale);
     bind_stage(cmd, pipe->layout, regs, ps, false, ptex, targetScale);

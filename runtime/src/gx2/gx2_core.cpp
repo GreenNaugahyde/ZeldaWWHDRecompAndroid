@@ -31,6 +31,20 @@ namespace gx2 {
 static uint32 g_regs[kNumRegs];
 static uint32* g_shadow = nullptr;  // register copy of the active GX2ContextState
 static std::unordered_map<uint32, std::vector<uint32>> g_contexts;
+// Register blocks ever written (in g_regs or any context). Every other block is zero everywhere, so
+// a context switch copies only these instead of the whole 256 KiB register file.
+constexpr uint32 kRegBlock = 64;
+static bool g_reg_touched[kNumRegs / kRegBlock];
+static std::vector<uint16_t> g_reg_blocks;
+static void touch_regs(uint32 first, uint32 n) {
+    if (!n) return;
+    for (uint32 b = first / kRegBlock, e = (first + n - 1) / kRegBlock; b <= e && b < kNumRegs / kRegBlock; b++)
+        if (!g_reg_touched[b]) {
+            g_reg_touched[b] = true;
+            g_reg_blocks.push_back((uint16_t)b);
+        }
+}
+static void touch_all_regs() { touch_regs(0, kNumRegs); }
 static std::recursive_mutex g_exec_mutex;
 
 uint32* regs() { return g_regs; }
@@ -53,6 +67,7 @@ static bool shader_irrelevant(uint32 reg) {
 
 static void apply_regs(uint32 first, const uint32* v, uint32 n) {
     if (first + n > kNumRegs) return;
+    touch_regs(first, n);
     if (memcmp(&g_regs[first], v, n * 4) != 0) {
         for (uint32 i = 0; i < n; i++)
             if (g_regs[first + i] != v[i] && !shader_irrelevant(first + i)) { g_shader_state_gen++; break; }
@@ -191,7 +206,9 @@ static void set_context(uint32 ctx) {
         return;
     }
     g_shadow = it->second.data();
-    memcpy(g_regs, g_shadow, sizeof(g_regs));
+    static const bool init = (touch_regs(REGADDR::VGT_PRIMITIVE_TYPE, 1), true);  // gfx::draw writes it
+    (void)init;
+    for (uint16_t b : g_reg_blocks) memcpy(&g_regs[b * kRegBlock], &g_shadow[b * kRegBlock], kRegBlock * 4);
     g_shader_state_gen++;
 }
 
@@ -644,6 +661,7 @@ void gx2_ss_load(ss::Reader& r) {
     std::lock_guard<std::recursive_mutex> lk(g_exec_mutex);
     r.u32();
     r.bytes(g_regs, sizeof g_regs);
+    touch_all_regs();  // a loaded state may use any register
     g_contexts.clear();
     uint32 n = r.u32();
     for (uint32 i = 0; i < n && r.ok; i++) {
