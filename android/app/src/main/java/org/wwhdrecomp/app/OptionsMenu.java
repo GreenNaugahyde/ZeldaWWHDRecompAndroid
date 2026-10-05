@@ -384,6 +384,8 @@ final class OptionsMenu extends Dialog {
         int lang = 0;
         for (int i = 0; i < MainActivity.LANGUAGES.length; i++) if (MainActivity.LANGUAGES[i] == a.prefs.getInt("language", 1)) lang = i;
         choice(R.string.opt_language, 0, a.getResources().getStringArray(R.array.languages), lang, a::setLanguage);
+        choice(R.string.opt_fps, R.string.opt_fps_hint, a.getResources().getStringArray(R.array.fps_modes),
+               a.prefs.getBoolean("fg_enabled", false) ? 0 : a.prefs.getInt("fps_mode", 0), a::setFpsMode);
         choice(R.string.opt_resolution, 0, res, indexOf(MainActivity.RES_SCALES, a.prefs.getString("res_scale", "1"), 2), a::setResolution);
         submenu(R.string.opt_framegen, 0, a.frameGenLabel(), () -> openPage(this::frameGenPage));
         choice(R.string.opt_aspect, 0, a.getResources().getStringArray(R.array.aspect_modes), a.prefs.getInt("tv_aspect", 0), i -> {

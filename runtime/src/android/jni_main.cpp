@@ -23,6 +23,7 @@
 #include "../savestate.h"
 #include "../vk/lsfg.h"
 #include "../vk/vk_window.h"
+#include "fps60.h"
 #include "jni_bridge.h"
 #include "recomp_table.h"
 
@@ -357,6 +358,7 @@ JNI_FN(void, setOption)(JNIEnv* env, jclass, jstring name, jint value) {
     else if (n == "capture") gfx::request_capture();
     else if (n == "res_scale") gfx::set_resolution_scale(value / 100.0f);
     else if (n == "tv_aspect") gfx::set_tv_aspect(value);
+    else if (n == "fps_mode") fps60::set_mode(value);
     // gameplay mods (runtime/src/mods)
     else if (n == "mod_direct_camera") mods::set_direct_camera(value != 0);
     else if (n == "mod_camera_speed") mods::set_camera_speed(value / 100.0f);
@@ -373,6 +375,7 @@ JNI_FN(jint, getOption)(JNIEnv* env, jclass, jstring name) {
     if (n == "aniso") return gfx::aniso_enabled();
     if (n == "pro_controller") return input::pro_controller();
     if (n == "tv_aspect") return gfx::tv_aspect();
+    if (n == "fps_mode") return fps60::mode();
     if (n == "mod_direct_camera") return mods::direct_camera();
     if (n == "mod_camera_speed") return (int)lroundf(mods::camera_speed() * 100);
     if (n == "mod_first_person") return mods::first_person_wheel();

@@ -19,6 +19,7 @@
 #include "runtime.h"
 #ifdef __ANDROID__
 #include "android/display_vsync.h"
+#include "android/fps60.h"
 #include "android/perf_hint.h"
 #endif
 
@@ -522,6 +523,7 @@ HLE(gx2, GX2SwapScanBuffers) {
         g_pending_flips.push_back({vsync_index(), g_swap_count});
     }
 #ifdef __ANDROID__
+    fps60::on_swap();
     perf_hint::on_swap(interp::effective_swap_interval(g_swap_interval));
 #endif
     if (g_swap_count % 300 == 1) {

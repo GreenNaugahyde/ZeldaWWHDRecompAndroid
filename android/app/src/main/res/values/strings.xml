@@ -155,6 +155,13 @@
         <item>Français</item>
     </string-array>
     <string name="lang_restart">The new language takes effect when the game restarts. Progress since your last save is lost.</string>
+    <string name="opt_fps">Frame rate</string>
+    <string name="opt_fps_hint">60 fps draws a frame between each two game steps: the game itself keeps its original speed. Adaptive drops to 30 while the device can\'t hold 60. Turns frame generation off.</string>
+    <string-array name="fps_modes">
+        <item>30 fps</item>
+        <item>60 fps</item>
+        <item>60 fps (adaptive)</item>
+    </string-array>
     <string name="opt_resolution">Rendering resolution</string>
     <string name="opt_framegen">Frame generation</string>
     <string name="opt_aspect">Aspect ratio</string>

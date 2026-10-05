@@ -299,6 +299,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         Native.setOption("aniso", prefs.getBoolean("aniso", Native.getOption("aniso") != 0) ? 1 : 0);
         Native.setOption("pro_controller", prefs.getBoolean("pro_controller", Native.getOption("pro_controller") != 0) ? 1 : 0);
         Native.setOption("tv_aspect", prefs.getInt("tv_aspect", 0));
+        Native.setOption("fps_mode", prefs.getBoolean("fg_enabled", false) ? 0 : prefs.getInt("fps_mode", 0));
         for (String m : MODS) Native.setOption(m, prefs.getBoolean(m, false) ? 1 : 0);
         Native.setOption("mod_camera_speed", prefs.getInt("mod_camera_speed", 100));
     }
@@ -954,7 +955,19 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
 
     void setFrameGen(String key, boolean v) {
         prefs.edit().putBoolean(key, v).commit();
+        // frame generation multiplies the game's 30 fps: it replaces the 60 fps mode
+        if (key.equals("fg_enabled") && v && prefs.getInt("fps_mode", 0) != 0) setFpsMode(0);
         frameGenChanged();
+    }
+
+    /** 0: 30 fps, 1: 60 fps (frame interpolation), 2: adaptive 60 (30 while the device can't hold 60) */
+    void setFpsMode(int m) {
+        prefs.edit().putInt("fps_mode", m).commit();
+        if (m != 0 && prefs.getBoolean("fg_enabled", false)) {
+            prefs.edit().putBoolean("fg_enabled", false).commit();
+            frameGenChanged();
+        }
+        Native.setOption("fps_mode", m);
     }
 
     // applied while the game runs (the renderer rebuilds the network at its next frame)
