@@ -66,6 +66,8 @@ final class ControlsView extends View {
             return (x - cx) * (x - cx) + (y - cy) * (y - cy) <= rr * rr;
         }
         boolean custom() { return !Float.isNaN(fx); }
+        boolean removed;  // taken off the screen in the layout editor
+        boolean removable() { return kind != K_MENU && kind != K_EDIT; }  // the way back to the menus stays
     }
 
     private final Listener listener;
@@ -431,6 +433,7 @@ final class ControlsView extends View {
     }
 
     private boolean shown(Ctl c) {
+        if (c.removed) return false;
         if (editMode) return true;
         if (c.kind == K_MENU || c.kind == K_EDIT) return menuShown;
         if (!controlsVisible) return false;
@@ -606,14 +609,21 @@ final class ControlsView extends View {
         c.cy = Math.max(c.r * 0.5f, Math.min(H - c.r * 0.5f, c.cy));
     }
 
-    /** the saved layout: "id:fx,fy,d;..." for the controls the user moved */
+    /** the saved layout: "id:fx,fy,d;..." for the controls the user moved, "id:-" for removed ones */
     void setLayout(String s) {
-        for (Ctl c : controls) c.fx = c.fy = c.fd = Float.NaN;
+        for (Ctl c : controls) {
+            c.fx = c.fy = c.fd = Float.NaN;
+            c.removed = false;
+        }
         if (s != null)
             for (String part : s.split(";")) {
                 String[] kv = part.split(":");
                 if (kv.length != 2) continue;
                 Ctl c = byId.get(kv[0]);
+                if (c != null && kv[1].equals("-")) {
+                    c.removed = c.removable();
+                    continue;
+                }
                 String[] v = kv[1].split(",");
                 if (c == null || v.length != 3) continue;
                 try {
@@ -631,9 +641,10 @@ final class ControlsView extends View {
     private String layoutString() {
         StringBuilder sb = new StringBuilder();
         for (Ctl c : controls) {
-            if (!c.custom()) continue;
+            if (!c.custom() && !c.removed) continue;
             if (sb.length() > 0) sb.append(';');
-            sb.append(String.format(Locale.ROOT, "%s:%.4f,%.4f,%.3f", c.id, c.fx, c.fy, c.fd));
+            if (c.removed) sb.append(c.id).append(":-");
+            else sb.append(String.format(Locale.ROOT, "%s:%.4f,%.4f,%.3f", c.id, c.fx, c.fy, c.fd));
         }
         return sb.toString();
     }
@@ -725,7 +736,7 @@ final class ControlsView extends View {
                     touchDrc(true, x, y);
                 } else if (!controlsVisible) {
                     break;
-                } else if (x < getWidth() * 0.45f) {
+                } else if (x < getWidth() * 0.45f && !byId.get("stick").removed) {
                     if (stickPointer < 0) {
                         stickPointer = id;
                         stickOx = x;
@@ -824,7 +835,16 @@ final class ControlsView extends View {
     private int editPointer = -1, editPointer2 = -1;
     private boolean editResizing;
     private float editDx, editDy, editPinchStart, editSizeStart;
-    private final RectF editReset = new RectF(), editDone = new RectF();
+    private final RectF editReset = new RectF(), editDone = new RectF(), editRemove = new RectF(), editAdd = new RectF(),
+            editPanel = new RectF();
+    private boolean editAddOpen;  // the panel with the removed controls, to put them back
+    private final List<RectF> editPanelSlots = new ArrayList<>();
+    private final List<Ctl> editPanelCtls = new ArrayList<>();
+
+    private boolean anyRemoved() {
+        for (Ctl c : controls) if (c.removed) return true;
+        return false;
+    }
 
     boolean editMode() { return editMode; }
 
@@ -872,15 +892,45 @@ final class ControlsView extends View {
                     }
                     break;
                 }
+                if (editAddOpen) {  // the panel takes the touch: a control to put back, or outside to close
+                    for (int i = 0; i < editPanelSlots.size(); i++)
+                        if (editPanelSlots.get(i).contains(x, y)) {
+                            Ctl c = editPanelCtls.get(i);
+                            c.removed = false;
+                            editSel = c;
+                            buzz();
+                            break;
+                        }
+                    if (!editPanel.contains(x, y) || !anyRemoved()) editAddOpen = false;
+                    invalidate();
+                    return true;
+                }
                 if (editDone.contains(x, y)) {
                     listener.onLayoutSaved(layoutString());
                     setEditMode(false);
                     return true;
                 }
                 if (editReset.contains(x, y)) {
-                    for (Ctl c : controls) c.fx = c.fy = c.fd = Float.NaN;
+                    for (Ctl c : controls) {
+                        c.fx = c.fy = c.fd = Float.NaN;
+                        c.removed = false;
+                    }
                     editSel = null;
                     layoutControls(getWidth(), getHeight());
+                    invalidate();
+                    return true;
+                }
+                if (editRemove.contains(x, y)) {
+                    if (editSel != null && editSel.removable()) {
+                        editSel.removed = true;
+                        editSel = null;
+                        buzz();
+                    }
+                    invalidate();
+                    return true;
+                }
+                if (editAdd.contains(x, y)) {
+                    editAddOpen = anyRemoved();
                     invalidate();
                     return true;
                 }
@@ -1040,14 +1090,46 @@ final class ControlsView extends View {
     }
 
     private void drawEditBar(Canvas canvas) {
-        float r = baseUnit * 0.42f, cy = baseUnit * 0.6f, cx = getWidth() / 2f;
-        editReset.set(cx - baseUnit * 1.2f - r, cy - r, cx - baseUnit * 1.2f + r, cy + r);
-        editDone.set(cx + baseUnit * 1.2f - r, cy - r, cx + baseUnit * 1.2f + r, cy + r);
+        float r = baseUnit * 0.42f, cy = baseUnit * 0.6f, cx = getWidth() / 2f, step = baseUnit * 1.15f;
+        editReset.set(cx - 1.5f * step - r, cy - r, cx - 1.5f * step + r, cy + r);
+        editRemove.set(cx - 0.5f * step - r, cy - r, cx - 0.5f * step + r, cy + r);
+        editAdd.set(cx + 0.5f * step - r, cy - r, cx + 0.5f * step + r, cy + r);
+        editDone.set(cx + 1.5f * step - r, cy - r, cx + 1.5f * step + r, cy + r);
+        boolean canRemove = editSel != null && editSel.removable(), canAdd = anyRemoved();
         icons.draw(canvas, "editor_reset", TouchIcons.BONE, "↺", editReset.centerX(), cy, r, 255, false);
+        icons.draw(canvas, "editor_remove", TouchIcons.RED, "🗑", editRemove.centerX(), cy, r, canRemove ? 255 : 90, false);
+        icons.draw(canvas, "editor_add", TouchIcons.SKY, "+", editAdd.centerX(), cy, r, canAdd ? 255 : 90, false);
         icons.draw(canvas, "editor_done", TouchIcons.GREEN, "✓", editDone.centerX(), cy, r, 255, false);
+        if (editAddOpen) drawAddPanel(canvas);
         text.setColor(0xFFFFFFFF);
         text.setAlpha(255);
         text.setTextSize(baseUnit * 0.22f);
         canvas.drawText(getContext().getString(R.string.layout_edit_hint), cx, cy + r + baseUnit * 0.35f, text);
+    }
+
+    // the controls taken off the screen, in a grid: a touch puts one back
+    private void drawAddPanel(Canvas canvas) {
+        editPanelSlots.clear();
+        editPanelCtls.clear();
+        for (Ctl c : controls) if (c.removed) editPanelCtls.add(c);
+        int n = editPanelCtls.size();
+        if (n == 0) return;
+        float cell = baseUnit * 1.1f, r = baseUnit * 0.42f;
+        int cols = Math.min(n, 6), rows = (n + cols - 1) / cols;
+        float w = cols * cell + baseUnit * 0.4f, h = rows * cell + baseUnit * 0.9f;
+        float left = (getWidth() - w) / 2f, top = (getHeight() - h) / 2f;
+        editPanel.set(left, top, left + w, top + h);
+        fill.setColor(0xE61B2A4A);
+        canvas.drawRoundRect(editPanel, baseUnit * 0.2f, baseUnit * 0.2f, fill);
+        text.setColor(0xFFFFFFFF);
+        text.setAlpha(255);
+        text.setTextSize(baseUnit * 0.24f);
+        canvas.drawText(getContext().getString(R.string.layout_add_title), getWidth() / 2f, top + baseUnit * 0.45f, text);
+        for (int i = 0; i < n; i++) {
+            Ctl c = editPanelCtls.get(i);
+            float x = left + baseUnit * 0.2f + (i % cols + 0.5f) * cell, y = top + baseUnit * 0.7f + (i / cols + 0.5f) * cell;
+            editPanelSlots.add(new RectF(x - cell / 2, y - cell / 2, x + cell / 2, y + cell / 2));
+            icons.draw(canvas, c.icon, c.color, c.label, x, y, r, 255, false);
+        }
     }
 }

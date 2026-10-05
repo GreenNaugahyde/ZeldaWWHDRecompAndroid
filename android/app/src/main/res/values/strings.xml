@@ -164,7 +164,8 @@
     </string-array>
     <string name="opt_layout_edit">Edit touch layout</string>
     <string name="opt_layout_edit_hint">Move and resize every control on a grid (also the ✎ button next to ≡)</string>
-    <string name="layout_edit_hint">Drag to move · drag the corner handle or pinch to resize · Back cancels</string>
+    <string name="layout_edit_hint">Drag to move · corner handle or pinch to resize · 🗑 removes the selected control · + puts removed ones back · Back cancels</string>
+    <string name="layout_add_title">Touch a control to put it back</string>
     <string name="opt_camera_sensitivity">Camera swipe speed</string>
     <string name="opt_camera_sensitivity_hint">Swipe on the right side of the screen to turn the camera; double tap there to centre it</string>
     <string name="opt_combat_buttons">Combat buttons</string>
