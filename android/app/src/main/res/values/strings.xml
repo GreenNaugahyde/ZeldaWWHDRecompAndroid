@@ -175,6 +175,11 @@
         <item>Hidden</item>
     </string-array>
     <string name="opt_haptics">Vibrate on touch</string>
+    <string name="opt_gyro">Gyro aiming</string>
+    <string name="opt_gyro_hint">Aim by moving the phone. Also turn on motion controls in the game\'s own options.</string>
+    <string name="opt_gyro_recalibrate">Recalibrate gyro</string>
+    <string name="opt_gyro_recalibrate_hint">Hold the phone as you play and press: that becomes straight ahead</string>
+    <string name="gyro_recalibrated">Gyro recalibrated</string>
     <string name="opt_resolution">Rendering resolution</string>
     <string name="opt_framegen">Frame generation</string>
     <string name="opt_aspect">Aspect ratio</string>

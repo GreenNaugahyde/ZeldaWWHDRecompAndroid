@@ -2,6 +2,7 @@
 // Online services (Miiverse, SpotPass, accounts) report "unavailable".
 #include "../runtime.h"
 #include "../input.h"
+#include "../motion.h"
 
 namespace interp { bool repeat_input(); bool fresh_sticks(); void trace_read(const char*); }
 
@@ -117,6 +118,7 @@ HLE(vpad, VPADRead) {
     stf32(st + 0x14, p.rx); stf32(st + 0x18, p.ry);
     stf32(st + 0x30, 1.0f);                                    // accXY
     for (int i = 0; i < 3; i++) stf32(st + 0x6C + i * 0x10, 1.0f);  // dir = identity
+    if (!input::pro_controller()) motion::fill(st);            // gyro aiming (host sensors), when on
     // touch panel, raw coordinates as the hardware reports them (mapping from Cemu)
     static uint16_t last_tx = 0, last_ty = 0;
     if (p.touch) {

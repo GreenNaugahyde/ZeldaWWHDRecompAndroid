@@ -461,6 +461,11 @@ final class OptionsMenu extends Dialog {
                    a.prefs.edit().putInt("combat_buttons", i).apply();
                    a.applyControlsAppearance();
                });
+        if (a.gyroAvailable()) {
+            toggle(R.string.opt_gyro, R.string.opt_gyro_hint, a.prefs.getBoolean("gyro_enabled", false), a::setGyro);
+            if (a.prefs.getBoolean("gyro_enabled", false))
+                submenu(R.string.opt_gyro_recalibrate, R.string.opt_gyro_recalibrate_hint, "", a::recalibrateGyro);
+        }
         toggle(R.string.opt_haptics, 0, a.prefs.getBoolean("haptics", true), on -> {
             a.prefs.edit().putBoolean("haptics", on).apply();
             a.applyControlsAppearance();

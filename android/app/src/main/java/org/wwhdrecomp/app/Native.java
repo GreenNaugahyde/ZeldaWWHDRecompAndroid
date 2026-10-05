@@ -59,6 +59,10 @@ final class Native {
     static native int getOption(String name);
     /** game state for the touch controls: {flags, A action, B action, ZR action, X, Y, R item} */
     static native int[] hudState();
+    /** gyro aiming: a sensor sample in GamePad axes (rad/s, m/s^2, ns), on/off, recentre */
+    static native void setMotion(float gx, float gy, float gz, float ax, float ay, float az, long timestampNs);
+    static native void setMotionEnabled(boolean on);
+    static native void recalibrateMotion();
 
     /** Save state slot 1..5: {used "1"/"0", compatible "1"/"0", time, area}. */
     static native String[] saveSlotInfo(int slot);

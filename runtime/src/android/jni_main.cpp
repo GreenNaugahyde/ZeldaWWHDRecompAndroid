@@ -26,6 +26,7 @@
 #include "fps60.h"
 #include "jni_bridge.h"
 #include "touch_hud.h"
+#include "../motion.h"
 #include "recomp_table.h"
 
 namespace gfx {
@@ -348,6 +349,13 @@ JNI_FN(void, setPaused)(JNIEnv*, jclass, jboolean paused) {
     audio::set_paused(paused);
     if (paused && g_started) gfx::save_caches();
 }
+
+// gyro aiming: the phone's sensors as the GamePad's (MainActivity)
+JNI_FN(void, setMotion)(JNIEnv*, jclass, jfloat gx, jfloat gy, jfloat gz, jfloat ax, jfloat ay, jfloat az, jlong t) {
+    motion::push(gx, gy, gz, ax, ay, az, t);
+}
+JNI_FN(void, setMotionEnabled)(JNIEnv*, jclass, jboolean on) { motion::set_enabled(on); }
+JNI_FN(void, recalibrateMotion)(JNIEnv*, jclass) { motion::recalibrate(); }
 
 // game state for the touch controls' icons (ControlsView)
 JNI_FN(jintArray, hudState)(JNIEnv* env, jclass) {

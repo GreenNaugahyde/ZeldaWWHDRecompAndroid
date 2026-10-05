@@ -58,6 +58,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     SharedPreferences prefs;
     private SurfaceView surface;
     private ControlsView controls;
+    private Gyro gyro;
     private final InputMapper mapper = new InputMapper();
     private boolean autoHidden;
     private int surfaceW, surfaceH;
@@ -301,6 +302,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         Native.setOption("pro_controller", prefs.getBoolean("pro_controller", Native.getOption("pro_controller") != 0) ? 1 : 0);
         Native.setOption("tv_aspect", prefs.getInt("tv_aspect", 0));
         Native.setOption("fps_mode", prefs.getBoolean("fg_enabled", false) ? 0 : prefs.getInt("fps_mode", 0));
+        applyGyro();
         for (String m : MODS) Native.setOption(m, prefs.getBoolean(m, false) ? 1 : 0);
         Native.setOption("mod_camera_speed", prefs.getInt("mod_camera_speed", 100));
     }
@@ -415,6 +417,30 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     @Override
     public void onLayoutSaved(String layout) {
         prefs.edit().putString("touch_layout", layout).apply();
+    }
+
+    // ---- gyro aiming (Gyro, runtime/src/motion.cpp); off by default
+    private void applyGyro() {
+        boolean on = prefs.getBoolean("gyro_enabled", false);
+        if (gyro == null) gyro = new Gyro(this);
+        Native.setMotionEnabled(on && gyro.available());
+        if (on) gyro.start();
+        else gyro.stop();
+    }
+
+    boolean gyroAvailable() {
+        if (gyro == null) gyro = new Gyro(this);
+        return gyro.available();
+    }
+
+    void setGyro(boolean on) {
+        prefs.edit().putBoolean("gyro_enabled", on).apply();
+        applyGyro();
+    }
+
+    void recalibrateGyro() {
+        Native.recalibrateMotion();
+        info(getString(R.string.gyro_recalibrated));
     }
 
     /** the layout editor over the game (from the options menu) */
@@ -574,6 +600,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     @Override
     protected void onPause() {
         super.onPause();
+        if (gyro != null) gyro.stop();
         if (started) Native.setPaused(true);
     }
 
@@ -581,6 +608,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     protected void onResume() {
         super.onResume();
         if (started) Native.setPaused(false);
+        if (started) applyGyro();
         hideSystemBars();
     }
 
