@@ -4,6 +4,7 @@
 // GX2 core: command execution, display lists, context states, draws, clears,
 // copies and presentation.
 #include <algorithm>
+#include <cstdlib>
 #include <chrono>
 #include <mutex>
 #include <thread>
@@ -17,6 +18,7 @@
 #include "platform.h"
 #include "runtime.h"
 #ifdef __ANDROID__
+#include "android/display_vsync.h"
 #include "android/perf_hint.h"
 #endif
 
@@ -304,8 +306,23 @@ namespace gx2 { uint64_t flips_presented() { return __atomic_load_n(&g_flip_coun
 static uint32 g_swap_interval = 1;  // as set by the game (frame interpolation halves it)
 namespace interp { uint32_t effective_swap_interval(uint32_t game); }
 static std::mutex g_flip_mutex;
-static const auto g_vsync_epoch = std::chrono::steady_clock::now();
-static constexpr std::chrono::nanoseconds kVsyncPeriod(16683333);  // 59.94 Hz
+static constexpr int64_t kVsyncPeriod = 16683333;  // ns, 59.94 Hz
+// The guest vsync clock: index = base_index + (now - base_ns) / period. It runs free at 59.94 Hz;
+// on Android it locks to the display's vsync when the panel runs at a multiple of ~60 Hz
+// (gx2_display_vsync), so flips land on display refreshes instead of drifting against them
+// (a repeated or skipped frame every few seconds). WWHD_NO_VSYNC_LOCK=1 keeps it free running.
+static std::mutex g_vclock_mutex;
+static int64_t g_vclock_base_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+static uint64_t g_vclock_base_index = 0, g_vclock_last = 0;
+static int64_t g_vclock_period = kVsyncPeriod;
+static int64_t steady_ns() {
+    return std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+}
+static uint64_t vclock_index(int64_t t) {  // g_vclock_mutex held
+    int64_t d = t - g_vclock_base_ns;
+    uint64_t i = g_vclock_base_index + (d > 0 ? (uint64_t)(d / g_vclock_period) : 0);
+    return g_vclock_last = std::max(i, g_vclock_last);  // re-phasing never moves it back
+}
 // a flip also waits for the GPU to finish that frame, as on hardware: the game reuses a frame's
 // buffers once its flip has executed
 struct PendingFlip { uint64_t vsync, swap; };
@@ -314,7 +331,47 @@ static uint64_t g_last_flip_vsync = 0;
 static uint64_t g_last_flip_time = 0;  // timebase
 static int64_t g_count_offset = 0;     // guest-visible swap/flip counts minus ours (set by a loaded save state)
 
-static uint64_t vsync_index() { return (std::chrono::steady_clock::now() - g_vsync_epoch) / kVsyncPeriod; }
+static uint64_t vsync_index() {
+    std::lock_guard<std::mutex> lk(g_vclock_mutex);
+    return vclock_index(steady_ns());
+}
+// when the vsync after the current one happens
+static std::chrono::steady_clock::time_point next_vsync_time() {
+    std::lock_guard<std::mutex> lk(g_vclock_mutex);
+    uint64_t next = vclock_index(steady_ns()) + 1;
+    int64_t t = g_vclock_base_ns + (int64_t)(next - g_vclock_base_index) * g_vclock_period;
+    return std::chrono::steady_clock::time_point(std::chrono::nanoseconds(t));
+}
+
+// a display vsync (CLOCK_MONOTONIC ns) and the display's refresh period
+void gx2_display_vsync(int64_t vsync_ns, int64_t display_period) {
+    static const bool off = getenv("WWHD_NO_VSYNC_LOCK") != nullptr;
+    if (off || display_period <= 0) return;
+    int64_t n = std::max<int64_t>(1, (kVsyncPeriod + display_period / 2) / display_period);
+    int64_t period = n * display_period;
+    std::lock_guard<std::mutex> lk(g_vclock_mutex);
+    if (std::abs(period - kVsyncPeriod) * 50 > kVsyncPeriod) {  // e.g. 90 Hz: no multiple near 60 Hz
+        if (g_vclock_period != kVsyncPeriod) {
+            int64_t now = steady_ns();
+            g_vclock_base_index = vclock_index(now);
+            g_vclock_base_ns = now;
+            g_vclock_period = kVsyncPeriod;
+        }
+        return;
+    }
+    if (std::abs(period - g_vclock_period) * 200 > period) {  // new rate (beyond 0.5% jitter): continue from the current index
+        g_vclock_base_index = vclock_index(steady_ns());
+        g_vclock_base_ns = vsync_ns;
+        g_vclock_period = period;
+        LOG("[gx2] vsync locked to the display: %.2f Hz (%lld x %.2f Hz)", 1e9 / period, (long long)n, 1e9 / display_period);
+        return;
+    }
+    // phase: move our vsyncs onto the nearest display vsync
+    int64_t err = (vsync_ns - g_vclock_base_ns) % display_period;
+    if (err < 0) err += display_period;
+    if (err > display_period / 2) err -= display_period;
+    if (std::abs(err) > 250000) g_vclock_base_ns += err;
+}
 
 static void update_flips() {  // g_flip_mutex held
     uint64_t now = vsync_index();
@@ -331,6 +388,9 @@ static void update_flips() {  // g_flip_mutex held
 
 HLE(gx2, GX2Init) {
     set_default_state();
+#ifdef __ANDROID__
+    display_vsync::start();
+#endif
     LOG("[gx2] initialized (native GX2 -> %s)", gfx::backend_name());
 }
 
@@ -484,7 +544,7 @@ HLE(gx2, GX2GetSwapStatus) {
 }
 HLE(gx2, GX2SetSwapInterval) { g_swap_interval = std::max<uint32>(arg(c, 0), 1); }
 HLE(gx2, GX2WaitForVsync) {
-    threads::park_sleep_until(g_vsync_epoch + kVsyncPeriod * (vsync_index() + 1));
+    threads::park_sleep_until(next_vsync_time());
     std::lock_guard<std::mutex> lk(g_flip_mutex);
     update_flips();
     static uint64_t calls = 0;
