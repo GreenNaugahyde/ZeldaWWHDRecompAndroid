@@ -1,8 +1,10 @@
 // The app's 60 fps setting: frame interpolation (interp.cpp; game logic stays at 30 steps per
 // second, every second frame is drawn halfway between two steps).
-// Adaptive mode: interpolation only pays off at a steady 60. When the game can't hold it (the
-// frame rate drops below 54 for a 2 s window), it falls back to 30, where it paces evenly, and tries
-// 60 again later; each failed try doubles the wait (20 s up to 160 s), a steady minute resets it.
+// Adaptive mode: interpolation only pays off at a steady 60. It falls back to 30 (where it paces
+// evenly) as soon as frames are lost: a second below 50 fps, or two seconds in a row below 57.
+// It goes back to 60 only when the measurements show room for it: the render and game threads'
+// CPU time per frame at 30 fps (perf_hint) low enough for twice the frames, for 3 s in a row, and
+// not too soon after a failed try (5 s, doubling up to 2 min after tries that fail quickly).
 #include "fps60.h"
 
 #include <algorithm>
@@ -10,6 +12,7 @@
 #include <chrono>
 
 #include "../runtime.h"
+#include "perf_hint.h"
 
 namespace interp {
 bool interp_on();
@@ -22,9 +25,11 @@ using Clock = std::chrono::steady_clock;
 std::atomic<int> g_mode{0};
 std::atomic<bool> g_reset{false};
 
-constexpr auto kWindow = std::chrono::seconds(2);
-constexpr auto kMinBackoff = std::chrono::seconds(20), kMaxBackoff = std::chrono::seconds(160);
-constexpr double kDropBelow = 54.0;
+constexpr auto kWindow = std::chrono::seconds(1);
+constexpr auto kMinWait = std::chrono::seconds(5), kMaxWait = std::chrono::seconds(120);
+constexpr double kSteady = 57.0, kBad = 50.0;
+// room for 60: CPU time per frame at 30 fps (60 fps renders each frame in half the time)
+constexpr int64_t kRenderRoom = 11000000, kGameRoom = 22000000;
 }  // namespace
 
 void set_mode(int m) {
@@ -37,25 +42,33 @@ void set_mode(int m) {
 int mode() { return g_mode; }
 
 void on_swap() {
-    static Clock::time_point window_start, retry_at, steady_since;
-    static Clock::duration backoff = kMinBackoff;
+    static Clock::time_point window_start, fallback_at, tried_at, room_since;
+    static Clock::duration wait = kMinWait;
     static uint32_t swaps = 0;
-    static bool warmup = true;
+    static int low_windows = 0;
+    static bool warmup = true, has_room = false;
     if (g_mode.load(std::memory_order_relaxed) != 2) return;
     auto now = Clock::now();
     if (g_reset.exchange(false)) {
-        window_start = steady_since = now;
+        window_start = tried_at = now;
         swaps = 0;
+        low_windows = 0;
         warmup = true;
-        backoff = kMinBackoff;
+        wait = kMinWait;
         return;
     }
-    if (!interp::interp_on()) {  // at 30 after a fallback: try 60 again once the wait is over
-        if (now >= retry_at) {
+    if (!interp::interp_on()) {  // at 30 after a fallback: back to 60 once there is room for it
+        int64_t game, render;
+        perf_hint::recent_work(game, render);
+        bool room = render > 0 && render < kRenderRoom && game < kGameRoom;
+        if (room && !has_room) room_since = now;
+        has_room = room;
+        if (room && now - room_since >= std::chrono::seconds(3) && now - fallback_at >= wait) {
             interp::set_enabled(true);
-            LOG("[fps60] trying 60 fps again");
-            window_start = steady_since = now;
+            LOG("[fps60] room for 60 (render %.1f ms, game %.1f ms per frame): trying 60 fps", render / 1e6, game / 1e6);
+            window_start = tried_at = now;
             swaps = 0;
+            low_windows = 0;
             warmup = true;
         }
         return;
@@ -71,14 +84,15 @@ void on_swap() {
         warmup = false;
         return;
     }
-    if (fps < kDropBelow) {
+    low_windows = fps < kSteady ? low_windows + 1 : 0;
+    if (fps < kBad || low_windows >= 2) {
         interp::set_enabled(false);
-        retry_at = now + backoff;
-        LOG("[fps60] %.1f fps: back to 30 fps, next try in %lld s", fps,
-            (long long)std::chrono::duration_cast<std::chrono::seconds>(backoff).count());
-        backoff = std::min<Clock::duration>(backoff * 2, kMaxBackoff);
-        return;
+        // a try that fails quickly waits longer before the next one
+        wait = now - tried_at < std::chrono::seconds(15) ? std::min<Clock::duration>(wait * 2, kMaxWait) : kMinWait;
+        fallback_at = now;
+        has_room = false;
+        LOG("[fps60] %.1f fps: back to 30 fps (next try after %lld s with room for 60)", fps,
+            (long long)std::chrono::duration_cast<std::chrono::seconds>(wait).count());
     }
-    if (now - steady_since > std::chrono::seconds(60)) backoff = kMinBackoff;
 }
 }  // namespace fps60

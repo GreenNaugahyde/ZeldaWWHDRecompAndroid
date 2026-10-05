@@ -56,17 +56,37 @@ void register_render_thread() {
     g_render_set = true;
 }
 
+// CPU time per swap of the game and render threads, smoothed (also without ADPF)
+std::atomic<int64_t> g_game_avg{0}, g_render_avg{0};
+
+void recent_work(int64_t& game_ns, int64_t& render_ns) {
+    game_ns = g_game_avg.load(std::memory_order_relaxed);
+    render_ns = g_render_avg.load(std::memory_order_relaxed);
+}
+
 void on_swap(uint32_t swap_interval) {
     static const bool available = load();
+    static int64_t last_game = 0, last_render = 0;
+    static int32_t last_game_tid = 0;
+    // the busier of the two threads is the frame's critical path; their CPU time excludes waits
+    const int32_t game = (int32_t)syscall(SYS_gettid);
+    int64_t g = cpu_ns(CLOCK_THREAD_CPUTIME_ID), r = 0;
+    clockid_t rclk;
+    if (g_render_set && pthread_getcpuclockid(g_render_thread, &rclk) == 0) r = cpu_ns(rclk);
+    int64_t dg = last_game && game == last_game_tid ? g - last_game : 0, dr = last_render ? r - last_render : 0;
+    last_game = g;
+    last_render = r;
+    last_game_tid = game;
+    if (dg > 0 && dg < 1000000000) g_game_avg = g_game_avg.load() ? (g_game_avg.load() * 7 + dg) / 8 : dg;
+    if (dr > 0 && dr < 1000000000) g_render_avg = g_render_avg.load() ? (g_render_avg.load() * 7 + dr) / 8 : dr;
+
     if (!available) return;
     static Manager* mgr = p_getManager();
     static Session* session = nullptr;
     static int32_t session_game = 0, session_render = 0;
-    static int64_t target = 0, last_game = 0, last_render = 0;
+    static int64_t target = 0;
     static bool failed = false;
     if (!mgr || failed) return;
-
-    const int32_t game = (int32_t)syscall(SYS_gettid);
     const int32_t render = g_render_tid;
     int64_t want = (int64_t)std::max<uint32_t>(swap_interval, 1) * 16683333;  // vsyncs at 59.94 Hz
     if (!session || game != session_game || render != session_render) {
@@ -82,22 +102,13 @@ void on_swap(uint32_t swap_interval) {
         session_game = game;
         session_render = render;
         target = want;
-        last_game = last_render = 0;
+        return;
     }
     if (want != target) {
         p_updateTarget(session, want);
         target = want;
     }
-
-    // the busier of the two threads is the frame's critical path; their CPU time excludes waits
-    int64_t g = cpu_ns(CLOCK_THREAD_CPUTIME_ID), r = 0;
-    clockid_t rclk;
-    if (g_render_set && pthread_getcpuclockid(g_render_thread, &rclk) == 0) r = cpu_ns(rclk);
-    if (last_game) {
-        int64_t work = std::max(g - last_game, last_render ? r - last_render : 0);
-        if (work > 0) p_report(session, work);
-    }
-    last_game = g;
-    last_render = r;
+    int64_t work = std::max(dg, dr);
+    if (work > 0) p_report(session, work);
 }
 }  // namespace perf_hint

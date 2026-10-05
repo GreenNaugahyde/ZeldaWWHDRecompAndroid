@@ -28,6 +28,8 @@
         android:isGame="true"
         android:label="@string/app_name"
         android:theme="@style/AppTheme">
+        <!-- lets simpleperf / Perfetto profile release builds from adb (not debuggable) -->
+        <profileable android:shell="true" />
         <activity
             android:name=".MainActivity"
             android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboard|keyboardHidden|navigation|uiMode|density"
