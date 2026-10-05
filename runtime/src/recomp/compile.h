@@ -8,6 +8,10 @@
 
 namespace recomp {
 
+// -O3: the game thread spends most of its time in this code (part of the code cache key, so a change
+// recompiles once)
+constexpr int kDefaultOptLevel = 3;
+
 struct CompileOptions {
     std::string rpxPath;      // game/code/cking.rpx
     std::string opsBitcode;   // ops.c as LLVM bitcode
@@ -15,7 +19,7 @@ struct CompileOptions {
     std::string outDir;       // code_NNN.o are written here
     std::string cpu;          // target CPU ("" = the host's, e.g. on the device; "generic" for a PC build)
     size_t perModule = 1500;  // guest functions per module (and object file)
-    int optLevel = 2;         // LLVM -O2 or -O3
+    int optLevel = kDefaultOptLevel;  // LLVM -O2 or -O3
     unsigned jobs = 0;        // parallel modules (0: hardware threads)
     bool keepExisting = false;  // resume: modules whose object file exists aren't compiled again
     std::atomic<size_t>* modulesDone = nullptr;   // progress (optional)

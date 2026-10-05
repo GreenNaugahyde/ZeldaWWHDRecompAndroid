@@ -405,8 +405,8 @@ static void create_set_layout(Shader* sh) {
 }
 
 // registers that influence how a shader stage is translated (gathered, then hashed in one pass)
-static uint64_t stage_state_hash(const uint32_t* regs, uint64_t h, uint32_t texBase) {
-    uint32_t buf[400];
+// the register state that shapes a stage's translation, as words (hashed into the shader key)
+static uint32_t stage_state_words(const uint32_t* regs, uint32_t texBase, uint32_t* buf) {
     uint32_t n = 0;
     auto put = [&](uint32_t first, uint32_t count) { memcpy(&buf[n], &regs[first], count * 4); n += count; };
     put(mmSQ_VTX_SEMANTIC_0, 32);
@@ -445,6 +445,12 @@ static uint64_t stage_state_hash(const uint32_t* regs, uint64_t h, uint32_t texB
     }
     // depth-compare samplers
     for (int i = 0; i < 18 * 3; i++) buf[n++] = regs[REGADDR::SQ_TEX_SAMPLER_WORD0_0 + i * 3] & 0xF8000000;
+    return n;
+}
+
+static uint64_t stage_state_hash(const uint32_t* regs, uint64_t h, uint32_t texBase) {
+    uint32_t buf[400];
+    uint32_t n = stage_state_words(regs, texBase, buf);
     return hash_bytes(buf, n * 4, h);
 }
 
@@ -477,10 +483,27 @@ static Shader* get_shader_uncached(const uint32_t* regs, bool vertex, LatteFetch
     if (!addr || !size) return nullptr;
     uint64_t key = program_hash(addr, size) ^ (vertex ? 0x1111 : 0x2222);
     uint64_t base = key;
-    key = stage_state_hash(regs, key, vertex ? REGADDR::SQ_TEX_RESOURCE_WORD0_N_VS : REGADDR::SQ_TEX_RESOURCE_WORD0_N_PS);
+    // recent lookups: the same program with the same state words is the same shader (comparing the
+    // words is cheaper than hashing them and looking the key up)
+    struct Memo { uint64_t base, fsKey; uint32_t n; uint32_t words[400]; Shader* s; };
+    static Memo memo[64];
+    uint32_t words[400];
+    uint32_t n = stage_state_words(regs, vertex ? REGADDR::SQ_TEX_RESOURCE_WORD0_N_VS : REGADDR::SQ_TEX_RESOURCE_WORD0_N_PS, words);
+    uint64_t fk = vertex ? fsKey : 0;
+    Memo& m = memo[(base ^ (base >> 21) ^ fk) & 63];
+    if (m.s && m.base == base && m.fsKey == fk && m.n == n && memcmp(m.words, words, n * 4) == 0) return m.s;
+    key = hash_bytes(words, n * 4, key);
     if (vertex) key ^= fsKey * 31;
+    auto remember = [&](Shader* sh) {
+        m.base = base;
+        m.fsKey = fk;
+        m.n = n;
+        memcpy(m.words, words, n * 4);
+        m.s = sh;
+        return sh;
+    };
     auto it = g_shaders.find(key);
-    if (it != g_shaders.end()) return it->second;
+    if (it != g_shaders.end()) return remember(it->second);
 
     auto* s = new Shader();
     s->key = key;

@@ -133,7 +133,7 @@ std::string code_cache_key(const std::string& rpxPath) {
     disc::sha1((const uint8_t*)rpx.data(), rpx.size(), h);
     disc::sha1((const uint8_t*)wwhd_hooks, (size_t)(wwhd_hooks_end - wwhd_hooks), hk);
     return std::string("recompiler ") + WWHD_RECOMP_VERSION + "\nhooks " + hex(hk, 20) + "\nrpx " + hex(h, 20) + "\ncpu " +
-           host_features() + "\n";
+           host_features() + "\nopt " + std::to_string(kDefaultOptLevel) + "\n";
 }
 
 bool code_cache_ready(const std::string& dir, const std::string& key) {
