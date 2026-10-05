@@ -16,6 +16,9 @@
 #include "gx2_texture_regs.h"
 #include "platform.h"
 #include "runtime.h"
+#ifdef __ANDROID__
+#include "android/perf_hint.h"
+#endif
 
 using namespace Latte;
 
@@ -76,6 +79,9 @@ static uint64_t g_fence_issued = 0, g_fence_done = 0;
 static void render_thread_main() {
     platform::set_thread_name("GX2 render");
     platform::set_thread_high_priority();
+#ifdef __ANDROID__
+    perf_hint::register_render_thread();
+#endif
     for (;;) {
         {
             std::unique_lock<std::mutex> lk(g_q_mutex);
@@ -455,6 +461,9 @@ HLE(gx2, GX2SwapScanBuffers) {
         g_swap_count++;
         g_pending_flips.push_back({vsync_index(), g_swap_count});
     }
+#ifdef __ANDROID__
+    perf_hint::on_swap(interp::effective_swap_interval(g_swap_interval));
+#endif
     if (g_swap_count % 300 == 1) {
         static auto last = std::chrono::steady_clock::now();
         auto now = std::chrono::steady_clock::now();
