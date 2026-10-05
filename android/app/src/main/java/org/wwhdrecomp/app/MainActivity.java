@@ -279,6 +279,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         surface.getHolder().addCallback(this);
         root.addView(surface, new FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
         controls = new ControlsView(this, this);
+        controls.setLayout(prefs.getString("touch_layout", ""));
         root.addView(controls, new FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT,
                 Gravity.CENTER));
         setContentView(root);
@@ -308,6 +309,8 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         if (controls == null) return;
         boolean visible = prefs.getBoolean("controls_visible", true) && !autoHidden;
         controls.setAppearance(visible, prefs.getFloat("controls_scale", 1f), prefs.getFloat("controls_opacity", 0.45f));
+        controls.setTouchOptions(prefs.getFloat("camera_sensitivity", 1f), prefs.getBoolean("haptics", true),
+                prefs.getInt("combat_buttons", 0));
         updateLayout();
     }
 
@@ -410,6 +413,18 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     public void onControlsChanged() { pushInput(); }
 
     @Override
+    public void onLayoutSaved(String layout) {
+        prefs.edit().putString("touch_layout", layout).apply();
+    }
+
+    /** the layout editor over the game (from the options menu) */
+    void editTouchLayout() {
+        if (controls == null) return;
+        if (!prefs.getBoolean("controls_visible", true)) setControlsVisible(true);
+        controls.setEditMode(true);
+    }
+
+    @Override
     public void onOverlayMoved(float fx, float fy) {
         prefs.edit().putFloat("perf_x", fx).putFloat("perf_y", fy).apply();
     }
@@ -461,7 +476,13 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         int code = e.getKeyCode();
         boolean controller = InputMapper.isController(e.getDevice()) || KeyEvent.isGamepadButton(code);
         if (code == KeyEvent.KEYCODE_BACK && !controller) {
-            if (e.getAction() == KeyEvent.ACTION_UP) onMenu();
+            if (e.getAction() == KeyEvent.ACTION_UP) {
+                if (controls != null && controls.editMode()) {  // leaves the editor without saving
+                    controls.setEditMode(false);
+                    controls.setLayout(prefs.getString("touch_layout", ""));
+                }
+                else onMenu();
+            }
             return true;
         }
         if (code == KeyEvent.KEYCODE_VOLUME_UP || code == KeyEvent.KEYCODE_VOLUME_DOWN || code == KeyEvent.KEYCODE_VOLUME_MUTE)
@@ -586,6 +607,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     }
 
     // ---- actions of the in-game menu (OptionsMenu)
+    static final float[] CAMERA_SENSITIVITIES = {0.5f, 0.75f, 1f, 1.25f, 1.5f, 2f};
     static final float[] CONTROL_SIZES = {0.75f, 0.9f, 1f, 1.15f, 1.3f};
 
     // render targets switch to the new size as the game next draws into them

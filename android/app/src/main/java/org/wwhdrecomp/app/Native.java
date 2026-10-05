@@ -57,6 +57,8 @@ final class Native {
      */
     static native void setOption(String name, int value);
     static native int getOption(String name);
+    /** game state for the touch controls: {flags, A action, B action, ZR action, X, Y, R item} */
+    static native int[] hudState();
 
     /** Save state slot 1..5: {used "1"/"0", compatible "1"/"0", time, area}. */
     static native String[] saveSlotInfo(int slot);

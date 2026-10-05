@@ -25,6 +25,7 @@
 #include "../vk/vk_window.h"
 #include "fps60.h"
 #include "jni_bridge.h"
+#include "touch_hud.h"
 #include "recomp_table.h"
 
 namespace gfx {
@@ -346,6 +347,15 @@ JNI_FN(void, textInputDone)(JNIEnv* env, jclass, jboolean ok, jstring text) {
 JNI_FN(void, setPaused)(JNIEnv*, jclass, jboolean paused) {
     audio::set_paused(paused);
     if (paused && g_started) gfx::save_caches();
+}
+
+// game state for the touch controls' icons (ControlsView)
+JNI_FN(jintArray, hudState)(JNIEnv* env, jclass) {
+    int32_t s[touch_hud::kSize];
+    touch_hud::state(s);
+    jintArray a = env->NewIntArray(touch_hud::kSize);
+    env->SetIntArrayRegion(a, 0, touch_hud::kSize, s);
+    return a;
 }
 
 // settings shown in the app's menu

@@ -5,14 +5,20 @@ import android.graphics.Canvas;
 import android.graphics.Paint;
 import android.graphics.RectF;
 import android.util.SparseArray;
+import android.view.HapticFeedbackConstants;
 import android.view.MotionEvent;
 import android.view.View;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Locale;
 
 /**
- * On-screen Wii U GamePad: sticks, buttons and the GamePad touch screen, drawn over the game.
+ * Touch controls made for a phone, drawn over the game: a floating left stick, the camera on swipes
+ * over the right side, context buttons whose icons follow the game (A, B, ZR, the item slots X/Y/R),
+ * lock-on, first person, the D-pad, pause, and one-touch combat moves (macros of the GamePad
+ * combinations). Every control can be moved and resized in the layout editor.
  * Touches that hit no control and land on the GamePad image go to the game as touch-panel input.
  */
 final class ControlsView extends View {
@@ -21,35 +27,53 @@ final class ControlsView extends View {
         void onMenu();
         /** the performance overlay was dragged: its top left corner as fractions of the view size */
         void onOverlayMoved(float fx, float fy);
+        /** the layout editor finished: the layout to keep ("" = the default one) */
+        void onLayoutSaved(String layout);
     }
 
-    private static final int KIND_BUTTON = 0, KIND_STICK = 1, KIND_DPAD = 2, KIND_MENU = 3;
+    private static final int K_STICK = 0, K_BUTTON = 1, K_DPAD = 2, K_MACRO = 3, K_MENU = 4, K_EDIT = 5;
+    // combat moves (K_MACRO controls' bit field)
+    private static final int M_JUMP = 1, M_VERTICAL = 2, M_SPIN = 3, M_DODGE = 4;
 
-    private static final class Control {
-        int kind, bit;
-        String label;
-        float cx, cy, w, h;          // centre and size (buttons: w x h, sticks: w = radius)
-        boolean round, pressed;
-        float sx, sy;                // stick deflection -1..1 (+y up)
+    // game state from Native.hudState(): {flags, A action, B action, ZR action, X item, Y item, R item}
+    static final int HUD_KNOWN = 1, HUD_ON_BOAT = 2, HUD_SWORD_OUT = 4, HUD_TARGETING = 8, HUD_FIRST_PERSON = 16;
+    private static final int HUD_FLAGS = 0, HUD_A = 1, HUD_B = 2, HUD_ZR = 3, HUD_X = 4, HUD_Y = 5, HUD_R = 6;
+
+    private static final class Ctl {
+        final String id, label, icon;
+        final int kind, bit, color;
+        // default place: centre = (ax * W + ox * u, ay * H + oy * u), diameter d * u
+        final float ax, ox, ay, oy, d;
+        // the user's place (layout editor): centre as fractions of the view, diameter in u; NaN = default
+        float fx = Float.NaN, fy = Float.NaN, fd = Float.NaN;
+        float cx, cy, r;            // on screen
+        boolean pressed;
         int dpadBits;
-        Control(int kind, int bit, String label, boolean round) {
+        Ctl(String id, int kind, int bit, int color, String label, String icon, float ax, float ox, float ay, float oy, float d) {
+            this.id = id;
             this.kind = kind;
             this.bit = bit;
+            this.color = color;
             this.label = label;
-            this.round = round;
+            this.icon = icon;
+            this.ax = ax;
+            this.ox = ox;
+            this.ay = ay;
+            this.oy = oy;
+            this.d = d;
         }
         boolean hit(float x, float y, float slack) {
-            if (kind == KIND_STICK || kind == KIND_DPAD) {
-                float r = w * slack;
-                return (x - cx) * (x - cx) + (y - cy) * (y - cy) <= r * r;
-            }
-            return Math.abs(x - cx) <= w / 2 * slack && Math.abs(y - cy) <= h / 2 * slack;
+            float rr = r * slack;
+            return (x - cx) * (x - cx) + (y - cy) * (y - cy) <= rr * rr;
         }
+        boolean custom() { return !Float.isNaN(fx); }
     }
 
     private final Listener listener;
-    private final List<Control> controls = new ArrayList<>();
-    private final SparseArray<Control> pointers = new SparseArray<>();
+    private final TouchIcons icons;
+    private final List<Ctl> controls = new ArrayList<>();
+    private final HashMap<String, Ctl> byId = new HashMap<>();
+    private final SparseArray<Ctl> pointers = new SparseArray<>();
     private int drcPointer = -1;
     private final Paint fill = new Paint(Paint.ANTI_ALIAS_FLAG), stroke = new Paint(Paint.ANTI_ALIAS_FLAG),
             text = new Paint(Paint.ANTI_ALIAS_FLAG);
@@ -59,30 +83,44 @@ final class ControlsView extends View {
     private final RectF drcRect = new RectF();
     private boolean controlsVisible = true;
     private float scale = 1f, opacity = 0.45f;
+    private float unit = 1, baseUnit = 1;  // u (with the size setting) and without it
+
+    // settings
+    private float cameraSensitivity = 1f;
+    private boolean haptics = true;
+    private int combatMode;  // 0 auto (with the sword out or a target locked), 1 always, 2 never
 
     ControlsView(Context c, Listener l) {
         super(c);
         listener = l;
+        icons = new TouchIcons(c);
         fill.setStyle(Paint.Style.FILL);
         stroke.setStyle(Paint.Style.STROKE);
         text.setTextAlign(Paint.Align.CENTER);
         text.setFakeBoldText(true);
-        controls.add(new Control(KIND_BUTTON, Native.ZL, "ZL", false));
-        controls.add(new Control(KIND_BUTTON, Native.L, "L", false));
-        controls.add(new Control(KIND_BUTTON, Native.ZR, "ZR", false));
-        controls.add(new Control(KIND_BUTTON, Native.R, "R", false));
-        controls.add(new Control(KIND_DPAD, 0, "", true));
-        controls.add(new Control(KIND_STICK, 0, "L", true));
-        controls.add(new Control(KIND_STICK, 1, "R", true));
-        controls.add(new Control(KIND_BUTTON, Native.X, "X", true));
-        controls.add(new Control(KIND_BUTTON, Native.A, "A", true));
-        controls.add(new Control(KIND_BUTTON, Native.B, "B", true));
-        controls.add(new Control(KIND_BUTTON, Native.Y, "Y", true));
-        controls.add(new Control(KIND_BUTTON, Native.MINUS, "−", true));
-        controls.add(new Control(KIND_BUTTON, Native.PLUS, "+", true));
-        controls.add(new Control(KIND_BUTTON, Native.STICK_L, "L3", true));
-        controls.add(new Control(KIND_BUTTON, Native.STICK_R, "R3", true));
-        controls.add(new Control(KIND_MENU, 0, "≡", true));
+        final int T = TouchIcons.TEAL, B = TouchIcons.BONE, O = TouchIcons.ORANGE, S = TouchIcons.SKY;
+        add(new Ctl("stick", K_STICK, 0, S, "", "stick_base", 0, 2.0f, 1, -1.9f, 2.2f));
+        add(new Ctl("dpad", K_DPAD, 0, T, "", "dpad_base", 0, 1.7f, 0, 2.75f, 2.1f));
+        add(new Ctl("zl", K_BUTTON, Native.ZL, TouchIcons.VIOLET, "ZL", "zl_target", 0, 1.1f, 0, 0.9f, 1.2f));
+        add(new Ctl("zr", K_BUTTON, Native.ZR, TouchIcons.AMBER, "ZR", "zr_shield", 1, -1.1f, 0, 0.9f, 1.2f));
+        add(new Ctl("fp", K_BUTTON, Native.STICK_R, B, "◉", "btn_first_person", 1, -2.6f, 0, 0.9f, 0.9f));
+        add(new Ctl("a", K_BUTTON, Native.A, TouchIcons.GREEN, "A", "bubble_blank_a", 1, -1.3f, 1, -1.9f, 1.5f));
+        add(new Ctl("b", K_BUTTON, Native.B, TouchIcons.RED, "B", "b_sword", 1, -2.9f, 1, -1.2f, 1.25f));
+        add(new Ctl("x", K_BUTTON, Native.X, S, "X", "bubble_empty_item", 1, -0.9f, 1, -3.7f, 1.05f));
+        add(new Ctl("y", K_BUTTON, Native.Y, S, "Y", "bubble_empty_item", 1, -2.3f, 1, -3.4f, 1.05f));
+        add(new Ctl("r", K_BUTTON, Native.R, S, "R", "bubble_empty_item", 1, -3.6f, 1, -2.6f, 1.05f));
+        add(new Ctl("jump", K_MACRO, M_JUMP, O, "⤒", "combat_jump_attack", 1, -3.8f, 1, -4.3f, 0.95f));
+        add(new Ctl("vertical", K_MACRO, M_VERTICAL, O, "⇓", "combat_vertical_slash", 1, -4.7f, 1, -3.3f, 0.95f));
+        add(new Ctl("spin", K_MACRO, M_SPIN, O, "⟳", "combat_spin_attack", 1, -4.9f, 1, -2.1f, 0.95f));
+        add(new Ctl("dodge", K_MACRO, M_DODGE, O, "⇆", "combat_dodge", 1, -4.4f, 1, -0.9f, 0.95f));
+        add(new Ctl("pause", K_BUTTON, Native.PLUS, B, "❚❚", "btn_pause", 0.5f, -0.9f, 1, -0.5f, 0.75f));
+        add(new Ctl("menu", K_MENU, 0, B, "≡", "btn_menu", 0.5f, 0, 1, -0.5f, 0.75f));
+        add(new Ctl("edit", K_EDIT, 0, B, "✎", "btn_layout_edit", 0.5f, 0.9f, 1, -0.5f, 0.75f));
+    }
+
+    private void add(Ctl c) {
+        controls.add(c);
+        byId.put(c.id, c);
     }
 
     void setDrcRect(RectF r) {
@@ -296,12 +334,21 @@ final class ControlsView extends View {
         this.scale = scale;
         this.opacity = opacity;
         layoutControls(getWidth(), getHeight());
+        if (visible) startHudPoll();
+        invalidate();
+    }
+
+    /** camera speed for swipes (1 = default), vibration on presses, when the combat buttons show */
+    void setTouchOptions(float cameraSensitivity, boolean haptics, int combatMode) {
+        this.cameraSensitivity = cameraSensitivity;
+        this.haptics = haptics;
+        this.combatMode = combatMode;
         invalidate();
     }
 
     boolean controlsVisible() { return controlsVisible; }
 
-    // ---- the menu button hides after a while without touches and comes back on the next touch
+    // ---- the menu and editor buttons hide after a while without touches and come back on the next touch
     private static final long MENU_HIDE_MS = 5000;
     private boolean menuShown = true;
     private final Runnable hideMenu = () -> {
@@ -323,104 +370,316 @@ final class ControlsView extends View {
     protected void onAttachedToWindow() {
         super.onAttachedToWindow();
         touched();
+        startHudPoll();
     }
 
     @Override
     protected void onDetachedFromWindow() {
         removeCallbacks(hideMenu);
+        removeCallbacks(pollState);
+        removeCallbacks(cameraTick);
+        removeCallbacks(macroTick);
         super.onDetachedFromWindow();
     }
 
+    // ---- game state: what A, B and ZR do, the items on X/Y/R, boat / sword / lock-on
+    private int[] state = new int[7];
+    private boolean hudPolling;
+    private final Runnable pollState = new Runnable() {
+        @Override
+        public void run() {
+            if (!controlsVisible || getWindowToken() == null) {
+                hudPolling = false;
+                return;
+            }
+            int[] s = null;
+            try {
+                s = Native.hudState();
+            } catch (UnsatisfiedLinkError ignored) {
+            }
+            if (s != null && s.length >= 7 && !java.util.Arrays.equals(s, state)) {
+                state = s;
+                invalidate();
+            }
+            postDelayed(this, 100);
+        }
+    };
+
+    private void startHudPoll() {
+        if (hudPolling) return;
+        hudPolling = true;
+        post(pollState);
+    }
+
+    private boolean hudKnown() { return (state[HUD_FLAGS] & HUD_KNOWN) != 0; }
+    private boolean hudFlag(int f) { return (state[HUD_FLAGS] & f) != 0; }
+
+    private boolean combatShown() {
+        if (editMode) return true;
+        if (combatMode == 1) return true;
+        if (combatMode == 2) return false;
+        return !hudKnown() || hudFlag(HUD_SWORD_OUT) || hudFlag(HUD_TARGETING);
+    }
+
+    private boolean shown(Ctl c) {
+        if (editMode) return true;
+        if (c.kind == K_MENU || c.kind == K_EDIT) return menuShown;
+        if (!controlsVisible) return false;
+        if (c.kind == K_MACRO) return combatShown();
+        return true;
+    }
+
+    // ---- output to the game
+    // left stick: the finger's offset from where it went down (the stick follows a finger that goes past it)
+    private int stickPointer = -1;
+    private float stickOx, stickOy, stickX, stickY;
+    // camera: swipe speed on the right side acts as the right stick
+    private int camPointer = -1;
+    private float camLastX, camLastY, camAccX, camAccY, camX, camY;
+    private long lastCamTap;
+    private float camDownX, camDownY;
+    // double tap on the camera side: a short ZL (centres the camera behind Link)
+    private int pulseBits;
+    // combat move in progress
+    private int[][] macro;   // steps: {ms, buttons, stick? 1:0, sx*1000, sy*1000}
+    private int macroStep = -1;
+    private int macroBits;
+    private boolean macroStick;
+    private float macroSx, macroSy;
+
     int buttons() {
-        int b = 0;
-        for (Control c : controls) {
-            if (c.kind == KIND_BUTTON && c.pressed) b |= c.bit;
-            if (c.kind == KIND_DPAD) b |= c.dpadBits;
+        int b = pulseBits | macroBits;
+        for (Ctl c : controls) {
+            if (c.kind == K_BUTTON && c.pressed) b |= c.bit;
+            if (c.kind == K_DPAD) b |= c.dpadBits;
         }
         return b;
     }
-    float stickX(int i) { return controls.get(5 + i).sx; }
-    float stickY(int i) { return controls.get(5 + i).sy; }
 
+    float stickX(int i) { return i == 0 ? (macroStick ? macroSx : stickX) : camX; }
+    float stickY(int i) { return i == 0 ? (macroStick ? macroSy : stickY) : camY; }
+
+    private void changed() {
+        listener.onControlsChanged();
+        invalidate();
+    }
+
+    private void buzz() {
+        if (haptics) performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
+    }
+
+    // ---- camera
+    private final Runnable cameraTick = new Runnable() {
+        @Override
+        public void run() {
+            // a swipe of about 10 u per second turns the camera at full speed (times the sensitivity)
+            float k = cameraSensitivity / Math.max(1f, baseUnit * 0.16f);
+            float tx = clamp(camAccX * k), ty = clamp(-camAccY * k);
+            camAccX = camAccY = 0;
+            camX = camX * 0.35f + tx * 0.65f;
+            camY = camY * 0.35f + ty * 0.65f;
+            if (Math.abs(camX) < 0.02f) camX = 0;
+            if (Math.abs(camY) < 0.02f) camY = 0;
+            listener.onControlsChanged();
+            if (camPointer >= 0 || camX != 0 || camY != 0) postDelayed(this, 16);
+        }
+    };
+
+    private static float clamp(float v) { return Math.max(-1f, Math.min(1f, v)); }
+
+    private void cameraDown(int id, float x, float y) {
+        camPointer = id;
+        camLastX = camDownX = x;
+        camLastY = camDownY = y;
+        removeCallbacks(cameraTick);
+        post(cameraTick);
+        long now = android.os.SystemClock.uptimeMillis();
+        if (now - lastCamTap < 300) {  // second tap: centre the camera
+            lastCamTap = 0;
+            pulseBits = Native.ZL;
+            buzz();
+            changed();
+            postDelayed(() -> {
+                pulseBits = 0;
+                changed();
+            }, 150);
+        }
+    }
+
+    private void cameraUp(float x, float y) {
+        camPointer = -1;
+        boolean tap = Math.hypot(x - camDownX, y - camDownY) < baseUnit * 0.3f;
+        lastCamTap = tap ? android.os.SystemClock.uptimeMillis() : 0;
+    }
+
+    // ---- combat moves: the GamePad combinations, pressed for the player
+    private final Runnable macroTick = new Runnable() {
+        @Override
+        public void run() {
+            macroStep++;
+            applyMacroStep();
+        }
+    };
+
+    private void applyMacroStep() {
+        if (macro == null || macroStep >= macro.length) {
+            macro = null;
+            macroStep = -1;
+            macroBits = 0;
+            macroStick = false;
+            changed();
+            return;
+        }
+        int[] s = macro[macroStep];
+        macroBits = s[1];
+        macroStick = s[2] != 0;
+        macroSx = s[3] / 1000f;
+        macroSy = s[4] / 1000f;
+        changed();
+        postDelayed(macroTick, s[0]);
+    }
+
+    private void startMacro(int move) {
+        if (macro != null) return;
+        final int ZL = Native.ZL, A = Native.A, B = Native.B;
+        switch (move) {
+            case M_JUMP:      // lock on + A
+                macro = new int[][] {{60, ZL, 0, 0, 0}, {140, ZL | A, 0, 0, 0}, {60, ZL, 0, 0, 0}};
+                break;
+            case M_VERTICAL:  // lock on + B
+                macro = new int[][] {{60, ZL, 0, 0, 0}, {140, ZL | B, 0, 0, 0}, {60, ZL, 0, 0, 0}};
+                break;
+            case M_SPIN:      // hold B until the sword charges, then let go
+                macro = new int[][] {{1100, B, 0, 0, 0}};
+                break;
+            case M_DODGE: {   // lock on + stick + A: sideways where the stick points, else a backflip
+                float sx = stickX, sy = stickY, len = (float) Math.hypot(sx, sy);
+                if (len < 0.4f) { sx = 0; sy = -1; } else { sx /= len; sy /= len; }
+                int x = Math.round(sx * 1000), y = Math.round(sy * 1000);
+                macro = new int[][] {{60, ZL, 0, 0, 0}, {80, ZL, 1, x, y}, {140, ZL | A, 1, x, y}, {60, ZL, 0, 0, 0}};
+                break;
+            }
+            default:
+                return;
+        }
+        macroStep = 0;
+        applyMacroStep();
+    }
+
+    // ---- layout
     @Override
     protected void onSizeChanged(int w, int h, int ow, int oh) {
         layoutControls(w, h);
     }
 
-    // positions in units of u = shorter side / 7 (landscape)
+    // u = shorter side / 7 (landscape), times the size setting
     private void layoutControls(int W, int H) {
         if (W == 0 || H == 0) return;
-        float u = Math.min(W, H) / 7f * scale;
-        float m = u * 0.25f;  // edge margin
-        float colL = m + u * 1.6f, colR = W - m - u * 1.6f;
-        set(0, colL, m + u * 0.4f, u * 1.6f, u * 0.65f);               // ZL
-        set(1, colL, m + u * 1.25f, u * 1.6f, u * 0.65f);              // L
-        set(2, colR, m + u * 0.4f, u * 1.6f, u * 0.65f);               // ZR
-        set(3, colR, m + u * 1.25f, u * 1.6f, u * 0.65f);              // R
-        set(4, colL, H * 0.5f - u * 0.1f, u * 0.95f, 0);               // D-pad
-        set(5, colL, H - m - u * 1.15f, u * 1.05f, 0);                 // left stick
-        set(6, colR, H - m - u * 1.15f, u * 1.05f, 0);                 // right stick
-        float fx = colR, fy = H * 0.5f - u * 0.1f, d = u * 0.78f, r = u * 0.72f;
-        set(7, fx, fy - d, r, r);                                      // X (top)
-        set(8, fx + d, fy, r, r);                                      // A (right)
-        set(9, fx, fy + d, r, r);                                      // B (bottom)
-        set(10, fx - d, fy, r, r);                                     // Y (left)
-        set(11, W * 0.5f - u * 1.1f, H - m - u * 0.35f, u * 0.6f, u * 0.6f);  // -
-        set(12, W * 0.5f + u * 1.1f, H - m - u * 0.35f, u * 0.6f, u * 0.6f);  // +
-        set(13, colL + u * 1.55f, H - m - u * 0.35f, u * 0.55f, u * 0.55f);   // L3
-        set(14, colR - u * 1.55f, H - m - u * 0.35f, u * 0.55f, u * 0.55f);   // R3
-        set(15, W * 0.5f, H - m - u * 0.35f, u * 0.6f, u * 0.6f);             // menu
-        text.setTextSize(u * 0.34f);
-        stroke.setStrokeWidth(Math.max(2f, u * 0.04f));
+        baseUnit = Math.min(W, H) / 7f;
+        unit = baseUnit * scale;
+        for (Ctl c : controls) place(c, W, H);
+        text.setTextSize(unit * 0.34f);
+        stroke.setStrokeWidth(Math.max(2f, unit * 0.04f));
     }
 
-    private void set(int i, float cx, float cy, float w, float h) {
-        Control c = controls.get(i);
-        c.cx = cx;
-        c.cy = cy;
-        c.w = w;
-        c.h = h;
+    private void place(Ctl c, int W, int H) {
+        if (c.custom()) {
+            c.cx = c.fx * W;
+            c.cy = c.fy * H;
+            c.r = c.fd * baseUnit / 2;
+        } else {
+            c.cx = c.ax * W + c.ox * unit;
+            c.cy = c.ay * H + c.oy * unit;
+            c.r = c.d * unit / 2;
+        }
+        c.cx = Math.max(c.r * 0.5f, Math.min(W - c.r * 0.5f, c.cx));
+        c.cy = Math.max(c.r * 0.5f, Math.min(H - c.r * 0.5f, c.cy));
     }
 
-    private Control controlAt(float x, float y) {
-        // exact hits first, then a little slack (thumbs are imprecise)
-        for (float slack : new float[] {1f, 1.35f})
-            for (Control c : controls) {
-                if (!controlsVisible && c.kind != KIND_MENU) continue;
+    /** the saved layout: "id:fx,fy,d;..." for the controls the user moved */
+    void setLayout(String s) {
+        for (Ctl c : controls) c.fx = c.fy = c.fd = Float.NaN;
+        if (s != null)
+            for (String part : s.split(";")) {
+                String[] kv = part.split(":");
+                if (kv.length != 2) continue;
+                Ctl c = byId.get(kv[0]);
+                String[] v = kv[1].split(",");
+                if (c == null || v.length != 3) continue;
+                try {
+                    c.fx = Float.parseFloat(v[0]);
+                    c.fy = Float.parseFloat(v[1]);
+                    c.fd = Float.parseFloat(v[2]);
+                } catch (NumberFormatException e) {
+                    c.fx = c.fy = c.fd = Float.NaN;
+                }
+            }
+        layoutControls(getWidth(), getHeight());
+        invalidate();
+    }
+
+    private String layoutString() {
+        StringBuilder sb = new StringBuilder();
+        for (Ctl c : controls) {
+            if (!c.custom()) continue;
+            if (sb.length() > 0) sb.append(';');
+            sb.append(String.format(Locale.ROOT, "%s:%.4f,%.4f,%.3f", c.id, c.fx, c.fy, c.fd));
+        }
+        return sb.toString();
+    }
+
+    private Ctl controlAt(float x, float y) {
+        // exact hits first, then a little slack (thumbs are imprecise); the stick is a zone, not a button
+        for (float slack : new float[] {1f, 1.25f})
+            for (Ctl c : controls) {
+                if (!shown(c) || (c.kind == K_STICK && !editMode)) continue;
                 if (c.hit(x, y, slack)) return c;
             }
         return null;
     }
 
-    private void updateStick(Control c, float x, float y) {
-        float dx = (x - c.cx) / c.w, dy = -(y - c.cy) / c.w;
-        float len = (float) Math.hypot(dx, dy);
-        if (len > 1) { dx /= len; dy /= len; }
-        c.sx = dx;
-        c.sy = dy;
-    }
-
-    private void updateDpad(Control c, float x, float y) {
-        float dx = x - c.cx, dy = y - c.cy, dead = c.w * 0.25f;
+    private void updateDpad(Ctl c, float x, float y) {
+        float dx = x - c.cx, dy = y - c.cy, dead = c.r * 0.25f;
         int b = 0;
         if (dx < -dead && Math.abs(dy) < Math.abs(dx) * 2.4f) b |= Native.LEFT;
         if (dx > dead && Math.abs(dy) < Math.abs(dx) * 2.4f) b |= Native.RIGHT;
         if (dy < -dead && Math.abs(dx) < Math.abs(dy) * 2.4f) b |= Native.UP;
         if (dy > dead && Math.abs(dx) < Math.abs(dy) * 2.4f) b |= Native.DOWN;
+        if (b != 0 && b != c.dpadBits) buzz();
         c.dpadBits = b;
     }
 
-    private void release(Control c) {
+    private void updateStick(float x, float y) {
+        Ctl s = byId.get("stick");
+        float r = s.r * 0.8f;
+        float dx = x - stickOx, dy = y - stickOy, len = (float) Math.hypot(dx, dy);
+        if (len > r) {  // drag the stick along with the finger
+            stickOx = x - dx / len * r;
+            stickOy = y - dy / len * r;
+            dx = x - stickOx;
+            dy = y - stickOy;
+        }
+        stickX = clamp(dx / r);
+        stickY = clamp(-dy / r);
+    }
+
+    private void release(Ctl c) {
         c.pressed = false;
-        c.sx = c.sy = 0;
         c.dpadBits = 0;
     }
 
     private void releaseAll() {
-        for (Control c : controls) release(c);
+        for (Ctl c : controls) release(c);
         pointers.clear();
         if (drcPointer >= 0) Native.setTouch(false, 0, 0);
         drcPointer = -1;
+        stickPointer = camPointer = -1;
+        stickX = stickY = camX = camY = 0;
+        removeCallbacks(macroTick);
+        macro = null;
+        macroStep = -1;
+        macroBits = pulseBits = 0;
+        macroStick = false;
     }
 
     private boolean inDrc(float x, float y) { return !drcRect.isEmpty() && drcRect.contains(x, y); }
@@ -432,6 +691,7 @@ final class ControlsView extends View {
 
     @Override
     public boolean onTouchEvent(MotionEvent e) {
+        if (editMode) return editTouch(e);
         int action = e.getActionMasked();
         int idx = e.getActionIndex();
         boolean changed = false;
@@ -442,20 +702,42 @@ final class ControlsView extends View {
                 int id = e.getPointerId(idx);
                 float x = e.getX(idx), y = e.getY(idx);
                 if (perfTouchDown(id, x, y)) break;
-                Control c = controlAt(x, y);
+                Ctl c = controlAt(x, y);
                 if (c != null) {
-                    if (c.kind == KIND_MENU) {
-                        if (!menuWasHidden) listener.onMenu();  // a touch on the hidden button only shows it
+                    if (c.kind == K_MENU || c.kind == K_EDIT) {
+                        // a touch on a hidden button only shows it
+                        if (!menuWasHidden) {
+                            if (c.kind == K_MENU) listener.onMenu();
+                            else setEditMode(true);
+                        }
                         return true;
                     }
                     pointers.put(id, c);
-                    if (c.kind == KIND_STICK) updateStick(c, x, y);
-                    else if (c.kind == KIND_DPAD) updateDpad(c, x, y);
-                    else c.pressed = true;
+                    if (c.kind == K_DPAD) updateDpad(c, x, y);
+                    else if (c.kind == K_MACRO) {
+                        buzz();
+                        startMacro(c.bit);
+                        c.pressed = true;
+                    } else {
+                        c.pressed = true;
+                        buzz();
+                    }
                     changed = true;
                 } else if (drcPointer < 0 && inDrc(x, y)) {
                     drcPointer = id;
                     touchDrc(true, x, y);
+                } else if (!controlsVisible) {
+                    break;
+                } else if (x < getWidth() * 0.45f) {
+                    if (stickPointer < 0) {
+                        stickPointer = id;
+                        stickOx = x;
+                        stickOy = y;
+                        updateStick(x, y);
+                        changed = true;
+                    }
+                } else if (camPointer < 0) {
+                    cameraDown(id, x, y);
                 }
                 break;
             }
@@ -471,17 +753,29 @@ final class ControlsView extends View {
                         touchDrc(true, x, y);
                         continue;
                     }
-                    Control c = pointers.get(id);
+                    if (id == stickPointer) {
+                        updateStick(x, y);
+                        changed = true;
+                        continue;
+                    }
+                    if (id == camPointer) {
+                        camAccX += x - camLastX;
+                        camAccY += y - camLastY;
+                        camLastX = x;
+                        camLastY = y;
+                        continue;
+                    }
+                    Ctl c = pointers.get(id);
                     if (c == null) continue;
-                    if (c.kind == KIND_STICK) updateStick(c, x, y);
-                    else if (c.kind == KIND_DPAD) updateDpad(c, x, y);
-                    else if (c.kind == KIND_BUTTON) {
-                        // sliding between buttons (e.g. across the face buttons) moves the press
-                        Control now = controlAt(x, y);
-                        if (now != null && now != c && now.kind == KIND_BUTTON) {
+                    if (c.kind == K_DPAD) updateDpad(c, x, y);
+                    else if (c.kind == K_BUTTON) {
+                        // sliding between buttons moves the press (e.g. from B to A)
+                        Ctl now = controlAt(x, y);
+                        if (now != null && now != c && now.kind == K_BUTTON) {
                             release(c);
                             now.pressed = true;
                             pointers.put(id, now);
+                            buzz();
                         }
                     }
                     changed = true;
@@ -507,7 +801,13 @@ final class ControlsView extends View {
                     touchDrc(false, e.getX(idx), e.getY(idx));
                     drcPointer = -1;
                 }
-                Control c = pointers.get(id);
+                if (id == stickPointer) {
+                    stickPointer = -1;
+                    stickX = stickY = 0;
+                    changed = true;
+                }
+                if (id == camPointer) cameraUp(e.getX(idx), e.getY(idx));
+                Ctl c = pointers.get(id);
                 if (c != null) {
                     release(c);
                     pointers.remove(id);
@@ -518,68 +818,253 @@ final class ControlsView extends View {
             default:
                 break;
         }
-        if (changed) {
-            listener.onControlsChanged();
-            invalidate();
+        if (changed) changed();
+        return true;
+    }
+
+    // ---- layout editor: drag to move (snaps to the grid), drag the handle or pinch to resize
+    private boolean editMode;
+    private Ctl editSel;
+    private int editPointer = -1, editPointer2 = -1;
+    private boolean editResizing;
+    private float editDx, editDy, editPinchStart, editSizeStart;
+    private final RectF editReset = new RectF(), editDone = new RectF();
+
+    boolean editMode() { return editMode; }
+
+    void setEditMode(boolean on) {
+        if (on == editMode) return;
+        releaseAll();
+        changed();
+        editMode = on;
+        editSel = null;
+        editPointer = editPointer2 = -1;
+        invalidate();
+    }
+
+    private float grid() { return baseUnit * 0.25f; }
+
+    private float snap(float v) {
+        float g = grid();
+        return Math.round(v / g) * g;
+    }
+
+    /** makes the control's current place its saved place */
+    private void pin(Ctl c) {
+        int W = Math.max(1, getWidth()), H = Math.max(1, getHeight());
+        c.fx = c.cx / W;
+        c.fy = c.cy / H;
+        c.fd = c.r * 2 / baseUnit;
+    }
+
+    private float handleX(Ctl c) { return c.cx + c.r * 0.75f; }
+    private float handleY(Ctl c) { return c.cy + c.r * 0.75f; }
+
+    private boolean editTouch(MotionEvent e) {
+        int action = e.getActionMasked(), idx = e.getActionIndex();
+        int id = e.getPointerId(idx);
+        float x = e.getX(idx), y = e.getY(idx);
+        switch (action) {
+            case MotionEvent.ACTION_DOWN:
+            case MotionEvent.ACTION_POINTER_DOWN:
+                if (editPointer >= 0) {  // second finger: pinch the selected control
+                    if (editSel != null && editPointer2 < 0) {
+                        editPointer2 = id;
+                        int p = e.findPointerIndex(editPointer);
+                        editPinchStart = (float) Math.hypot(x - e.getX(p), y - e.getY(p));
+                        editSizeStart = editSel.r;
+                    }
+                    break;
+                }
+                if (editDone.contains(x, y)) {
+                    listener.onLayoutSaved(layoutString());
+                    setEditMode(false);
+                    return true;
+                }
+                if (editReset.contains(x, y)) {
+                    for (Ctl c : controls) c.fx = c.fy = c.fd = Float.NaN;
+                    editSel = null;
+                    layoutControls(getWidth(), getHeight());
+                    invalidate();
+                    return true;
+                }
+                editResizing = editSel != null && Math.hypot(x - handleX(editSel), y - handleY(editSel)) < baseUnit * 0.35f;
+                if (!editResizing) {
+                    Ctl c = controlAt(x, y);
+                    editSel = c;
+                    if (c != null) {
+                        editDx = x - c.cx;
+                        editDy = y - c.cy;
+                    }
+                }
+                if (editSel != null) editPointer = id;
+                invalidate();
+                break;
+            case MotionEvent.ACTION_MOVE: {
+                if (editSel == null || editPointer < 0) break;
+                int p = e.findPointerIndex(editPointer);
+                if (p < 0) break;
+                float px = e.getX(p), py = e.getY(p);
+                if (editPointer2 >= 0) {
+                    int q = e.findPointerIndex(editPointer2);
+                    if (q >= 0 && editPinchStart > 0) {
+                        float dist = (float) Math.hypot(px - e.getX(q), py - e.getY(q));
+                        setRadius(editSel, editSizeStart * dist / editPinchStart);
+                    }
+                } else if (editResizing) {
+                    setRadius(editSel, (float) Math.hypot(px - editSel.cx, py - editSel.cy) / 0.75f / (float) Math.sqrt(2));
+                } else {
+                    editSel.cx = Math.max(0, Math.min(getWidth(), px - editDx));
+                    editSel.cy = Math.max(0, Math.min(getHeight(), py - editDy));
+                }
+                pin(editSel);
+                invalidate();
+                break;
+            }
+            case MotionEvent.ACTION_UP:
+            case MotionEvent.ACTION_POINTER_UP:
+            case MotionEvent.ACTION_CANCEL:
+                if (id == editPointer2) {
+                    editPointer2 = -1;
+                } else if (id == editPointer || action == MotionEvent.ACTION_CANCEL) {
+                    if (editSel != null && !editResizing && editPointer2 < 0) {
+                        editSel.cx = snap(editSel.cx);
+                        editSel.cy = snap(editSel.cy);
+                        pin(editSel);
+                    }
+                    editPointer = editPointer2 = -1;
+                    editResizing = false;
+                }
+                invalidate();
+                break;
+            default:
+                break;
         }
         return true;
     }
 
+    private void setRadius(Ctl c, float r) {
+        float min = baseUnit * 0.25f, max = baseUnit * 2f;
+        c.r = Math.max(min, Math.min(max, r));
+    }
+
+    // ---- drawing
     @Override
     protected void onDraw(Canvas canvas) {
+        if (editMode) drawGrid(canvas);
         drawClimbHud(canvas);
-        drawPerfHud(canvas);
-        int a = (int) (255 * opacity);
-        for (Control c : controls) {
-            if (!controlsVisible && c.kind != KIND_MENU) continue;
-            if (c.kind == KIND_MENU && !menuShown) continue;
-            boolean active = c.pressed || c.dpadBits != 0 || c.sx != 0 || c.sy != 0;
-            fill.setColor(active ? 0xFFFFFFFF : 0xFF202020);
-            fill.setAlpha(active ? Math.min(255, a + 60) : a / 2);
-            stroke.setColor(0xFFFFFFFF);
-            stroke.setAlpha(a);
-            text.setColor(active ? 0xFF000000 : 0xFFFFFFFF);
-            text.setAlpha(Math.min(255, a + 40));
+        if (!editMode) drawPerfHud(canvas);
+        int a = editMode ? 230 : (int) (255 * opacity);
+        for (Ctl c : controls) {
+            if (!shown(c)) continue;
             switch (c.kind) {
-                case KIND_STICK: {
-                    canvas.drawCircle(c.cx, c.cy, c.w, fill);
-                    canvas.drawCircle(c.cx, c.cy, c.w, stroke);
-                    float kx = c.cx + c.sx * c.w * 0.6f, ky = c.cy - c.sy * c.w * 0.6f;
-                    fill.setColor(0xFFFFFFFF);
-                    fill.setAlpha(a);
-                    canvas.drawCircle(kx, ky, c.w * 0.42f, fill);
-                    break;
-                }
-                case KIND_DPAD: {
-                    float s = c.w * 0.36f;
-                    drawDpadArm(canvas, c, 0, -1, s, (c.dpadBits & Native.UP) != 0, a);
-                    drawDpadArm(canvas, c, 0, 1, s, (c.dpadBits & Native.DOWN) != 0, a);
-                    drawDpadArm(canvas, c, -1, 0, s, (c.dpadBits & Native.LEFT) != 0, a);
-                    drawDpadArm(canvas, c, 1, 0, s, (c.dpadBits & Native.RIGHT) != 0, a);
-                    break;
-                }
-                default: {
-                    if (c.round) {
-                        float r = Math.min(c.w, c.h) / 2;
-                        canvas.drawCircle(c.cx, c.cy, r, fill);
-                        canvas.drawCircle(c.cx, c.cy, r, stroke);
-                    } else {
-                        tmp.set(c.cx - c.w / 2, c.cy - c.h / 2, c.cx + c.w / 2, c.cy + c.h / 2);
-                        canvas.drawRoundRect(tmp, c.h / 2, c.h / 2, fill);
-                        canvas.drawRoundRect(tmp, c.h / 2, c.h / 2, stroke);
-                    }
-                    canvas.drawText(c.label, c.cx, c.cy - (text.descent() + text.ascent()) / 2, text);
-                }
+                case K_STICK: drawStick(canvas, c, a); break;
+                case K_DPAD: drawDpad(canvas, c, a); break;
+                default: drawButton(canvas, c, a); break;
             }
+            if (editMode && c == editSel) {
+                stroke.setColor(0xFFFFCC26);
+                stroke.setAlpha(255);
+                canvas.drawCircle(c.cx, c.cy, c.r * 1.05f, stroke);
+                icons.draw(canvas, "editor_resize_handle", 0xFFFFFFFF, "↘", handleX(c), handleY(c), baseUnit * 0.22f, 255, false);
+            }
+        }
+        if (editMode) drawEditBar(canvas);
+    }
+
+    private void drawButton(Canvas canvas, Ctl c, int a) {
+        String name = c.icon;
+        String overlay = null;
+        switch (c.id) {
+            case "a": {
+                String n = TouchIcons.at(TouchIcons.A_ACTIONS, state[HUD_A]);
+                if (n != null) name = n;
+                else overlay = "A";
+                break;
+            }
+            case "b": {
+                String n = TouchIcons.at(TouchIcons.B_ACTIONS, state[HUD_B]);
+                if (n != null) name = n;
+                break;
+            }
+            case "zr": {
+                String n = TouchIcons.at(TouchIcons.ZR_ACTIONS, state[HUD_ZR]);
+                if (n != null) name = n;
+                break;
+            }
+            case "x": case "y": case "r": {
+                int slot = c.id.equals("x") ? HUD_X : c.id.equals("y") ? HUD_Y : HUD_R;
+                String n = TouchIcons.at(TouchIcons.ITEMS, state[slot]);
+                if (n != null) name = n;
+                else overlay = c.label;
+                break;
+            }
+            case "zl":
+                if (hudFlag(HUD_TARGETING)) name = "zl_target_active";
+                break;
+            default:
+                break;
+        }
+        boolean pressed = c.pressed;
+        boolean hasIcon = icons.get(name) != null;
+        icons.draw(canvas, name, c.color, overlay != null ? overlay : c.label, c.cx, c.cy, c.r, a, pressed);
+        if (hasIcon && overlay != null) icons.label(canvas, overlay, c.cx, c.cy, c.r, a);
+    }
+
+    private void drawStick(Canvas canvas, Ctl c, int a) {
+        boolean active = stickPointer >= 0;
+        float bx = active ? stickOx : c.cx, by = active ? stickOy : c.cy;
+        int alpha = active ? a : a * 2 / 3;
+        if (icons.get("stick_base") != null) icons.draw(canvas, "stick_base", 0, null, bx, by, c.r, alpha, false);
+        else {
+            fill.setColor(TouchIcons.SKY);
+            fill.setAlpha(alpha / 3);
+            canvas.drawCircle(bx, by, c.r, fill);
+            stroke.setColor(TouchIcons.NAVY);
+            stroke.setAlpha(alpha);
+            canvas.drawCircle(bx, by, c.r, stroke);
+        }
+        float kx = bx + stickX * c.r * 0.8f, ky = by - stickY * c.r * 0.8f;
+        icons.draw(canvas, "stick_knob", TouchIcons.BONE, "", kx, ky, c.r * 0.42f, alpha, false);
+    }
+
+    private void drawDpad(Canvas canvas, Ctl c, int a) {
+        if (icons.get("dpad_base") != null) icons.draw(canvas, "dpad_base", 0, null, c.cx, c.cy, c.r, a, false);
+        boolean known = hudKnown(), boat = hudFlag(HUD_ON_BOAT);
+        // the cannon and the salvage hook only work on the boat: dimmed elsewhere
+        int dim = known && !boat && !editMode ? a / 2 : a;
+        float s = c.r * 0.6f, rr = c.r * 0.36f;
+        icons.draw(canvas, "dpad_up_wind_waker", c.color, "↑", c.cx, c.cy - s, rr, a, (c.dpadBits & Native.UP) != 0);
+        icons.draw(canvas, "dpad_down", c.color, "↓", c.cx, c.cy + s, rr, a, (c.dpadBits & Native.DOWN) != 0);
+        icons.draw(canvas, "dpad_left_cannon", c.color, "←", c.cx - s, c.cy, rr, dim, (c.dpadBits & Native.LEFT) != 0);
+        icons.draw(canvas, "dpad_right_grapple", c.color, "→", c.cx + s, c.cy, rr, dim, (c.dpadBits & Native.RIGHT) != 0);
+    }
+
+    private void drawGrid(Canvas canvas) {
+        fill.setColor(0xFF000000);
+        fill.setAlpha(90);
+        canvas.drawRect(0, 0, getWidth(), getHeight(), fill);
+        float g = grid();
+        stroke.setColor(0xFF9FD8FF);
+        for (int i = 0; i * g <= getWidth(); i++) {
+            stroke.setAlpha(i % 4 == 0 ? 90 : 35);
+            canvas.drawLine(i * g, 0, i * g, getHeight(), stroke);
+        }
+        for (int i = 0; i * g <= getHeight(); i++) {
+            stroke.setAlpha(i % 4 == 0 ? 90 : 35);
+            canvas.drawLine(0, i * g, getWidth(), i * g, stroke);
         }
     }
 
-    private void drawDpadArm(Canvas canvas, Control c, int dx, int dy, float s, boolean on, int a) {
-        float x = c.cx + dx * s * 1.25f, y = c.cy + dy * s * 1.25f;
-        tmp.set(x - s * 0.62f, y - s * 0.62f, x + s * 0.62f, y + s * 0.62f);
-        fill.setColor(on ? 0xFFFFFFFF : 0xFF202020);
-        fill.setAlpha(on ? Math.min(255, a + 60) : a / 2);
-        canvas.drawRoundRect(tmp, s * 0.2f, s * 0.2f, fill);
-        canvas.drawRoundRect(tmp, s * 0.2f, s * 0.2f, stroke);
+    private void drawEditBar(Canvas canvas) {
+        float r = baseUnit * 0.42f, cy = baseUnit * 0.6f, cx = getWidth() / 2f;
+        editReset.set(cx - baseUnit * 1.2f - r, cy - r, cx - baseUnit * 1.2f + r, cy + r);
+        editDone.set(cx + baseUnit * 1.2f - r, cy - r, cx + baseUnit * 1.2f + r, cy + r);
+        icons.draw(canvas, "editor_reset", TouchIcons.BONE, "↺", editReset.centerX(), cy, r, 255, false);
+        icons.draw(canvas, "editor_done", TouchIcons.GREEN, "✓", editDone.centerX(), cy, r, 255, false);
+        text.setColor(0xFFFFFFFF);
+        text.setAlpha(255);
+        text.setTextSize(baseUnit * 0.22f);
+        canvas.drawText(getContext().getString(R.string.layout_edit_hint), cx, cy + r + baseUnit * 0.35f, text);
     }
 }

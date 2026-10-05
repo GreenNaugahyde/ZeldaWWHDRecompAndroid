@@ -442,6 +442,29 @@ final class OptionsMenu extends Dialog {
             a.prefs.edit().putFloat("controls_scale", MainActivity.CONTROL_SIZES[i]).apply();
             a.applyControlsAppearance();
         });
+        submenu(R.string.opt_layout_edit, R.string.opt_layout_edit_hint, "", () -> {
+            dismiss();
+            a.editTouchLayout();
+        });
+        String[] sens = new String[MainActivity.CAMERA_SENSITIVITIES.length];
+        int curSens = 2;
+        for (int i = 0; i < sens.length; i++) {
+            sens[i] = Math.round(MainActivity.CAMERA_SENSITIVITIES[i] * 100) + "%";
+            if (Math.abs(MainActivity.CAMERA_SENSITIVITIES[i] - a.prefs.getFloat("camera_sensitivity", 1f)) < 0.01f) curSens = i;
+        }
+        choice(R.string.opt_camera_sensitivity, R.string.opt_camera_sensitivity_hint, sens, curSens, i -> {
+            a.prefs.edit().putFloat("camera_sensitivity", MainActivity.CAMERA_SENSITIVITIES[i]).apply();
+            a.applyControlsAppearance();
+        });
+        choice(R.string.opt_combat_buttons, R.string.opt_combat_buttons_hint, a.getResources().getStringArray(R.array.combat_buttons),
+               a.prefs.getInt("combat_buttons", 0), i -> {
+                   a.prefs.edit().putInt("combat_buttons", i).apply();
+                   a.applyControlsAppearance();
+               });
+        toggle(R.string.opt_haptics, 0, a.prefs.getBoolean("haptics", true), on -> {
+            a.prefs.edit().putBoolean("haptics", on).apply();
+            a.applyControlsAppearance();
+        });
         String[] kinds = {a.getString(R.string.controller_gamepad), a.getString(R.string.controller_pro)};
         choice(R.string.opt_controller, 0, kinds, Native.getOption("pro_controller") != 0 ? 1 : 0, i -> a.setBool("pro_controller", i == 1));
     }
