@@ -99,6 +99,7 @@ static void render_thread_main() {
     platform::set_thread_high_priority();
 #ifdef __ANDROID__
     perf_hint::register_render_thread();
+    platform::set_thread_fastest_cores();  // the render thread is the usual bottleneck
 #endif
     for (;;) {
         {

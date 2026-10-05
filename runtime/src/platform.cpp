@@ -3,6 +3,7 @@
 
 #include <sys/mman.h>
 #include <unistd.h>
+#include <sched.h>
 
 #include <cstdio>
 #include <cstdlib>
@@ -64,6 +65,36 @@ void set_thread_high_priority() {
     // Android's THREAD_PRIORITY_URGENT_DISPLAY; the scheduler favours big cores for low nice values.
     // Fails quietly where the app may not raise priorities.
     setpriority(PRIO_PROCESS, (id_t)syscall(SYS_gettid), -8);
+#endif
+}
+
+void set_thread_fastest_cores() {
+#if defined(__ANDROID__)
+    if (getenv("WWHD_NO_PRIME_CORE")) return;
+    // the cores whose maximum clock is the highest of all
+    long best = 0;
+    long freq[64] = {};
+    int n = 0;
+    for (; n < 64; n++) {
+        char path[96];
+        snprintf(path, sizeof path, "/sys/devices/system/cpu/cpu%d/cpufreq/cpuinfo_max_freq", n);
+        FILE* f = fopen(path, "r");
+        if (!f) break;
+        if (fscanf(f, "%ld", &freq[n]) != 1) freq[n] = 0;
+        fclose(f);
+        if (freq[n] > best) best = freq[n];
+    }
+    if (n == 0 || best == 0) return;
+    cpu_set_t set;
+    CPU_ZERO(&set);
+    int count = 0;
+    for (int i = 0; i < n; i++)
+        if (freq[i] == best) {
+            CPU_SET(i, &set);
+            count++;
+        }
+    if (count == n) return;  // one cluster: nothing to choose
+    if (sched_setaffinity(0, sizeof set, &set) == 0) __android_log_print(ANDROID_LOG_INFO, "wwhd", "[platform] render thread on the %d fastest core(s)", count);
 #endif
 }
 
