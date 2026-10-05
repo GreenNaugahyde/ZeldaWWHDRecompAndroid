@@ -4,6 +4,8 @@
 #include <sys/mman.h>
 #include <unistd.h>
 #include <sched.h>
+#include <dirent.h>
+#include <algorithm>
 
 #include <cstdio>
 #include <cstdlib>
@@ -68,12 +70,10 @@ void set_thread_high_priority() {
 #endif
 }
 
-void set_thread_fastest_cores() {
 #if defined(__ANDROID__)
-    if (getenv("WWHD_NO_PRIME_CORE")) return;
-    // the cores whose maximum clock is the highest of all
-    long best = 0;
-    long freq[64] = {};
+// the cores whose maximum clock is the highest of all, and all cores; false if there is one cluster
+static bool core_sets(cpu_set_t& fastest, cpu_set_t& all, int& count) {
+    long best = 0, freq[64] = {};
     int n = 0;
     for (; n < 64; n++) {
         char path[96];
@@ -82,19 +82,51 @@ void set_thread_fastest_cores() {
         if (!f) break;
         if (fscanf(f, "%ld", &freq[n]) != 1) freq[n] = 0;
         fclose(f);
-        if (freq[n] > best) best = freq[n];
+        best = std::max(best, freq[n]);
     }
-    if (n == 0 || best == 0) return;
-    cpu_set_t set;
-    CPU_ZERO(&set);
-    int count = 0;
-    for (int i = 0; i < n; i++)
+    CPU_ZERO(&fastest);
+    CPU_ZERO(&all);
+    count = 0;
+    for (int i = 0; i < n; i++) {
+        CPU_SET(i, &all);
         if (freq[i] == best) {
-            CPU_SET(i, &set);
+            CPU_SET(i, &fastest);
             count++;
         }
-    if (count == n) return;  // one cluster: nothing to choose
-    if (sched_setaffinity(0, sizeof set, &set) == 0) __android_log_print(ANDROID_LOG_INFO, "wwhd", "[platform] render thread on the %d fastest core(s)", count);
+    }
+    return best > 0 && count < n;
+}
+#endif
+
+void set_thread_fastest_cores() {
+#if defined(__ANDROID__)
+    if (getenv("WWHD_NO_PRIME_CORE")) return;
+    static cpu_set_t fastest, all;
+    static int count = 0;
+    static const bool multi = core_sets(fastest, all, count);
+    if (!multi) return;
+    static pid_t self = 0;
+    pid_t tid = (pid_t)syscall(SYS_gettid);
+    cpu_set_t now;
+    bool pinned = sched_getaffinity(0, sizeof now, &now) == 0 && CPU_EQUAL(&now, &fastest);
+    if (!pinned) {
+        if (sched_setaffinity(0, sizeof fastest, &fastest) != 0) return;
+        if (self != tid)
+            __android_log_print(ANDROID_LOG_INFO, "wwhd", "[platform] render thread on the %d fastest core(s)", count);
+        else
+            __android_log_print(ANDROID_LOG_INFO, "wwhd", "[platform] render thread affinity restored");
+    }
+    self = tid;
+    // threads created from this one (driver threads) inherit the affinity: give them every core back
+    if (DIR* d = opendir("/proc/self/task")) {
+        while (dirent* e = readdir(d)) {
+            pid_t t = (pid_t)atoi(e->d_name);
+            cpu_set_t a;
+            if (t <= 0 || t == tid || sched_getaffinity(t, sizeof a, &a) != 0 || !CPU_EQUAL(&a, &fastest)) continue;
+            sched_setaffinity(t, sizeof all, &all);
+        }
+        closedir(d);
+    }
 #endif
 }
 

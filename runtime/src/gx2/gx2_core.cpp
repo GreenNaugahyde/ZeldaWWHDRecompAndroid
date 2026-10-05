@@ -283,7 +283,15 @@ static void execute_one(Op op, const uint32* p, uint32 n) {
     case OP_EXPAND_COLOR: case OP_EXPAND_DEPTH: break;  // MSAA/HiZ decompression: nothing to do on the host
     case OP_FLUSH: gfx::flush(); break;
     case OP_DRAW_DONE: gfx::draw_done(); break;
-    case OP_SWAP: gfx::swap(); break;
+    case OP_SWAP:
+        gfx::swap();
+#ifdef __ANDROID__
+        {
+            static uint32_t swaps = 0;
+            if (++swaps % 120 == 0) platform::set_thread_fastest_cores();  // keep (or get back) the prime core
+        }
+#endif
+        break;
     case OP_SETUP_CONTEXT:
         g_contexts[p[0]].assign(kNumRegs, 0);
         g_shadow = g_contexts[p[0]].data();

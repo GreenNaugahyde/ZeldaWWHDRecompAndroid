@@ -14,7 +14,9 @@ void set_thread_name(const char* name);
 // (macOS QoS user-interactive; Android: a raised nice value). WWHD_NO_QOS=1 skips it.
 void set_thread_high_priority();
 // Android: run the calling thread on the CPU cluster with the highest clock (the "prime" core of
-// big.LITTLE phones), for the render thread, the usual bottleneck. WWHD_NO_PRIME_CORE=1 skips it.
+// big.LITTLE phones), for the render thread, the usual bottleneck. Call again from time to time: it
+// restores the affinity if the system changed it, and gives inherited affinities back to other
+// threads. WWHD_NO_PRIME_CORE=1 skips it.
 void set_thread_fastest_cores();
 // bounds of the calling thread's stack: [lo, hi)
 void thread_stack_bounds(uintptr_t& lo, uintptr_t& hi);
