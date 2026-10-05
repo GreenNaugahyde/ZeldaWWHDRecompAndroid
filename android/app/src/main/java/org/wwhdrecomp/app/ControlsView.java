@@ -351,6 +351,12 @@ final class ControlsView extends View {
 
     boolean controlsVisible() { return controlsVisible; }
 
+    /** the icons built from the game's artwork are ready */
+    void iconsChanged() {
+        icons.clear();
+        invalidate();
+    }
+
     // ---- the menu and editor buttons hide after a while without touches and come back on the next touch
     private static final long MENU_HIDE_MS = 5000;
     private boolean menuShown = true;

@@ -185,6 +185,12 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         File base = baseDir();
         // testing: WWHD_CLEAR_SHADERS=1 (an intent extra) starts as with "Delete shader cache"
         if (Os.getenv("WWHD_CLEAR_SHADERS") != null) Backup.deleteTree(new File(getNoBackupFilesDir(), "shadercache"));
+        if (!IconForge.ready(this)) {  // the controls' icons from the game's own artwork, once
+            final String game = gameDir();
+            new Thread(() -> {
+                if (IconForge.build(this, game)) runOnUiThread(() -> { if (controls != null) controls.iconsChanged(); });
+            }, "icons").start();
+        }
         Native.start(gameDir(), new File(base, "save").getAbsolutePath(),
                 new File(getNoBackupFilesDir(), "shadercache").getAbsolutePath(), base.getAbsolutePath());
         started = true;

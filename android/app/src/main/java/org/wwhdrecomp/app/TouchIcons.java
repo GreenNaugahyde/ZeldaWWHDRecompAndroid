@@ -49,15 +49,29 @@ final class TouchIcons {
         text.setFakeBoldText(true);
     }
 
-    /** the PNG with that name, or null if it isn't in the app yet */
+    /**
+     * The icon with that name: built from the game's own artwork (IconForge) if there is one, else
+     * the PNG in the app; null if neither exists yet.
+     */
     Drawable get(String name) {
         if (name == null) return null;
         if (cache.containsKey(name)) return cache.get(name);
-        int id = ctx.getResources().getIdentifier(name, "drawable", ctx.getPackageName());
-        Drawable d = id != 0 ? ctx.getDrawable(id) : null;
+        Drawable d = null;
+        java.io.File f = new java.io.File(new java.io.File(ctx.getFilesDir(), IconForge.DIR), name + ".png");
+        if (f.exists()) {
+            android.graphics.Bitmap b = android.graphics.BitmapFactory.decodeFile(f.getPath());
+            if (b != null) d = new android.graphics.drawable.BitmapDrawable(ctx.getResources(), b);
+        }
+        if (d == null) {
+            int id = ctx.getResources().getIdentifier(name, "drawable", ctx.getPackageName());
+            d = id != 0 ? ctx.getDrawable(id) : null;
+        }
         cache.put(name, d);
         return d;
     }
+
+    /** forget loaded icons (new ones were built) */
+    void clear() { cache.clear(); }
 
     /**
      * Draws the icon `name` as a bubble of radius r at (cx, cy); without the PNG, a bubble of colour

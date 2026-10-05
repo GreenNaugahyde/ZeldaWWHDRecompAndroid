@@ -63,6 +63,8 @@ final class Native {
     static native void setMotion(float gx, float gy, float gz, float ax, float ay, float az, long timestampNs);
     static native void setMotionEnabled(boolean on);
     static native void recalibrateMotion();
+    /** decodes game textures to outDir/<texture>.rgba (IconForge); returns how many */
+    static native int extractUiTextures(String gameDir, String outDir, String[] layouts, String[] textures);
 
     /** Save state slot 1..5: {used "1"/"0", compatible "1"/"0", time, area}. */
     static native String[] saveSlotInfo(int slot);
