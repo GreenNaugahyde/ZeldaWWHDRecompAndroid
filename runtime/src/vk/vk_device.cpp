@@ -1885,6 +1885,7 @@ void invalidate(uint32_t flags, uint32_t addr, uint32_t size) {
             s->lastCheckedFrame = ~0ull;
             s->dirty = true;
             g_stat_invalidated_surfaces++;
+            next_write_seq();  // draws must check their textures again (draw's fast path)
         }
 }
 

@@ -25,6 +25,7 @@ static uint64_t fnv(const uint8_t* p, size_t n) {
 
 static uint64_t g_write_seq = 0;
 uint64_t next_write_seq() { return ++g_write_seq; }
+uint64_t write_seq() { return g_write_seq; }
 
 // image shape for a surface: Vulkan image type, natural view type, layers, depth
 static void image_shape(uint32_t dim, uint32_t slices, bool forRendering, VkImageType& type, VkImageViewType& view, uint32_t& layers,

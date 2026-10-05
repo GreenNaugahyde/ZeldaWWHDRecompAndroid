@@ -99,6 +99,7 @@ static uint64_t hash_bytes(const void* data, size_t n, uint64_t h = 0x9E3779B97F
 
 // bytes copied to the GPU per category since the last report (vertex data, uniform blocks, uniform variables)
 static uint64_t g_bytes_vtx, g_bytes_vtx_shared, g_bytes_ubo, g_bytes_vars, g_bytes_vtx_reused, g_bytes_ubo_reused;
+static uint64_t g_fast_draws, g_slow_draws;  // draws through the fast path (state reused) and the full one
 
 // Guest data copied for draws, per submission by address and size: a draw whose data is
 // byte-identical to an earlier copy in the same submission reuses it (the same mesh or uniform block
@@ -1458,6 +1459,7 @@ struct DrawState {
     bool valid = false;
 };
 static DrawState g_ds;
+static uint64_t g_pass_serial = 0;  // render passes begun by draws (the fast path stays within one)
 
 static bool ensure_pass(Surface* const* colors, const uint32_t* colorSlices, Surface* depth, uint32_t depthSlice, uint32_t w,
                         uint32_t h, const PassFormats& pf) {
@@ -1494,6 +1496,7 @@ static bool ensure_pass(Surface* const* colors, const uint32_t* colorSlices, Sur
     bi.renderArea = {{0, 0}, {w, h}};
     vkCmdBeginRenderPass(command_buffer(), &bi, VK_SUBPASS_CONTENTS_INLINE);
     g_ds = DrawState{};  // dynamic state and bindings recorded from here on are tracked again
+    g_pass_serial++;
     g_ds.valid = true;
     R.pass = rp;
     for (int i = 0; i < 8; i++) {
@@ -1821,6 +1824,8 @@ void report_skips() {
         g_bytes_vtx / 300.0 / 1024, g_bytes_vtx_shared / 300.0 / 1024, g_bytes_vtx_reused / 300.0 / 1024, g_bytes_ubo / 300.0 / 1024,
         g_bytes_ubo_reused / 300.0 / 1024, g_bytes_vars / 300.0 / 1024);
     g_bytes_vtx = g_bytes_vtx_shared = g_bytes_ubo = g_bytes_vars = g_bytes_vtx_reused = g_bytes_ubo_reused = 0;
+    LOG("[gfx] last 300 frames, draws/frame: %.0f with state reused, %.0f resolved", g_fast_draws / 300.0, g_slow_draws / 300.0);
+    g_fast_draws = g_slow_draws = 0;
 }
 
 // ---------------------------------------------------------------- vertex data
@@ -1847,145 +1852,51 @@ static Upload vertex_buffer(uint32_t addr, uint32_t size) {
     return u;
 }
 
-void draw(const uint32_t* regs, uint32_t prim, uint32_t count, uint32_t indexType, uint32_t indexAddr, uint32_t baseVertex,
-          uint32_t instances) {
-    static bool cacheLoaded = (cache_load(), true);
-    (void)cacheLoaded;
-    R.drawCount++;
-    draws_since_commit()++;
-    DLOG("[draw] prim %X count %u idx %u@%08X VS %08X PS %08X CB0 %08X info %08X DB %08X depthctl %08X blend %08X mask %08X",
-         prim, count, indexType, indexAddr, regs[mmSQ_PGM_START_VS] << 8, regs[mmSQ_PGM_START_PS] << 8, regs[mmCB_COLOR0_BASE],
-         regs[mmCB_COLOR0_INFO], regs[mmDB_DEPTH_BASE], regs[REGADDR::DB_DEPTH_CONTROL], regs[REGADDR::CB_COLOR_CONTROL],
-         regs[REGADDR::CB_TARGET_MASK]);
-    if (!count || !instances) return;
-    ((uint32_t*)regs)[REGADDR::VGT_PRIMITIVE_TYPE] = prim;
-    if (regs[REGADDR::VGT_GS_MODE] & 3) { g_skip[SK_GS]++; return; }  // geometry shaders: not supported yet
-    if (regs[REGADDR::PA_CL_CLIP_CNTL] & (1 << 22)) { g_skip[SK_RASTER_KILL]++; return; }  // rasterization disabled
-
-    uint64_t fsKey = 0;
-    LatteFetchShader* fs = get_fetch_shader(regs, &fsKey);
-    if (!fs) {
-        if (g_skip[SK_NO_FETCH]++ < 5) {
-            uint32_t prog = regs[mmSQ_PGM_START_FS] << 8;
-            LOG("[gfx] no fetch shader: FS=%08X size=%X words %08X %08X %08X %08X", prog, regs[mmSQ_PGM_START_FS + 1] << 3,
-                prog ? ld32(prog) : 0, prog ? ld32(prog + 4) : 0, prog ? ld32(prog + 8) : 0, prog ? ld32(prog + 12) : 0);
-        }
-        return;
-    }
-    Shader* vs = get_shader(regs, true, fs, fsKey);
-    Shader* ps = get_shader(regs, false, fs, fsKey);
-    if (!vs || !ps || shader_state(vs) == CS_FAILED || shader_state(ps) == CS_FAILED) { g_skip[SK_NO_SHADER]++; return; }
-    compile_deferred(vs);
-    compile_deferred(ps);
-
-    const LatteContextRegister& lcr = *(const LatteContextRegister*)regs;
+// ---------------------------------------------------------------- draws
+// What a draw resolved (shaders, targets, textures, pipeline, viewport limits): reused by the next
+// draws while only data registers change (see the fast path in draw)
+struct Prepared {
+    LatteFetchShader* fs = nullptr;
+    Shader* vs = nullptr;
+    Shader* ps = nullptr;
     Surface* colors[8] = {};
-    uint32_t colorSlices[8] = {}, depthSlice = 0;
-    uint8_t mask = LatteMRT::GetActiveColorBufferMask(ps->dec, lcr);
-    for (int i = 0; i < 8; i++)
-        if (mask & (1 << i)) colors[i] = color_target(regs, i, &colorSlices[i]);
-    Surface* depth = LatteMRT::GetActiveDepthBufferMask(lcr) ? depth_target(regs, &depthSlice) : nullptr;
-    if (g_hires_redraw) {
-        if (!colors[0]) return;
-        g_hires_src = colors[0]->addr;
-        colors[0] = hires_surface(g_hires_color, colors[0]);
-        colorSlices[0] = 0;
-        if (depth) { depth = hires_surface(g_hires_depth, depth); depthSlice = 0; }
-        if (!colors[0]) return;
-    }
-    // attachments that can't be rendered to on this device (or images that aren't 2D) are dropped
-    auto renderable = [](Surface* s) { return s->fmt.renderable && s->img.image && s->img.type == VK_IMAGE_TYPE_2D; };
-    for (auto& c : colors)
-        if (c && !renderable(c)) c = nullptr;
-    if (depth && !renderable(depth)) depth = nullptr;
-    // one framebuffer size (image size, which includes the resolution scale) for all attachments;
-    // drop mismatching ones (as the Metal renderer does)
-    uint32_t w = 0, h = 0;
-    float targetScale = 1.0f;
-    for (auto* c : colors)
-        if (c) { w = c->img.width; h = c->img.height; targetScale = c->rscale; break; }
-    if (depth && w && (depth->img.width < w || depth->img.height < h)) { depth = nullptr; g_skip[SK_DROPPED_DEPTH]++; }
-    if (!w && depth) { w = depth->img.width; h = depth->img.height; targetScale = depth->rscale; }
-    for (auto& c : colors)
-        if (c && (c->img.width != w || c->img.height != h)) { c = nullptr; g_skip[SK_DROPPED_COLOR]++; }
-    if (!w) { g_skip[SK_NO_TARGET]++; return; }
-
-    // skipping while compiling only for targets drawn in each of the last 3 frames (see wait_compiled)
-    bool everyFrame = true;
-    int kind = 0;
-    auto track = [&](Surface* s) {
-        if (!s) return;
-        if (s->lastDrawFrame != R.frame) {
-            int k = s->lastDrawFrame == ~0ull ? 2 : s->lastDrawFrame + 1 == R.frame ? 0 : 1;
-            s->drawStreak = k == 0 ? s->drawStreak + 1 : 1;
-            s->lastDrawFrame = R.frame;
-            s->firstDrawFrame = k == 2;
-        }
-        if (s->drawStreak < 3) everyFrame = false;
-        if (s->firstDrawFrame) kind = 2;
-        else if (s->drawStreak == 1) kind = std::max(kind, 1);
-    };
-    for (auto* c : colors) track(c);
-    track(depth);
-    struct WaitScope { ~WaitScope() { g_wait_whole = false; } } waitScope;
-    g_wait_kind = kind;
-    g_wait_whole = g_wait_policy == 1 ? !everyFrame : g_wait_policy == 2 ? kind == 2 : false;
-    if (!wait_compiled(shader_state(vs)) || !wait_compiled(shader_state(ps))) {
-        g_wait_whole = false;
-        g_skip[SK_COMPILING]++;
-        return;
-    }
-
-    static std::vector<uint32_t> indices;  // render thread; storage reused across draws
-    VkPrimitiveTopology ptype;
-    if (!build_indices(prim, count, indexType, indexAddr, indices, ptype)) { g_skip[SK_PRIM]++; return; }
-
+    Surface* depth = nullptr;
+    uint32_t depthSlice = 0, w = 0, h = 0, sx = 0, sy = 0, ex = 0, ey = 0, depthControl = 0;
+    float targetScale = 1.0f, k = 1.0f;
+    StageTextures vtex, ptex;
+    Pipeline* pipe = nullptr;
+};
+static Prepared g_prep;
+static struct PrepKey {
+    uint64_t gen, frame, writeSeq;
+    size_t surfaces;
+    uint64_t pass;
+    uint32_t prim;
+    bool valid;
+} g_prep_key{};
+// Records a draw whose state is resolved (Prepared): dynamic state, vertex buffers, descriptors and
+// the draw itself, inside the current render pass.
+static void record_draw(const uint32_t* regs, const Prepared& P, uint32_t prim, uint32_t count, uint32_t indexType,
+                        uint32_t indexAddr, uint32_t baseVertex, uint32_t instances, const std::vector<uint32_t>& indices) {
+    LatteFetchShader* fs = P.fs;
+    Shader* vs = P.vs;
+    Shader* ps = P.ps;
+    const StageTextures& vtex = P.vtex;
+    const StageTextures& ptex = P.ptex;
+    Surface* const* colors = P.colors;
+    Surface* depth = P.depth;
+    const uint32_t depthSlice = P.depthSlice;
+    const float targetScale = P.targetScale, k = P.k;
+    const uint32_t sx = P.sx, sy = P.sy, ex = P.ex, ey = P.ey, w = P.w, h = P.h;
+    const uint32_t stDepthControl = P.depthControl;
+    Pipeline* pipe = P.pipe;
     LATTE_PA_SU_SC_MODE_CNTL pm;
     uint32_t pmr = regs[REGADDR::PA_SU_SC_MODE_CNTL];
     memcpy(&pm, &pmr, 4);
-    bool cf = pm.get_CULL_FRONT(), cb = pm.get_CULL_BACK();
-    if (cf && cb) { g_skip[SK_CULL]++; return; }
-
-    // viewport and scissor (Vulkan's viewport transform is the hardware's: y = YOFFSET + YSCALE * ndc)
-    // guest units -> image pixels: the resolution scale, times 1.5 for the private AO depth copy
-    const float k = (g_hires_redraw ? 1.5f : 1.0f) * targetScale;
-    uint32_t tl = regs[REGADDR::PA_SC_GENERIC_SCISSOR_TL], br = regs[REGADDR::PA_SC_GENERIC_SCISSOR_BR];
-    uint32_t sx = std::min<uint32_t>((uint32_t)((tl & 0x7FFF) * k), w), sy = std::min<uint32_t>((uint32_t)(((tl >> 16) & 0x7FFF) * k), h);
-    uint32_t ex = std::min<uint32_t>((uint32_t)((br & 0x7FFF) * k), w), ey = std::min<uint32_t>((uint32_t)(((br >> 16) & 0x7FFF) * k), h);
-    if (ex <= sx || ey <= sy) { g_skip[SK_SCISSOR]++; return; }
-
-    // textures: uploads, layout changes and copies happen before the render pass begins
-    StageTextures vtex, ptex;
-    resolve_textures(regs, vs, true, colors, depth, vtex);
-    resolve_textures(regs, ps, false, colors, depth, ptex);
-
-    PipelineState st;
-    for (int i = 0; i < 8; i++)
-        if (colors[i]) {
-            st.pass.color[i] = (uint32_t)colors[i]->img.format;
-            if (colors[i]->fmt.kind != FormatInfo::FLOAT) st.intTargets |= 1u << i;
-        }
-    if (depth) {
-        st.pass.depth = (uint32_t)depth->img.format;
-        st.pass.stencil = depth->fmt.stencil;
-    }
-    for (int i = 0; i < 8; i++) st.blend[i] = regs[REGADDR::CB_BLEND0_CONTROL + i];
-    st.colorControl = regs[REGADDR::CB_COLOR_CONTROL];
-    st.targetMask = regs[REGADDR::CB_TARGET_MASK];
-    st.topology = (uint32_t)ptype;
-    st.cull = (cf ? 1 : 0) | (cb ? 2 : 0);
-    st.frontCCW = pm.get_FRONT_FACE() == LATTE_PA_SU_SC_MODE_CNTL::E_FRONTFACE::CCW;
-    st.depthControl = depth ? regs[REGADDR::DB_DEPTH_CONTROL] : 0;
     LATTE_PA_CL_CLIP_CNTL clipCntl;
     uint32_t clipRaw = regs[REGADDR::PA_CL_CLIP_CNTL];
     memcpy(&clipCntl, &clipRaw, 4);
-    st.depthClamp = clipCntl.get_ZCLIP_FAR_DISABLE() ? 1 : 0;
-
-    Pipeline* pipe = get_pipeline(regs, vs, ps, fs, fsKey, st);
-    g_wait_whole = false;
-    if (!pipe) { g_skip[SK_PIPE_COMPILING]++; return; }
-
-    if (!ensure_pass(colors, colorSlices, depth, depthSlice, w, h, st.pass)) { g_skip[SK_PASS]++; return; }
+    (void)w; (void)h; (void)vs; (void)ps;
     VkCommandBuffer cmd = command_buffer();
     if (!g_ds.valid || g_ds.pipeline != pipe->pipeline) {
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipe->pipeline);
@@ -1998,7 +1909,7 @@ void draw(const uint32_t* regs, uint32_t prim, uint32_t count, uint32_t indexTyp
     memcpy(&sf, &rf, 4);
     memcpy(&sbk, &rb, 4);
     LATTE_DB_DEPTH_CONTROL dc;
-    memcpy(&dc, &st.depthControl, 4);
+    memcpy(&dc, &stDepthControl, 4);
     bool backSeparate = dc.get_BACK_STENCIL_ENABLE();
     const uint32_t stencil[6] = {sf.get_STENCILREF_F(), sbk.get_STENCILREF_B(), sf.get_STENCILMASK_F(), sf.get_STENCILWRITEMASK_F(),
                                  backSeparate ? sbk.get_STENCILMASK_B() : sf.get_STENCILMASK_F(),
@@ -2122,7 +2033,7 @@ void draw(const uint32_t* regs, uint32_t prim, uint32_t count, uint32_t indexTyp
     if (R.frame == dumpFrame && dumpDraws.count(thisDraw)) {
         char name[64];
         snprintf(name, sizeof name, "draw_%llu_%llu.png", (unsigned long long)R.frame, (unsigned long long)thisDraw);
-        for (auto* c : colors) if (c) { dump_texture(c->img, name, true, false); break; }
+        for (int ci = 0; ci < 8; ci++) if (colors[ci]) { dump_texture(colors[ci]->img, name, true, false); break; }
         if (depth) {
             snprintf(name, sizeof name, "draw_%llu_%llu_depth.png", (unsigned long long)R.frame, (unsigned long long)thisDraw);
             dump_texture(depth->img, name, true, false);
@@ -2134,6 +2045,184 @@ void draw(const uint32_t* regs, uint32_t prim, uint32_t count, uint32_t indexTyp
         draw(regs, prim, count, indexType, indexAddr, baseVertex, instances);
         g_hires_redraw = false;
     }
+}
+
+void draw(const uint32_t* regs, uint32_t prim, uint32_t count, uint32_t indexType, uint32_t indexAddr, uint32_t baseVertex,
+          uint32_t instances) {
+    static bool cacheLoaded = (cache_load(), true);
+    (void)cacheLoaded;
+    R.drawCount++;
+    draws_since_commit()++;
+    DLOG("[draw] prim %X count %u idx %u@%08X VS %08X PS %08X CB0 %08X info %08X DB %08X depthctl %08X blend %08X mask %08X",
+         prim, count, indexType, indexAddr, regs[mmSQ_PGM_START_VS] << 8, regs[mmSQ_PGM_START_PS] << 8, regs[mmCB_COLOR0_BASE],
+         regs[mmCB_COLOR0_INFO], regs[mmDB_DEPTH_BASE], regs[REGADDR::DB_DEPTH_CONTROL], regs[REGADDR::CB_COLOR_CONTROL],
+         regs[REGADDR::CB_TARGET_MASK]);
+    if (!count || !instances) return;
+    ((uint32_t*)regs)[REGADDR::VGT_PRIMITIVE_TYPE] = prim;
+    if (regs[REGADDR::VGT_GS_MODE] & 3) { g_skip[SK_GS]++; return; }  // geometry shaders: not supported yet
+    if (regs[REGADDR::PA_CL_CLIP_CNTL] & (1 << 22)) { g_skip[SK_RASTER_KILL]++; return; }  // rasterization disabled
+
+    // fast path: nothing but data registers (uniform constants, uniform block and vertex buffer
+    // addresses) changed since the previous draw, which is in the same render pass, and no surface was
+    // created, written or invalidated since: everything resolved for it still holds (runs of draws of
+    // the same object with different matrices: grass, trees, crowds)
+    static std::vector<uint32_t> indices;  // render thread; storage reused across draws
+    if (g_prep_key.valid && !g_hires_redraw && g_prep_key.gen == g_shader_state_gen && g_prep_key.prim == prim &&
+        g_prep_key.frame == R.frame && g_prep_key.writeSeq == write_seq() && g_prep_key.surfaces == R.surfaces.size() &&
+        g_prep_key.pass == g_pass_serial && R.pass != VK_NULL_HANDLE) {
+        VkPrimitiveTopology ptype;
+        if (!build_indices(prim, count, indexType, indexAddr, indices, ptype)) { g_skip[SK_PRIM]++; return; }
+        g_fast_draws++;
+        record_draw(regs, g_prep, prim, count, indexType, indexAddr, baseVertex, instances, indices);
+        return;
+    }
+    g_prep_key.valid = false;
+
+    uint64_t fsKey = 0;
+    LatteFetchShader* fs = get_fetch_shader(regs, &fsKey);
+    if (!fs) {
+        if (g_skip[SK_NO_FETCH]++ < 5) {
+            uint32_t prog = regs[mmSQ_PGM_START_FS] << 8;
+            LOG("[gfx] no fetch shader: FS=%08X size=%X words %08X %08X %08X %08X", prog, regs[mmSQ_PGM_START_FS + 1] << 3,
+                prog ? ld32(prog) : 0, prog ? ld32(prog + 4) : 0, prog ? ld32(prog + 8) : 0, prog ? ld32(prog + 12) : 0);
+        }
+        return;
+    }
+    Shader* vs = get_shader(regs, true, fs, fsKey);
+    Shader* ps = get_shader(regs, false, fs, fsKey);
+    if (!vs || !ps || shader_state(vs) == CS_FAILED || shader_state(ps) == CS_FAILED) { g_skip[SK_NO_SHADER]++; return; }
+    compile_deferred(vs);
+    compile_deferred(ps);
+
+    const LatteContextRegister& lcr = *(const LatteContextRegister*)regs;
+    Surface* colors[8] = {};
+    uint32_t colorSlices[8] = {}, depthSlice = 0;
+    uint8_t mask = LatteMRT::GetActiveColorBufferMask(ps->dec, lcr);
+    for (int i = 0; i < 8; i++)
+        if (mask & (1 << i)) colors[i] = color_target(regs, i, &colorSlices[i]);
+    Surface* depth = LatteMRT::GetActiveDepthBufferMask(lcr) ? depth_target(regs, &depthSlice) : nullptr;
+    if (g_hires_redraw) {
+        if (!colors[0]) return;
+        g_hires_src = colors[0]->addr;
+        colors[0] = hires_surface(g_hires_color, colors[0]);
+        colorSlices[0] = 0;
+        if (depth) { depth = hires_surface(g_hires_depth, depth); depthSlice = 0; }
+        if (!colors[0]) return;
+    }
+    // attachments that can't be rendered to on this device (or images that aren't 2D) are dropped
+    auto renderable = [](Surface* s) { return s->fmt.renderable && s->img.image && s->img.type == VK_IMAGE_TYPE_2D; };
+    for (auto& c : colors)
+        if (c && !renderable(c)) c = nullptr;
+    if (depth && !renderable(depth)) depth = nullptr;
+    // one framebuffer size (image size, which includes the resolution scale) for all attachments;
+    // drop mismatching ones (as the Metal renderer does)
+    uint32_t w = 0, h = 0;
+    float targetScale = 1.0f;
+    for (auto* c : colors)
+        if (c) { w = c->img.width; h = c->img.height; targetScale = c->rscale; break; }
+    if (depth && w && (depth->img.width < w || depth->img.height < h)) { depth = nullptr; g_skip[SK_DROPPED_DEPTH]++; }
+    if (!w && depth) { w = depth->img.width; h = depth->img.height; targetScale = depth->rscale; }
+    for (auto& c : colors)
+        if (c && (c->img.width != w || c->img.height != h)) { c = nullptr; g_skip[SK_DROPPED_COLOR]++; }
+    if (!w) { g_skip[SK_NO_TARGET]++; return; }
+
+    // skipping while compiling only for targets drawn in each of the last 3 frames (see wait_compiled)
+    bool everyFrame = true;
+    int kind = 0;
+    auto track = [&](Surface* s) {
+        if (!s) return;
+        if (s->lastDrawFrame != R.frame) {
+            int k = s->lastDrawFrame == ~0ull ? 2 : s->lastDrawFrame + 1 == R.frame ? 0 : 1;
+            s->drawStreak = k == 0 ? s->drawStreak + 1 : 1;
+            s->lastDrawFrame = R.frame;
+            s->firstDrawFrame = k == 2;
+        }
+        if (s->drawStreak < 3) everyFrame = false;
+        if (s->firstDrawFrame) kind = 2;
+        else if (s->drawStreak == 1) kind = std::max(kind, 1);
+    };
+    for (auto* c : colors) track(c);
+    track(depth);
+    struct WaitScope { ~WaitScope() { g_wait_whole = false; } } waitScope;
+    g_wait_kind = kind;
+    g_wait_whole = g_wait_policy == 1 ? !everyFrame : g_wait_policy == 2 ? kind == 2 : false;
+    if (!wait_compiled(shader_state(vs)) || !wait_compiled(shader_state(ps))) {
+        g_wait_whole = false;
+        g_skip[SK_COMPILING]++;
+        return;
+    }
+
+    VkPrimitiveTopology ptype;
+    if (!build_indices(prim, count, indexType, indexAddr, indices, ptype)) { g_skip[SK_PRIM]++; return; }
+
+    LATTE_PA_SU_SC_MODE_CNTL pm;
+    uint32_t pmr = regs[REGADDR::PA_SU_SC_MODE_CNTL];
+    memcpy(&pm, &pmr, 4);
+    bool cf = pm.get_CULL_FRONT(), cb = pm.get_CULL_BACK();
+    if (cf && cb) { g_skip[SK_CULL]++; return; }
+
+    // viewport and scissor (Vulkan's viewport transform is the hardware's: y = YOFFSET + YSCALE * ndc)
+    // guest units -> image pixels: the resolution scale, times 1.5 for the private AO depth copy
+    const float k = (g_hires_redraw ? 1.5f : 1.0f) * targetScale;
+    uint32_t tl = regs[REGADDR::PA_SC_GENERIC_SCISSOR_TL], br = regs[REGADDR::PA_SC_GENERIC_SCISSOR_BR];
+    uint32_t sx = std::min<uint32_t>((uint32_t)((tl & 0x7FFF) * k), w), sy = std::min<uint32_t>((uint32_t)(((tl >> 16) & 0x7FFF) * k), h);
+    uint32_t ex = std::min<uint32_t>((uint32_t)((br & 0x7FFF) * k), w), ey = std::min<uint32_t>((uint32_t)(((br >> 16) & 0x7FFF) * k), h);
+    if (ex <= sx || ey <= sy) { g_skip[SK_SCISSOR]++; return; }
+
+    // textures: uploads, layout changes and copies happen before the render pass begins
+    StageTextures vtex, ptex;
+    resolve_textures(regs, vs, true, colors, depth, vtex);
+    resolve_textures(regs, ps, false, colors, depth, ptex);
+
+    PipelineState st;
+    for (int i = 0; i < 8; i++)
+        if (colors[i]) {
+            st.pass.color[i] = (uint32_t)colors[i]->img.format;
+            if (colors[i]->fmt.kind != FormatInfo::FLOAT) st.intTargets |= 1u << i;
+        }
+    if (depth) {
+        st.pass.depth = (uint32_t)depth->img.format;
+        st.pass.stencil = depth->fmt.stencil;
+    }
+    for (int i = 0; i < 8; i++) st.blend[i] = regs[REGADDR::CB_BLEND0_CONTROL + i];
+    st.colorControl = regs[REGADDR::CB_COLOR_CONTROL];
+    st.targetMask = regs[REGADDR::CB_TARGET_MASK];
+    st.topology = (uint32_t)ptype;
+    st.cull = (cf ? 1 : 0) | (cb ? 2 : 0);
+    st.frontCCW = pm.get_FRONT_FACE() == LATTE_PA_SU_SC_MODE_CNTL::E_FRONTFACE::CCW;
+    st.depthControl = depth ? regs[REGADDR::DB_DEPTH_CONTROL] : 0;
+    LATTE_PA_CL_CLIP_CNTL clipCntl;
+    uint32_t clipRaw = regs[REGADDR::PA_CL_CLIP_CNTL];
+    memcpy(&clipCntl, &clipRaw, 4);
+    st.depthClamp = clipCntl.get_ZCLIP_FAR_DISABLE() ? 1 : 0;
+
+    Pipeline* pipe = get_pipeline(regs, vs, ps, fs, fsKey, st);
+    g_wait_whole = false;
+    if (!pipe) { g_skip[SK_PIPE_COMPILING]++; return; }
+
+    if (!ensure_pass(colors, colorSlices, depth, depthSlice, w, h, st.pass)) { g_skip[SK_PASS]++; return; }
+    Prepared hiresPrep;  // the AO redraw (called from record_draw) must not replace the fast path's state
+    Prepared& P = g_hires_redraw ? hiresPrep : g_prep;
+    P.fs = fs;
+    P.vs = vs;
+    P.ps = ps;
+    memcpy(P.colors, colors, sizeof P.colors);
+    P.depth = depth;
+    P.depthSlice = depthSlice;
+    P.w = w;
+    P.h = h;
+    P.targetScale = targetScale;
+    P.k = k;
+    P.sx = sx; P.sy = sy; P.ex = ex; P.ey = ey;
+    P.vtex = vtex;
+    P.ptex = ptex;
+    P.pipe = pipe;
+    P.depthControl = st.depthControl;
+    if (!g_hires_redraw) {  // state after ensure_pass: it may have begun the render pass and marked targets written
+        g_prep_key = {g_shader_state_gen, R.frame, write_seq(), R.surfaces.size(), g_pass_serial, prim, true};
+        g_slow_draws++;
+    }
+    record_draw(regs, P, prim, count, indexType, indexAddr, baseVertex, instances, indices);
 }
 
 // ---------------------------------------------------------------- shader head start hooks (gfx/shader_headstart.cpp)

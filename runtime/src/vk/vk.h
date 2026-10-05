@@ -73,6 +73,7 @@ struct Screen {
 };
 
 uint64_t next_write_seq();
+uint64_t write_seq();  // the latest; changes whenever a surface is written, uploaded or invalidated
 inline void mark_gpu_written(Surface* s) { s->gpuWritten = true; s->writeSeq = next_write_seq(); }
 
 // Transient GPU-visible memory for one draw's data (vertices, indices, uniforms, uploads).
