@@ -23,10 +23,8 @@ static uint64_t fnv(const uint8_t* p, size_t n) {
     return h ^ n;
 }
 
-uint64_t next_write_seq() {
-    static uint64_t seq = 0;
-    return ++seq;
-}
+static uint64_t g_write_seq = 0;
+uint64_t next_write_seq() { return ++g_write_seq; }
 
 // image shape for a surface: Vulkan image type, natural view type, layers, depth
 static void image_shape(uint32_t dim, uint32_t slices, bool forRendering, VkImageType& type, VkImageViewType& view, uint32_t& layers,
@@ -304,7 +302,24 @@ Surface* surface_from_depth_buffer(uint32_t addr, uint32_t* firstSlice, uint32_t
 static uint64_t sparse_hash(Surface* s);
 uint64_t g_stat_full_checks, g_stat_uploads, g_stat_invalidates, g_stat_invalidated_surfaces;
 
+// The surface a set of texture words resolves to only changes when a surface is created or written
+// (the choice among surfaces aliasing one address depends on that): remember recent lookups.
+static Surface* check_texture(Surface* s);
+struct TexLookup {
+    uint32_t w[7];
+    uint64_t writeSeq;
+    size_t surfaces;
+    Surface* s;
+    bool used;
+};
+static TexLookup g_tex_lookups[512];
+
 Surface* sampled_texture(const uint32_t* w, bool isDepthSampler) {
+    uint64_t key = 0x9E3779B97F4A7C15ull;
+    for (int i = 0; i < 7; i++) key = (key ^ w[i]) * 0xFF51AFD7ED558CCDull;
+    TexLookup& tl = g_tex_lookups[(key ^ (key >> 29)) & 511];
+    if (tl.used && tl.writeSeq == g_write_seq && tl.surfaces == R.surfaces.size() && memcmp(tl.w, w, sizeof tl.w) == 0)
+        return check_texture(tl.s);
     Latte::LATTE_SQ_TEX_RESOURCE_WORD0_N w0;
     Latte::LATTE_SQ_TEX_RESOURCE_WORD1_N w1;
     Latte::LATTE_SQ_TEX_RESOURCE_WORD4_N w4;
@@ -349,6 +364,17 @@ Surface* sampled_texture(const uint32_t* w, bool isDepthSampler) {
     d.swizzle = swizzle;
     d.isDepth = false;
     Surface* s = find_or_create_surface(d, false);
+    s = check_texture(s);
+    memcpy(tl.w, w, sizeof tl.w);
+    tl.writeSeq = g_write_seq;  // after the check: an upload counts as a write
+    tl.surfaces = R.surfaces.size();
+    tl.s = s;
+    tl.used = true;
+    return s;
+}
+
+// a sampled CPU texture: upload it if its memory changed (checked once per frame)
+static Surface* check_texture(Surface* s) {
     if (s && !s->gpuWritten && s->lastCheckedFrame != R.frame) {
         s->lastCheckedFrame = R.frame;
         // full hash only when new, invalidated, every 64 frames, or when a sparse sample changed

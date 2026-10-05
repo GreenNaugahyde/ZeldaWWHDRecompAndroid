@@ -548,8 +548,13 @@ HLE(gx2, GX2SwapScanBuffers) {
         auto now = std::chrono::steady_clock::now();
         double s = std::chrono::duration<double>(now - last).count();
         last = now;
-        LOG("[gx2] frame %llu, %.1f swaps/s, swap interval %u; GX2DrawDone %.1f/frame, %.1f ms/frame", (unsigned long long)g_swap_count,
-            300 / s, g_swap_interval, g_drawdone_calls.exchange(0) / 300.0, g_drawdone_us.exchange(0) / 300.0 / 1000.0);
+        int64_t gameNs = 0, renderNs = 0;
+#ifdef __ANDROID__
+        perf_hint::recent_work(gameNs, renderNs);
+#endif
+        LOG("[gx2] frame %llu, %.1f swaps/s, swap interval %u; GX2DrawDone %.1f/frame, %.1f ms/frame; CPU per frame: game %.1f ms, render %.1f ms",
+            (unsigned long long)g_swap_count, 300 / s, g_swap_interval, g_drawdone_calls.exchange(0) / 300.0,
+            g_drawdone_us.exchange(0) / 300.0 / 1000.0, gameNs / 1e6, renderNs / 1e6);
         if (getenv("WWHD_SCHED_STATS")) threads::report_sched();
     }
 }
