@@ -1,9 +1,10 @@
 // Vulkan renderer: device, submission, transient memory, image layouts, presentation into the
 // Android window, clears, copies and debug image dumps. Counterpart of gfx/metal_main.mm.
-#include "vk.h"  // first: vulkan.h before vulkan_android.h
+#include "vk.h"
 
+#include <adrenotools/driver.h>
 #include <android/native_window.h>
-#include <vulkan/vulkan_android.h>
+#include <dlfcn.h>
 #include <sys/stat.h>
 #include <zlib.h>
 
@@ -51,8 +52,9 @@ Chunk* new_chunk(VkDeviceSize size) {
     c->size = size;
     VkBufferCreateInfo bi{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
     bi.size = size;
+    // storage: the GPU texture decoder reads its input and writes its output here (vk_surfaces.cpp)
     bi.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT |
-               VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+               VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
     VmaAllocationCreateInfo ai{};
     ai.usage = VMA_MEMORY_USAGE_AUTO;
     ai.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT;
@@ -102,10 +104,11 @@ VkDescriptorSet alloc_descriptor_set(VkDescriptorSetLayout layout) {
                 g_pool_free.pop_back();
             } else {
                 VkDescriptorPoolSize sizes[] = {{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 8192},
-                                                {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 8192}};
+                                                {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 8192},
+                                                {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 2048}};
                 VkDescriptorPoolCreateInfo pi{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
                 pi.maxSets = 2048;
-                pi.poolSizeCount = 2;
+                pi.poolSizeCount = 3;
                 pi.pPoolSizes = sizes;
                 VK_CHECK(vkCreateDescriptorPool(R.device, &pi, nullptr, &g_pool_cur));
             }
@@ -168,6 +171,7 @@ void submit(VkSemaphore wait = VK_NULL_HANDLE, VkSemaphore signal = VK_NULL_HAND
         if (!wait && !signal) return;
         command_buffer();
     }
+    prof_cmd_end();
     VK_CHECK(vkEndCommandBuffer(R.cmd));
     InFlight f;
     f.cmd = R.cmd;
@@ -236,6 +240,7 @@ VkCommandBuffer command_buffer() {
     bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
     VK_CHECK(vkBeginCommandBuffer(R.cmd, &bi));
     R.cmdSerial++;
+    prof_cmd_begin();
     return R.cmd;
 }
 
@@ -244,6 +249,7 @@ void on_complete(std::function<void()> fn) { g_pending_done.push_back(std::move(
 void end_pass() {
     if (R.pass) {
         vkCmdEndRenderPass(R.cmd);
+        prof_pass_end();
         R.pass = VK_NULL_HANDLE;
         // submit work in chunks so the GPU starts while the frame is still being built (like the
         // hardware command processor), instead of all at once on swap
@@ -285,21 +291,63 @@ static VkImageLayout layout_for(Use u, const Image& img) {
     }
 }
 
+// The pipeline stages and accesses of a use of an image. Precise masks let the GPU overlap
+// unrelated work across a layout change (tiled GPUs run the next pass's vertex work while the
+// previous pass's pixels are still being shaded); WWHD_BROAD_BARRIERS=1 waits for everything.
+static bool broad_barriers() {
+    static const bool b = getenv("WWHD_BROAD_BARRIERS") != nullptr;
+    return b;
+}
+static VkPipelineStageFlags use_stages(Use u) {
+    switch (u) {
+    case Use::SAMPLED: return VK_PIPELINE_STAGE_VERTEX_SHADER_BIT | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
+    case Use::COLOR: return VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+    case Use::DEPTH: return VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
+    case Use::COPY_SRC: case Use::COPY_DST: return VK_PIPELINE_STAGE_TRANSFER_BIT;
+    default: return VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+    }
+}
+static VkAccessFlags use_writes(Use u) {
+    switch (u) {
+    case Use::COLOR: return VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+    case Use::DEPTH: return VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+    case Use::COPY_DST: return VK_ACCESS_TRANSFER_WRITE_BIT;
+    default: return 0;  // reads: an execution dependency is enough
+    }
+}
+static VkAccessFlags use_accesses(Use u) {
+    switch (u) {
+    case Use::SAMPLED: return VK_ACCESS_SHADER_READ_BIT;
+    case Use::COLOR: return VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+    case Use::DEPTH: return VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+    case Use::COPY_SRC: return VK_ACCESS_TRANSFER_READ_BIT;
+    case Use::COPY_DST: return VK_ACCESS_TRANSFER_WRITE_BIT;
+    default: return 0;
+    }
+}
+
 void prepare(Image& img, Use use) {
     if (!img.image) return;
     // render passes order attachment writes among themselves (subpass dependencies); reads after reads need nothing
     if (img.use == use && (use == Use::SAMPLED || use == Use::COLOR || use == Use::DEPTH)) return;
     end_pass();
     VkImageMemoryBarrier b{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
-    b.srcAccessMask = img.use == Use::NONE ? 0 : VK_ACCESS_MEMORY_WRITE_BIT;
-    b.dstAccessMask = VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT;
+    const bool broad = broad_barriers();
+    VkPipelineStageFlags srcStage = broad ? VK_PIPELINE_STAGE_ALL_COMMANDS_BIT : use_stages(img.use);
+    VkPipelineStageFlags dstStage = broad ? VK_PIPELINE_STAGE_ALL_COMMANDS_BIT : use_stages(use);
+    if (broad) {
+        b.srcAccessMask = img.use == Use::NONE ? 0 : VK_ACCESS_MEMORY_WRITE_BIT;
+        b.dstAccessMask = VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT;
+    } else {
+        b.srcAccessMask = use_writes(img.use);
+        b.dstAccessMask = use_accesses(use);
+    }
     b.oldLayout = img.layout;
     b.newLayout = layout_for(use, img);
     b.srcQueueFamilyIndex = b.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
     b.image = img.image;
     b.subresourceRange = {img.aspect, 0, VK_REMAINING_MIP_LEVELS, 0, VK_REMAINING_ARRAY_LAYERS};
-    vkCmdPipelineBarrier(command_buffer(), VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 0, nullptr, 0,
-                         nullptr, 1, &b);
+    vkCmdPipelineBarrier(command_buffer(), srcStage, dstStage, 0, 0, nullptr, 0, nullptr, 1, &b);
     img.layout = b.newLayout;
     img.use = use;
 }
@@ -375,15 +423,29 @@ static bool has_ext(const std::vector<VkExtensionProperties>& exts, const char* 
     return false;
 }
 
-static std::string pipeline_cache_path() {
+// one pipeline cache per driver (a user-installed GPU driver and the system's keep their own);
+// pipelines.vkcache is the name builds before that used
+static std::string pipeline_cache_path(bool legacy = false) {
     std::string dir = config::cache_dir.empty() ? "." : config::cache_dir;
-    return dir + "/pipelines.vkcache";
+    if (legacy) return dir + "/pipelines.vkcache";
+    uint32_t h = 2166136261u;
+    auto mix = [&](const void* p, size_t n) {
+        for (size_t i = 0; i < n; i++) h = (h ^ ((const uint8_t*)p)[i]) * 16777619u;
+    };
+    mix(&R.props.vendorID, 4);
+    mix(&R.props.deviceID, 4);
+    mix(R.props.pipelineCacheUUID, VK_UUID_SIZE);
+    char name[40];
+    snprintf(name, sizeof name, "/pipelines-%08x.vkcache", h);
+    return dir + name;
 }
 
 static void load_pipeline_cache() {
     std::vector<uint8_t> data;
     if (const char* e = getenv("WWHD_SHADER_CACHE"); !(e && !strcmp(e, "0"))) {
-        if (FILE* f = fopen(pipeline_cache_path().c_str(), "rb")) {
+        FILE* f = fopen(pipeline_cache_path().c_str(), "rb");
+        if (!f) f = fopen(pipeline_cache_path(true).c_str(), "rb");  // the header check below decides if it fits
+        if (f) {
             fseek(f, 0, SEEK_END);
             long n = ftell(f);
             fseek(f, 0, SEEK_SET);
@@ -392,6 +454,19 @@ static void load_pipeline_cache() {
                 if (fread(data.data(), 1, n, f) != (size_t)n) data.clear();
             }
             fclose(f);
+        }
+    }
+    // only data of this driver and GPU: some drivers misbehave on another driver's cache (switching
+    // between the system driver and an installed one) instead of rejecting it
+    struct Header {
+        uint32_t size, version, vendor, device;
+        uint8_t uuid[VK_UUID_SIZE];
+    } h;
+    if (data.size() >= sizeof h) {
+        memcpy(&h, data.data(), sizeof h);
+        if (h.vendor != R.props.vendorID || h.device != R.props.deviceID || memcmp(h.uuid, R.props.pipelineCacheUUID, VK_UUID_SIZE)) {
+            LOG("[vk] pipeline cache is from another driver: starting empty");
+            data.clear();
         }
     }
     VkPipelineCacheCreateInfo ci{VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO};
@@ -403,7 +478,7 @@ static void load_pipeline_cache() {
         ci.pInitialData = nullptr;
         VK_CHECK(vkCreatePipelineCache(R.device, &ci, nullptr, &R.pipelineCache));
     }
-    if (!data.empty()) LOG("[vk] pipeline cache: %zu KiB from %s", data.size() / 1024, pipeline_cache_path().c_str());
+    if (!data.empty()) LOG("[vk] pipeline cache: %zu KiB", data.size() / 1024);
 }
 
 void save_caches() {
@@ -417,11 +492,65 @@ void save_caches() {
     if (FILE* f = fopen(tmp.c_str(), "wb")) {
         bool ok = fwrite(data.data(), 1, n, f) == n;
         ok &= fclose(f) == 0;
-        if (ok) rename(tmp.c_str(), path.c_str());
+        if (ok && rename(tmp.c_str(), path.c_str()) == 0) remove(pipeline_cache_path(true).c_str());
     }
 }
 
+// The Vulkan library: the system's, or on Adreno GPUs one whose driver is a package the user installed
+// (libadrenotools loads it in place of the system driver). MainActivity passes the installed driver:
+// WWHD_GPU_DRIVER_DIR (with a trailing /), WWHD_GPU_DRIVER_LIB (its file name) and
+// WWHD_GPU_HOOK_DIR (libadrenotools' hook libraries).
+static std::string g_driver_file;  // the installed driver asked for ("dir/lib"), or ""
+static bool g_driver_fallback = false;  // ... but the system's runs (libadrenotools falls back when it can't load it)
+
+static void load_vulkan() {
+    void* lib = nullptr;
+    const char* dir = getenv("WWHD_GPU_DRIVER_DIR");
+    const char* name = getenv("WWHD_GPU_DRIVER_LIB");
+    const char* hooks = getenv("WWHD_GPU_HOOK_DIR");
+    if (dir && *dir && name && *name && hooks && *hooks) {
+        g_driver_file = std::string(dir) + name;
+        lib = adrenotools_open_libvulkan(RTLD_NOW | RTLD_LOCAL, ADRENOTOOLS_DRIVER_CUSTOM, nullptr, hooks, dir, name, nullptr, nullptr);
+        if (!lib) g_driver_fallback = true;
+        LOG("[vk] GPU driver %s%s: %s", dir, name, lib ? "loading" : "could not be loaded, using the system driver");
+    }
+    if (!lib) lib = dlopen("libvulkan.so", RTLD_NOW | RTLD_LOCAL);
+    auto gipa = lib ? (PFN_vkGetInstanceProcAddr)dlsym(lib, "vkGetInstanceProcAddr") : nullptr;
+    if (!gipa) fatal("Vulkan is not available");
+    volkInitializeCustom(gipa);
+}
+
+// true if the installed driver's library is mapped into the process (the driver loads with the instance)
+static bool driver_file_mapped() {
+    // its directory and file name (the linker may report the path as /data/data/... or /data/user/0/...)
+    std::string tail = g_driver_file.substr(g_driver_file.rfind('/', g_driver_file.rfind('/') - 1));
+    FILE* f = fopen("/proc/self/maps", "r");
+    if (!f) return true;
+    char line[512];
+    bool found = false;
+    while (!found && fgets(line, sizeof line, f)) found = strstr(line, tail.c_str()) != nullptr;
+    fclose(f);
+    return found;
+}
+
+// the driver's name and version for people: Qualcomm's own version number (as V@0762.24 in its
+// build string) and date instead of its four-line build information
+static std::string describe_driver(const VkPhysicalDeviceDriverProperties& dp) {
+    std::string info = dp.driverInfo;
+    if (dp.driverID == VK_DRIVER_ID_QUALCOMM_PROPRIETARY) {
+        uint32_t v = R.props.driverVersion;
+        char s[96];
+        snprintf(s, sizeof s, "Qualcomm Adreno driver v%u.%02u", (v >> 12) & 0x3FF, v & 0xFFF);
+        std::string out = s;
+        size_t d = info.find("Date: ");
+        if (d != std::string::npos) out += " (" + info.substr(d + 6, info.find('\n', d) - d - 6) + ")";
+        return out;
+    }
+    return std::string(dp.driverName) + (info.empty() ? "" : " " + info.substr(0, info.find('\n')));
+}
+
 static void create_device() {
+    load_vulkan();
     uint32_t apiVersion = VK_API_VERSION_1_0;
     vkEnumerateInstanceVersion(&apiVersion);
     if (apiVersion < VK_API_VERSION_1_1) fatal("Vulkan 1.1 is required (device has %u.%u)", VK_API_VERSION_MAJOR(apiVersion),
@@ -444,6 +573,7 @@ static void create_device() {
         ici.enabledLayerCount = 0;
         VK_CHECK(vkCreateInstance(&ici, nullptr, &R.instance));
     }
+    volkLoadInstance(R.instance);
 
     uint32_t n = 0;
     vkEnumeratePhysicalDevices(R.instance, &n, nullptr);
@@ -452,6 +582,25 @@ static void create_device() {
     vkEnumeratePhysicalDevices(R.instance, &n, pds.data());
     R.pd = pds[0];
     vkGetPhysicalDeviceProperties(R.pd, &R.props);
+    // which driver actually runs (an installed one may have fallen back to the system's)
+    R.driverInfo = R.props.deviceName;
+    {
+        uint32_t m = 0;
+        vkEnumerateDeviceExtensionProperties(R.pd, nullptr, &m, nullptr);
+        std::vector<VkExtensionProperties> e(m);
+        vkEnumerateDeviceExtensionProperties(R.pd, nullptr, &m, e.data());
+        if (R.props.apiVersion >= VK_API_VERSION_1_2 || has_ext(e, VK_KHR_DRIVER_PROPERTIES_EXTENSION_NAME)) {
+            VkPhysicalDeviceDriverProperties dp{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DRIVER_PROPERTIES};
+            VkPhysicalDeviceProperties2 p2{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2};
+            p2.pNext = &dp;
+            vkGetPhysicalDeviceProperties2(R.pd, &p2);
+            R.driverInfo = describe_driver(dp);
+        }
+        if (!g_driver_file.empty() && !g_driver_fallback && !driver_file_mapped()) g_driver_fallback = true;
+        if (g_driver_fallback) LOG("[vk] the installed GPU driver could not be loaded; the system driver runs");
+        LOG("[vk] driver: %s (Vulkan %u.%u.%u)", R.driverInfo.c_str(), VK_API_VERSION_MAJOR(R.props.apiVersion),
+            VK_API_VERSION_MINOR(R.props.apiVersion), VK_API_VERSION_PATCH(R.props.apiVersion));
+    }
 
     vkGetPhysicalDeviceQueueFamilyProperties(R.pd, &n, nullptr);
     std::vector<VkQueueFamilyProperties> qf(n);
@@ -516,9 +665,14 @@ static void create_device() {
     di.pEnabledFeatures = &en;
     if (R.shaderFloat16) di.pNext = &f16;
     VK_CHECK(vkCreateDevice(R.pd, &di, nullptr, &R.device));
+    volkLoadDevice(R.device);  // direct entry points of the one device
     vkGetDeviceQueue(R.device, R.queueFamily, 0, &R.queue);
 
+    VmaVulkanFunctions vf{};
+    vf.vkGetInstanceProcAddr = vkGetInstanceProcAddr;
+    vf.vkGetDeviceProcAddr = vkGetDeviceProcAddr;
     VmaAllocatorCreateInfo vi{};
+    vi.pVulkanFunctions = &vf;
     vi.vulkanApiVersion = VK_API_VERSION_1_1;
     vi.physicalDevice = R.pd;
     vi.device = R.device;
@@ -532,9 +686,17 @@ static void create_device() {
 
     formats_init(R.pd);
     load_pipeline_cache();
+    // an installed driver: note its pipeline cache in its folder, so removing the driver removes it too (GpuDrivers.java)
+    if (!g_driver_file.empty() && !g_driver_fallback) {
+        std::string note = g_driver_file.substr(0, g_driver_file.rfind('/') + 1) + ".pipeline_cache";
+        if (FILE* f = fopen(note.c_str(), "w")) {
+            fputs(pipeline_cache_path().c_str(), f);
+            fclose(f);
+        }
+    }
     LOG("[vk] device: %s (Vulkan %u.%u.%u, driver %08X); BC %s, aniso %s, depth clamp %s, cube arrays %s, mirror-clamp %s",
         R.props.deviceName, VK_API_VERSION_MAJOR(R.props.apiVersion), VK_API_VERSION_MINOR(R.props.apiVersion),
-        VK_API_VERSION_PATCH(R.props.apiVersion), R.props.driverVersion, en.textureCompressionBC ? "yes" : "decoded on CPU",
+        VK_API_VERSION_PATCH(R.props.apiVersion), R.props.driverVersion, en.textureCompressionBC ? "yes" : "no (unpacked)",
         en.samplerAnisotropy ? "yes" : "no", en.depthClamp ? "yes" : "no", en.imageCubeArray ? "yes" : "no",
         R.mirrorClampToEdge ? "yes" : "no");
 }
@@ -579,7 +741,8 @@ struct Swapchain {
     bool stale = false;  // out of date: recreate before the next present
 };
 Swapchain g_sc;
-std::mutex g_window_mutex;  // g_sc and the layout; held by the render thread while presenting
+Swapchain g_sc_drc;  // the GamePad picture on a second display (dual-screen devices), if the app gives one
+std::mutex g_window_mutex;  // g_sc, g_sc_drc and the layout; held by the render thread while presenting
 ScreenRect g_tv_rect, g_drc_rect;
 bool g_drc_visible = false;
 std::vector<VkSemaphore> g_acquire_free;
@@ -668,49 +831,50 @@ VkPipeline create_present_pipeline(VkRenderPass pass) {
 }
 
 // g_window_mutex and the queue idle
-void destroy_swapchain(bool keepSurface) {
-    for (auto fb : g_sc.fbs) vkDestroyFramebuffer(R.device, fb, nullptr);
-    for (auto v : g_sc.views) vkDestroyImageView(R.device, v, nullptr);
-    for (auto s : g_sc.renderDone) vkDestroySemaphore(R.device, s, nullptr);
-    g_sc.fbs.clear();
-    g_sc.views.clear();
-    g_sc.renderDone.clear();
-    g_sc.images.clear();
-    if (g_sc.sc) vkDestroySwapchainKHR(R.device, g_sc.sc, nullptr);
-    g_sc.sc = VK_NULL_HANDLE;
-    if (!keepSurface && g_sc.surface) {
-        vkDestroySurfaceKHR(R.instance, g_sc.surface, nullptr);
-        g_sc.surface = VK_NULL_HANDLE;
+void destroy_swapchain(Swapchain& sc, bool keepSurface) {
+    for (auto fb : sc.fbs) vkDestroyFramebuffer(R.device, fb, nullptr);
+    for (auto v : sc.views) vkDestroyImageView(R.device, v, nullptr);
+    for (auto s : sc.renderDone) vkDestroySemaphore(R.device, s, nullptr);
+    sc.fbs.clear();
+    sc.views.clear();
+    sc.renderDone.clear();
+    sc.images.clear();
+    if (sc.sc) vkDestroySwapchainKHR(R.device, sc.sc, nullptr);
+    sc.sc = VK_NULL_HANDLE;
+    if (!keepSurface && sc.surface) {
+        vkDestroySurfaceKHR(R.instance, sc.surface, nullptr);
+        sc.surface = VK_NULL_HANDLE;
     }
 }
 
-// g_window_mutex held; true if a swapchain is ready
-bool ensure_swapchain() {
-    if (!g_sc.window) return false;
-    if (g_sc.sc && !g_sc.stale) return true;
-    if (g_sc.sc) {
+// g_window_mutex held; true if a swapchain is ready. `main`: the game window (frame generation
+// presents there); else the GamePad's own display
+bool ensure_swapchain(Swapchain& sc, bool main = true) {
+    if (!sc.window) return false;
+    if (sc.sc && !sc.stale) return true;
+    if (sc.sc) {
         std::lock_guard<std::mutex> lk(R.queueMutex);
         vkQueueWaitIdle(R.queue);
-        destroy_swapchain(true);
+        destroy_swapchain(sc, true);
     }
-    if (!g_sc.surface) {
+    if (!sc.surface) {
         VkAndroidSurfaceCreateInfoKHR si{VK_STRUCTURE_TYPE_ANDROID_SURFACE_CREATE_INFO_KHR};
-        si.window = g_sc.window;
-        if (vkCreateAndroidSurfaceKHR(R.instance, &si, nullptr, &g_sc.surface) != VK_SUCCESS) return false;
+        si.window = sc.window;
+        if (vkCreateAndroidSurfaceKHR(R.instance, &si, nullptr, &sc.surface) != VK_SUCCESS) return false;
         VkBool32 ok = VK_FALSE;
-        vkGetPhysicalDeviceSurfaceSupportKHR(R.pd, R.queueFamily, g_sc.surface, &ok);
+        vkGetPhysicalDeviceSurfaceSupportKHR(R.pd, R.queueFamily, sc.surface, &ok);
         if (!ok) LOG("[vk] warning: queue family %u reports no present support", R.queueFamily);
     }
     // frame generation presents at a steady multiple of the game's 30 fps: ask for a display mode
     // that is a multiple of it (a 144 Hz panel can't space 60 or 120 fps evenly; 120 Hz can)
-    if (fg::loaded()) ANativeWindow_setFrameRate(g_sc.window, 30.0f * fg::config().multiplier,
+    if (main && fg::loaded()) ANativeWindow_setFrameRate(sc.window, 30.0f * fg::config().multiplier,
                                                  ANATIVEWINDOW_FRAME_RATE_COMPATIBILITY_FIXED_SOURCE);
     VkSurfaceCapabilitiesKHR caps{};
-    vkGetPhysicalDeviceSurfaceCapabilitiesKHR(R.pd, g_sc.surface, &caps);
+    vkGetPhysicalDeviceSurfaceCapabilitiesKHR(R.pd, sc.surface, &caps);
     uint32_t n = 0;
-    vkGetPhysicalDeviceSurfaceFormatsKHR(R.pd, g_sc.surface, &n, nullptr);
+    vkGetPhysicalDeviceSurfaceFormatsKHR(R.pd, sc.surface, &n, nullptr);
     std::vector<VkSurfaceFormatKHR> fmts(n);
-    vkGetPhysicalDeviceSurfaceFormatsKHR(R.pd, g_sc.surface, &n, fmts.data());
+    vkGetPhysicalDeviceSurfaceFormatsKHR(R.pd, sc.surface, &n, fmts.data());
     if (fmts.empty()) return false;
     VkSurfaceFormatKHR fmt = fmts[0];
     for (auto& f : fmts)
@@ -720,19 +884,19 @@ bool ensure_swapchain() {
             break;
         }
     // the window's size in its current orientation; the compositor applies any rotation
-    VkExtent2D ext{(uint32_t)ANativeWindow_getWidth(g_sc.window), (uint32_t)ANativeWindow_getHeight(g_sc.window)};
+    VkExtent2D ext{(uint32_t)ANativeWindow_getWidth(sc.window), (uint32_t)ANativeWindow_getHeight(sc.window)};
     if (!ext.width || !ext.height) return false;
-    vkGetPhysicalDeviceSurfacePresentModesKHR(R.pd, g_sc.surface, &n, nullptr);
+    vkGetPhysicalDeviceSurfacePresentModesKHR(R.pd, sc.surface, &n, nullptr);
     std::vector<VkPresentModeKHR> modes(n);
-    vkGetPhysicalDeviceSurfacePresentModesKHR(R.pd, g_sc.surface, &n, modes.data());
+    vkGetPhysicalDeviceSurfacePresentModesKHR(R.pd, sc.surface, &n, modes.data());
     // the game paces itself (GX2 flips are timed in gx2_core.cpp): don't let presentation block it.
     // With frame generation the present thread paces the frames and each one must be shown: FIFO.
     VkPresentModeKHR mode = VK_PRESENT_MODE_FIFO_KHR;
     for (auto m : modes)
-        if (m == VK_PRESENT_MODE_MAILBOX_KHR && !fg::loaded()) mode = m;
+        if (m == VK_PRESENT_MODE_MAILBOX_KHR && !(main && fg::loaded())) mode = m;
 
     VkSwapchainCreateInfoKHR ci{VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR};
-    ci.surface = g_sc.surface;
+    ci.surface = sc.surface;
     ci.minImageCount = std::max(caps.minImageCount, 3u);
     if (caps.maxImageCount) ci.minImageCount = std::min(ci.minImageCount, caps.maxImageCount);
     ci.imageFormat = fmt.format;
@@ -752,13 +916,13 @@ bool ensure_swapchain() {
         }
     ci.presentMode = mode;
     ci.clipped = VK_TRUE;
-    if (vkCreateSwapchainKHR(R.device, &ci, nullptr, &g_sc.sc) != VK_SUCCESS) {
-        g_sc.sc = VK_NULL_HANDLE;
+    if (vkCreateSwapchainKHR(R.device, &ci, nullptr, &sc.sc) != VK_SUCCESS) {
+        sc.sc = VK_NULL_HANDLE;
         return false;
     }
-    if (g_sc.format != fmt.format) {
-        if (g_sc.pass) vkDestroyRenderPass(R.device, g_sc.pass, nullptr);
-        if (g_sc.pipeline) vkDestroyPipeline(R.device, g_sc.pipeline, nullptr);
+    if (sc.format != fmt.format) {
+        if (sc.pass) vkDestroyRenderPass(R.device, sc.pass, nullptr);
+        if (sc.pipeline) vkDestroyPipeline(R.device, sc.pipeline, nullptr);
         VkAttachmentDescription a{};
         a.format = fmt.format;
         a.samples = VK_SAMPLE_COUNT_1_BIT;
@@ -782,15 +946,15 @@ bool ensure_swapchain() {
         rp.pSubpasses = &sp;
         rp.dependencyCount = 1;
         rp.pDependencies = &dep;
-        VK_CHECK(vkCreateRenderPass(R.device, &rp, nullptr, &g_sc.pass));
-        g_sc.pipeline = create_present_pipeline(g_sc.pass);
-        g_sc.format = fmt.format;
+        VK_CHECK(vkCreateRenderPass(R.device, &rp, nullptr, &sc.pass));
+        sc.pipeline = create_present_pipeline(sc.pass);
+        sc.format = fmt.format;
     }
-    g_sc.extent = ext;
-    vkGetSwapchainImagesKHR(R.device, g_sc.sc, &n, nullptr);
-    g_sc.images.resize(n);
-    vkGetSwapchainImagesKHR(R.device, g_sc.sc, &n, g_sc.images.data());
-    for (VkImage img : g_sc.images) {
+    sc.extent = ext;
+    vkGetSwapchainImagesKHR(R.device, sc.sc, &n, nullptr);
+    sc.images.resize(n);
+    vkGetSwapchainImagesKHR(R.device, sc.sc, &n, sc.images.data());
+    for (VkImage img : sc.images) {
         VkImageViewCreateInfo vi{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
         vi.image = img;
         vi.viewType = VK_IMAGE_VIEW_TYPE_2D;
@@ -798,9 +962,9 @@ bool ensure_swapchain() {
         vi.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
         VkImageView v;
         VK_CHECK(vkCreateImageView(R.device, &vi, nullptr, &v));
-        g_sc.views.push_back(v);
+        sc.views.push_back(v);
         VkFramebufferCreateInfo fi{VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO};
-        fi.renderPass = g_sc.pass;
+        fi.renderPass = sc.pass;
         fi.attachmentCount = 1;
         fi.pAttachments = &v;
         fi.width = ext.width;
@@ -808,14 +972,14 @@ bool ensure_swapchain() {
         fi.layers = 1;
         VkFramebuffer fb;
         VK_CHECK(vkCreateFramebuffer(R.device, &fi, nullptr, &fb));
-        g_sc.fbs.push_back(fb);
+        sc.fbs.push_back(fb);
         VkSemaphoreCreateInfo si{VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO};
         VkSemaphore s;
         VK_CHECK(vkCreateSemaphore(R.device, &si, nullptr, &s));
-        g_sc.renderDone.push_back(s);
+        sc.renderDone.push_back(s);
     }
-    g_sc.stale = false;
-    LOG("[vk] swapchain %ux%u, %u images, format %d, %s, display transform %d", ext.width, ext.height, n, (int)fmt.format,
+    sc.stale = false;
+    LOG("[vk] %sswapchain %ux%u, %u images, format %d, %s, display transform %d", main ? "" : "GamePad display ", ext.width, ext.height, n, (int)fmt.format,
         mode == VK_PRESENT_MODE_MAILBOX_KHR ? "mailbox" : "fifo", (int)caps.currentTransform);
     return true;
 }
@@ -876,7 +1040,7 @@ void count_present() { g_presents.fetch_add(1, std::memory_order_relaxed); }
 // record the window image and submit the frame; false if there is no window to present to
 bool present_frame() {
     std::lock_guard<std::mutex> wl(g_window_mutex);
-    if (!ensure_swapchain()) return false;
+    if (!ensure_swapchain(g_sc)) return false;
     VkSemaphore acquire;
     if (!g_acquire_free.empty()) {
         acquire = g_acquire_free.back();
@@ -934,6 +1098,65 @@ bool present_frame() {
     if (r == VK_ERROR_OUT_OF_DATE_KHR) g_sc.stale = true;
     count_present();
     return true;
+}
+
+// The GamePad picture on its own display (dual-screen devices): once per game frame, after the main
+// window. It must never hold up the game: a short acquire timeout, mailbox where offered, and a
+// frame that can't be shown is skipped.
+std::vector<VkSemaphore> g_drc_acquire_free;
+void present_drc_window() {
+    std::lock_guard<std::mutex> wl(g_window_mutex);
+    if (!g_sc_drc.window || !R.drc.img.image || !ensure_swapchain(g_sc_drc, false)) return;
+    VkSemaphore acquire;
+    if (!g_drc_acquire_free.empty()) {
+        acquire = g_drc_acquire_free.back();
+        g_drc_acquire_free.pop_back();
+    } else {
+        VkSemaphoreCreateInfo si{VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO};
+        VK_CHECK(vkCreateSemaphore(R.device, &si, nullptr, &acquire));
+    }
+    uint32_t idx = 0;
+    VkResult r = vkAcquireNextImageKHR(R.device, g_sc_drc.sc, 10 * 1000000ull, acquire, VK_NULL_HANDLE, &idx);
+    if (r == VK_ERROR_OUT_OF_DATE_KHR || r == VK_TIMEOUT || r == VK_NOT_READY || r < 0) {
+        if (r != VK_TIMEOUT && r != VK_NOT_READY) g_sc_drc.stale = true;
+        g_drc_acquire_free.push_back(acquire);
+        return;
+    }
+    if (r == VK_SUBOPTIMAL_KHR && ((uint32_t)ANativeWindow_getWidth(g_sc_drc.window) != g_sc_drc.extent.width ||
+                                   (uint32_t)ANativeWindow_getHeight(g_sc_drc.window) != g_sc_drc.extent.height))
+        g_sc_drc.stale = true;
+    prepare(R.drc.img, Use::SAMPLED);
+    end_pass();
+    VkCommandBuffer cmd = command_buffer();
+    VkClearValue clear{};
+    clear.color = {{0, 0, 0, 1}};
+    VkRenderPassBeginInfo bi{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
+    bi.renderPass = g_sc_drc.pass;
+    bi.framebuffer = g_sc_drc.fbs[idx];
+    bi.renderArea = {{0, 0}, g_sc_drc.extent};
+    bi.clearValueCount = 1;
+    bi.pClearValues = &clear;
+    vkCmdBeginRenderPass(cmd, &bi, VK_SUBPASS_CONTENTS_INLINE);
+    VkViewport vp{0, 0, (float)g_sc_drc.extent.width, (float)g_sc_drc.extent.height, 0, 1};
+    VkRect2D scissor{{0, 0}, g_sc_drc.extent};
+    vkCmdSetViewport(cmd, 0, 1, &vp);
+    vkCmdSetScissor(cmd, 0, 1, &scissor);
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g_sc_drc.pipeline);
+    draw_screen(cmd, R.drc, ScreenRect{}, g_sc_drc.extent);  // the whole display, 16:9 with bars
+    vkCmdEndRenderPass(cmd);
+    on_complete([acquire] { g_drc_acquire_free.push_back(acquire); });
+    submit(acquire, g_sc_drc.renderDone[idx]);
+    VkPresentInfoKHR pi{VK_STRUCTURE_TYPE_PRESENT_INFO_KHR};
+    pi.waitSemaphoreCount = 1;
+    pi.pWaitSemaphores = &g_sc_drc.renderDone[idx];
+    pi.swapchainCount = 1;
+    pi.pSwapchains = &g_sc_drc.sc;
+    pi.pImageIndices = &idx;
+    {
+        std::lock_guard<std::mutex> lk(R.queueMutex);
+        r = vkQueuePresentKHR(R.queue, &pi);
+    }
+    if (r == VK_ERROR_OUT_OF_DATE_KHR) g_sc_drc.stale = true;
 }
 
 // ---------------------------------------------------------------- frame generation
@@ -999,7 +1222,7 @@ void fg_present_init() {
 // present thread: show `img` (GENERAL layout, written by compute or as an attachment) in the window
 bool fg_present(const Image* img) {
     std::lock_guard<std::mutex> wl(g_window_mutex);
-    if (!ensure_swapchain()) return false;
+    if (!ensure_swapchain(g_sc)) return false;
     PresentSlot& ps = g_fg_slots[g_fg_next];
     vkWaitForFences(R.device, 1, &ps.fence, VK_TRUE, UINT64_MAX);
     uint32_t idx = 0;
@@ -1335,11 +1558,28 @@ void set_window(ANativeWindow* w) {
     if (g_sc.sc || g_sc.surface) {
         std::lock_guard<std::mutex> lk(R.queueMutex);
         vkQueueWaitIdle(R.queue);
-        destroy_swapchain(false);
+        destroy_swapchain(g_sc, false);
     }
     if (g_sc.window) ANativeWindow_release(g_sc.window);
     g_sc.window = w;
     if (w) ANativeWindow_acquire(w);
+}
+
+void set_drc_window(ANativeWindow* w) {
+    std::lock_guard<std::mutex> wl(g_window_mutex);
+    if (w == g_sc_drc.window) {
+        g_sc_drc.stale = true;  // same window, new size
+        return;
+    }
+    if (g_sc_drc.sc || g_sc_drc.surface) {
+        std::lock_guard<std::mutex> lk(R.queueMutex);
+        vkQueueWaitIdle(R.queue);
+        destroy_swapchain(g_sc_drc, false);
+    }
+    if (g_sc_drc.window) ANativeWindow_release(g_sc_drc.window);
+    g_sc_drc.window = w;
+    if (w) ANativeWindow_acquire(w);
+    LOG("[vk] GamePad display %s", w ? "attached" : "detached");
 }
 
 void request_frame_generation(bool on, const char* dll, bool quality, float flowScale, int multiplier, bool uiDetection) {
@@ -1730,21 +1970,32 @@ static void service_tv_dumps() {
         }
 }
 
-// performance overlay: game frame times over one-second windows
+// performance overlay: game frame times over one-second windows, and running totals for the average
 static std::mutex g_perf_mu;
-static float g_perf[5];
+static float g_perf[7];
 static void perf_frame() {
     using clk = std::chrono::steady_clock;
     static clk::time_point last{}, windowStart{};
     static double sumMs = 0, maxMs = 0;
-    static int frames = 0;
+    static int frames = 0, late = 0;
     static uint64_t presents0 = 0;
+    static double totalFrames = 0, totalSec = 0;
+    static const bool logIt = getenv("WWHD_PERF_LOG") != nullptr;  // debug: log the numbers every second
     clk::time_point now = clk::now();
     if (last != clk::time_point{}) {
         double ms = std::chrono::duration<double, std::milli>(now - last).count();
         sumMs += ms;
         maxMs = std::max(maxMs, ms);
+        if (ms > 40) late++;
         frames++;
+        // gaps over a second are the app paused or in the background, not game frames
+        if (ms <= 1000) {
+            std::lock_guard<std::mutex> lk(g_perf_mu);
+            totalFrames++;
+            totalSec += ms / 1000;
+            g_perf[5] = (float)totalFrames;
+            g_perf[6] = (float)totalSec;
+        }
     } else {
         windowStart = now;
     }
@@ -1758,13 +2009,19 @@ static void perf_frame() {
         g_perf[2] = (float)maxMs;
         g_perf[3] = (float)((p - presents0) / el);
         g_perf[4] = fg::loaded() ? fg::gpu_ms() : 0.0f;
+        if (logIt) LOG("[perf] game %.1f fps, frame %.1f ms, max %.1f, late %d", g_perf[0], g_perf[1], g_perf[2], late);
+        late = 0;
         presents0 = p;
         windowStart = now;
         sumMs = maxMs = 0;
         frames = 0;
     }
 }
-void perf_stats(float out[5]) {
+const char* driver_info() { return R.driverInfo.c_str(); }
+const char* gpu_name() { return R.device ? R.props.deviceName : ""; }
+bool driver_fallback() { return g_driver_fallback; }
+
+void perf_stats(float out[7]) {
     std::lock_guard<std::mutex> lk(g_perf_mu);
     memcpy(out, g_perf, sizeof g_perf);
 }
@@ -1772,6 +2029,8 @@ void perf_stats(float out[5]) {
 void swap() {
     cache_warm_step();
     perf_frame();
+    platform::perf_hint_frame();
+    prof_frame();
     latch_resolution_scale();
     apply_frame_generation();
     descriptor_cache_trim();
@@ -1780,6 +2039,10 @@ void swap() {
     end_pass();
     if (log_this_frame()) LOG("[frame] end %llu", (unsigned long long)R.frame);
     R.frame++;
+    // an installed GPU driver ran the game for a few seconds: its start marker goes (MainActivity
+    // switches back to the system driver if it finds one); not if the system driver runs instead
+    if (R.frame == 120 && !g_driver_fallback)
+        if (const char* probe = getenv("WWHD_GPU_DRIVER_PROBE"); probe && *probe) remove(probe);
     if (g_dump_frames.count(R.frame)) dump_tv(R.frame);
     service_tv_dumps();
     static std::string pendingCapture;  // the TV image is dumped once the captured frame has been drawn
@@ -1791,6 +2054,7 @@ void swap() {
     }
     if (const char* dir = capture_begin_frame()) pendingCapture = dir;
     if (!(fg::loaded() ? present_frame_fg() : present_frame())) submit();
+    present_drc_window();
     signal_frame_end();
     g_frames_submitted++;
     if (R.frame % 300 == 1) {
@@ -1806,10 +2070,21 @@ void swap() {
 }
 
 extern uint64_t g_stat_invalidates, g_stat_invalidated_surfaces;
+
+// CPU-side surfaces sorted by address, for invalidate (the game sends ~200 a frame; going through
+// every surface each time cost the render thread several percent). Rebuilt when surfaces are added
+// or their data size changes (surfaces_changed).
+static std::vector<std::pair<uint32_t, Surface*>> g_inval_index;
+static uint32_t g_inval_maxlen = 0;
+static bool g_inval_dirty = true;
+void surfaces_changed() { g_inval_dirty = true; }
+static uint32_t surface_extent(const Surface* s) { return std::max<uint32_t>(s->dataSize, s->pitch * s->height * 4); }
+
 void invalidate(uint32_t flags, uint32_t addr, uint32_t size) {
     g_stat_invalidates++;
     static int logged = 0;
-    if (getenv("WWHD_LOG_INVALIDATE") && (flags & 0x2) && logged++ < 400)
+    static const bool logInval = getenv("WWHD_LOG_INVALIDATE") != nullptr;
+    if (logInval && (flags & 0x2) && logged++ < 400)
         LOG("[inval] frame %llu flags %X addr %08X size %X", (unsigned long long)R.frame, flags, addr, size);
     // GX2_INVALIDATE_MODE_TEXTURE (0x2): the CPU wrote texture data; force a full check of surfaces in
     // range on next use. Uniform/attribute/shader invalidations need nothing here (data is copied per draw).
@@ -1817,14 +2092,41 @@ void invalidate(uint32_t flags, uint32_t addr, uint32_t size) {
     // "invalidate everything" (sent several times per frame) carries no information about CPU writes;
     // changed textures are still caught by the per-frame sparse check and the periodic full check
     if (size >= 0x10000000) return;
-    for (auto& [a, s] : R.surfaces)
-        // MEM1 holds render targets; CPU-side surfaces there are views of GPU data, not CPU uploads
-        if (!s->gpuWritten && !(a >= 0xF4000000 && a < 0xF6000000) && a < addr + size &&
-            addr < a + std::max<uint32_t>(s->dataSize, s->pitch * s->height * 4)) {
+    static const bool scan = getenv("WWHD_INVALIDATE_SCAN") != nullptr;  // debug: the old full scan
+    if (scan) {
+        for (auto& [a, s] : R.surfaces)
+            // MEM1 holds render targets; CPU-side surfaces there are views of GPU data, not CPU uploads
+            if (!s->gpuWritten && !(a >= 0xF4000000 && a < 0xF6000000) && a < addr + size && addr < a + surface_extent(s.get())) {
+                s->lastCheckedFrame = ~0ull;
+                s->dirty = true;
+                g_stat_invalidated_surfaces++;
+            }
+        return;
+    }
+    if (g_inval_dirty) {
+        g_inval_dirty = false;
+        g_inval_index.clear();
+        g_inval_maxlen = 0;
+        for (auto& [a, s] : R.surfaces)
+            if (!(a >= 0xF4000000 && a < 0xF6000000)) {  // MEM1: render targets, not CPU uploads
+                g_inval_index.push_back({a, s.get()});
+                g_inval_maxlen = std::max(g_inval_maxlen, surface_extent(s.get()));
+            }
+        std::sort(g_inval_index.begin(), g_inval_index.end(),
+                  [](const std::pair<uint32_t, Surface*>& x, const std::pair<uint32_t, Surface*>& y) { return x.first < y.first; });
+    }
+    // surfaces starting in [addr - longest, addr + size) can overlap
+    uint32_t from = addr > g_inval_maxlen ? addr - g_inval_maxlen : 0;
+    auto it = std::lower_bound(g_inval_index.begin(), g_inval_index.end(), from,
+                               [](const std::pair<uint32_t, Surface*>& e, uint32_t v) { return e.first < v; });
+    for (; it != g_inval_index.end() && it->first < addr + size; ++it) {
+        Surface* s = it->second;
+        if (!s->gpuWritten && addr < it->first + surface_extent(s)) {
             s->lastCheckedFrame = ~0ull;
             s->dirty = true;
             g_stat_invalidated_surfaces++;
         }
+    }
 }
 
 }  // namespace gfx

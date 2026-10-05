@@ -18,8 +18,17 @@ void shader_compiler_init() {
     (void)done;
 }
 
+bool compile_glsl_stage(const char* src, EShLanguage stage, std::vector<uint32_t>& spirv, std::string& log);
+
 bool compile_glsl(const char* src, bool vertex, std::vector<uint32_t>& spirv, std::string& log) {
-    EShLanguage stage = vertex ? EShLangVertex : EShLangFragment;
+    return compile_glsl_stage(src, vertex ? EShLangVertex : EShLangFragment, spirv, log);
+}
+
+bool compile_glsl_compute(const char* src, std::vector<uint32_t>& spirv, std::string& log) {
+    return compile_glsl_stage(src, EShLangCompute, spirv, log);
+}
+
+bool compile_glsl_stage(const char* src, EShLanguage stage, std::vector<uint32_t>& spirv, std::string& log) {
     glslang::TShader sh(stage);
     sh.setStrings(&src, 1);
     sh.setEnvInput(glslang::EShSourceGlsl, stage, glslang::EShClientVulkan, 100);

@@ -23,6 +23,7 @@
 #include <vector>
 
 #include "../disc/crypto.h"
+#include "../release.h"
 #include "compile.h"
 #include "emit.h"
 #include "program.h"
@@ -132,8 +133,17 @@ std::string code_cache_key(const std::string& rpxPath) {
     uint8_t h[20], hk[20];
     disc::sha1((const uint8_t*)rpx.data(), rpx.size(), h);
     disc::sha1((const uint8_t*)wwhd_hooks, (size_t)(wwhd_hooks_end - wwhd_hooks), hk);
-    return std::string("recompiler ") + WWHD_RECOMP_VERSION + "\nhooks " + hex(hk, 20) + "\nrpx " + hex(h, 20) + "\ncpu " +
-           host_features() + "\n";
+    std::string key = std::string("recompiler ") + WWHD_RECOMP_VERSION + "\nhooks " + hex(hk, 20) + "\nrpx " + hex(h, 20) + "\ncpu " +
+                      host_features() + "\n";
+    // another release: its address map decides the function names
+    uint32_t entry = rpx.size() >= 0x1C ? (uint8_t)rpx[0x18] << 24 | (uint8_t)rpx[0x19] << 16 | (uint8_t)rpx[0x1A] << 8 | (uint8_t)rpx[0x1B] : 0;
+    if (release::known_entry(entry) && entry != kSupportedEntryPoint) {
+        std::string map = release::map_text();
+        uint8_t hm[20];
+        disc::sha1((const uint8_t*)map.data(), map.size(), hm);
+        key += "map " + hex(hm, 20) + "\n";
+    }
+    return key;
 }
 
 bool code_cache_ready(const std::string& dir, const std::string& key) {
@@ -166,10 +176,11 @@ bool load_game_code(const std::string& rpxPath, const std::string& dir, std::str
     auto ms = [&] { return (long)std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0).count(); };
     static Program prog;  // the tables point into it
     if (!prog.load(rpxPath, err)) return false;
-    if (prog.entry != kSupportedEntryPoint) {
-        err = rpxPath + " is not the supported game version";
+    if (!release::select(prog.entry)) {
+        err = rpxPath + " is not a supported game version";
         return false;
     }
+    log_msg("[recomp] game release: %s", release::name());
     long tAnalyze = ms();
 
     static Resolver res;
@@ -222,8 +233,9 @@ bool load_game_code(const std::string& rpxPath, const std::string& dir, std::str
     llvm::orc::SymbolLookupSet want;
     std::vector<llvm::orc::SymbolStringPtr> names;
     char buf[32];
-    for (uint32_t a : prog.entries) {
-        snprintf(buf, sizeof buf, "f_%08X", a);
+    for (uint32_t a : prog.entries) {  // named by their USA address (emit.cpp, sym)
+        uint32_t u = release::usa_code(a);
+        snprintf(buf, sizeof buf, u ? "f_%08X" : "f_E%08X", u ? u : a);
         names.push_back(es.intern(buf));
     }
     for (unsigned i = 0; i < wwhd_jit_count; i++) names.push_back(es.intern(wwhd_jit_names[i]));

@@ -18,7 +18,9 @@
 #include "../input.h"
 #include "../mods/climb.h"
 #include "../mods/mods.h"
+#include "../motion.h"
 #include "../platform.h"
+#include "../release.h"
 #include "../runtime.h"
 #include "../savestate.h"
 #include "../vk/lsfg.h"
@@ -42,6 +44,7 @@ namespace {
 JavaVM* g_vm = nullptr;
 jclass g_native_class = nullptr;
 jmethodID g_request_text = nullptr;
+jmethodID g_rumble = nullptr, g_rumble_hold = nullptr;
 std::atomic<bool> g_started{false};
 
 std::string jstr(JNIEnv* env, jstring s) {
@@ -77,6 +80,24 @@ bool request_text_input(const std::u16string& initial, int maxLen) {
     }
     return true;
 }
+
+void rumble(const uint8_t* pattern, int bits) {
+    JNIEnv* env = env_for_thread();
+    if (!env || !g_rumble) return;
+    int bytes = bits > 0 && pattern ? (bits + 7) / 8 : 0;
+    jbyteArray a = env->NewByteArray(bytes);
+    if (bytes) env->SetByteArrayRegion(a, 0, bytes, (const jbyte*)pattern);
+    env->CallStaticVoidMethod(g_native_class, g_rumble, a, (jint)(bytes ? bits : 0));
+    env->DeleteLocalRef(a);
+    if (env->ExceptionCheck()) env->ExceptionClear();
+}
+
+void rumble_hold(bool on) {
+    JNIEnv* env = env_for_thread();
+    if (!env || !g_rumble_hold) return;
+    env->CallStaticVoidMethod(g_native_class, g_rumble_hold, (jboolean)on);
+    if (env->ExceptionCheck()) env->ExceptionClear();
+}
 }  // namespace jni
 
 extern "C" JNIEXPORT jint JNI_OnLoad(JavaVM* vm, void*) {
@@ -87,6 +108,8 @@ extern "C" JNIEXPORT jint JNI_OnLoad(JavaVM* vm, void*) {
     if (!c) return JNI_ERR;
     g_native_class = (jclass)env->NewGlobalRef(c);
     g_request_text = env->GetStaticMethodID(c, "requestTextInput", "(Ljava/lang/String;I)V");
+    g_rumble = env->GetStaticMethodID(c, "rumble", "([BI)V");
+    g_rumble_hold = env->GetStaticMethodID(c, "rumbleHold", "(Z)V");
     return JNI_VERSION_1_6;
 }
 
@@ -102,8 +125,26 @@ JNI_FN(jstring, checkGame)(JNIEnv* env, jclass, jstring gameDir) {
     fclose(f);
     if (n != sizeof h || memcmp(h, "\x7F" "ELF", 4) != 0) return env->NewStringUTF((path + " is not an RPX executable").c_str());
     uint32_t entry = (uint32_t)h[0x18] << 24 | h[0x19] << 16 | h[0x1A] << 8 | h[0x1B];
+#ifdef WWHD_DEVICE_RECOMP
+    // compiled on the device: any release with an address map (release.h)
+    if (!release::known_entry(entry)) return env->NewStringUTF((path + " is not a supported version of the game").c_str());
+#else
     if (entry != g_recomp_entry_point) return env->NewStringUTF((path + " does not match the recompiled code in this build").c_str());
+#endif
     return nullptr;
+}
+
+// the game release in `gameDir`: "USA", "EUR", or "" (none or unknown)
+JNI_FN(jstring, gameRelease)(JNIEnv* env, jclass, jstring gameDir) {
+    FILE* f = fopen((jstr(env, gameDir) + "/code/cking.rpx").c_str(), "rb");
+    uint8_t h[0x1C] = {};
+    if (f) {
+        fread(h, 1, sizeof h, f);
+        fclose(f);
+    }
+    uint32_t entry = (uint32_t)h[0x18] << 24 | h[0x19] << 16 | h[0x1A] << 8 | h[0x1B];
+    const char* r = entry == 0x028EA120u /* USA */ ? "USA" : release::known_entry(entry) ? "EUR" : "";
+    return env->NewStringUTF(r);
 }
 
 // the licenses of everything in the APK (assembled by CMakeLists.txt)
@@ -126,6 +167,18 @@ JNI_FN(jboolean, frameGenDllTested)(JNIEnv* env, jclass, jstring path) {
 
 // why frame generation couldn't start ("" if it runs or is off)
 JNI_FN(jstring, frameGenError)(JNIEnv* env, jclass) { return env->NewStringUTF(gfx::fg::last_error().c_str()); }
+
+// GamePad motion: one sensor sample (SDL controller axes, rad/s and m/s²), or forget the state
+JNI_FN(void, motionSample)(JNIEnv*, jclass, jfloat dt, jfloat gx, jfloat gy, jfloat gz, jfloat ax, jfloat ay, jfloat az) {
+    motion::sample(dt, gx, gy, gz, ax, ay, az);
+}
+JNI_FN(void, motionReset)(JNIEnv*, jclass) { motion::reset(); }
+
+// the running GPU driver ("" until the renderer has started)
+JNI_FN(jstring, gpuDriverInfo)(JNIEnv* env, jclass) { return env->NewStringUTF(gfx::driver_info()); }
+// the GPU's name as Vulkan reports it ("" until the renderer has started)
+JNI_FN(jstring, gpuName)(JNIEnv* env, jclass) { return env->NewStringUTF(gfx::gpu_name()); }
+JNI_FN(jboolean, gpuDriverFellBack)(JNIEnv*, jclass) { return gfx::driver_fallback(); }
 
 // ---- extracting the game from the user's disc image (runtime/src/disc), on a Java thread
 static std::atomic<uint64_t> g_extract_done{0}, g_extract_total{0};
@@ -319,6 +372,13 @@ JNI_FN(void, surfaceChanged)(JNIEnv* env, jclass, jobject surface) {
 
 JNI_FN(void, surfaceDestroyed)(JNIEnv*, jclass) { gfx::set_window(nullptr); }
 
+// the GamePad's own display (a second screen): its surface, or null when it goes away
+JNI_FN(void, drcSurfaceChanged)(JNIEnv* env, jclass, jobject surface) {
+    ANativeWindow* w = surface ? ANativeWindow_fromSurface(env, surface) : nullptr;
+    gfx::set_drc_window(w);
+    if (w) ANativeWindow_release(w);  // the renderer holds its own reference
+}
+
 JNI_FN(void, setLayout)(JNIEnv* env, jclass, jfloatArray tv, jfloatArray drc, jboolean drcVisible) {
     gfx::ScreenRect t, d;
     if (tv && env->GetArrayLength(tv) >= 4) env->GetFloatArrayRegion(tv, 0, 4, &t.x);
@@ -383,14 +443,15 @@ JNI_FN(jint, getOption)(JNIEnv* env, jclass, jstring name) {
 }
 
 // ---- save states (runtime/src/savestate.cpp): 5 slots, saved and loaded at the next frame boundary
-// {used, compatible, time, area} of slot 1..5
+// {used, compatible, time, area, controller ("", "gamepad" or "pro")} of slot 1..5
 JNI_FN(jobjectArray, saveSlotInfo)(JNIEnv* env, jclass, jint slot) {
     ss::SlotInfo i = ss::slot_info(slot);
-    jobjectArray a = env->NewObjectArray(4, env->FindClass("java/lang/String"), nullptr);
+    jobjectArray a = env->NewObjectArray(5, env->FindClass("java/lang/String"), nullptr);
     env->SetObjectArrayElement(a, 0, env->NewStringUTF(i.used ? "1" : "0"));
     env->SetObjectArrayElement(a, 1, env->NewStringUTF(i.compatible ? "1" : "0"));
     env->SetObjectArrayElement(a, 2, env->NewStringUTF(i.when.c_str()));
     env->SetObjectArrayElement(a, 3, env->NewStringUTF(i.area.c_str()));
+    env->SetObjectArrayElement(a, 4, env->NewStringUTF(i.controller == 2 ? "pro" : i.controller == 1 ? "gamepad" : ""));
     return a;
 }
 JNI_FN(void, saveState)(JNIEnv*, jclass, jint slot) { ss::request_save(slot); }
@@ -405,12 +466,13 @@ JNI_FN(void, applyFrameGen)(JNIEnv* env, jclass, jboolean on, jstring dll, jbool
     gfx::request_frame_generation(on, path.c_str(), quality, flowScale, multiplier, uiDetection);
 }
 
-// performance overlay: {game fps, frame time avg ms, worst ms, presented fps, frame generation GPU ms}
+// performance overlay: {game fps, frame time avg ms, worst ms, presented fps, frame generation GPU ms,
+// game frames so far, their time in seconds (without pauses)}
 JNI_FN(jfloatArray, perfStats)(JNIEnv* env, jclass) {
-    float v[5];
+    float v[7];
     gfx::perf_stats(v);
-    jfloatArray a = env->NewFloatArray(5);
-    env->SetFloatArrayRegion(a, 0, 5, v);
+    jfloatArray a = env->NewFloatArray(7);
+    env->SetFloatArrayRegion(a, 0, 7, v);
     return a;
 }
 

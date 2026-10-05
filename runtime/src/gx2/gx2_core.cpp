@@ -45,11 +45,29 @@ static bool shader_irrelevant(uint32 reg) {
     return false;
 }
 
+// The renderer may name exactly the register changes that alter its shader key (vk_draw.cpp);
+// without a filter every register outside shader_irrelevant counts (the Metal renderer).
+extern "C" { bool (*g_shader_reg_filter)(uint32 reg, uint32 oldv, uint32 newv) = nullptr; }
+
+// debug: WWHD_GEN_STATS=1 counts what bumps g_shader_state_gen (logged with the frame line)
+static const bool g_gen_stats = getenv("WWHD_GEN_STATS") != nullptr;
+static uint64_t g_gen_ctx = 0, g_gen_ctx_calls = 0, g_gen_regs = 0;
+static std::unordered_map<uint32, uint64_t> g_gen_by_reg;
+
 static void apply_regs(uint32 first, const uint32* v, uint32 n) {
     if (first + n > kNumRegs) return;
     if (memcmp(&g_regs[first], v, n * 4) != 0) {
+        static const bool coarse = getenv("WWHD_COARSE_SHADER_GEN") != nullptr;  // debug: the old rule
         for (uint32 i = 0; i < n; i++)
-            if (g_regs[first + i] != v[i] && !shader_irrelevant(first + i)) { g_shader_state_gen++; break; }
+            if (g_regs[first + i] != v[i] &&
+                (g_shader_reg_filter && !coarse ? g_shader_reg_filter(first + i, g_regs[first + i], v[i]) : !shader_irrelevant(first + i))) {
+                g_shader_state_gen++;
+                if (g_gen_stats) {
+                    g_gen_regs++;
+                    g_gen_by_reg[first + i]++;
+                }
+                break;
+            }
         memcpy(&g_regs[first], v, n * 4);
     }
     if (g_shadow) memcpy(&g_shadow[first], v, n * 4);
@@ -172,6 +190,7 @@ void execute(const uint32* words, uint32 count) {
 }
 
 static void set_context(uint32 ctx) {
+    if (g_gen_stats) g_gen_ctx_calls++;
     if (!ctx) {
         g_shadow = nullptr;
         return;
@@ -184,6 +203,7 @@ static void set_context(uint32 ctx) {
     g_shadow = it->second.data();
     memcpy(g_regs, g_shadow, sizeof(g_regs));
     g_shader_state_gen++;
+    if (g_gen_stats) g_gen_ctx++;
 }
 
 constexpr uint32 kColorBufferWords = 0x9C / 4, kDepthBufferWords = 0xAC / 4, kSurfaceWords = 0x74 / 4;
@@ -463,6 +483,21 @@ HLE(gx2, GX2SwapScanBuffers) {
         LOG("[gx2] frame %llu, %.1f swaps/s, swap interval %u; GX2DrawDone %.1f/frame, %.1f ms/frame", (unsigned long long)g_swap_count,
             300 / s, g_swap_interval, g_drawdone_calls.exchange(0) / 300.0, g_drawdone_us.exchange(0) / 300.0 / 1000.0);
         if (getenv("WWHD_SCHED_STATS")) threads::report_sched();
+        if (g_gen_stats) {
+            std::vector<std::pair<uint64_t, uint32>> top;
+            for (auto& [r, c] : g_gen_by_reg) top.push_back({c, r});
+            std::sort(top.rbegin(), top.rend());
+            std::string t;
+            for (size_t k = 0; k < top.size() && k < 8; k++) {
+                char b[32];
+                snprintf(b, sizeof b, " %04X:%.1f", top[k].second, top[k].first / 300.0);
+                t += b;
+            }
+            LOG("[gx2] per frame: set_context %.1f (loads %.1f), shader-relevant register bumps %.1f; by register%s", g_gen_ctx_calls / 300.0,
+                g_gen_ctx / 300.0, g_gen_regs / 300.0, t.c_str());
+            g_gen_ctx = g_gen_ctx_calls = g_gen_regs = 0;
+            g_gen_by_reg.clear();
+        }
     }
 }
 HLE(gx2, GX2GetSwapStatus) {

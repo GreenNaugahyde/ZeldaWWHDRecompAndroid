@@ -2,6 +2,8 @@
 // tools/recomp/recomp.py's Ctx callbacks and ppc2c.py's branch translation.
 #include "emit.h"
 
+#include "../release.h"
+
 #include <llvm/Bitcode/BitcodeReader.h>
 #include <llvm/IR/IRBuilder.h>
 #include <llvm/IR/InlineAsm.h>
@@ -29,14 +31,25 @@ void Hooks::parse(const std::string& text) {
         size_t b = line.find_first_not_of(" \t\r"), e = line.find_last_not_of(" \t\r");
         if (b == std::string::npos) continue;
         line = line.substr(b, e - b + 1);
-        if (line[0] == '@') sites.insert((uint32_t)strtoul(line.c_str() + 1, nullptr, 16));
-        else functions.insert((uint32_t)strtoul(line.c_str(), nullptr, 16));
+        // USA addresses: the running release's (release.h); none if the code differs between them
+        bool site = line[0] == '@';
+        uint32_t a = release::code((uint32_t)strtoul(line.c_str() + (site ? 1 : 0), nullptr, 16));
+        if (a) (site ? sites : functions).insert(a);
     }
 }
 
 namespace {
 
 int32_t sext(uint32_t v, int bits) { return (int32_t)(v << (32 - bits)) >> (32 - bits); }
+
+// the name of guest code at `a`: its USA address (the runtime names game functions by those;
+// release.h), or for code without one (other releases only) E + its own address
+std::string sym(uint32_t a) {
+    uint32_t u = release::usa_code(a);
+    char b[10];
+    snprintf(b, sizeof b, u ? "%08X" : "E%08X", u ? u : a);
+    return b;
+}
 
 std::string hex8(uint32_t v) {
     char b[9];
@@ -66,13 +79,13 @@ public:
         end = P.funcEnd(start);
         bool hooked = H.functions.count(start) != 0;
         if (hooked) {  // callers reach hook_X, which may call the game's code (f_X_orig)
-            llvm::Function* w = guest("f_" + hex8(start));
+            llvm::Function* w = guest("f_" + sym(start));
             auto* bb = llvm::BasicBlock::Create(C, "", w);
             B.SetInsertPoint(bb);
-            B.CreateCall(external("hook_" + hex8(start)), {w->getArg(0)});
+            B.CreateCall(external("hook_" + sym(start)), {w->getArg(0)});
             B.CreateRetVoid();
         }
-        F = guest(hooked ? "f_" + hex8(start) + "_orig" : "f_" + hex8(start));
+        F = guest(hooked ? "f_" + sym(start) + "_orig" : "f_" + sym(start));
         c = F->getArg(0);
         auto* entry = llvm::BasicBlock::Create(C, "entry", F);  // first: the function's entry block
         collect_labels();
@@ -87,13 +100,13 @@ public:
             } else if (B.GetInsertBlock()->getTerminator()) {
                 B.SetInsertPoint(llvm::BasicBlock::Create(C, "", F));  // unreachable code after a jump
             }
-            if (H.sites.count(a)) B.CreateCall(external("site_" + hex8(a)), {c});
+            if (H.sites.count(a)) B.CreateCall(external("site_" + sym(a)), {c});
             instruction(a, P.word(a));
             S.instructions++;
         }
         if (!B.GetInsertBlock()->getTerminator()) {  // falls through into the next function
             if (end < P.textHi) {
-                std::string next = "f_" + hex8(end) + (H.functions.count(end) ? "_orig" : "");
+                std::string next = "f_" + sym(end) + (H.functions.count(end) ? "_orig" : "");
                 tail(guest(next));
             } else {
                 call_unimplemented(end, 0);
@@ -201,7 +214,7 @@ private:
             B.CreateBr(blocks.at(tgt));
             return;
         }
-        if (std::binary_search(P.entries.begin(), P.entries.end(), tgt)) return tail(guest("f_" + hex8(tgt)));
+        if (std::binary_search(P.entries.begin(), P.entries.end(), tgt)) return tail(guest("f_" + sym(tgt)));
         store32(offsetof(Cpu, pc), tgt);
         dispatch(true);
     }
@@ -216,7 +229,7 @@ private:
             return;
         }
         if (std::binary_search(P.entries.begin(), P.entries.end(), tgt)) {
-            B.CreateCall(guest("f_" + hex8(tgt)), {c});
+            B.CreateCall(guest("f_" + sym(tgt)), {c});
             return;
         }
         store32(offsetof(Cpu, pc), tgt);

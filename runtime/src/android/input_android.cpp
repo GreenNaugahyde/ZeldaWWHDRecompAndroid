@@ -42,6 +42,9 @@ void set_pad(uint32_t buttons, float lx, float ly, float rx, float ry) {
 
 void init() {}
 
+void rumble(const uint8_t* pattern, int bits) { jni::rumble(pattern, bits); }
+void rumble_hold(bool on) { jni::rumble_hold(on); }
+
 // debug: WWHD_PRESS=1000-1010:8000,1500-1505:0008 holds VPAD buttons (hex) during TV frame ranges
 struct Press { uint64_t from, to; uint32_t bits; };
 static std::vector<Press> scripted() {

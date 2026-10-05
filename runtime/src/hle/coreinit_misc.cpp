@@ -9,6 +9,7 @@
 #include <string>
 #include <unordered_map>
 
+#include "../release.h"
 #include "../runtime.h"
 
 // ---------------------------------------------------------------- guest printf
@@ -252,6 +253,27 @@ HLE(coreinit, _Exit) { LOG("[game] _Exit(%d)", (int)arg(c, 0)); std::_Exit((int)
 // UCSysConfig entries are 0x54 bytes: name[64], access u32, dataType u32, error s32, dataSize u32, dataPtr u32
 HLE(coreinit, UCOpen) { ret(c, 1); }
 HLE(coreinit, UCClose) { ret(c, 0); }
+// The console language and country the game sees: WWHD_LANGUAGE (en, fr, de, it, es; the app's
+// Language option), limited to the release's languages (USA: English, French, Spanish; EUR: also
+// German and Italian), with a country of that language in the release's region.
+static void system_language(uint32_t& language, uint32_t& country) {
+    const char* l = getenv("WWHD_LANGUAGE");
+    std::string want = l ? l : "en";
+    const bool eur = release::id() == release::Id::EUR;
+    struct Lang { const char* code; uint32_t language, usCountry, euCountry; };
+    // cafe.language: 1 English, 2 French, 3 German, 4 Italian, 5 Spanish. Countries: 49 USA,
+    // 18 Canada, 36 Mexico; 110 United Kingdom, 77 France, 78 Germany, 83 Italy, 105 Spain
+    static const Lang langs[] = {{"en", 1, 49, 110}, {"fr", 2, 18, 77}, {"de", 3, 0, 78}, {"it", 4, 0, 83}, {"es", 5, 36, 105}};
+    for (const Lang& g : langs)
+        if (want == g.code && (eur ? g.euCountry : g.usCountry)) {
+            language = g.language;
+            country = eur ? g.euCountry : g.usCountry;
+            return;
+        }
+    language = 1;
+    country = eur ? 110 : 49;
+}
+
 HLE(coreinit, UCReadSysConfig) {
     uint32_t count = arg(c, 1), items = arg(c, 2);
     for (uint32_t i = 0; i < count; i++) {
@@ -259,8 +281,10 @@ HLE(coreinit, UCReadSysConfig) {
         std::string name = mem::read_cstr(e);
         uint32_t size = ld32(e + 0x4C), data = ld32(e + 0x50);
         uint32_t value = 0;
-        if (name == "cafe.language") value = 1;          // English
-        else if (name == "cafe.cntry_reg") value = 49;   // USA
+        uint32_t language, country;
+        system_language(language, country);
+        if (name == "cafe.language") value = language;
+        else if (name == "cafe.cntry_reg") value = country;
         else if (name == "cafe.eula_agree") value = 1;
         else if (name == "cafe.initial_launch") value = 2;
         else if (name == "parent.enable") value = 0;

@@ -17,6 +17,7 @@
 #include <vector>
 
 #include "verify_tap.h"  // not verify_tap_gen.h: the recorder's own accesses are not logged
+#include "release.h"
 
 extern "C" {
 int tap_begin(Cpu* c, uint32_t func);
@@ -64,7 +65,7 @@ void event(Recorder* r, uint8_t type, uint8_t size, uint32_t ea, uint64_t value,
 extern "C" int tap_begin(Cpu* c, uint32_t func) {
     std::call_once(g_once, init);
     if (!g_dir) return 0;
-    if (g_after && ld32(0x101FF558) < g_after) return 0;  // g_Counter.mCounter0
+    if (g_after && ld32(release::data(0x101FF558)) < g_after) return 0;  // g_Counter.mCounter0
     uint32_t seq;
     {
         std::lock_guard<std::mutex> l(g_mu);
@@ -77,7 +78,7 @@ extern "C" int tap_begin(Cpu* c, uint32_t func) {
     h.magic = TAP_MAGIC;
     h.func = func;
     h.seq = seq;
-    h.frame = ld32(0x101FF558);  // g_Counter.mCounter0
+    h.frame = ld32(release::data(0x101FF558));  // g_Counter.mCounter0
     tap_regs_from(&h.entry, c);
     r->put(&h, sizeof h);
     t_stack.push_back(r);

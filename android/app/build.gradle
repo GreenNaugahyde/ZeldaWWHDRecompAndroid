@@ -14,14 +14,14 @@ android {
         minSdk 30          // Vulkan 1.1, AAudio, 39-bit+ address space handling
         targetSdk 36
         // -PwwhdVersionCode / -PwwhdVersionName for a release; raise the code with every APK you share
-        versionCode((project.findProperty('wwhdVersionCode') ?: '2') as int)
-        versionName project.findProperty('wwhdVersionName') ?: '0.2'
+        versionCode((project.findProperty('wwhdVersionCode') ?: '3') as int)
+        versionName project.findProperty('wwhdVersionName') ?: '0.3'
         ndk {
             abiFilters 'arm64-v8a'
         }
         externalNativeBuild {
             cmake {
-                targets 'wwhd'
+                targets 'wwhd', 'main_hook', 'hook_impl'  // + libadrenotools' hooks (custom GPU drivers)
                 arguments '-DANDROID_STL=c++_static'
                 // -PwwhdGenDir=<dir>: recompiled code somewhere other than build/gen
                 if (project.hasProperty('wwhdGenDir')) arguments "-DGEN_DIR=${project.property('wwhdGenDir')}"

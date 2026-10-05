@@ -11,8 +11,12 @@ namespace platform {
 // name of the calling thread, as shown by debuggers and profilers (truncated to 15 characters on Linux)
 void set_thread_name(const char* name);
 // game, render and service threads: ask the OS to keep them on fast cores
-// (macOS QoS user-interactive; Android: a raised nice value). WWHD_NO_QOS=1 skips it.
+// (macOS QoS user-interactive; Android: a raised nice value and the performance hint session).
+// WWHD_NO_QOS=1 skips the priority.
 void set_thread_high_priority();
+// once per game frame (render thread): reports the frame's CPU work of the game, render and present
+// threads to Android's performance hint session (no-op elsewhere)
+void perf_hint_frame();
 // bounds of the calling thread's stack: [lo, hi)
 void thread_stack_bounds(uintptr_t& lo, uintptr_t& hi);
 // CPU time consumed by a thread so far, in microseconds (0 if unavailable)

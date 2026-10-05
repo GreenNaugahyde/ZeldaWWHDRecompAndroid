@@ -29,6 +29,8 @@ final class Native {
     /** {modules done, modules in total (0 until known)} of the running compile. */
     static native long[] compileProgress();
     static native void compileCancel();
+    /** The game release in gameDir: "USA", "EUR", or "" (none or unknown). */
+    static native String gameRelease(String gameDir);
     /** The licenses of everything in the app, as text. */
     static native String licenses();
     /** Boots the runtime and starts the game (once per process). */
@@ -37,11 +39,19 @@ final class Native {
     static native String checkFrameGenDll(String path);
     /** True if path is a usable Lossless.dll with a shader version this build was tested with. */
     static native boolean frameGenDllTested(String path);
+    /** The running GPU driver's name and version, "" until the renderer has started. */
+    static native String gpuDriverInfo();
+    /** The GPU's name (e.g. "Adreno (TM) 640"), "" until the renderer has started. */
+    static native String gpuName();
+    /** True if the chosen installed driver couldn't be loaded and the system's runs instead. */
+    static native boolean gpuDriverFellBack();
     /** Why frame generation couldn't start, or "" (it runs, or it is off). */
     static native String frameGenError();
 
     static native void surfaceChanged(Object surface);
     static native void surfaceDestroyed();
+    /** The GamePad picture's own display (a second screen): its surface, or null. */
+    static native void drcSurfaceChanged(Object surface);
     /** Screen rectangles in surface pixels: {x, y, w, h}. */
     static native void setLayout(float[] tv, float[] drc, boolean drcVisible);
 
@@ -71,6 +81,25 @@ final class Native {
     static native float[] perfStats();
     /** Climb mod stamina wheel: {stamina 0..1, alpha 0..1 (0 = hidden), exhausted 0/1}. */
     static native float[] climbHud();
+
+    /** One motion sample in SDL controller axes (gyro rad/s, acceleration m/s²), dt in seconds. */
+    static native void motionSample(float dt, float gx, float gy, float gz, float ax, float ay, float az);
+    /** Motion sensors stopped: the GamePad reports resting values. */
+    static native void motionReset();
+
+    /** Called by the game (VPADControlMotor): a rumble pattern of `bits` 1/120 s steps, or stop (0). */
+    @SuppressWarnings("unused")
+    static void rumble(byte[] pattern, int bits) {
+        MainActivity a = MainActivity.instance;
+        if (a != null) a.rumbler().pattern(pattern, bits);
+    }
+
+    /** Called by the game (Pro Controller): rumble motor on or off. */
+    @SuppressWarnings("unused")
+    static void rumbleHold(boolean on) {
+        MainActivity a = MainActivity.instance;
+        if (a != null) a.rumbler().hold(on);
+    }
 
     /** Called by the game (software keyboard) on one of its threads. */
     @SuppressWarnings("unused")

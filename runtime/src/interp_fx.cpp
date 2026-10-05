@@ -37,6 +37,7 @@
 
 #include "runtime.h"
 #include "true60.h"
+#include "release.h"
 
 namespace interp {
 bool enabled();
@@ -104,7 +105,8 @@ int trace_left(int part) {
 // +0xEC its scale (global = local * scale + offset).
 constexpr uint32_t kMgrGroups = 0x50, kEmtrPtcls = 0x1AC, kEmtrChildren = 0x1B8;
 constexpr uint32_t kPtclAge = 0x78, kPtclVel = 0x34;
-constexpr uint32_t kEmtrInfo = 0x104B5730, kInfoCenter = 0xE0, kInfoScale = 0xEC;
+const release::Data kEmtrInfo{0x104B5730};
+constexpr uint32_t kInfoCenter = 0xE0, kInfoScale = 0xEC;
 constexpr int kPW = 12;  // words per particle state
 constexpr uint32_t kPtclWord[kPW] = {0x28, 0x2C, 0x30, 0x9C, 0xA0, 0x8C, 0x90, 0x94, 0xAC, 0xB8, 0xBC, 0xC0};
 enum { kWPos = 0, kWSize = 3, kWAxis = 5, kWAlpha = 8, kWPrm = 9, kWEnv = 10, kWRot = 11 };
@@ -216,7 +218,7 @@ struct PtclTrace {
 // in its time block (*(this+0): +0 frame (after wrap/clamp), +4 start, +8 end, +0x10 the frame
 // mapping function: 027DA9E8 loops, 027DAAA0 clamps) and caches the frame at this+0x28. btk/brk
 // entry and many actors call it from Draw on every pass.
-constexpr uint32_t kLoopFn = 0x027DA9E8;
+const release::Code kLoopFn{0x027DA9E8};
 struct AnmRec {
     uint32_t ts = 0;
     float frame = 0;
@@ -285,7 +287,7 @@ bool plausible(float v) { return v == 0.0f || (std::fabs(v) > 1e-12f && std::fab
 // (slots at +0x18F0C, 0x38 apart), trees s16 +4/+6 (+0x2A9C, 0x84 apart), flowers s16 +4
 // (+0x35BC, 0x38 apart). On logic passes the slots are drawn halfway between the previous step's
 // and this step's values; the exact ones are back for the hold pass.
-constexpr uint32_t kCounterTimer = 0x101FF560;
+const release::Data kCounterTimer{0x101FF560};
 struct SwayKind {
     uint32_t base, stride;
     int fields;
@@ -347,7 +349,7 @@ struct WoodRec {
 // of effect records in a packet that g_env_light (10475A68) points to; WWHD's packets keep the
 // GameCube records (the J3DPacket base grew). On logic passes every float field of every record
 // that did not respawn this step (same status byte, small position change) is drawn halfway.
-constexpr uint32_t kEnvLight = 0x10475A68;
+const release::Data kEnvLight{0x10475A68};
 struct KankyoKind {
     const char* name;
     uint32_t env_off, base, stride;
@@ -1035,7 +1037,7 @@ extern "C" void hook_0246BD4C(Cpu* c) {
 
 // PSMTXTrans(m, x, y, z): the sea's scroll translation, half a step back on halfway frames
 extern "C" void hook_028E93CC(Cpu* c) {
-    if (g_sea_scroll_half && c->lr == 0x0246C958) {
+    if (g_sea_scroll_half && c->lr == release::code(0x0246C958)) {
         static int tr = trace_left(3);
         double y = c->f[2].ps0 - 0.5 / 300.0;
         if (tr) {

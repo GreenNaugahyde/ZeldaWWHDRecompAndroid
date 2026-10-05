@@ -29,6 +29,11 @@ void set_touch(bool down, float x, float y);  // mouse on the GamePad window
 bool pro_controller();
 void set_pro_controller(bool on);
 
+// GamePad rumble: a VPADControlMotor pattern (bit i = motor on during the i-th 1/120 s, least
+// significant bit first; bits == 0 stops), and the Pro Controller's motor on or off
+void rumble(const uint8_t* pattern, int bits);
+void rumble_hold(bool on);
+
 void init();       // main thread, after NSApplication exists
 PadState read();   // any thread
 void release_keys();                // forget held keys (another window took the keyboard)

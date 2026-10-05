@@ -7,6 +7,8 @@
 #include <sys/stat.h>
 
 #include <cstdio>
+#include <cstring>
+#include <strings.h>
 #include <mutex>
 #include <string>
 #include <unordered_map>
@@ -42,7 +44,51 @@ std::unordered_map<uint32_t, OpenFile> g_files;
 std::unordered_map<uint32_t, OpenDir> g_dirs;
 uint32_t g_next_handle = 1;
 
+std::string host_path_exact(const std::string& guest);
+
+// The Wii U's file system ignores case and the game relies on it (it opens
+// "Common/Audiores/c_king.bfsar"; the disc has "AudioRes"). Android's shared storage ignores case
+// on most devices but not on all (seen on an older device with Android 16), so a game data path
+// that doesn't exist as spelled is looked up folder by folder ignoring case; results are kept.
+std::string case_insensitive(const std::string& root, const std::string& path) {
+    struct stat st;
+    if (stat(path.c_str(), &st) == 0 || path.size() <= root.size()) return path;
+    static std::mutex m;
+    static std::unordered_map<std::string, std::string> cache;
+    std::lock_guard<std::mutex> lk(m);
+    auto it = cache.find(path);
+    if (it != cache.end()) return it->second;
+    std::string out = root;
+    size_t i = root.size();
+    while (i < path.size()) {
+        size_t j = path.find('/', i + 1);
+        if (j == std::string::npos) j = path.size();
+        std::string part = path.substr(i + 1, j - i - 1);  // path[i] is '/'
+        std::string next = out + "/" + part;
+        if (!part.empty() && stat(next.c_str(), &st) != 0)
+            if (DIR* d = opendir(out.c_str())) {
+                while (dirent* e = readdir(d))
+                    if (!strcasecmp(e->d_name, part.c_str())) {
+                        next = out + "/" + e->d_name;
+                        break;
+                    }
+                closedir(d);
+            }
+        out = next;
+        i = j;
+    }
+    cache[path] = out;
+    return out;
+}
+
 std::string host_path(const std::string& guest) {
+    std::string r = host_path_exact(guest);
+    const std::string& g = config::game_dir;
+    if (r.compare(0, g.size(), g) == 0 && guest.compare(0, 9, "/vol/save") != 0) return case_insensitive(g, r);
+    return r;
+}
+
+std::string host_path_exact(const std::string& guest) {
     std::string p = guest;
     auto map = [&](const char* prefix, const std::string& root) -> bool {
         size_t n = strlen(prefix);

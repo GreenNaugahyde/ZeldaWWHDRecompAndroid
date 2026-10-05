@@ -40,6 +40,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cstdarg>
+#include <cstddef>
 #include <cstdlib>
 #include <ctime>
 #include <map>
@@ -49,6 +50,8 @@
 #include <unordered_map>
 
 #include "runtime.h"
+#include "input.h"
+#include "release.h"
 
 // module sections
 bool threads_ss_save(ss::Writer& w, std::string& why);
@@ -93,7 +96,11 @@ struct Header {
     uint32_t cpu_size;      // sizeof(Cpu)
     uint32_t blocks;        // compressed blocks that follow
     uint64_t raw_size;      // payload bytes
+    // added later (files written before end at header_size == kHeaderV1Size and read these as 0)
+    uint32_t controller;    // the controls at the time: 0 unknown, 1 GamePad, 2 Pro Controller
+    uint32_t reserved;
 };
+constexpr uint32_t kHeaderV1Size = offsetof(Header, controller);
 
 enum : uint32_t {
     kSecThreads = 'THRD',
@@ -291,13 +298,14 @@ uint64_t game_id() {
 }
 
 // current stage (dComIfG_gameInfo.play: the start stage, 8 chars)
-constexpr uint32_t kStageName = 0x1046F0B0 + 0x5134;  // dStage_startStage_c (next stage at +0x5140)
+const release::Data kStageInfo{0x1046F0B0};
+constexpr uint32_t kStageNameOff = 0x5134;  // dStage_startStage_c (next stage at +0x5140)
 std::string stage_name() {
     if (const char* e = getenv("WWHD_STATE_STAGE_ADDR")) {
         uint32_t a = (uint32_t)strtoul(e, nullptr, 16);
         return std::string((const char*)mem::ptr(a), strnlen((const char*)mem::ptr(a), 8));
     }
-    const char* p = (const char*)mem::ptr(kStageName);
+    const char* p = (const char*)mem::ptr(kStageInfo + kStageNameOff);
     size_t n = strnlen(p, 8);
     for (size_t i = 0; i < n; i++)
         if (p[i] < 0x20 || p[i] > 0x7E) return "";
@@ -399,8 +407,14 @@ bool write_slot(int slot, const Header& h0, const std::vector<uint8_t>& payload)
 }
 
 bool read_header(FILE* f, Header& h, std::string& why) {
-    if (fread(&h, sizeof h, 1, f) != 1 || memcmp(h.magic, kMagic, 8) != 0) { why = "not a save state"; return false; }
-    if (h.version != kVersion || h.header_size != sizeof(Header)) { why = "saved by another version"; return false; }
+    memset(&h, 0, sizeof h);
+    if (fread(&h, kHeaderV1Size, 1, f) != 1 || memcmp(h.magic, kMagic, 8) != 0) { why = "not a save state"; return false; }
+    if (h.version != kVersion || h.header_size < kHeaderV1Size || h.header_size > 4096) { why = "saved by another version"; return false; }
+    // the fields added since (a newer header's unknown rest is skipped)
+    size_t known = std::min<size_t>(h.header_size, sizeof h) - kHeaderV1Size;
+    uint32_t headerSize = h.header_size;
+    if (known && fread((uint8_t*)&h + kHeaderV1Size, known, 1, f) != 1) { why = "file is truncated"; return false; }
+    if (headerSize > sizeof h && fseek(f, headerSize - sizeof h, SEEK_CUR) != 0) { why = "file is truncated"; return false; }
     if (h.cpu_size != sizeof(Cpu)) { why = "saved by an incompatible build"; return false; }
     if (h.game_id != game_id()) { why = "saved with a different game executable"; return false; }
     return true;
@@ -573,6 +587,7 @@ bool do_save(int slot) {
     build_uuid(h.build);
     h.game_id = game_id();
     h.cpu_size = sizeof(Cpu);
+    h.controller = input::pro_controller() ? 2 : 1;
     threads::thaw();
     double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
     LOG("[savestate] slot %d: captured %.1f MB in %.1f ms (stage %s)", slot, payload->b.size() / 1048576.0, ms, stage.c_str());
@@ -642,7 +657,14 @@ bool do_load(const std::shared_ptr<Snapshot>& s) {
     threads::thaw();
     double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
     std::string area = s->h.area[0] ? " (" + area_label(s->h.area) + ")" : "";
-    message("Loaded slot %d%s", s->slot, area.c_str());
+    // the controls the state was saved with: the game expects input from that controller
+    bool pro = s->h.controller == 2;
+    if (s->h.controller && pro != input::pro_controller()) {
+        input::set_pro_controller(pro);
+        message("Loaded slot %d%s; controls act as %s again", s->slot, area.c_str(), pro ? "Wii U Pro Controller" : "Wii U GamePad");
+    } else {
+        message("Loaded slot %d%s", s->slot, area.c_str());
+    }
     LOG("[savestate] slot %d: restored in %.1f ms", s->slot, ms);
     return true;
 }
@@ -697,6 +719,7 @@ SlotInfo slot_info(int slot) {
         info.when = buf;
         h.area[sizeof h.area - 1] = 0;
         if (h.area[0]) info.area = area_label(h.area);
+        info.controller = (int)h.controller;
     }
     return info;
 }

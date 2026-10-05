@@ -2,6 +2,7 @@
 // Online services (Miiverse, SpotPass, accounts) report "unavailable".
 #include "../runtime.h"
 #include "../input.h"
+#include "../motion.h"
 
 namespace interp { bool repeat_input(); bool fresh_sticks(); void trace_read(const char*); }
 
@@ -115,8 +116,28 @@ HLE(vpad, VPADRead) {
     last_hold = hold;
     stf32(st + 0x0C, p.lx); stf32(st + 0x10, p.ly);
     stf32(st + 0x14, p.rx); stf32(st + 0x18, p.ry);
-    stf32(st + 0x30, 1.0f);                                    // accXY
-    for (int i = 0; i < 3; i++) stf32(st + 0x6C + i * 0x10, 1.0f);  // dir = identity
+    // motion from the host's sensors (motion.cpp), also in Pro Controller mode (the game may still
+    // read the GamePad's gyro); without sensors, lying flat at rest
+    motion::Vpad m;
+    if (motion::vpad(m)) {
+        for (int i = 0; i < 3; i++) stf32(st + 0x1C + i * 4, m.acc[i]);
+        stf32(st + 0x28, m.accMagnitude);
+        stf32(st + 0x2C, m.accAcceleration);
+        stf32(st + 0x30, m.accXY[0]);
+        stf32(st + 0x34, m.accXY[1]);
+        for (int i = 0; i < 3; i++) stf32(st + 0x38 + i * 4, m.gyro[i]);
+        for (int i = 0; i < 3; i++) stf32(st + 0x44 + i * 4, m.angle[i]);
+        for (int i = 0; i < 9; i++) stf32(st + 0x6C + i * 4, m.dir[i]);
+        // debug: WWHD_MOTION_LOG=1 logs the motion values every 30th read, and the rumble commands
+        static const bool logMotion = getenv("WWHD_MOTION_LOG") != nullptr;
+        static int n = 0;
+        if (logMotion && ++n % 30 == 0)
+            LOG("[motion] acc %.2f %.2f %.2f  gyro %.3f %.3f %.3f  angle %.3f %.3f %.3f  dir.x %.2f %.2f %.2f", m.acc[0], m.acc[1],
+                m.acc[2], m.gyro[0], m.gyro[1], m.gyro[2], m.angle[0], m.angle[1], m.angle[2], m.dir[0], m.dir[1], m.dir[2]);
+    } else {
+        stf32(st + 0x30, 1.0f);                                         // accXY
+        for (int i = 0; i < 3; i++) stf32(st + 0x6C + i * 0x10, 1.0f);  // dir = identity
+    }
     // touch panel, raw coordinates as the hardware reports them (mapping from Cemu)
     static uint16_t last_tx = 0, last_ty = 0;
     if (p.touch) {
@@ -147,8 +168,17 @@ HLE(vpad, VPADGetTPCalibratedPointEx) {
     int res = (int)arg(c, 1);  // 0 = 1920x1080, 1 = 1280x720, 2 = 854x480
     tp_to_screen(arg(c, 2), arg(c, 3), res == 0 ? 1920 : res == 2 ? 854 : 1280, res == 0 ? 1080 : res == 2 ? 480 : 720);
 }
-HLE(vpad, VPADControlMotor) { ret(c, 0); }
-HLE(vpad, VPADStopMotor) {}
+// (chan, uint8* pattern, uint8 length in bits): up to 120 steps of 1/120 s; length 0 stops
+HLE(vpad, VPADControlMotor) {
+    uint32_t chan = arg(c, 0), pattern = arg(c, 1), bits = std::min<uint32_t>(arg(c, 2) & 0xFF, 120);
+    if (getenv("WWHD_MOTION_LOG") && pattern && bits)
+        LOG("[rumble] %u bits: %02X %02X %02X %02X ...", bits, ld8(pattern), ld8(pattern + 1), ld8(pattern + 2), ld8(pattern + 3));
+    if (chan == 0 && !input::pro_controller()) input::rumble(pattern ? mem::ptr(pattern) : nullptr, pattern ? (int)bits : 0);
+    ret(c, 0);
+}
+HLE(vpad, VPADStopMotor) {
+    if (arg(c, 0) == 0) input::rumble(nullptr, 0);
+}
 HLE(vpadbase, VPADBASEGetHeadphoneStatus) { ret(c, 0); }
 
 // ---- padscore (Wii Remote / Pro Controller): see padscore.cpp

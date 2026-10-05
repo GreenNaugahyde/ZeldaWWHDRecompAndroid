@@ -29,6 +29,7 @@
 
 #include "runtime.h"
 #include "true60.h"
+#include "release.h"
 
 extern "C" {
 void f_025DF940_orig(Cpu* c);  // fpcM_Execute
@@ -122,7 +123,7 @@ void ratio_arg(Cpu* c, int r) {
 // ---- processes ----
 namespace {
 constexpr uint32_t kSubMethod = 0xF0;     // fopAc_ac_c::sub_method (GameCube 0xEC)
-constexpr uint32_t kDaPyExecute = 0x0240EBB0;  // daPy_Execute (tail-calls daPy_lk_c::execute 0240CDD0)
+const release::Code kDaPyExecute{0x0240EBB0};  // daPy_Execute (tail-calls daPy_lk_c::execute 0240CDD0)
 constexpr uint32_t kCurProc = 0x65F0;     // daPy_lk_c::mCurProc (GameCube 0x31D8)
 constexpr uint32_t kPos = 0x314, kOld = 0x300, kSpeed = 0x33C, kSpeedF = 0x370, kGravity = 0x374, kMaxFall = 0x378;
 constexpr uint32_t kShapeAngle = 0x328, kAngle = 0x320;
@@ -207,7 +208,7 @@ void init_link_procs() {
 // camera (dCamera_c::followCamera, whose smoothing is converted by tools/true60/sites_camera.txt);
 // other camera modes stay at 30 Hz and are interpolated. WWHD_TRUE60_CAMERA=0 keeps it at 30 Hz.
 constexpr uint32_t kCamMtd = 0x228;              // camera_class::mpMtd (GameCube 0x224)
-constexpr uint32_t kCameraExecute = 0x024FFA3C;  // camera_execute
+const release::Code kCameraExecute{0x024FFA3C};  // camera_execute
 constexpr uint32_t kDCamera = 0x248;             // camera_process_class::mCamera
 bool g_follow_called = false;  // followCamera ran during the camera's execute
 bool g_cam_follow = false;     // ... during its last execute
@@ -796,7 +797,7 @@ extern "C" void site_025B00B0(Cpu* c) {
     if (hold_world()) c->r[3] = 1;
 }
 extern "C" void hook_025CB6D4(Cpu* c) {
-    if (c->lr == 0x025B01F0u && hold_world()) return;
+    if (c->lr == release::code(0x025B01F0) && hold_world()) return;
     f_025CB6D4_orig(c);
 }
 

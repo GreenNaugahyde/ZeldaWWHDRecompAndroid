@@ -23,6 +23,7 @@
 #include <thread>
 #include <vector>
 
+#include "../release.h"
 #include "emit.h"
 #include "program.h"
 
@@ -30,7 +31,9 @@ namespace recomp {
 
 // Code for the CPU we run on: generic AArch64 plus only the extensions the kernel reports (a CPU
 // model would imply some the firmware disables, e.g. SVE on Snapdragons); the model itself is used
-// for scheduling only ("tune-cpu").
+// for scheduling only ("tune-cpu"). SVE/SVE2 only where the kernel enables them (MediaTek
+// Dimensity, Google Tensor); the code stays vector-length agnostic. SME stays off: streaming
+// mode isn't something compiled game code can use.
 std::string host_features() {
     std::string f;
 #if defined(__aarch64__) && defined(__linux__)
@@ -40,8 +43,15 @@ std::string host_features() {
     if (hw & (1UL << 20)) f += "+dotprod,";   // HWCAP_ASIMDDP
     if (hw & (1UL << 15)) f += "+rcpc,";      // HWCAP_LRCPC
     if (hw & (1UL << 7)) f += "+rdm,";        // HWCAP_ASIMDRDM
-#endif
+    unsigned long hw2 = getauxval(AT_HWCAP2);
+    const bool sve = hw & (1UL << 22);        // HWCAP_SVE
+    const bool sve2 = sve && (hw2 & (1UL << 1));  // HWCAP2_SVE2
+    f += sve ? "+sve," : "-sve,";
+    f += sve2 ? "+sve2," : "-sve2,";
+    f += "-sme";
+#else
     f += "-sve,-sve2,-sme";
+#endif
     return f;
 }
 
@@ -51,6 +61,10 @@ bool compile_game(const CompileOptions& opt, CompileResult& res, std::string& er
     auto t0 = std::chrono::steady_clock::now();
     Program prog;
     if (!prog.load(opt.rpxPath, err)) return false;
+    if (!release::select(prog.entry)) {  // before the hooks: their USA addresses are translated
+        err = "this game version is not supported";
+        return false;
+    }
     Hooks hooks;
     hooks.parse(opt.hooksText);
 

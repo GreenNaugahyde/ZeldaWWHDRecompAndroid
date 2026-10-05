@@ -116,24 +116,40 @@ elseif(ANDROID)
   # Vulkan Memory Allocator (header only; its CMake project isn't needed)
   FetchContent_Declare(vma GIT_REPOSITORY https://github.com/GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator.git GIT_TAG v3.3.0
                        GIT_SHALLOW TRUE SOURCE_SUBDIR none)
-  FetchContent_MakeAvailable(glslang vma)
+  # volk: Vulkan entry points loaded at run time, from the system's libvulkan or (libadrenotools)
+  # one that loads a GPU driver the user installed; tag matching the NDK's Vulkan headers
+  FetchContent_Declare(volk GIT_REPOSITORY https://github.com/zeux/volk.git GIT_TAG vulkan-sdk-1.3.275.0
+                       GIT_SHALLOW TRUE SOURCE_SUBDIR none)
+  FetchContent_Declare(adrenotools GIT_REPOSITORY https://github.com/bylaws/libadrenotools.git
+                       GIT_TAG 8fae8ce254dfc1344527e05301e43f37dea2df80 GIT_SUBMODULES_RECURSE TRUE)
+  if(NOT CMAKE_ANDROID_ARCH_ABI)
+    set(CMAKE_ANDROID_ARCH_ABI ${ANDROID_ABI})  # libadrenotools checks it
+  endif()
+  FetchContent_MakeAvailable(glslang vma volk adrenotools)
 
   file(GLOB VK_SOURCES CONFIGURE_DEPENDS runtime/src/vk/*.cpp)
   file(GLOB ANDROID_SOURCES CONFIGURE_DEPENDS runtime/src/android/*.cpp)
   set_source_files_properties(${GX2_SOURCES} ${VK_SOURCES} ${ANDROID_SOURCES} ${SHARED_GFX_SOURCES} PROPERTIES COMPILE_OPTIONS "-include;${CEMU_DIR}/cemu_shim.h")
 
   add_library(wwhd SHARED ${RUNTIME_SOURCES} runtime/src/audio_out_aaudio.cpp ${GX2_SOURCES} ${VK_SOURCES} ${ANDROID_SOURCES}
-                          ${SHARED_GFX_SOURCES})
-  target_include_directories(wwhd PRIVATE runtime/include runtime/src runtime/src/gx2 ${vma_SOURCE_DIR}/include ${glslang_SOURCE_DIR})
-  target_compile_definitions(wwhd PRIVATE VMA_STATIC_VULKAN_FUNCTIONS=1 VMA_DYNAMIC_VULKAN_FUNCTIONS=0
-                                      VMA_VULKAN_VERSION=1001000)  # Vulkan 1.1 entry points only
+                          ${SHARED_GFX_SOURCES} ${volk_SOURCE_DIR}/volk.c)
+  target_include_directories(wwhd PRIVATE runtime/include runtime/src runtime/src/gx2 ${vma_SOURCE_DIR}/include ${glslang_SOURCE_DIR}
+                                          ${volk_SOURCE_DIR})
+  # no Vulkan prototypes: every vk* call goes through volk's function pointers
+  target_compile_definitions(wwhd PRIVATE VK_NO_PROTOTYPES VK_USE_PLATFORM_ANDROID_KHR VMA_STATIC_VULKAN_FUNCTIONS=0
+                                      VMA_DYNAMIC_VULKAN_FUNCTIONS=1 VMA_VULKAN_VERSION=1001000)  # Vulkan 1.1 entry points only
   target_compile_options(wwhd PRIVATE -Wall -Wno-unused-function -Wno-unused-variable -Wno-unused-private-field
                                       -Wno-nullability-completeness -Wno-mismatched-tags -ffp-contract=off)
   # 16 KiB page devices (Android 15+); -Bsymbolic: calls between the recompiled functions bind
   # directly instead of through the PLT (their names stay exported for backtraces)
   target_link_options(wwhd PRIVATE "-Wl,-z,max-page-size=16384" "-Wl,-Bsymbolic")
   target_link_libraries(wwhd PRIVATE cemu_latte glslang glslang-default-resource-limits SPIRV
-                                     vulkan android nativewindow log aaudio z)
+                                     adrenotools android nativewindow log aaudio z dl)
+  # libadrenotools' hooks, loaded into the driver's linker namespace (packaged next to libwwhd.so)
+  add_dependencies(wwhd main_hook hook_impl)
+  foreach(t main_hook hook_impl)
+    target_link_options(${t} PRIVATE "-Wl,-z,max-page-size=16384")  # 16 KiB page devices, as libwwhd.so
+  endforeach()
   if(NOT WWHD_DEVICE_RECOMP)
     target_link_libraries(wwhd PRIVATE gamecode)
   endif()
@@ -144,7 +160,10 @@ elseif(ANDROID)
     "Cemu (GPU address library and shader decompiler, in runtime/third_party/cemu)|MPL-2.0 (same license text as this project)|"
     "{fmt}|MIT|${CMAKE_SOURCE_DIR}/runtime/third_party/fmt/LICENSE"
     "glslang|BSD-3-Clause and others|${glslang_SOURCE_DIR}/LICENSE.txt"
-    "Vulkan Memory Allocator|MIT|${vma_SOURCE_DIR}/LICENSE.txt")
+    "Vulkan Memory Allocator|MIT|${vma_SOURCE_DIR}/LICENSE.txt"
+    "volk|MIT|${volk_SOURCE_DIR}/LICENSE.md"
+    "libadrenotools|BSD-2-Clause|${adrenotools_SOURCE_DIR}/LICENSE"
+    "linkernsbypass (part of libadrenotools)|BSD-2-Clause|${adrenotools_SOURCE_DIR}/lib/linkernsbypass/LICENSE")
   set(WWHD_LLVM_DIR ${CMAKE_SOURCE_DIR}/build/llvm/install CACHE PATH "LLVM built for Android (tools/android/build-llvm.sh)")
   if(EXISTS ${WWHD_LLVM_DIR}/lib/cmake/llvm/LLVMConfig.cmake)
     find_package(LLVM REQUIRED CONFIG PATHS ${WWHD_LLVM_DIR}/lib/cmake/llvm NO_DEFAULT_PATH NO_CMAKE_FIND_ROOT_PATH)
@@ -158,7 +177,7 @@ elseif(ANDROID)
                                 runtime/src/recomp/compile.cpp ${CMAKE_BINARY_DIR}/recomp_data.S)
     set_source_files_properties(runtime/src/recomp/emit.cpp runtime/src/recomp/compile.cpp PROPERTIES
                                 INCLUDE_DIRECTORIES "${LLVM_INCLUDE_DIRS}")
-    target_compile_definitions(wwhd PRIVATE WWHD_RECOMP=1)
+    target_compile_definitions(wwhd PRIVATE WWHD_RECOMP=1 WWHD_RELEASE_MAPS=1)  # release.cpp: the EUR address map
     target_link_libraries(wwhd PRIVATE ${WWHD_LLVM_LIBS})
     list(APPEND LIC_PARTS "LLVM (the on-device recompiler) and libc++|Apache-2.0 with LLVM Exceptions|${WWHD_LLVM_DIR}/LICENSE.TXT")
     # ops.c as LLVM bitcode (the instruction semantics the recompiler inlines), embedded with the hook lists
@@ -173,7 +192,9 @@ elseif(ANDROID)
     file(WRITE ${CMAKE_BINARY_DIR}/recomp_data.S
 "    .section .rodata
     .balign 16
-    .global wwhd_ops_bc, wwhd_ops_bc_end, wwhd_hooks, wwhd_hooks_end
+    .global wwhd_ops_bc, wwhd_ops_bc_end, wwhd_hooks, wwhd_hooks_end, wwhd_release_eur, wwhd_release_eur_end
+wwhd_release_eur: .incbin \"${HOOKS_DIR}/release_eur.txt\"
+wwhd_release_eur_end:
 wwhd_ops_bc: .incbin \"${OPS_BC}\"
 wwhd_ops_bc_end:
 wwhd_hooks:
@@ -185,7 +206,7 @@ wwhd_hooks:
 wwhd_hooks_end:
 ")
     set_source_files_properties(${CMAKE_BINARY_DIR}/recomp_data.S PROPERTIES OBJECT_DEPENDS
-      "${OPS_BC};${HOOKS_DIR}/hooks.txt;${HOOKS_DIR}/hooks_climb.txt;${HOOKS_DIR}/hooks_mods.txt")
+      "${OPS_BC};${HOOKS_DIR}/hooks.txt;${HOOKS_DIR}/hooks_climb.txt;${HOOKS_DIR}/hooks_mods.txt;${HOOKS_DIR}/release_eur.txt")
 
     if(WWHD_DEVICE_RECOMP)
       # The game code is linked at startup (loader.cpp). The game functions the runtime calls

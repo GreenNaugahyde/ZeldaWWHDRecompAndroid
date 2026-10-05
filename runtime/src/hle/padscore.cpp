@@ -35,7 +35,10 @@ HLE(padscore, KPADSetMplsWorkarea) {}
 HLE(padscore, WPADEnableURCC) {}
 HLE(padscore, WPADEnableWiiRemote) {}
 HLE(padscore, WPADDisconnect) {}
-HLE(padscore, WPADControlMotor) {}
+// (chan, command): 1 = motor on, 0 = off (Pro Controller on channel 0 only)
+HLE(padscore, WPADControlMotor) {
+    if (arg(c, 0) == 0 && input::pro_controller()) input::rumble_hold(arg(c, 1) != 0);
+}
 HLE(padscore, WPADGetBatteryLevel) { ret(c, 4); }  // full
 HLE(padscore, WPADCanSendStreamData) { ret(c, 0); }
 HLE(padscore, WPADSendStreamData) { ret(c, (uint32_t)kWpadErrNoController); }
