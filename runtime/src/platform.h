@@ -18,6 +18,8 @@ void set_thread_high_priority();
 // restores the affinity if the system changed it, and gives inherited affinities back to other
 // threads. WWHD_NO_PRIME_CORE=1 skips it.
 void set_thread_fastest_cores();
+void set_prime_core(bool on);  // the app's switch for the above (applied at the next check)
+bool prime_core();
 // bounds of the calling thread's stack: [lo, hi)
 void thread_stack_bounds(uintptr_t& lo, uintptr_t& hi);
 // CPU time consumed by a thread so far, in microseconds (0 if unavailable)

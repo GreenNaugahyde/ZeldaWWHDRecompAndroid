@@ -187,6 +187,7 @@
         <item>One behind</item>
         <item>No wait</item>
     </string-array>
+    <string name="opt_prime_core">Experimental: render on prime core</string>
     <string name="opt_resolution">Rendering resolution</string>
     <string name="opt_framegen">Frame generation</string>
     <string name="opt_aspect">Aspect ratio</string>

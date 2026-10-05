@@ -288,7 +288,7 @@ static void execute_one(Op op, const uint32* p, uint32 n) {
 #ifdef __ANDROID__
         {
             static uint32_t swaps = 0;
-            if (++swaps % 120 == 0) platform::set_thread_fastest_cores();  // keep (or get back) the prime core
+            if (++swaps % 30 == 0) platform::set_thread_fastest_cores();  // keep (or get back) the prime core
         }
 #endif
         break;

@@ -6,6 +6,7 @@
 #include <sched.h>
 #include <dirent.h>
 #include <algorithm>
+#include <atomic>
 
 #include <cstdio>
 #include <cstdlib>
@@ -98,15 +99,26 @@ static bool core_sets(cpu_set_t& fastest, cpu_set_t& all, int& count) {
 }
 #endif
 
+static std::atomic<bool> g_prime_core{getenv("WWHD_NO_PRIME_CORE") == nullptr};
+void set_prime_core(bool on) { g_prime_core = on; }
+bool prime_core() { return g_prime_core; }
+
 void set_thread_fastest_cores() {
 #if defined(__ANDROID__)
-    if (getenv("WWHD_NO_PRIME_CORE")) return;
     static cpu_set_t fastest, all;
     static int count = 0;
     static const bool multi = core_sets(fastest, all, count);
     if (!multi) return;
     static pid_t self = 0;
     pid_t tid = (pid_t)syscall(SYS_gettid);
+    if (!g_prime_core) {  // switched off: every core again (once)
+        if (self == tid) {
+            sched_setaffinity(0, sizeof all, &all);
+            self = 0;
+            __android_log_print(ANDROID_LOG_INFO, "wwhd", "[platform] render thread on every core");
+        }
+        return;
+    }
     cpu_set_t now;
     bool pinned = sched_getaffinity(0, sizeof now, &now) == 0 && CPU_EQUAL(&now, &fastest);
     if (!pinned) {
