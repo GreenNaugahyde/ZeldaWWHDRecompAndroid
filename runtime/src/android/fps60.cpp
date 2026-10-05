@@ -17,6 +17,7 @@
 namespace interp {
 bool interp_on();
 void set_enabled(bool v);
+void set_mode(int m);  // 0 off, 1 interpolation, 2 true 60
 }  // namespace interp
 
 namespace fps60 {
@@ -33,10 +34,11 @@ constexpr int64_t kRenderRoom = 11000000, kGameRoom = 22000000;
 }  // namespace
 
 void set_mode(int m) {
-    m = std::clamp(m, 0, 2);
+    m = std::clamp(m, 0, 3);
     g_mode = m;
     g_reset = true;
-    interp::set_enabled(m != 0);
+    if (m == 3) interp::set_mode(2);  // true 60 (experimental): Link and the camera at 60 logic steps
+    else interp::set_enabled(m != 0);
 }
 
 int mode() { return g_mode; }

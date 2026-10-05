@@ -1,3 +1,5 @@
+#include <cmath>
+#include <chrono>
 // Android input: the Java side merges the on-screen controls, game controllers and a hardware
 // keyboard into one Wii U GamePad state (MainActivity / InputMapper) and hands it over here.
 #include <atomic>
@@ -109,3 +111,22 @@ namespace mods {
 bool mouse_captured() { return false; }
 void mouse_release() {}
 }  // namespace mods
+
+// ---- rumble: the game repeats its request while the effect lasts; forward only changes (or a
+// request after the previous one ran out) so the vibrator isn't restarted every frame
+namespace input {
+void set_rumble(float strength, uint32_t duration_ms) {
+    static float last = -1;
+    static auto until = std::chrono::steady_clock::time_point{};
+    auto now = std::chrono::steady_clock::now();
+    if (strength <= 0.01f) {
+        if (last > 0) jni::rumble(0, 0);
+        last = 0;
+        return;
+    }
+    if (std::fabs(strength - last) < 0.1f && now < until - std::chrono::milliseconds(100)) return;
+    last = strength;
+    until = now + std::chrono::milliseconds(duration_ms);
+    jni::rumble(strength, duration_ms);
+}
+}  // namespace input

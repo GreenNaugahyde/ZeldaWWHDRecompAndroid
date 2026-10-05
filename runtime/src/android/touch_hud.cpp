@@ -66,6 +66,10 @@ uint32_t save_address() {
     uint32_t s = base + kSaveOffset;
     uint16_t maxLife = ld16(s), life = ld16(s + 2);
     if (maxLife < 12 || maxLife > 80 || maxLife % 4 || life > maxLife) return 0;
+    // the title screen and the file select have placeholder save data (as mods/cheats.cpp checks)
+    const char* stage = (const char*)mem::ptr(0x1046F0B0 + 0x5134);
+    size_t n = strnlen(stage, 8);
+    if (n == 0 || (n == 5 && !memcmp(stage, "sea_T", 5)) || (n == 4 && !memcmp(stage, "Name", 4))) return 0;
     return s;
 }
 

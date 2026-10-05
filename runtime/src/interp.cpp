@@ -11,6 +11,7 @@
 // Main loop functions in WWHD: see tools/recomp/hooks.txt and docs/decomp-notes.md.
 // Camera layout (camera_draw, 024FFC40): near +0xCC, far +0xD0, fovy +0xD4, aspect +0xD8,
 // eye +0xDC, center +0xE8, up +0xF4, bank (s16) +0x100.
+#include <algorithm>
 #include <atomic>
 #include <cmath>
 #include <cstdlib>
@@ -233,6 +234,38 @@ extern "C" void hook_024FFC40(Cpu* c) {
     }
     p->s = read_cam(cam);  // exact step: remember it for the next halfway frame
     p->valid = true;
+    if (g_hold && true60::enabled()) {  // true 60: the half pass's camera is a preview (true60.cpp)
+        true60::camera_draw_preview(true);
+        f_024FFC40_orig(c);
+        true60::camera_draw_preview(false);
+        return;
+    }
+    static const bool dbg = getenv("WWHD_T60_CAMDRAWLOG") != nullptr;  // debug: statics camera_draw writes
+    if (dbg && g_hold) {
+        static std::vector<uint32_t> before;
+        static std::unordered_map<uint32_t, int> cnt;
+        static int n = 0;
+        const uint32_t lo = 0x10100000, hi = 0x10500000;
+        before.assign((uint32_t*)ppc_ptr(lo), (uint32_t*)ppc_ptr(hi));
+        f_024FFC40_orig(c);
+        const uint32_t* cur = (const uint32_t*)ppc_ptr(lo);
+        for (size_t i = 0; i < before.size(); i++)
+            if (cur[i] != before[i]) cnt[lo + 4 * (uint32_t)i]++;
+        if (++n % 200 == 0) {
+            std::vector<std::pair<uint32_t, int>> v(cnt.begin(), cnt.end());
+            std::sort(v.begin(), v.end());
+            std::string o;
+            uint32_t start = 0, last = 0; int c0 = 0;
+            for (auto& [a, k] : v) {
+                if (start && a == last + 4) { last = a; continue; }
+                if (start) { char t[48]; snprintf(t, sizeof t, " %08X-%08X:%d", start, last + 3, c0); o += t; }
+                start = last = a; c0 = k;
+            }
+            if (start) { char t[48]; snprintf(t, sizeof t, " %08X-%08X:%d", start, last + 3, c0); o += t; }
+            LOG("[camdrawlog]%s", o.c_str());
+        }
+        return;
+    }
     f_024FFC40_orig(c);
 }
 
@@ -455,10 +488,13 @@ void ss_reset() {
 }
 }  // namespace interp
 
+namespace mods { void cheats_service(); }  // mods/cheats.cpp
+
 extern "C" void hook_0203593C(Cpu* c) {
     using namespace interp;
     fx_pass_start();
     ss::service(c);  // save states: exact values are back in guest memory, all other threads idle
+    mods::cheats_service();
     // test aid: WWHD_INTERP_AT_STEP=n switches interpolation on after n frames
     static uint64_t passes = 0;
     static const uint64_t at = getenv("WWHD_INTERP_AT_STEP") ? strtoull(getenv("WWHD_INTERP_AT_STEP"), nullptr, 10) : 0;
@@ -467,6 +503,7 @@ extern "C" void hook_0203593C(Cpu* c) {
     static uint64_t passes60 = 0;
     if (at60 && ++passes60 == at60) set_mode(2);
     true60::new_pass();
+    true60::pass_begin(!enabled() || !g_hold_next);  // full pass: take back Link's half-pass preview
     if (!enabled() || !g_hold_next) g_logic_steps++;
     if (!enabled()) {
         g_hold_next = false;
@@ -580,7 +617,26 @@ extern "C" void hook_0255E854(Cpu* c) {
             for (int i = 0; i < 3 && st; i++) st32(st + 4 * i, s.pos[i]);
         }
     }
+    // true 60: the hold pass ran with the preview camera; the next full pass continues from the
+    // state the logic pass left, as the 30 fps game's next step does
+    static SetLightState after_logic;
+    if (true60::enabled() && called_from_frame_function() && !interp::g_hold_frame && after_logic.step + 1 == interp::g_logic_steps) {
+        uint32_t st2 = ld32(kLightStatusPt);
+        if (after_logic.status == st2) {
+            st32(kSetLightTarget, after_logic.target);
+            st32(kSetLightEfTarget, after_logic.ef_target);
+            for (int i = 0; i < 3 && st2; i++) st32(st2 + 4 * i, after_logic.pos[i]);
+        }
+    }
     f_0255E854_orig(c);
+    if (true60::enabled() && called_from_frame_function() && !interp::g_hold_frame) {
+        uint32_t st2 = ld32(kLightStatusPt);
+        after_logic.step = interp::g_logic_steps;
+        after_logic.target = ld32(kSetLightTarget);
+        after_logic.ef_target = ld32(kSetLightEfTarget);
+        after_logic.status = st2;
+        for (int i = 0; i < 3; i++) after_logic.pos[i] = st2 ? ld32(st2 + 4 * i) : 0;
+    }
     uint32_t st = ld32(0x101E8CC8);  // lightStatusPt
     interp::light_trace_add(" setLight t%.2f r%u p(%.1f,%.1f,%.1f)", ldf32(0x101E8EC8), st ? ld8(st + 0x18) : 0, st ? ldf32(st) : 0.0,
                             st ? ldf32(st + 4) : 0.0, st ? ldf32(st + 8) : 0.0);
@@ -655,8 +711,18 @@ bool repeat_input() {
 
 // Sound effect starts (JAIZelBasic::seStart core and the mDoAud_* start wrappers). Some sounds are
 // started from drawing code (animation-linked effects); an in-between frame only redraws, so a
-// sound started there would play a second time. Suppressed while the hold pass draws.
+// sound started there would play a second time. Suppressed while the hold pass draws, and with true
+// 60 on the whole half pass: its executes are previews that the next full pass takes back and runs
+// again (true60.cpp), so every sound starts once, on the full pass of the 30 fps game's step.
 // debug: WWHD_SE_STATS=1 logs calls per second by frame phase every 5 s
+// debug: WWHD_SE_TRACE=path logs every start that is not suppressed: logic step, full pass (1/0),
+// wrapper index, r4 (the sound id for the seStart wrappers), caller (true60 comparisons)
+static void se_trace(int fn, Cpu* c) {
+    static FILE* f = getenv("WWHD_SE_TRACE") ? fopen(getenv("WWHD_SE_TRACE"), "w") : nullptr;
+    if (!f || interp::g_hold) return;
+    fprintf(f, "%llu %d %d %08X %08X\n", (unsigned long long)interp::g_logic_steps, interp::g_hold ? 0 : 1, fn, c->r[4], c->lr);
+    fflush(f);
+}
 static void se_stat(int fn) {
     static const bool on = getenv("WWHD_SE_STATS") != nullptr;
     if (!on) return;
@@ -677,13 +743,13 @@ static void se_stat(int fn) {
         t0 = t;
     }
 }
-extern "C" void hook_0201EBA0(Cpu* c) { se_stat(0); if (interp::g_hold && true60::dt() >= 1.0f) { c->r[3] = 0; return; } f_0201EBA0_orig(c); }
-extern "C" void hook_025E1988(Cpu* c) { se_stat(1); if (interp::g_hold && true60::dt() >= 1.0f) { c->r[3] = 0; return; } f_025E1988_orig(c); }
-extern "C" void hook_025E19CC(Cpu* c) { se_stat(2); if (interp::g_hold && true60::dt() >= 1.0f) { c->r[3] = 0; return; } f_025E19CC_orig(c); }
-extern "C" void hook_025E1A04(Cpu* c) { se_stat(3); if (interp::g_hold && true60::dt() >= 1.0f) { c->r[3] = 0; return; } f_025E1A04_orig(c); }
-extern "C" void hook_025E1A40(Cpu* c) { se_stat(4); if (interp::g_hold && true60::dt() >= 1.0f) { c->r[3] = 0; return; } f_025E1A40_orig(c); }
-extern "C" void hook_025E1A7C(Cpu* c) { se_stat(5); if (interp::g_hold && true60::dt() >= 1.0f) { c->r[3] = 0; return; } f_025E1A7C_orig(c); }
-extern "C" void hook_025E1AA4(Cpu* c) { se_stat(6); if (interp::g_hold && true60::dt() >= 1.0f) { c->r[3] = 0; return; } f_025E1AA4_orig(c); }
+extern "C" void hook_0201EBA0(Cpu* c) { se_stat(0); se_trace(0, c); if (interp::g_hold) { c->r[3] = 0; return; } f_0201EBA0_orig(c); }
+extern "C" void hook_025E1988(Cpu* c) { se_stat(1); se_trace(1, c); if (interp::g_hold) { c->r[3] = 0; return; } f_025E1988_orig(c); }
+extern "C" void hook_025E19CC(Cpu* c) { se_stat(2); se_trace(2, c); if (interp::g_hold) { c->r[3] = 0; return; } f_025E19CC_orig(c); }
+extern "C" void hook_025E1A04(Cpu* c) { se_stat(3); se_trace(3, c); if (interp::g_hold) { c->r[3] = 0; return; } f_025E1A04_orig(c); }
+extern "C" void hook_025E1A40(Cpu* c) { se_stat(4); se_trace(4, c); if (interp::g_hold) { c->r[3] = 0; return; } f_025E1A40_orig(c); }
+extern "C" void hook_025E1A7C(Cpu* c) { se_stat(5); se_trace(5, c); if (interp::g_hold) { c->r[3] = 0; return; } f_025E1A7C_orig(c); }
+extern "C" void hook_025E1AA4(Cpu* c) { se_stat(6); se_trace(6, c); if (interp::g_hold) { c->r[3] = 0; return; } f_025E1AA4_orig(c); }
 
 // The sound engine takes its listener from camera_draw. Feeding it the halfway camera as well as the
 // exact one makes the listener hop every frame (Doppler/panning wobble: doubled-sounding effects),

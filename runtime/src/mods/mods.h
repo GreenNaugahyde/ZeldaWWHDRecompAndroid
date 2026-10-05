@@ -2,6 +2,7 @@
 //   camera.cpp  direct right-stick camera, mouse camera, first person on R3 / mouse wheel
 //   mouse.mm    mouse capture in the game window (macOS events)
 //   turbo.cpp   quick doors and fast scene changes (extra logic steps while they run)
+//   cheats.cpp  items, sword/shield, stats, infinite health/magic/ammo, songs, Triforce, dungeon items
 // Test/start-up switches: WWHD_MOD_<NAME>=1 (see mods.cpp).
 #pragma once
 #include <cstdint>
@@ -44,6 +45,18 @@ void mouse_release();  // mouse.mm: release the pointer (also called when the mo
 // ---- logic (interp.cpp: fpcEx_Handler) ----
 // after a normal logic step: runs extra steps while a door event or a scene change is in progress
 void after_execute(Cpu* c, uint32_t execute_fn);
+
+// ---- cheats (cheats.cpp): one-shot save data edits, applied at the top of the next frame ----
+enum Cheat {
+    kCheatItems = 1, kCheatSword = 2, kCheatStats = 4,
+    // story progress (can change or break story events)
+    kCheatSongs = 8, kCheatTriforce = 16, kCheatDungeon = 32, kCheatKey = 64,
+};
+void request_cheat(int which);  // any thread
+enum Infinite { kInfHealth = 1, kInfMagic = 2, kInfAmmo = 4 };
+bool infinite(int which);
+void set_infinite(int which, bool on);
+void cheats_service();          // game main thread, frame start (interp.cpp)
 
 // shared helpers (mods.cpp)
 uint64_t step();    // full logic steps so far (interp::logic_steps)

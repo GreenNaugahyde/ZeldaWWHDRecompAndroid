@@ -930,6 +930,20 @@ void rnd_trace(Cpu* c, char fn, bool replayed) {
 // fn: ' ' cM_rnd (fraction), 'F' cM_rndF(max), 'X' cM_rndFX(max) = (fraction - 0.5) * 2 * max
 static void rnd_call(Cpu* c, char fn, void (*orig)(Cpu*)) {
     static int depth = 0;  // cM_rndF / cM_rndFX call cM_rnd: only the outer call counts
+    // debug: WWHD_RND_LOG=path logs every outer call: logic step, hold pass, in execute, caller, seed r0 before
+    static FILE* lf = getenv("WWHD_RND_LOG") ? fopen(getenv("WWHD_RND_LOG"), "w") : nullptr;
+    static const uint32_t bt_lo = getenv("WWHD_RND_BT") ? (uint32_t)strtoul(getenv("WWHD_RND_BT"), nullptr, 16) : 0;
+    if (lf && bt_lo && (c->lr >> 12) == (bt_lo >> 12)) {  // debug: back chain of callers in that 4 KB page
+        uint32_t sp = c->r[1];
+        fprintf(lf, "BT");
+        for (int k = 0; k < 10 && sp >= 0x10000000; k++) { sp = ld32(sp); if (sp < 0x10000000) break; fprintf(lf, " %08X", ld32(sp + 4)); }
+        fprintf(lf, "\n");
+    }
+    if (lf && !depth && (c->lr == 0x025616CCu || getenv("WWHD_RND_REGS_ALL")))
+        fprintf(lf, "REGS %08X %08X %08X %08X %08X %08X %08X L %08X %08X %08X %08X %08X\n", c->r[24], c->r[26], c->r[27], c->r[28], c->r[29], c->r[30], c->r[31],
+                ld32(c->r[24] + 0x14), ld32(c->r[24] + 0x18), ld32(c->r[24] + 0x1C), ld32(c->r[24] + 0x28), ld32(c->r[24] + 0x2C));
+    if (lf && !depth) fprintf(lf, "%llu %d %d %c %08X %08X\n", (unsigned long long)interp::logic_steps(), (int)interp::hold_pass(),
+                               (int)interp::in_execute(), fn, c->lr, ld32(0x101FF9D4));
     if (!on(8) || interp::in_execute() || depth) {
         orig(c);
         return;
@@ -950,7 +964,15 @@ static void rnd_call(Cpu* c, char fn, void (*orig)(Cpu*)) {
             c->f[1].ps0 = (float)from_frac(it->second[i]);
             return;
         }
+        // true 60: a draw on a half pass must not consume random numbers either (the full passes
+        // keep the 30 fps sequence: drops, AI choices); it gets the next value without using it
+        uint32_t seeds[3];
+        bool keep = true60::enabled();
+        if (keep)
+            for (int k = 0; k < 3; k++) seeds[k] = ld32(0x101FF9D4 + 4 * k);
         orig(c);
+        if (keep)
+            for (int k = 0; k < 3; k++) st32(0x101FF9D4 + 4 * k, seeds[k]);
         return;
     }
     RndRec& r = g_rnd_logic;

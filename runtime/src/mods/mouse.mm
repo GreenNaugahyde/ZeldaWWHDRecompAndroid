@@ -4,12 +4,15 @@
 // The mouse wheel (first person mod) works whenever the TV window is the key window.
 // WWHD_NO_HOST_INPUT ignores the real mouse (test runs; WWHD_TEST_MOUSE injects movement).
 #import <AppKit/AppKit.h>
+#include "../overlay/overlay.h"
 #include <Carbon/Carbon.h>  // kVK_Escape
 
 #include <atomic>
 
 #include "mods.h"
 #include "runtime.h"
+
+namespace gfx { bool drc_overlay_hit(void* window, double x, double y); }  // gfx/display.mm
 
 namespace mods {
 namespace {
@@ -57,6 +60,7 @@ void mouse_init(void* tv_window) {
                        NSEventMaskOtherMouseDragged | NSEventMaskLeftMouseDown | NSEventMaskLeftMouseUp |
                        NSEventMaskRightMouseDown | NSEventMaskRightMouseUp | NSEventMaskOtherMouseDown | NSEventMaskScrollWheel;
     [NSEvent addLocalMonitorForEventsMatchingMask:mask handler:^NSEvent*(NSEvent* e) {
+        if (overlay::is_open()) return e;  // the settings overlay has the mouse (gfx/overlay_appkit.mm)
         if (e.type == NSEventTypeScrollWheel) {
             if (first_person_wheel() && (in_tv(e) || mouse_captured())) {
                 // a wheel notch is about 1 line; trackpads send many small precise deltas
@@ -70,7 +74,9 @@ void mouse_init(void* tv_window) {
         if (!mouse_camera()) return e;
         if (!mouse_captured()) {
             // a click into the game picture captures the pointer (the title bar stays usable)
-            if (e.type == NSEventTypeLeftMouseDown && in_tv(e) && NSPointInRect(e.locationInWindow, g_tv.contentView.frame)) {
+            // (except on the GamePad picture-in-picture, where a click is a touch)
+            if (e.type == NSEventTypeLeftMouseDown && in_tv(e) && NSPointInRect(e.locationInWindow, g_tv.contentView.frame) &&
+                !gfx::drc_overlay_hit((__bridge void*)g_tv, e.locationInWindow.x, e.locationInWindow.y)) {
                 capture();
                 return nil;
             }

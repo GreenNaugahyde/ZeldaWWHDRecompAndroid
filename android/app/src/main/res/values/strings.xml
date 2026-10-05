@@ -161,6 +161,7 @@
         <item>30 fps</item>
         <item>60 fps</item>
         <item>60 fps (adaptive)</item>
+        <item>True 60 (experimental)</item>
     </string-array>
     <string name="opt_layout_edit">Edit touch layout</string>
     <string name="opt_layout_edit_hint">Move and resize every control on a grid (also the ✎ button next to ≡)</string>
@@ -176,6 +177,24 @@
         <item>Hidden</item>
     </string-array>
     <string name="opt_haptics">Vibrate on touch</string>
+    <string name="opt_rumble">Rumble</string>
+    <string name="opt_rumble_hint">The phone vibrates when the game rumbles the GamePad</string>
+    <string name="opt_cheats">Cheats</string>
+    <string name="opt_cheats_hint">Items, sword and shield, hearts, infinite health…</string>
+    <string name="cheat_note">Cheats change the loaded save file; they last once the game is saved. The game itself takes the sword away in Forsaken Fortress and the bow in the Tower of the Gods.</string>
+    <string name="cheat_apply">Apply</string>
+    <string name="cheat_done">Cheat applied</string>
+    <string name="cheat_items">All items</string>
+    <string name="cheat_sword">Best sword and shield</string>
+    <string name="cheat_stats">Full hearts, magic and wallet</string>
+    <string name="cheat_songs">All songs</string>
+    <string name="cheat_triforce">All Triforce shards</string>
+    <string name="cheat_dungeon">Map, compass and boss key (this dungeon)</string>
+    <string name="cheat_key">A small key (this dungeon)</string>
+    <string name="cheat_story_hint">Story progress: can change or break story events</string>
+    <string name="cheat_inf_health">Infinite health</string>
+    <string name="cheat_inf_magic">Infinite magic</string>
+    <string name="cheat_inf_ammo">Infinite arrows and bombs</string>
     <string name="opt_gyro">Gyro aiming</string>
     <string name="opt_gyro_hint">Aim by moving the phone. Also turn on motion controls in the game\'s own options.</string>
     <string name="opt_gyro_recalibrate">Recalibrate gyro</string>

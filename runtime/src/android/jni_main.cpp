@@ -46,6 +46,7 @@ namespace {
 JavaVM* g_vm = nullptr;
 jclass g_native_class = nullptr;
 jmethodID g_request_text = nullptr;
+jmethodID g_rumble = nullptr;
 std::atomic<bool> g_started{false};
 
 std::string jstr(JNIEnv* env, jstring s) {
@@ -81,6 +82,14 @@ bool request_text_input(const std::u16string& initial, int maxLen) {
     }
     return true;
 }
+
+// the game's rumble (GamePad / Pro Controller motor) as the phone's vibration (Native.rumble)
+void rumble(float strength, uint32_t ms) {
+    JNIEnv* env = env_for_thread();
+    if (!env || !g_rumble) return;
+    env->CallStaticVoidMethod(g_native_class, g_rumble, (jfloat)strength, (jint)ms);
+    if (env->ExceptionCheck()) env->ExceptionClear();
+}
 }  // namespace jni
 
 extern "C" JNIEXPORT jint JNI_OnLoad(JavaVM* vm, void*) {
@@ -91,6 +100,7 @@ extern "C" JNIEXPORT jint JNI_OnLoad(JavaVM* vm, void*) {
     if (!c) return JNI_ERR;
     g_native_class = (jclass)env->NewGlobalRef(c);
     g_request_text = env->GetStaticMethodID(c, "requestTextInput", "(Ljava/lang/String;I)V");
+    g_rumble = env->GetStaticMethodID(c, "rumble", "(FI)V");
     return JNI_VERSION_1_6;
 }
 
@@ -393,6 +403,11 @@ JNI_FN(void, setOption)(JNIEnv* env, jclass, jstring name, jint value) {
     else if (n == "fps_mode") fps60::set_mode(value);
     else if (n == "drawdone_mode") gx2::set_drawdone_mode(value);
     else if (n == "core_mode") platform::set_core_mode(value);
+    // cheats (mods/cheats.cpp): one-shot edits of the save data, and the infinite switches
+    else if (n == "cheat") mods::request_cheat(value);
+    else if (n == "inf_health") mods::set_infinite(mods::kInfHealth, value != 0);
+    else if (n == "inf_magic") mods::set_infinite(mods::kInfMagic, value != 0);
+    else if (n == "inf_ammo") mods::set_infinite(mods::kInfAmmo, value != 0);
     // gameplay mods (runtime/src/mods)
     else if (n == "mod_direct_camera") mods::set_direct_camera(value != 0);
     else if (n == "mod_camera_speed") mods::set_camera_speed(value / 100.0f);

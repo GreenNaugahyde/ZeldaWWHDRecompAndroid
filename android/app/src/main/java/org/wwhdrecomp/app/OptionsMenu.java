@@ -416,7 +416,32 @@ final class OptionsMenu extends Dialog {
             submenu(R.string.opt_capture, R.string.opt_capture_hint, "", () -> Native.setOption("capture", 1));
     }
 
+    // cheats (runtime/src/mods/cheats.cpp): one-shot save data edits, and infinite health / magic / ammo
+    private void cheatsPage() {
+        note(a.getString(R.string.cheat_note));
+        int[] labels = {R.string.cheat_items, R.string.cheat_sword, R.string.cheat_stats, R.string.cheat_songs,
+                        R.string.cheat_triforce, R.string.cheat_dungeon, R.string.cheat_key};
+        int[] bits = {1, 2, 4, 8, 16, 32, 64};
+        for (int i = 0; i < labels.length; i++) {
+            final int bit = bits[i];
+            submenu(labels[i], i >= 3 ? R.string.cheat_story_hint : 0, a.getString(R.string.cheat_apply), () -> {
+                Native.setOption("cheat", bit);
+                a.info(a.getString(R.string.cheat_done));
+            });
+        }
+        String[] keys = {"inf_health", "inf_magic", "inf_ammo"};
+        int[] names = {R.string.cheat_inf_health, R.string.cheat_inf_magic, R.string.cheat_inf_ammo};
+        for (int i = 0; i < keys.length; i++) {
+            final String k = keys[i];
+            toggle(names[i], 0, a.prefs.getBoolean(k, false), on -> {
+                a.prefs.edit().putBoolean(k, on).apply();
+                Native.setOption(k, on ? 1 : 0);
+            });
+        }
+    }
+
     private void mods() {
+        submenu(R.string.opt_cheats, R.string.opt_cheats_hint, "", () -> openPage(this::cheatsPage));
         int[] labels = {R.string.opt_mod_direct_camera, R.string.opt_mod_first_person, R.string.opt_mod_climb,
                         R.string.opt_mod_quick_doors, R.string.opt_mod_fast_scenes};
         int[] hints = {R.string.opt_mod_direct_camera_hint, 0, R.string.opt_mod_climb_hint, R.string.opt_mod_speed_hint,
@@ -476,6 +501,8 @@ final class OptionsMenu extends Dialog {
             if (a.prefs.getBoolean("gyro_enabled", false))
                 submenu(R.string.opt_gyro_recalibrate, R.string.opt_gyro_recalibrate_hint, "", a::recalibrateGyro);
         }
+        toggle(R.string.opt_rumble, R.string.opt_rumble_hint, a.prefs.getBoolean("rumble", true),
+               on -> a.prefs.edit().putBoolean("rumble", on).apply());
         toggle(R.string.opt_haptics, 0, a.prefs.getBoolean("haptics", true), on -> {
             a.prefs.edit().putBoolean("haptics", on).apply();
             a.applyControlsAppearance();

@@ -35,7 +35,16 @@ HLE(padscore, KPADSetMplsWorkarea) {}
 HLE(padscore, WPADEnableURCC) {}
 HLE(padscore, WPADEnableWiiRemote) {}
 HLE(padscore, WPADDisconnect) {}
-HLE(padscore, WPADControlMotor) {}
+// The Pro Controller motor: cmd 0 stops it, 1 runs it until the game stops it. The Pro
+// Controller is only connected while the keyboard/controllers act as one (see connected).
+HLE(padscore, WPADControlMotor) {
+    uint32_t chan = arg(c, 0), cmd = arg(c, 1);
+    if (connected(chan)) {
+        TRACE("[pad] WPADControlMotor(%u, %u) -> %s", chan, cmd, cmd ? "rumble" : "stop");
+        input::set_rumble(cmd ? 1.f : 0.f, cmd ? 500u : 0u);
+    }
+    ret(c, (uint32_t)kWpadErrNone);
+}
 HLE(padscore, WPADGetBatteryLevel) { ret(c, 4); }  // full
 HLE(padscore, WPADCanSendStreamData) { ret(c, 0); }
 HLE(padscore, WPADSendStreamData) { ret(c, (uint32_t)kWpadErrNoController); }

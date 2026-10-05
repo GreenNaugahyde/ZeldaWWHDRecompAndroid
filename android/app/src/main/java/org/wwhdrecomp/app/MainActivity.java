@@ -311,6 +311,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         applyGyro();
         Native.setOption("drawdone_mode", prefs.getInt("drawdone_mode", 0));
         Native.setOption("core_mode", prefs.getInt("core_mode", 0));
+        for (String k : new String[] {"inf_health", "inf_magic", "inf_ammo"}) Native.setOption(k, prefs.getBoolean(k, false) ? 1 : 0);
         for (String m : MODS) Native.setOption(m, prefs.getBoolean(m, false) ? 1 : 0);
         Native.setOption("mod_camera_speed", prefs.getInt("mod_camera_speed", 100));
     }
@@ -425,6 +426,19 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     @Override
     public void onLayoutSaved(String layout) {
         prefs.edit().putString("touch_layout", layout).apply();
+    }
+
+    // ---- the game's rumble as the phone's vibration (Native.rumble, from a game thread)
+    void rumble(float strength, int ms) {
+        if (!prefs.getBoolean("rumble", true)) return;
+        android.os.Vibrator v = getSystemService(android.os.Vibrator.class);
+        if (v == null || !v.hasVibrator()) return;
+        if (strength <= 0 || ms <= 0) {
+            v.cancel();
+            return;
+        }
+        int amp = Math.max(1, Math.min(255, Math.round(strength * 255)));
+        v.vibrate(android.os.VibrationEffect.createOneShot(ms, v.hasAmplitudeControl() ? amp : android.os.VibrationEffect.DEFAULT_AMPLITUDE));
     }
 
     // ---- gyro aiming (Gyro, runtime/src/motion.cpp); off by default
@@ -1085,7 +1099,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         }, "backup").start();
     }
 
-    private void info(String msg) {
+    void info(String msg) {
         new GameDialog(this).title(R.string.backup_title).message(msg).button(R.string.opt_ok, null).show();
     }
 

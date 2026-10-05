@@ -33,11 +33,18 @@ void init();       // main thread, after NSApplication exists
 PadState read();   // any thread
 void release_keys();                // forget held keys (another window took the keyboard)
 void controller_values(float* v);   // main thread: input_map::kPadCount host controller inputs, 0..1
+void host_controller_values(float* v);  // any thread: the latest controller_values (settings overlay)
 void held_keys(bool* keys);         // 256 entries: keys held for the game (keyboard + WWHD_KEYS script)
 
 // Ask the user for a line of text (software keyboard). Non-blocking: `done` runs on the
 // main thread with ok = false when cancelled. Text is UTF-16.
 void prompt_text(const std::u16string& initial, int max_len,
                  std::function<void(bool ok, std::u16string text)> done);
+
+// Run the rumble motor of the host controllers. The game asks for it from a guest thread
+// (VPADControlMotor / WPADControlMotor, see runtime/src/hle), so this only records the request;
+// the host input layer applies it with the next update. `strength` is 0..1 and `duration_ms`
+// how long the motor runs; a strength of 0 stops it.
+void set_rumble(float strength, uint32_t duration_ms);
 
 }  // namespace input

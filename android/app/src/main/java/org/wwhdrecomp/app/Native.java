@@ -82,6 +82,12 @@ final class Native {
 
     /** Called by the game (software keyboard) on one of its threads. */
     @SuppressWarnings("unused")
+    /** the game's rumble (GamePad motor): the phone vibrates, strength 0..1 for ms; 0 stops it */
+    static void rumble(float strength, int ms) {
+        MainActivity a = MainActivity.instance;
+        if (a != null) a.rumble(strength, ms);
+    }
+
     static void requestTextInput(String initial, int maxLen) {
         MainActivity a = MainActivity.instance;
         if (a == null) {

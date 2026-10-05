@@ -18,13 +18,15 @@
 // ("@ADDR" in tools/recomp/hooks.txt, site_ADDR functions in true60_link.cpp).
 // Integer per-step amounts are split over the two half steps so that each pair adds up to exactly
 // one original step: the half pass takes the rounded-up half, the full pass the rest.
+#include <algorithm>
 #include <atomic>
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
 #include <unordered_map>
-#include <sys/stat.h>
+#include <filesystem>
 #include <bit>
+#include <string>
 #include <vector>
 
 #include "runtime.h"
@@ -59,6 +61,12 @@ void f_025CB6D4_orig(Cpu* c);  // dVibration_c::Pause
 void f_024EF968_orig(Cpu* c);  // dBgS::MoveBgCrrPos
 }
 
+namespace true60_test {  // true60_test.cpp (debug dumps)
+void after_execute(uint32_t proc, uint32_t fn, bool is_link, float dt);
+void before_execute_link(uint32_t proc);
+uint64_t origin_step();
+bool dumping();
+}
 namespace interp {
 bool hold_pass();          // interp.cpp: this is a half pass (no 30 Hz logic)
 uint64_t logic_steps();    // full logic steps so far
@@ -121,6 +129,7 @@ void ratio_arg(Cpu* c, int r) {
 
 // ---- processes ----
 namespace {
+constexpr uint32_t kRndSeeds = 0x101FF9D4;  // cM_rnd's three seeds r0, r1, r2 (cM_rnd 02019788: -0x62C/-0x628/-0x624 from 0x10200000)
 constexpr uint32_t kSubMethod = 0xF0;     // fopAc_ac_c::sub_method (GameCube 0xEC)
 constexpr uint32_t kDaPyExecute = 0x0240EBB0;  // daPy_Execute (tail-calls daPy_lk_c::execute 0240CDD0)
 constexpr uint32_t kCurProc = 0x65F0;     // daPy_lk_c::mCurProc (GameCube 0x31D8)
@@ -135,6 +144,7 @@ struct ProcInfo {
 };
 std::unordered_map<uint32_t, ProcInfo> g_procs;
 uint32_t g_link = 0;  // Link's process (daPy_lk_c), once seen
+uint64_t g_link_steps = 0;  // Link's full-pass executes since the last save-state load (test clock)
 
 uint32_t actor_execute_fn(uint32_t proc) {
     uint32_t sub = ld32(proc + kSubMethod);
@@ -142,10 +152,42 @@ uint32_t actor_execute_fn(uint32_t proc) {
     return ld32(sub + 8);
 }
 
-// Link's procedures that run at 60 Hz (daPy_lk_c::daPy_PROC values); others stay at 30 Hz.
-// The default list holds the procedures measured against the 30 fps game (docs/decomp-notes.md, "True 60 fps").
-// WWHD_TRUE60_LINK=audited|all|none|n,n,... (decimal or 0x hex) overrides it (testing).
-bool g_link_proc[256];
+// Conversion groups. WWHD_TRUE60_GROUPS=+name,-name,... switches groups on/off relative to the
+// default; a list without +/- replaces the default ("all", "none" also work). Names: kGroupNames.
+// Only groups that passed the gates (docs/decomp-notes.md, "True 60 fps") are on by default.
+const char* const kGroupNames[kNumGroups] = {"loco", "camera", "sword", "items", "swim", "sail", "bk", "mo2", "cc", "ki"};
+constexpr uint32_t kGroupDefault = (1u << kGrpLoco) | (1u << kGrpCamera) | (1u << kGrpSword);
+uint32_t g_groups = [] {
+    uint32_t m = kGroupDefault;
+    const char* e = getenv("WWHD_TRUE60_GROUPS");
+    bool replaced = false;
+    for (const char* p = e; p && *p;) {
+        size_t n = strcspn(p, ",");
+        std::string w(p, n);
+        p += n + (p[n] == ',');
+        char sign = w.empty() ? 0 : w[0];
+        if (sign == '+' || sign == '-') w = w.substr(1);
+        else if (!replaced) m = 0, replaced = true;
+        uint32_t bit = 0;
+        if (w == "all") bit = (1u << kNumGroups) - 1;
+        else if (w == "none") bit = 0, m = sign == '+' ? m : 0;
+        for (int g = 0; g < kNumGroups; g++)
+            if (w == kGroupNames[g]) bit = 1u << g;
+        if (sign == '-') m &= ~bit;
+        else m |= bit;
+    }
+    std::string on;
+    for (int g = 0; g < kNumGroups; g++)
+        if (m & (1u << g)) on += std::string(on.empty() ? "" : ",") + kGroupNames[g];
+    LOG("[true60] groups: %s", on.c_str());
+    return m;
+}();
+
+// Link's procedures that run at 60 Hz (daPy_lk_c::daPy_PROC values) and how (link_proc_mode);
+// all others stay at 30 Hz. The lists hold the procedures measured against the 30 fps game
+// (docs/decomp-notes.md, "True 60 fps"). WWHD_TRUE60_LINK=audited|all|none|n,n,... (decimal or 0x
+// hex; a trailing 's' runs that procedure's own logic on full passes only) overrides it (testing).
+uint8_t g_link_proc[256];
 const int kAudited[] = {
 // 108 procedures: no inline per-step code in the GameCube source of the procedure itself
 // (tools/true60/proc_audit.py), or only per-procedure timer countdowns (held generically);
@@ -170,36 +212,68 @@ const int kAudited[] = {
     0x9C, 0x9E, 0x9F, 0xA0, 0xA1, 0xA2,  // TactPlayEnd IceSlipFall IceSlipFallUp IceSlipAlmostFall BootsEquip NotUse
     0xA3, 0xA4, 0xA5, 0xA6, 0xA7, 0xA8,  // BottleDrink BottleOpen BottleSwing BottleGet FoodThrow FoodSet
 };
-void init_link_procs() {
-    static const int kDefault[] = {
-        0x04,  // WAIT
-        0x05,  // FREE_WAIT
+struct ProcGroup { Group g; uint8_t mode; std::vector<int> procs; };
+const ProcGroup kLinkGroups[] = {
+    // locomotion with physics and steering: the procedure runs on every pass with dt = 0.5
+    {kGrpLoco, 1, {
         0x06,  // MOVE
         0x07,  // ATN_MOVE (Z-target)
         0x0A,  // SIDE_STEP (side hop)
-        0x1E,  // FRONT_ROLL
         0x22,  // BACK_JUMP (back flip)
-        0x23,  // BACK_JUMP_LAND
         0x24,  // AUTO_JUMP
-        0x25,  // LAND
         0x27,  // FALL
-    };
+    }},
+    // locomotion that ends on animation frames or picks idle animations at random: the procedure's
+    // own logic on full passes (same step and same random numbers as at 30 fps)
+    {kGrpLoco, 2, {
+        0x04,  // WAIT
+        0x05,  // FREE_WAIT
+        0x1E,  // FRONT_ROLL
+        0x23,  // BACK_JUMP_LAND
+        0x25,  // LAND
+    }},
+    // sword actions: animation, motion and collision at 60 Hz, the procedure's own decisions on
+    // full passes (frame thresholds, combo inputs, hit windows and sounds exactly as at 30 fps)
+    {kGrpSword, 2, {
+        0x41, 0x42, 0x43, 0x44,  // CUT_A CUT_F CUT_R CUT_L
+        0x45, 0x46,              // CUT_EA CUT_EB (combo finishers)
+        0x47, 0x48,              // CUT_EX_A CUT_EX_B (parry attacks)
+        0x4A,                    // CUT_KESA
+        0x55, 0x58, 0x59,        // CUT_TURN (spin attack), CUT_TURN_CHARGE, CUT_TURN_MOVE
+        0x5A,                    // CUT_REVERSE (sword bounces off a wall)
+    }},
+    // items (the item actors themselves stay at 30 Hz): aiming, throwing, shooting, catching
+    {kGrpItems, 2, {
+        0x80, 0x81, 0x82,        // BOOMERANG_SUBJECT BOOMERANG_MOVE BOOMERANG_CATCH
+        0x83, 0x84,              // HOOKSHOT_SUBJECT HOOKSHOT_MOVE (not HOOKSHOT_FLY: pulled by the hookshot)
+        0x94, 0x95,              // BOW_SUBJECT BOW_MOVE
+    }},
+};
+void init_link_procs() {
+    static bool done = false;
+    if (done) return;
+    done = true;
     const char* e = getenv("WWHD_TRUE60_LINK");
     if (e && !strcmp(e, "audited")) {
-        for (int v : kAudited) g_link_proc[v] = true;
-        for (int v : kDefault) g_link_proc[v] = true;
+        for (int v : kAudited) g_link_proc[v] = 1;
+        for (auto& pg : kLinkGroups)
+            for (int v : pg.procs) g_link_proc[v] = pg.mode;
     } else if (e && !strcmp(e, "all")) {
-        for (bool& b : g_link_proc) b = true;
+        for (auto& b : g_link_proc) b = 1;
     } else if (e && strcmp(e, "none")) {
         for (const char* p = e; *p;) {
             char* end;
             long v = strtol(p, &end, 0);
             if (end == p) break;
-            if (v >= 0 && v < 256) g_link_proc[v] = true;
+            uint8_t mode = 1;
+            if (*end == 's') mode = 2, end++;
+            if (v >= 0 && v < 256) g_link_proc[v] = mode;
             p = *end == ',' ? end + 1 : end;
         }
     } else if (!e) {
-        for (int v : kDefault) g_link_proc[v] = true;
+        for (auto& pg : kLinkGroups)
+            if (g_groups & (1u << pg.g))
+                for (int v : pg.procs) g_link_proc[v] = pg.mode;
     }
 }
 
@@ -213,7 +287,7 @@ bool g_follow_called = false;  // followCamera ran during the camera's execute
 bool g_cam_follow = false;     // ... during its last execute
 uint32_t g_camera = 0;
 bool camera_enabled() {
-    static const bool on = !getenv("WWHD_TRUE60_CAMERA") || atoi(getenv("WWHD_TRUE60_CAMERA")) != 0;
+    static const bool on = (!getenv("WWHD_TRUE60_CAMERA") || atoi(getenv("WWHD_TRUE60_CAMERA")) != 0) && (g_groups & (1u << kGrpCamera));
     return on && g_cam_fallback == 0;
 }
 
@@ -221,7 +295,9 @@ bool camera_enabled() {
 // NaN centre in dCamera_c::bumpCheck). Each 60 Hz camera step is snapshotted; if it produces a NaN
 // the snapshot is restored, the camera runs at 30 Hz for a second and the case is logged to
 // captures/true60-nan.log (for finding the cause).
-constexpr uint32_t kCamSnap = kDCamera + 0x1000;  // camera process incl. dCamera_c (GameCube 0x790; HD larger)
+// the camera process with its dCamera_c: the size in its profile (101D5640: name 0x1DC, size 0xB28;
+// earlier 0x1248 was assumed here, which reached into the next heap block)
+constexpr uint32_t kCamSnap = 0xB28;
 bool g_cam_step = false;    // inside a 60 Hz camera execute
 bool g_cam_nan = false;     // ... and a sphere got a NaN centre
 uint32_t g_cam_nan_lr = 0;  // its caller
@@ -249,12 +325,19 @@ float classify(uint32_t proc) {
         if (g_link != proc) {
             g_link = proc;
             LOG("[true60] Link is process %08X", proc);
+            if (false) {
+                uint32_t of = ld32(proc + 0x65CC);
+                uint32_t ti = ld32(of + 0x1C), q = ld32(of + 0x20);
+                LOG("[t60dbg] old_fdata %08X trans %08X quat %08X (q-t %X); headers %08X %08X %08X %08X / %08X %08X %08X %08X", of, ti, q, q - ti,
+                    ld32(ti - 16), ld32(ti - 12), ld32(ti - 8), ld32(ti - 4), ld32(q - 16), ld32(q - 12), ld32(q - 8), ld32(q - 4));
+                LOG("[t60dbg] Link header %08X %08X %08X %08X", ld32(proc - 16), ld32(proc - 12), ld32(proc - 8), ld32(proc - 4));
+            }
         }
         uint32_t p = ld32(proc + kCurProc);
         // standing on moving collision of a 30 Hz actor (platform, raft): the platform moves on full
         // passes only and is drawn interpolated, so Link moves with it at 30 Hz
         if (g_link_ride > 0) return 1.0f;
-        return p < 256 && g_link_proc[p] ? 0.5f : 1.0f;
+        return p < 256 && g_link_proc[p] ? 0.5f : 1.0f;  // (mode 2: see true60_link.cpp)
     }
     if (is_camera(proc)) {  // checked every time: each scene creates its own camera process
         if (g_camera != proc) LOG("[true60] camera is process %08X", proc);
@@ -302,17 +385,131 @@ void trace_camera(uint32_t proc, float dt) {
 }
 }  // namespace
 
-// Step-counted timers stored in a process (fields counted down by one per step, inline in the
-// game's code). With dt < 1 they count on full passes only: on a half pass, a field that the
-// execute counted down by exactly one is put back (unless the actor changed state meanwhile).
-// Link: the per-procedure timer union m34D0..m34DA, m3522, m3526, mTinkleHoverTimer, m355C, m355E
-// (tools/decomp/timers.py, WWHD offsets) and an HD-only s32 countdown at +0x8260 (execute 0240CE60).
+// Link's half-pass preview. What Link's execute changes in his own memory is put back at the start
+// of the next full pass, which then runs the 30 Hz step from exactly the state the 30 fps game has:
+//  - his process (profile size 0x8284), completely;
+//  - his actor heap (fopAc_ac_c::heap +0xF4, a solid heap: start +0x8, size +0x20, ~590 KB): his
+//    models' joint matrices (read by the next step before they are computed again: neck and head
+//    aim, attachments), the old-frame pose blocks (m_old_fdata +0x65CC) and the other per-step
+//    model state. Taken back word by word where his preview execute changed it: the heap also holds
+//    the models' draw packets, which the draw (not the execute) links into the frame's draw lists;
+//    taking the whole heap back broke the lists (sead assert in the J3D packet entry).
+// Effects outside are fenced off during the preview (true60_link.cpp: procedure, decisions,
+// actor/emitter creation, colliders, events) or done again identically by the full pass; sounds are
+// not started on half passes at all (interp.cpp).
+constexpr uint32_t kLinkSize = 0x8284;
+constexpr uint32_t kActorHeap = 0xF4;
+// Regions taken back word by word where Link's preview execute changed them (before/after the
+// execute; changes made by anything else, like the draw linking packets, stay): his actor heap, the
+// d_a_player statics holding his position (1046CD48, read back by the next execute) and the words of
+// the dComIfGp play state (1046F0B0) his execute writes (10473FE8..10474050: player position and
+// status, 10474C64: the do/A/R button statuses), found with WWHD_T60_REGIONLOG. Not whole static
+// regions: other threads (the sound engine) write there while his execute runs, and taking their
+// writes back crashed the sound thread (JASTrack). cM_rnd's seeds are put back separately.
+struct Region { uint32_t base = 0; std::vector<uint32_t> before, after; };
+struct LinkSnap {
+    uint64_t pass = ~0ull;
+    uint32_t proc = 0;
+    std::vector<uint8_t> link;
+    Region regions[4];
+    uint32_t env_player[3];  // g_env_light +0xB2C: Link's position for the scene lighting, set by his draw
+} g_snap;
+constexpr uint32_t kEnvPlayerPos = 0x10475A68 + 0xB2C;  // (found with WWHD_T60_ENVLOG)
+void region_begin(Region& r, uint32_t base, uint32_t size) {
+    r.base = base;
+    r.before.resize(size / 4);
+    memcpy(r.before.data(), ppc_ptr(base), size & ~3u);
+}
+void region_end(Region& r) {
+    if (!r.base) return;
+    r.after.resize(r.before.size());
+    memcpy(r.after.data(), ppc_ptr(r.base), 4 * r.after.size());
+}
+void region_restore(Region& r) {
+    if (!r.base || r.after.size() != r.before.size()) return;
+    static const bool dbg = getenv("WWHD_T60_REGIONLOG") != nullptr;
+    if (dbg && (&r == &g_snap.regions[3])) {
+        static std::unordered_map<uint32_t, int> cnt;
+        static int n = 0;
+        for (size_t i = 0; i < r.before.size(); i++)
+            if (r.after[i] != r.before[i]) cnt[r.base + 4 * (uint32_t)i]++;
+        if (++n % 100 == 0) {
+            std::vector<std::pair<uint32_t, int>> v(cnt.begin(), cnt.end());
+            std::sort(v.begin(), v.end());
+            std::string o;
+            for (auto& [a, c] : v) { char t[32]; snprintf(t, sizeof t, " %08X:%d", a, c); o += t; }
+            LOG("[regionlog]%s", o.c_str());
+        }
+    }
+    if (dbg && &r == &g_snap.regions[3]) return;  // (log only)
+    uint32_t* cur = (uint32_t*)ppc_ptr(r.base);
+    const uint32_t* b = r.before.data();
+    const uint32_t* a = r.after.data();
+    for (size_t i = 0, n = r.before.size(); i < n; i++)
+        if (a[i] != b[i]) cur[i] = b[i];  // raw words: no byte swap needed
+}
+// debug: WWHD_T60_MEMDIFF=step: memory changed by the half pass of that logic step and not taken back
+std::vector<uint8_t> g_memdiff;
+uint64_t g_memdiff_step = getenv("WWHD_T60_MEMDIFF") ? strtoull(getenv("WWHD_T60_MEMDIFF"), nullptr, 10) : 0;
+const uint32_t kMemDiffLo = getenv("WWHD_T60_MEMDIFF_LO") ? (uint32_t)strtoul(getenv("WWHD_T60_MEMDIFF_LO"), nullptr, 16) : 0x10000000;
+const uint32_t kMemDiffHi = getenv("WWHD_T60_MEMDIFF_HI") ? (uint32_t)strtoul(getenv("WWHD_T60_MEMDIFF_HI"), nullptr, 16) : 0x4A000000;
+void link_preview_begin(uint32_t proc) {
+    if (g_memdiff_step && true60_test::origin_step() && interp::logic_steps() == true60_test::origin_step() + g_memdiff_step && g_memdiff.empty()) {
+        g_memdiff.assign(ppc_ptr(kMemDiffLo), ppc_ptr(kMemDiffHi));
+        LOG("[memdiff] snapshot at step %llu", (unsigned long long)g_memdiff_step);
+    }
+    g_snap.pass = g_pass;
+    g_snap.proc = proc;
+    g_snap.link.assign(ppc_ptr(proc), ppc_ptr(proc) + kLinkSize);
+    for (int i = 0; i < 3; i++) g_snap.env_player[i] = ld32(kEnvPlayerPos + 4 * i);
+    for (auto& r : g_snap.regions) r.base = 0;
+    region_begin(g_snap.regions[0], 0x1046CD10, 0x44);          // d_a_player statics (his kept position at +0x38)
+    region_begin(g_snap.regions[1], 0x10473FE8, 0x10474C68 - 0x10473FE8);  // dComIfGp play: player position/status words, button statuses
+    if (const char* e = getenv("WWHD_T60_EXTRA_REGION")) {  // debug: hunt for preview state (lo:size hex)
+        uint32_t lo = (uint32_t)strtoul(e, nullptr, 16), sz = strchr(e, ':') ? (uint32_t)strtoul(strchr(e, ':') + 1, nullptr, 16) : 0;
+        if (sz) region_begin(g_snap.regions[3], lo, sz);
+    }
+    uint32_t h = ld32(proc + kActorHeap);
+    if (h >= mem::kMem2Start && h < mem::kMem2End) {
+        uint32_t start = ld32(h + 0x8), size = ld32(h + 0x20) & ~3u;
+        if (start >= mem::kMem2Start && (start & 3) == 0 && size > 0 && size <= 0x200000 && start + size <= mem::kMem2End)
+            region_begin(g_snap.regions[2], h, start + size - h);  // (from the heap object: its allocation state too)
+    }
+    static bool warned = false;
+    if (!g_snap.regions[2].base && !warned) {
+        warned = true;
+        LOG("[true60] Link's actor heap not found (%08X)", h);
+    }
+}
+void link_preview_end() {
+    for (auto& r : g_snap.regions) region_end(r);
+}
+void link_preview_restore() {
+    if (g_snap.pass == ~0ull) return;
+    g_snap.pass = ~0ull;
+    if (g_snap.proc != g_link || g_snap.link.size() != kLinkSize) return;
+    memcpy(ppc_ptr(g_snap.proc), g_snap.link.data(), kLinkSize);
+    for (auto& r : g_snap.regions) region_restore(r);
+    // his half-pass draw lit the scene from his preview position; the full pass's draws before his
+    // own draw use the position of the last full pass, as at 30 fps
+    for (int i = 0; i < 3; i++) st32(kEnvPlayerPos + 4 * i, g_snap.env_player[i]);
+}
+
+// The 60 Hz camera's full passes are exact 30 Hz steps: its half pass is a preview (drawn), and the
+// next full pass starts again from the camera as it was before that half pass (pass_begin) and takes
+// a whole step. So at full passes the camera is the 30 fps game's camera (Link reads it to steer;
+// what is in view, and so the draw-time random numbers of the scene lighting, stays the same).
+// WWHD_TRUE60_CAMERA_EXACT=0 keeps two half steps (debug).
+const bool g_cam_exact = !getenv("WWHD_TRUE60_CAMERA_EXACT") || atoi(getenv("WWHD_TRUE60_CAMERA_EXACT")) != 0;
+std::vector<uint8_t> g_cam_half;
+// the camera's execute also writes the play state's camera data (dComIfGp: 1047E720.., 104846B0..,
+// eye/center/up of the camera slots, read by the next pass's draws before its own camera_draw):
+// taken back word by word where the preview execute changed them
+constexpr uint32_t kPlayCamLo = 0x1046F0B0, kPlayCamHi = 0x10485000;
+Region g_cam_play;
+uint64_t g_cam_half_pass = ~0ull, g_cam_restored = ~0ull;
+uint32_t g_cam_half_proc = 0;
 struct TimerField { uint32_t off; int bytes; };
-const TimerField kLinkTimers[] = {
-    {0x6916, 2}, {0x6918, 2}, {0x691A, 2}, {0x691C, 2}, {0x691E, 2}, {0x6920, 2},
-    {0x6972, 2}, {0x6976, 2}, {0x699C, 2}, {0x69AC, 2}, {0x69AE, 2}, {0x8260, 4},
-};
-constexpr int kNumLinkTimers = sizeof(kLinkTimers) / sizeof(kLinkTimers[0]);
 // camera (dCamera_c offsets + kDCamera): step counters m07C, m080, m108, m118, m11C (Run),
 // mForceLockTimer +0x138, and the follow camera's work counters (work at +0x37C in WWHD:
 // +0x380 bezier counter (GameCube m388), +0x38A charge counter (m392); +0x384 see hook_025DF940)
@@ -328,13 +525,98 @@ void write_field(uint32_t a, int bytes, int32_t v) {
     else st32(a, (uint32_t)v);
 }
 
+bool group_on(Group g) { return (g_groups >> g) & 1; }
+int link_proc_mode(uint32_t p) {
+    init_link_procs();
+    return p < 256 ? g_link_proc[p] : 0;
+}
+float set_dt(float dt) {
+    float o = t_dt;
+    t_dt = dt;
+    return o;
+}
+
 bool runs_60(uint32_t proc) {
     if (!enabled()) return false;
     auto it = g_procs.find(proc);
     return it != g_procs.end() && it->second.pass == g_pass && it->second.dt < 1.0f;
 }
 uint32_t link() { return g_link; }
+uint64_t link_steps() { return g_link_steps; }
+bool g_state_loaded = false;
+bool state_loaded() { return g_state_loaded; }
+// camera_draw on a half pass sets the view matrix for the preview camera (j3dSys view matrix at
+// 104B45F8, found with WWHD_T60_CAMDRAWLOG). The next full pass draws its actors before its own
+// camera_draw, as the 30 fps game does with the camera of the previous step: the matrix goes back to
+// the full pass's. Only these words: the area around holds sound-engine state written by the sound
+// thread meanwhile (taking a wider range back crashed it in JASTrack).
+Region g_camdraw;
+void camera_draw_preview(bool) {}  // (the view matrix is among the half-pass draw state, pass_begin)
+// Draw state the half pass's previews changed and the next full pass would otherwise start from:
+// what its draws decide before the full pass's own camera_draw and lighting are set up (which
+// objects are in view, which are lit by a point light, with a random number each) must be the
+// 30 fps game's. At the start of each half pass these are saved, at the next full pass put back:
+//   the scene lighting (g_env_light 10475A68: light fades, flicker, the lighting position of the
+//   player), the frustum clipper (mDoLib_clipper 1048CFF0, set up from the camera), the J3D view
+//   matrix (104B45F8).
+// WWHD_TRUE60_DRAWSTATE_KEEP=1 keeps them (debug).
+struct HalfSave { uint32_t addr, size; std::vector<uint8_t> data; };
+// (found with WWHD_T60_DRAWWRITE: the words half-pass draws change; not the sound engine's areas
+// around 104B5000 and 104C1000, which the sound thread writes at the same time)
+HalfSave g_half_saves[] = {
+    {0x10474DE0, 0x10, {}},    // play state: lighting position written by Link's draw
+    {0x1047E720, 0x90, {}},    // play state: camera slot 0 draw data (written by daBg's draw)
+    {0x104846B0, 0x90, {}},    // play state: camera slot 1 draw data (daBg)
+    {0x1048CFF0, 0x80, {}},    // mDoLib_clipper
+    {0x104B45F8, 0x30, {}},    // J3D view matrix
+};
+uint64_t g_half_saves_pass = ~0ull;
+void pass_begin(bool full) {
+    static const bool keep = getenv("WWHD_TRUE60_DRAWSTATE_KEEP") != nullptr;
+    if (!full) {
+        if (enabled() && !keep && (g_link || g_camera)) {
+            for (auto& h : g_half_saves) h.data.assign(ppc_ptr(h.addr), ppc_ptr(h.addr) + h.size);
+            g_half_saves_pass = g_pass;
+        }
+        return;
+    }
+    if (g_half_saves_pass + 1 == g_pass)
+        for (auto& h : g_half_saves) memcpy(ppc_ptr(h.addr), h.data.data(), h.size);
+    g_half_saves_pass = ~0ull;
+    link_preview_restore();
+
+    if (!g_memdiff.empty() && g_memdiff_step) {
+        g_memdiff_step = 0;
+        int n = 0;
+        size_t i = 0, sz = g_memdiff.size();
+        const uint8_t* cur = ppc_ptr(kMemDiffLo);
+        while (i < sz && n < 400) {
+            if (cur[i] == g_memdiff[i]) { i++; continue; }
+            size_t j = i;
+            size_t last = i;
+            while (j < sz && j - last < 32) { if (cur[j] != g_memdiff[j]) last = j; j++; }
+            LOG("[memdiff] %08X +%zX", (uint32_t)(kMemDiffLo + i), last + 1 - i);
+            n++;
+            i = last + 1;
+        }
+        g_memdiff.clear();
+        g_memdiff.shrink_to_fit();
+    }
+    // the camera's half pass was a preview too: put it back before anything executes (Link reads it)
+    if (g_cam_half_pass + 1 == g_pass && g_cam_half_proc == g_camera && g_cam_half.size() == kCamSnap) {
+        memcpy(ppc_ptr(g_cam_half_proc), g_cam_half.data(), kCamSnap);
+        region_restore(g_cam_play);
+        g_cam_restored = g_pass;
+    }
+    g_cam_play.base = 0;
+    g_cam_half_pass = ~0ull;
+}
+bool preview() { return t_dt < 1.0f && half_pass(); }
 void ss_reset() {
+    g_link_steps = 0;
+    g_state_loaded = true;
+    g_snap.pass = ~0ull;  // the loaded state has its own Link and camera
+    g_cam_half_pass = ~0ull;
     g_procs.clear();
     g_link = 0;
     g_camera = 0;
@@ -363,13 +645,41 @@ void stats_tick() {
 using namespace true60;
 
 // fpcM_Execute(process): per-process gate and step length
+// debug: WWHD_WATCH_LINK=off: logs which process execute/draw changes the word at Link+off
+static uint32_t watch_addr() {
+    static const long abs_a = getenv("WWHD_WATCH_ADDR") ? strtol(getenv("WWHD_WATCH_ADDR"), nullptr, 16) : -1;
+    if (abs_a >= 0) return (uint32_t)abs_a;
+    static const long off = getenv("WWHD_WATCH_LINK") ? strtol(getenv("WWHD_WATCH_LINK"), nullptr, 16) : -1;
+    return off >= 0 && true60::link() ? true60::link() + (uint32_t)off : 0;
+}
+static void watch_link(const char* what, uint32_t proc, uint32_t before) {
+    uint32_t wa = watch_addr();
+    if (!wa) return;
+    uint32_t v = ld32(wa);
+    if (v != before) LOG("[watch] pass %llu step %llu %s %s %08X (exec fn %08X): %08X -> %08X", (unsigned long long)true60::pass(), (unsigned long long)interp::logic_steps(), interp::hold_pass() ? "half" : "full", what, proc, actor_execute_fn(proc), before, v);
+}
+static uint32_t watch_val() {
+    uint32_t wa = watch_addr();
+    return wa ? ld32(wa) : 0;
+}
+static FILE* g_rx = getenv("WWHD_RND_EXEC") ? fopen(getenv("WWHD_RND_EXEC"), "w") : nullptr;  // debug
+static void rx_log(uint32_t proc, uint32_t s0) {
+    if (g_rx && ld32(0x101FF9D4) != s0)
+        fprintf(g_rx, "%llu %d %08X %08X %08X\n", (unsigned long long)interp::logic_steps(), (int)half_pass(), proc, actor_execute_fn(proc), s0);
+}
 extern "C" void hook_025DF940(Cpu* c) {
     uint32_t proc = c->r[3];
+    uint32_t rx_s0 = ld32(0x101FF9D4);
+    struct WatchGuard { uint32_t p, v; ~WatchGuard() { watch_link("execute", p, v); } } watch_guard{proc, watch_val()};
+    struct RxLog { uint32_t p, s; ~RxLog() { rx_log(p, s); } } rx_guard{proc, rx_s0};
     if (!enabled()) {
         bool is_link = g_trace && actor_execute_fn(proc) == kDaPyExecute;
         bool is_cam = g_cam_trace && is_camera(proc);
         if (is_cam) g_follow_called = false;
+        uint32_t fn = true60_test::dumping() ? actor_execute_fn(proc) : 0;
+        if (fn == kDaPyExecute) true60_test::before_execute_link(proc);
         f_025DF940_orig(c);
+        if (fn) true60_test::after_execute(proc, fn, fn == kDaPyExecute, 1.0f);
         if (is_cam) trace_camera(proc, 1.0f);
         g_st.full++;
         if (g_trace || g_cam_trace) stats_tick();  // statistics also for the 30 fps reference runs
@@ -377,6 +687,7 @@ extern "C" void hook_025DF940(Cpu* c) {
             g_link = proc;
             trace_link(proc, 1.0f);
         }
+        if (actor_execute_fn(proc) == kDaPyExecute) g_link_steps++;
         return;
     }
     float dt = classify(proc);
@@ -385,17 +696,35 @@ extern "C" void hook_025DF940(Cpu* c) {
         c->r[3] = 0;
         return;
     }
+    // Link in a converted procedure: the full pass is a whole 30 Hz step (exactly the 30 fps game's
+    // step: the half-pass preview before it was taken back in pass_begin), the half pass a preview
+    // made from a snapshot (link_preview_begin) with dt = 0.5. Drawn at 60 Hz on both.
+    bool link_conv = proc == g_link && dt < 1.0f;  // (also set for the camera's exact step below)
+    if (link_conv && !half_pass()) dt = 1.0f;
+    bool link_preview = link_conv && half_pass();
+    if (link_preview) link_preview_begin(proc);
+    // The 60 Hz camera's full passes are exact 30 Hz steps: the half pass is a preview (drawn), and
+    // the full pass starts again from the camera as it was before that half pass and takes a whole
+    // step. So at full passes the camera is the 30 fps game's camera (what is in view, and so the
+    // draw-time random numbers of the scene lighting, stay those of the 30 fps game).
+    // WWHD_TRUE60_CAMERA_EXACT=0 keeps two half steps (debug).
+    bool cam_preview = false;
+    if (g_cam_exact && proc == g_camera && dt < 1.0f) {
+        if (half_pass()) {
+            g_cam_half.assign(ppc_ptr(proc), ppc_ptr(proc) + kCamSnap);
+            g_cam_half_pass = g_pass;
+            g_cam_half_proc = proc;
+            cam_preview = true;
+            region_begin(g_cam_play, kPlayCamLo, kPlayCamHi - kPlayCamLo);
+        } else if (g_cam_restored == g_pass) {
+            dt = 1.0f;  // pass_begin put the camera back: a whole step
+            link_conv = true;  // (drawn as a 60 Hz process: not blended)
+        }
+    }
     float saved_dt = t_dt;
     uint32_t saved_proc = t_proc;
     t_dt = dt;
     t_proc = proc;
-    int32_t timers[kNumLinkTimers];
-    uint32_t state = 0;
-    bool hold_timers = dt < 1.0f && half_pass() && proc == g_link;
-    if (hold_timers) {
-        state = ld32(proc + kCurProc);
-        for (int i = 0; i < kNumLinkTimers; i++) timers[i] = read_field(proc + kLinkTimers[i].off, kLinkTimers[i].bytes);
-    }
     int32_t cam[kNumCamCounters];
     bool hold_cam = dt < 1.0f && half_pass() && proc == g_camera;
     uint32_t cam_sum = 0;
@@ -414,13 +743,27 @@ extern "C" void hook_025DF940(Cpu* c) {
         g_cam_step = true;
         g_cam_nan = false;
     }
+    uint32_t dump_fn = true60_test::dumping() ? actor_execute_fn(proc) : 0;
+    if (dump_fn == kDaPyExecute) true60_test::before_execute_link(proc);
+    // random numbers (cM_rnd seeds): a half pass does not consume any, so the sequence the 30 Hz
+    // processes and the full passes see is the one of the 30 fps game (drops, AI choices). A 60 Hz
+    // process drawing on a half pass gets the values its next full step will draw.
+    uint32_t rng[3];
+    bool hold_rng = dt < 1.0f && half_pass();
+    if (hold_rng)
+        for (int i = 0; i < 3; i++) rng[i] = ld32(kRndSeeds + 4 * i);
     f_025DF940_orig(c);
+    if (link_preview) link_preview_end();
+    if (cam_preview) region_end(g_cam_play);
+    if (hold_rng)
+        for (int i = 0; i < 3; i++) st32(kRndSeeds + 4 * i, rng[i]);
     if (cam60) {
         g_cam_step = false;
         if (g_cam_nan || (!nan_before && cam_has_nan(proc))) {
             static int logged = 0;
             if (logged++ < 20) {
-                mkdir("captures", 0755);
+                std::error_code directory_error;
+                std::filesystem::create_directory("captures", directory_error);
                 if (FILE* f = fopen("captures/true60-nan.log", "a")) {
                     fprintf(f, "pass %llu: 60 Hz camera step produced NaN (sphere %d, caller %08X); restored, 30 Hz for 60 passes\n",
                             (unsigned long long)g_pass, (int)g_cam_nan, g_cam_nan_lr);
@@ -473,17 +816,13 @@ extern "C" void hook_025DF940(Cpu* c) {
             if (v == cam[i] + 1 || (!up_only && v == cam[i] - 1)) write_field(a, kCamCounters[i].bytes, cam[i]);
         }
     }
-    if (hold_timers && ld32(proc + kCurProc) == state) {
-        for (int i = 0; i < kNumLinkTimers; i++) {
-            uint32_t a = proc + kLinkTimers[i].off;
-            if (timers[i] > 0 && read_field(a, kLinkTimers[i].bytes) == timers[i] - 1) write_field(a, kLinkTimers[i].bytes, timers[i]);
-        }
-    }
     t_dt = saved_dt;
     t_proc = saved_proc;
+    if (dump_fn) true60_test::after_execute(proc, dump_fn, dump_fn == kDaPyExecute, dt);
+    if (proc == g_link && !half_pass()) g_link_steps++;
     ProcInfo& pi = g_procs[proc];
     pi.pass = g_pass;
-    pi.dt = dt;
+    pi.dt = link_conv ? 0.5f : dt;  // (drawn as a 60 Hz process)
     (dt < 1.0f ? g_st.half : g_st.full)++;
     if (proc == g_link) {
         (dt < 1.0f ? g_st.link60 : g_st.link30)++;
@@ -675,18 +1014,60 @@ extern "C" void hook_0200F8D0(Cpu* c) {  // int cLib_chaseAngleS(s16* v, s16 tar
 // J3DFrameCtrl::update (WWHD layout, no vtable: rate +0x0, frame +0x4, start s16 +0x8,
 // end s16 +0xA, loop s16 +0xC, attribute u8 +0xE, state u8 +0xF): frame += rate * dt. The update
 // sets the rate to 0 when a one-shot animation ends; otherwise the real rate is put back.
+// Full passes are exact: when the half pass before advanced this frame control and nothing else
+// changed it since, the full pass repeats the 30 Hz step from the frame of the last full pass
+// (frame + rate, with the original end/loop handling), so the game's frame comparisons (e.g.
+// `frame > 16.0f` in procCutL, reached exactly at 30 fps) see the bit-identical 30 fps values.
 namespace interp { bool fx_hold_anim(); }
+namespace {
+struct FcStep { uint64_t pass; uint32_t before, after, rate, range; };
+std::unordered_map<uint32_t, FcStep> g_fc;  // frame controls advanced on the last half pass
+}  // namespace
 extern "C" void hook_027F2FC4(Cpu* c) {
     // drawing code advancing an animation on a hold/half pass: held back (interp_fx.cpp); inside
     // game logic (e.g. Link at 60 Hz) the step is scaled by dt below
     if (interp::fx_hold_anim()) return;
     if (t_dt >= 1.0f) return f_027F2FC4_orig(c);
     uint32_t fc = c->r[3];
-    uint32_t rate = ld32(fc);
+    uint32_t rate = ld32(fc), frame = ld32(fc + 4), range = ld32(fc + 8);
+    if (!half_pass()) {
+        auto it = g_fc.find(fc);
+        bool halved = false;  // the half pass before advanced it
+        if (it != g_fc.end()) {
+            FcStep st = it->second;
+            g_fc.erase(it);
+            if (st.pass + 1 == g_pass) {
+                halved = true;
+                if (st.after == frame && st.rate == rate && st.range == range) {
+                    st32(fc + 4, st.before);
+                    f_027F2FC4_orig(c);  // the whole 30 Hz step
+                    return;
+                }
+            }
+        }
+        // not advanced on the half pass before (the process ran at 30 Hz there, e.g. Link entering a
+        // 60 Hz procedure, or true 60 was just switched on): this pass is a whole step
+        if (!halved) return f_027F2FC4_orig(c);
+    }
     float scaled = u32_as_f32(rate) * t_dt;
     st32(fc, f32_as_u32(scaled));
     f_027F2FC4_orig(c);
     if (ld32(fc) == f32_as_u32(scaled)) st32(fc, rate);
+    if (half_pass()) {
+        if (g_fc.size() > 4096) g_fc.clear();
+        g_fc[fc] = FcStep{g_pass, frame, ld32(fc + 4), ld32(fc), range};
+    }
+}
+
+// J3DFrameCtrl::checkPass(f32 frame): true if `frame` lies in [frame, frame + rate), i.e. is passed
+// by the next 30 Hz step (key frames for footsteps, voices, effects, item models). With dt < 1 it
+// is answered on full passes only, where the frame is the exact 30 fps value (hook_027F2FC4): the
+// windows of consecutive full passes tile the animation like at 30 fps, so every key frame is found
+// once and at the same step as in the 30 fps game. Half passes find nothing.
+extern "C" void f_027F2BF8_orig(Cpu* c);
+extern "C" void hook_027F2BF8(Cpu* c) {
+    if (t_dt >= 1.0f || !half_pass()) return f_027F2BF8_orig(c);
+    c->r[3] = 0;
 }
 
 // mDoExt_MtxCalcOldFrame::decOldFrameMorfCounter: blend from the previous pose over a number of
@@ -760,10 +1141,110 @@ bool true60::drawing_60() {
     if (enabled() && g_force_draw_60 > 0) return true;
     return enabled() && g_draw_depth > 0 && g_draw_depth <= 8 && runs_60(g_draw_stack[g_draw_depth - 1]);
 }
+// An actor's draw on a half pass leaves no state behind in a 30 Hz actor: its draw also steps
+// draw-side state in the actor (its tevStr: the environment light it is lit with, faded per draw,
+// which decides e.g. whether point-light flicker is drawn for it, with a random number each time).
+// At 60 fps that ran twice per step; with true 60 the words an actor's half-pass draw changed in
+// its own memory (allocation size from its heap block header, proc-8) are put back right after it.
+// WWHD_TRUE60_DRAW_KEEP=1 turns this off (debug).
 extern "C" void hook_025DF904(Cpu* c) {
-    if (g_draw_depth < 8) g_draw_stack[g_draw_depth] = c->r[3];
+    uint32_t proc = c->r[3];
+    if (g_draw_depth < 8) g_draw_stack[g_draw_depth] = proc;
     g_draw_depth++;
+    uint32_t wv = watch_val();
+    static const uint32_t dlp = getenv("WWHD_DRAWLOG_PROC") ? (uint32_t)strtoul(getenv("WWHD_DRAWLOG_PROC"), nullptr, 16) : 0;
+    if (dlp && proc == dlp) {  // debug: draws of one process, with a word of it before (WWHD_DRAWLOG_OFF)
+        static const uint32_t off = getenv("WWHD_DRAWLOG_OFF") ? (uint32_t)strtoul(getenv("WWHD_DRAWLOG_OFF"), nullptr, 16) : 0;
+        LOG("[drawlog] step %llu %s depth %d word %08X exec %08X", (unsigned long long)interp::logic_steps(), half_pass() ? "half" : "full", g_draw_depth, ld32(proc + off), actor_execute_fn(proc));
+        static FILE* df = getenv("WWHD_DRAWLOG_DUMP") ? fopen(getenv("WWHD_DRAWLOG_DUMP"), "wb") : nullptr;
+        if (df && !half_pass()) {  // the process and g_env_light at its draw, as an ADMP record of 0x400 + 0x2000 bytes
+            static uint32_t rlo = getenv("WWHD_DRAWLOG_RANGE") ? (uint32_t)strtoul(getenv("WWHD_DRAWLOG_RANGE"), nullptr, 16) : 0x10475A68;
+            static uint32_t rsz = getenv("WWHD_DRAWLOG_RANGE") && strchr(getenv("WWHD_DRAWLOG_RANGE"), ':') ? (uint32_t)strtoul(strchr(getenv("WWHD_DRAWLOG_RANGE"), ':') + 1, nullptr, 16) : 0x2000;
+            uint64_t step = interp::logic_steps(); uint32_t full = 1, size = 0x400 + rsz; float dtv = 1.0f;
+            fwrite("ADMP", 1, 4, df); fwrite(&step, 8, 1, df); fwrite(&full, 4, 1, df); fwrite(&dtv, 4, 1, df);
+            fwrite(&proc, 4, 1, df); fwrite(&size, 4, 1, df); fwrite(mem::ptr(proc), 1, 0x400, df); fwrite(mem::ptr(rlo), 1, rsz, df);
+            fflush(df);
+        }
+    }
+    static const bool keep = getenv("WWHD_TRUE60_DRAW_KEEP") != nullptr;
+    static std::vector<uint32_t> before;
+    uint32_t size = 0, cull_mtx = 0;
+    uint8_t cull_before[0x30];
+    if (enabled() && half_pass() && !keep && g_draw_depth >= 2 && !runs_60(proc) && actor_execute_fn(proc)) {
+        size = ld32(proc - 8) & ~3u;
+        if (size < 0x100 || size > 0x20000) size = 0;
+        if (size) before.assign((uint32_t*)ppc_ptr(proc), (uint32_t*)ppc_ptr(proc + size));
+        // its culling matrix (fopAc_ac_c +0x348, the model's base matrix: fopAcM_cullingCheck 025D6D08),
+        // which some draws set (spinning rupees): the next full pass culls with the previous step's
+        cull_mtx = ld32(proc + 0x348);
+        if (cull_mtx >= mem::kMem2Start && cull_mtx < mem::kMem2End && (cull_mtx & 3) == 0)
+            memcpy(cull_before, ppc_ptr(cull_mtx), 0x30);
+        else
+            cull_mtx = 0;
+    }
+    static const bool envlog = getenv("WWHD_T60_ENVLOG") != nullptr;  // debug: env-light words Link's half-pass draw/execute changes
+    static std::vector<uint32_t> env_before;
+    bool envdbg = envlog && proc == g_link && half_pass();
+    if (envdbg) env_before.assign((uint32_t*)ppc_ptr(0x10475A68), (uint32_t*)ppc_ptr(0x10475A68 + 0x2000));
+    // debug: WWHD_T60_DRAWWRITE=1 logs static words (1046F0B0..104C3000) that half-pass actor draws change, with counts
+    static const bool dwlog = getenv("WWHD_T60_DRAWWRITE") != nullptr;
+    static std::vector<uint32_t> dw_before;
+    bool dw = dwlog && half_pass() && g_draw_depth >= 2;
+    if (dw) dw_before.assign((uint32_t*)ppc_ptr(0x1046F0B0), (uint32_t*)ppc_ptr(0x104C3000));
     f_025DF904_orig(c);
+    if (dw) {
+        static std::unordered_map<uint32_t, int> cnt;
+        static std::unordered_map<uint32_t, uint32_t> who;
+        static int n = 0;
+        const uint32_t* cur = (const uint32_t*)ppc_ptr(0x1046F0B0);
+        for (size_t i = 0; i < dw_before.size(); i++)
+            if (cur[i] != dw_before[i]) { uint32_t a = 0x1046F0B0 + 4 * (uint32_t)i; cnt[a]++; who[a] = actor_execute_fn(proc); }
+        if (++n % 3000 == 0) {
+            std::vector<std::pair<uint32_t, int>> v(cnt.begin(), cnt.end());
+            std::sort(v.begin(), v.end());
+            std::string o;
+            for (auto& [a, k] : v) { char t[40]; snprintf(t, sizeof t, " %08X:%d:%08X", a, k, who[a]); o += t; }
+            LOG("[drawwrite]%s", o.c_str());
+        }
+    }
+    if (envdbg) {
+        std::string o;
+        const uint32_t* cur = (const uint32_t*)ppc_ptr(0x10475A68);
+        for (size_t i = 0; i < env_before.size(); i++)
+            if (cur[i] != env_before[i]) { char t[16]; snprintf(t, sizeof t, " +%zX", 4 * i); o += t; }
+        static int n = 0;
+        if (n++ < 20) LOG("[envlog] Link draw changed g_env_light:%s", o.c_str());
+    }
+    if (size) {
+        uint32_t* cur = (uint32_t*)ppc_ptr(proc);
+        // J3D packets inside the actor that its draw entered into a draw buffer (J3DDrawBuffer::entry*:
+        // packet +0x94 = the bucket slot, +0x10 = the next packet) stay entered: the buffer lists them
+        // until its frameInit, which asserts that each listed packet points back at its slot
+        auto entered_packet = [&](uint32_t i) {
+            if (i * 4 < 0x94) return false;
+            uint32_t slot = __builtin_bswap32(cur[i]);
+            if (slot < mem::kMem2Start || slot >= mem::kMem2End || (slot & 3)) return false;
+            uint32_t pkt = proc + 4 * i - 0x94;
+            uint32_t q = ld32(slot);
+            for (int n = 0; q && n < 4096; n++) {
+                if (q == pkt) return true;
+                if (q < mem::kMem2Start || q >= mem::kMem2End || (q & 3)) return false;
+                q = ld32(q + 0x10);
+            }
+            return false;
+        };
+        static std::vector<uint32_t> keep;  // word indexes not taken back: entered packets' +0x94 and +0x10
+        keep.clear();
+        for (uint32_t i = 0x94 / 4; i < size / 4; i++)
+            if (cur[i] != before[i] && entered_packet(i)) {
+                keep.push_back(i);
+                keep.push_back(i - (0x94 - 0x10) / 4);
+            }
+        for (uint32_t i = 0; i < size / 4; i++)
+            if (cur[i] != before[i] && std::find(keep.begin(), keep.end(), i) == keep.end()) cur[i] = before[i];
+        if (cull_mtx) memcpy(ppc_ptr(cull_mtx), cull_before, 0x30);
+    }
+    watch_link("draw", proc, wv);
     g_draw_depth--;
 }
 
@@ -859,4 +1340,15 @@ void true60_nan_probe(uint32_t addr) {
         for (uint32_t o = 0x10; o <= 0x60; o += 4) if (std::isnan(ldf32(cam + o))) LOG("[nanprobe]   NaN at dCamera+0x%02X", o);
     }
     was_nan = nan;
+}
+
+// The HUD (d_meter) updates its state from the play scene's draw (02593B10, the per-step part of
+// the meter: button labels, gauges, the magic gauge sparkle with its random numbers), so at 60 fps
+// it stepped twice per logic step. With true 60 the update runs on full passes only (half passes
+// still draw it): HUD timing and its use of the shared random numbers are those of the 30 fps game.
+extern "C" void f_02593B10_orig(Cpu* c);
+extern "C" void hook_02593B10(Cpu* c) {
+    static const bool every = getenv("WWHD_HUD_EVERY_PASS") != nullptr;  // debug: old behaviour
+    if (enabled() && half_pass() && !every) return;
+    f_02593B10_orig(c);
 }
