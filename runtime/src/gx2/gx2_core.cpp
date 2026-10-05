@@ -371,7 +371,9 @@ static uint64_t vclock_index(int64_t t) {  // g_vclock_mutex held
 }
 // a flip also waits for the GPU to finish that frame, as on hardware: the game reuses a frame's
 // buffers once its flip has executed
-struct PendingFlip { uint64_t vsync, swap; };
+struct PendingFlip { uint64_t vsync, swap; uint8_t waitedRender = 0, waitedGpu = 0; };
+// pacing diagnostics: why flips missed the vsync they could have had (logged every 300 flips)
+static uint64_t g_pace_flips, g_pace_on_time, g_pace_game_late, g_pace_render_late, g_pace_gpu_late;
 static std::deque<PendingFlip> g_pending_flips;
 static uint64_t g_last_flip_vsync = 0;
 static uint64_t g_last_flip_time = 0;  // timebase
@@ -422,8 +424,29 @@ void gx2_display_vsync(int64_t vsync_ns, int64_t display_period) {
 static void update_flips() {  // g_flip_mutex held
     uint64_t now = vsync_index();
     while (!g_pending_flips.empty()) {
-        uint64_t at = std::max(g_pending_flips.front().vsync + 1, g_last_flip_vsync + interp::effective_swap_interval(g_swap_interval));
-        if (at > now || gfx::frames_completed() < g_pending_flips.front().swap) break;
+        PendingFlip& pf = g_pending_flips.front();
+        uint64_t ideal = g_last_flip_vsync + interp::effective_swap_interval(g_swap_interval);
+        uint64_t at = std::max(pf.vsync + 1, ideal);
+        if (at > now) break;
+        if (gfx::frames_completed() < pf.swap) {  // could flip now, but the frame isn't done
+            if (gfx::frames_submitted() < pf.swap) pf.waitedRender = 1;
+            else pf.waitedGpu = 1;
+            break;
+        }
+        g_pace_flips++;
+        if (pf.vsync + 1 > ideal) g_pace_game_late += pf.vsync + 1 - ideal;  // the swap came after its vsync
+        if (now > at) {
+            if (pf.waitedRender) g_pace_render_late += now - at;
+            else g_pace_gpu_late += now - at;
+        } else if (pf.vsync + 1 <= ideal) {
+            g_pace_on_time++;
+        }
+        if (g_pace_flips % 300 == 0) {
+            LOG("[pace] last 300 flips: %llu on time; vsyncs lost: game late %llu, render late %llu, GPU late %llu",
+                (unsigned long long)g_pace_on_time, (unsigned long long)g_pace_game_late, (unsigned long long)g_pace_render_late,
+                (unsigned long long)g_pace_gpu_late);
+            g_pace_on_time = g_pace_game_late = g_pace_render_late = g_pace_gpu_late = 0;
+        }
         at = now;
         g_pending_flips.pop_front();
         g_last_flip_vsync = at;

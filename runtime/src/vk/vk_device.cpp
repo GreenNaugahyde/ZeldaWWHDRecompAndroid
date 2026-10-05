@@ -1706,6 +1706,7 @@ static std::atomic<uint64_t> g_frames_completed{0}, g_frames_submitted{0};
 // GPU so the game can reuse the frame's buffers; this renderer has copied all guest data by the time
 // a frame is submitted, so a submitted frame counts, as long as the GPU is at most one frame behind.
 // The CPU then builds frame N+1 while the GPU renders frame N (WWHD_STRICT_FLIPS=1: wait for the GPU).
+uint64_t frames_submitted() { return g_frames_submitted.load(); }
 uint64_t frames_completed() {
     static const bool strict = getenv("WWHD_STRICT_FLIPS") != nullptr;
     uint64_t done = g_frames_completed.load();

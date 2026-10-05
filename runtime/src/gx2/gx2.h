@@ -33,6 +33,7 @@ void copy_surface(uint32_t src, uint32_t srcMip, uint32_t srcSlice, uint32_t dst
 void copy_to_scan(uint32_t colorBuffer, uint32_t target);  // target: 1 = TV, 4 = DRC (GamePad)
 void swap();                     // present the TV scan buffer
 uint64_t frames_completed();     // swaps whose GPU work has finished
+uint64_t frames_submitted();     // swaps the render thread has submitted
 void with_autorelease_pool(void (*fn)());  // render thread: drain Objective-C temporaries per batch
 void set_tv_format(uint32_t gx2Format, bool tv);  // GX2SetTVBuffer / GX2SetDRCBuffer
 void invalidate(uint32_t flags, uint32_t addr, uint32_t size);
