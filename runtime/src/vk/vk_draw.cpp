@@ -1741,6 +1741,46 @@ static bool build_indices(uint32_t prim, uint32_t count, uint32_t indexType, uin
     return true;
 }
 
+// Indices converted and uploaded once per submission for each (address, count, type, primitive),
+// reused while the game hasn't written their pages (as copy_tracked): the same mesh drawn many
+// times converts its indices once. n == 0: a non-indexed draw.
+struct DrawIndices {
+    Upload u;
+    uint32_t n = 0;
+    VkPrimitiveTopology type = VK_PRIMITIVE_TOPOLOGY_POINT_LIST;
+};
+static uint64_t g_index_reused, g_index_built;
+static bool draw_indices(uint32_t prim, uint32_t count, uint32_t indexType, uint32_t indexAddr, DrawIndices& out) {
+    struct Entry { DrawIndices d; uint32_t prim, indexType, gen; };
+    static std::unordered_map<uint64_t, Entry> cache;
+    static uint64_t serial = ~0ull;
+    static std::vector<uint32_t> tmp;  // render thread; storage reused across draws
+    command_buffer();
+    if (R.cmdSerial != serial) {  // transient memory is only valid within one submission
+        cache.clear();
+        serial = R.cmdSerial;
+    }
+    const uint32_t bytes = count * (indexType == 1 || indexType == 9 ? 4 : 2);
+    const bool cacheable = indexAddr && g_track_writes && indexAddr + (uint64_t)bytes <= 0x100000000ull;
+    const uint64_t key = (uint64_t)indexAddr << 32 | count;
+    if (cacheable) {
+        auto it = cache.find(key);
+        if (it != cache.end() && it->second.prim == prim && it->second.indexType == indexType &&
+            memw::unchanged_since(indexAddr, bytes, it->second.gen)) {
+            g_index_reused++;
+            out = it->second.d;
+            return true;
+        }
+    }
+    uint32_t gen = memw::now();  // before reading: a write during it makes the next use convert again
+    if (!build_indices(prim, count, indexType, indexAddr, tmp, out.type)) return false;
+    g_index_built++;
+    out.n = (uint32_t)tmp.size();
+    out.u = out.n ? upload(tmp.data(), tmp.size() * 4, 16) : Upload{};
+    if (cacheable) cache[key] = {out, prim, indexType, gen};
+    return true;
+}
+
 // ---------------------------------------------------------------- persistent shader cache
 // Every newly translated shader and every new pipeline is appended to a recipe file: the shader
 // microcode plus the register state that shaped its translation. At startup the recipes are
@@ -2007,7 +2047,9 @@ void report_skips() {
         g_bytes_vtx / 300.0 / 1024, g_bytes_vtx_shared / 300.0 / 1024, g_bytes_vtx_reused / 300.0 / 1024, g_bytes_ubo / 300.0 / 1024,
         g_bytes_ubo_reused / 300.0 / 1024, g_bytes_vars / 300.0 / 1024);
     g_bytes_vtx = g_bytes_vtx_shared = g_bytes_ubo = g_bytes_vars = g_bytes_vtx_reused = g_bytes_ubo_reused = 0;
-    LOG("[gfx] last 300 frames, draws/frame: %.0f with state reused, %.0f resolved", g_fast_draws / 300.0, g_slow_draws / 300.0);
+    LOG("[gfx] last 300 frames, draws/frame: %.0f with state reused, %.0f resolved; indices %.0f reused, %.0f built",
+        g_fast_draws / 300.0, g_slow_draws / 300.0, g_index_reused / 300.0, g_index_built / 300.0);
+    g_index_reused = g_index_built = 0;
     if (g_stale_reuses) LOG("[gfx] write tracking: %llu reuses were outdated (written without a flush)", (unsigned long long)g_stale_reuses);
     g_stale_reuses = 0;
     g_fast_draws = g_slow_draws = 0;
@@ -2063,7 +2105,7 @@ static struct PrepKey {
 // Records a draw whose state is resolved (Prepared): dynamic state, vertex buffers, descriptors and
 // the draw itself, inside the current render pass.
 static void record_draw(const uint32_t* regs, const Prepared& P, uint32_t prim, uint32_t count, uint32_t indexType,
-                        uint32_t indexAddr, uint32_t baseVertex, uint32_t instances, const std::vector<uint32_t>& indices) {
+                        uint32_t indexAddr, uint32_t baseVertex, uint32_t instances, const DrawIndices& indices) {
     LatteFetchShader* fs = P.fs;
     Shader* vs = P.vs;
     Shader* ps = P.ps;
@@ -2168,16 +2210,16 @@ static void record_draw(const uint32_t* regs, const Prepared& P, uint32_t prim, 
     DLOG("[draw]   -> target %ux%u fmt %d depth %d (slice %u of %u) vp %.0f,%.0f %.0fx%.0f", w, h,
          colors[0] ? (int)colors[0]->img.format : 0, depth != nullptr, depthSlice, depth ? depth->slices : 0, vp.x, vp.y, vp.width,
          vp.height);
-    if (indices.empty()) {
+    if (!indices.n) {
         vkCmdDraw(cmd, count, instances, baseVertex, 0);
     } else {
         // the index buffer stays bound at the start of its chunk; draws select theirs with firstIndex
-        Upload u = upload(indices.data(), indices.size() * 4, 16);
+        const Upload& u = indices.u;
         if (!g_ds.valid || g_ds.ib != u.buf) {
             vkCmdBindIndexBuffer(cmd, u.buf, 0, VK_INDEX_TYPE_UINT32);
             g_ds.ib = u.buf;
         }
-        vkCmdDrawIndexed(cmd, (uint32_t)indices.size(), instances, (uint32_t)(u.offset / 4), (int32_t)baseVertex, 0);
+        vkCmdDrawIndexed(cmd, indices.n, instances, (uint32_t)(u.offset / 4), (int32_t)baseVertex, 0);
     }
     // debug: WWHD_DUMP_DRAWS=frame:i,j,k dumps color target 0 after those draws
     static uint64_t dumpFrame = ~0ull;
@@ -2257,12 +2299,11 @@ void draw(const uint32_t* regs, uint32_t prim, uint32_t count, uint32_t indexTyp
     // addresses) changed since the previous draw, which is in the same render pass, and no surface was
     // created, written or invalidated since: everything resolved for it still holds (runs of draws of
     // the same object with different matrices: grass, trees, crowds)
-    static std::vector<uint32_t> indices;  // render thread; storage reused across draws
     if (g_prep_key.valid && !g_hires_redraw && g_prep_key.gen == g_draw_state_gen && g_prep_key.prim == prim &&
         g_prep_key.frame == R.frame && g_prep_key.writeSeq == write_seq() && g_prep_key.surfaces == R.surfaces.size() &&
         g_prep_key.pass == g_pass_serial && R.pass != VK_NULL_HANDLE) {
-        VkPrimitiveTopology ptype;
-        if (!build_indices(prim, count, indexType, indexAddr, indices, ptype)) { g_skip[SK_PRIM]++; return; }
+        DrawIndices indices;
+        if (!draw_indices(prim, count, indexType, indexAddr, indices)) { g_skip[SK_PRIM]++; return; }
         g_fast_draws++;
         record_draw(regs, g_prep, prim, count, indexType, indexAddr, baseVertex, instances, indices);
         return;
@@ -2370,8 +2411,10 @@ void draw(const uint32_t* regs, uint32_t prim, uint32_t count, uint32_t indexTyp
         return;
     }
 
-    VkPrimitiveTopology ptype;
-    if (!build_indices(prim, count, indexType, indexAddr, indices, ptype)) { g_skip[SK_PRIM]++; return; }
+    DrawIndices indices;
+    if (!draw_indices(prim, count, indexType, indexAddr, indices)) { g_skip[SK_PRIM]++; return; }
+    const VkPrimitiveTopology ptype = indices.type;
+    const uint64_t indicesSerial = R.cmdSerial;
 
     LATTE_PA_SU_SC_MODE_CNTL pm;
     uint32_t pmr = regs[REGADDR::PA_SU_SC_MODE_CNTL];
@@ -2440,6 +2483,8 @@ void draw(const uint32_t* regs, uint32_t prim, uint32_t count, uint32_t indexTyp
         g_prep_key = {g_draw_state_gen, R.frame, write_seq(), R.surfaces.size(), g_pass_serial, prim, true};
         g_slow_draws++;
     }
+    // a new command buffer since the indices were uploaded (render pass changes): upload them again
+    if (indices.n && R.cmdSerial != indicesSerial) draw_indices(prim, count, indexType, indexAddr, indices);
     record_draw(regs, P, prim, count, indexType, indexAddr, baseVertex, instances, indices);
 }
 
