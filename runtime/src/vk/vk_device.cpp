@@ -548,7 +548,13 @@ void main() {
     vec2 p = vec2((gl_VertexIndex << 1) & 2, gl_VertexIndex & 2);   // triangle strip corners
     uv = p * 0.5;
     vec2 ndc = pc.rect.xy + p * 0.5 * pc.rect.zw;                    // 0..1 within the window
-    gl_Position = vec4(ndc * 2.0 - 1.0, 0.0, 1.0);
+    vec2 q = ndc * 2.0 - 1.0;
+    // opts.y: quarter turns of the swapchain's pre-transform (the display's native orientation)
+    int rot = int(pc.opts.y + 0.5);
+    if (rot == 1) q = vec2(-q.y, q.x);
+    else if (rot == 2) q = -q;
+    else if (rot == 3) q = vec2(q.y, -q.x);
+    gl_Position = vec4(q, 0.0, 1.0);
 }
 )";
 const char* kPresentFS = R"(#version 450
@@ -569,7 +575,10 @@ struct Swapchain {
     VkSurfaceKHR surface = VK_NULL_HANDLE;
     VkSwapchainKHR sc = VK_NULL_HANDLE;
     VkFormat format = VK_FORMAT_UNDEFINED;
-    VkExtent2D extent{};
+    VkExtent2D extent{};  // the window's size in its current orientation (layout coordinates)
+    VkExtent2D phys{};    // the images' size: the extent in the display's native orientation
+    uint32_t rot = 0;     // quarter turns the present pass applies (pre-transform)
+    VkSurfaceTransformFlagBitsKHR transform = VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR;
     std::vector<VkImage> images;
     std::vector<VkImageView> views;
     std::vector<VkFramebuffer> fbs;
@@ -684,6 +693,9 @@ void destroy_swapchain(bool keepSurface) {
     }
 }
 
+// rotate in the present pass (see ensure_swapchain); WWHD_NO_PRETRANSFORM=1 leaves it to the compositor
+const bool g_pretransform = getenv("WWHD_NO_PRETRANSFORM") == nullptr;
+
 // g_window_mutex held; true if a swapchain is ready
 bool ensure_swapchain() {
     if (!g_sc.window) return false;
@@ -721,7 +733,7 @@ bool ensure_swapchain() {
             fmt = f;
             break;
         }
-    // the window's size in its current orientation; the compositor applies any rotation
+    // the window's size in its current orientation (layout coordinates; the images may be rotated)
     VkExtent2D ext{(uint32_t)ANativeWindow_getWidth(g_sc.window), (uint32_t)ANativeWindow_getHeight(g_sc.window)};
     if (!ext.width || !ext.height) return false;
     vkGetPhysicalDeviceSurfacePresentModesKHR(R.pd, g_sc.surface, &n, nullptr);
@@ -739,12 +751,22 @@ bool ensure_swapchain() {
     if (caps.maxImageCount) ci.minImageCount = std::min(ci.minImageCount, caps.maxImageCount);
     ci.imageFormat = fmt.format;
     ci.imageColorSpace = fmt.colorSpace;
-    ci.imageExtent = ext;
+    // rotate in the present pass instead of letting the compositor rotate every frame
+    // (often an extra GPU pass); WWHD_NO_PRETRANSFORM=1 restores the compositor rotation
+    uint32_t rot = 0;
+    if (g_pretransform) {
+        if (caps.currentTransform == VK_SURFACE_TRANSFORM_ROTATE_90_BIT_KHR) rot = 1;
+        else if (caps.currentTransform == VK_SURFACE_TRANSFORM_ROTATE_180_BIT_KHR) rot = 2;
+        else if (caps.currentTransform == VK_SURFACE_TRANSFORM_ROTATE_270_BIT_KHR) rot = 3;
+    }
+    VkExtent2D phys = rot & 1 ? VkExtent2D{ext.height, ext.width} : ext;
+    ci.imageExtent = phys;
     ci.imageArrayLayers = 1;
     ci.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
     ci.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
-    ci.preTransform = (caps.supportedTransforms & VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR) ? VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR
-                                                                                        : caps.currentTransform;
+    ci.preTransform = rot ? caps.currentTransform
+                          : (caps.supportedTransforms & VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR) ? VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR
+                                                                                                : caps.currentTransform;
     ci.compositeAlpha = VK_COMPOSITE_ALPHA_INHERIT_BIT_KHR;  // Android often offers only INHERIT
     for (VkCompositeAlphaFlagBitsKHR a : {VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR, VK_COMPOSITE_ALPHA_INHERIT_BIT_KHR,
                                           VK_COMPOSITE_ALPHA_PRE_MULTIPLIED_BIT_KHR, VK_COMPOSITE_ALPHA_POST_MULTIPLIED_BIT_KHR})
@@ -789,6 +811,9 @@ bool ensure_swapchain() {
         g_sc.format = fmt.format;
     }
     g_sc.extent = ext;
+    g_sc.phys = phys;
+    g_sc.rot = rot;
+    g_sc.transform = caps.currentTransform;
     vkGetSwapchainImagesKHR(R.device, g_sc.sc, &n, nullptr);
     g_sc.images.resize(n);
     vkGetSwapchainImagesKHR(R.device, g_sc.sc, &n, g_sc.images.data());
@@ -805,8 +830,8 @@ bool ensure_swapchain() {
         fi.renderPass = g_sc.pass;
         fi.attachmentCount = 1;
         fi.pAttachments = &v;
-        fi.width = ext.width;
-        fi.height = ext.height;
+        fi.width = phys.width;
+        fi.height = phys.height;
         fi.layers = 1;
         VkFramebuffer fb;
         VK_CHECK(vkCreateFramebuffer(R.device, &fi, nullptr, &fb));
@@ -838,7 +863,19 @@ void fit(const ScreenRect& r, float a, float out[4], VkExtent2D ext, int mode = 
     out[0] = x / W; out[1] = y / H; out[2] = w / W; out[3] = h / H;
 }
 
-void draw_screen(VkCommandBuffer cmd, Screen& scr, const ScreenRect& r, VkExtent2D ext, int mode = 0) {
+// a rect in window (layout) pixels -> the rotated image's pixels; matches the present vertex shader
+VkRect2D rotate_rect(VkRect2D r, VkExtent2D ext, uint32_t rot) {
+    int32_t W = (int32_t)ext.width, H = (int32_t)ext.height, x = r.offset.x, y = r.offset.y;
+    int32_t w = (int32_t)r.extent.width, h = (int32_t)r.extent.height;
+    switch (rot) {
+    case 1: return {{H - y - h, x}, {(uint32_t)h, (uint32_t)w}};
+    case 2: return {{W - x - w, H - y - h}, r.extent};
+    case 3: return {{y, W - x - w}, {(uint32_t)h, (uint32_t)w}};
+    default: return r;
+    }
+}
+
+void draw_screen(VkCommandBuffer cmd, Screen& scr, const ScreenRect& r, VkExtent2D ext, int mode = 0, uint32_t rot = 0) {
     if (!scr.img.image) return;
     float pc[8];
     fit(r, (float)scr.img.width / scr.img.height, pc, ext, mode);
@@ -849,10 +886,12 @@ void draw_screen(VkCommandBuffer cmd, Screen& scr, const ScreenRect& r, VkExtent
             int32_t x1 = std::min((int32_t)ext.width, (int32_t)(r.x + r.w)), y1 = std::min((int32_t)ext.height, (int32_t)(r.y + r.h));
             sc = {{x0, y0}, {(uint32_t)std::max(0, x1 - x0), (uint32_t)std::max(0, y1 - y0)}};
         }
+        sc = rotate_rect(sc, ext, rot);
         vkCmdSetScissor(cmd, 0, 1, &sc);
     }
     pc[4] = scr.srgb ? 1.0f : 0.0f;
-    pc[5] = pc[6] = pc[7] = 0;
+    pc[5] = (float)rot;
+    pc[6] = pc[7] = 0;
     VkDescriptorSet set = alloc_descriptor_set(g_present_dsl);
     if (!scr.view) scr.view = make_view(scr.img, VK_IMAGE_VIEW_TYPE_2D, 0, 1, {}, VK_IMAGE_ASPECT_COLOR_BIT);
     VkDescriptorImageInfo ii{R.linearClamp, scr.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
@@ -866,9 +905,20 @@ void draw_screen(VkCommandBuffer cmd, Screen& scr, const ScreenRect& r, VkExtent
     vkCmdPushConstants(cmd, g_present_layout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof pc, pc);
     vkCmdDraw(cmd, 4, 1, 0, 0);
     if (mode == 2) {
-        VkRect2D full{{0, 0}, ext};
+        VkRect2D full = rotate_rect({{0, 0}, ext}, ext, rot);
         vkCmdSetScissor(cmd, 0, 1, &full);
     }
+}
+
+// SUBOPTIMAL: recreate when the window size or the display rotation changed (g_window_mutex held)
+bool swapchain_changed() {
+    if ((uint32_t)ANativeWindow_getWidth(g_sc.window) != g_sc.extent.width ||
+        (uint32_t)ANativeWindow_getHeight(g_sc.window) != g_sc.extent.height)
+        return true;
+    if (!g_pretransform) return false;  // the compositor rotates: SUBOPTIMAL is expected
+    VkSurfaceCapabilitiesKHR caps{};
+    vkGetPhysicalDeviceSurfaceCapabilitiesKHR(R.pd, g_sc.surface, &caps);
+    return caps.currentTransform != g_sc.transform;
 }
 
 // performance overlay: frames presented (game frames, or with frame generation all presented frames)
@@ -896,9 +946,8 @@ bool present_frame() {
         return false;
     }
     // SUBOPTIMAL is normal on Android when the compositor rotates the image (identity pre-transform):
-    // recreate only when the window size changed
-    if (r == VK_SUBOPTIMAL_KHR && ((uint32_t)ANativeWindow_getWidth(g_sc.window) != g_sc.extent.width ||
-                                   (uint32_t)ANativeWindow_getHeight(g_sc.window) != g_sc.extent.height))
+    // recreate only when the window size or the display rotation changed
+    if (r == VK_SUBOPTIMAL_KHR && swapchain_changed())
         g_sc.stale = true;
     if (R.tv.img.image) prepare(R.tv.img, Use::SAMPLED);
     if (R.drc.img.image) prepare(R.drc.img, Use::SAMPLED);
@@ -909,17 +958,17 @@ bool present_frame() {
     VkRenderPassBeginInfo bi{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
     bi.renderPass = g_sc.pass;
     bi.framebuffer = g_sc.fbs[idx];
-    bi.renderArea = {{0, 0}, g_sc.extent};
+    bi.renderArea = {{0, 0}, g_sc.phys};
     bi.clearValueCount = 1;
     bi.pClearValues = &clear;
     vkCmdBeginRenderPass(cmd, &bi, VK_SUBPASS_CONTENTS_INLINE);
-    VkViewport vp{0, 0, (float)g_sc.extent.width, (float)g_sc.extent.height, 0, 1};
-    VkRect2D sc{{0, 0}, g_sc.extent};
+    VkViewport vp{0, 0, (float)g_sc.phys.width, (float)g_sc.phys.height, 0, 1};
+    VkRect2D sc{{0, 0}, g_sc.phys};
     vkCmdSetViewport(cmd, 0, 1, &vp);
     vkCmdSetScissor(cmd, 0, 1, &sc);
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g_sc.pipeline);
-    draw_screen(cmd, R.tv, g_tv_rect, g_sc.extent, g_tv_aspect.load(std::memory_order_relaxed));
-    if (g_drc_visible) draw_screen(cmd, R.drc, g_drc_rect, g_sc.extent);
+    draw_screen(cmd, R.tv, g_tv_rect, g_sc.extent, g_tv_aspect.load(std::memory_order_relaxed), g_sc.rot);
+    if (g_drc_visible) draw_screen(cmd, R.drc, g_drc_rect, g_sc.extent, 0, g_sc.rot);
     vkCmdEndRenderPass(cmd);
     on_complete([acquire] { g_acquire_free.push_back(acquire); });
     submit(acquire, g_sc.renderDone[idx]);
@@ -1010,8 +1059,7 @@ bool fg_present(const Image* img) {
         if (r != VK_TIMEOUT && r != VK_NOT_READY) g_sc.stale = true;
         return false;
     }
-    if (r == VK_SUBOPTIMAL_KHR && ((uint32_t)ANativeWindow_getWidth(g_sc.window) != g_sc.extent.width ||
-                                   (uint32_t)ANativeWindow_getHeight(g_sc.window) != g_sc.extent.height))
+    if (r == VK_SUBOPTIMAL_KHR && swapchain_changed())
         g_sc.stale = true;
     g_fg_next = (g_fg_next + 1) % 3;
     vkResetFences(R.device, 1, &ps.fence);
@@ -1048,16 +1096,16 @@ bool fg_present(const Image* img) {
     VkRenderPassBeginInfo rb{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
     rb.renderPass = g_sc.pass;
     rb.framebuffer = g_sc.fbs[idx];
-    rb.renderArea = {{0, 0}, g_sc.extent};
+    rb.renderArea = {{0, 0}, g_sc.phys};
     rb.clearValueCount = 1;
     rb.pClearValues = &clear;
     vkCmdBeginRenderPass(cmd, &rb, VK_SUBPASS_CONTENTS_INLINE);
-    VkViewport vp{0, 0, (float)g_sc.extent.width, (float)g_sc.extent.height, 0, 1};
-    VkRect2D sc{{0, 0}, g_sc.extent};
+    VkViewport vp{0, 0, (float)g_sc.phys.width, (float)g_sc.phys.height, 0, 1};
+    VkRect2D sc{{0, 0}, g_sc.phys};
     vkCmdSetViewport(cmd, 0, 1, &vp);
     vkCmdSetScissor(cmd, 0, 1, &sc);
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g_sc.pipeline);
-    float pc[8] = {0, 0, 1, 1, 0, 0, 0, 0};  // the whole window; already display encoded
+    float pc[8] = {0, 0, 1, 1, 0, (float)g_sc.rot, 0, 0};  // the whole window; already display encoded
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g_present_layout, 0, 1, &set, 0, nullptr);
     vkCmdPushConstants(cmd, g_present_layout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof pc, pc);
     vkCmdDraw(cmd, 4, 1, 0, 0);
