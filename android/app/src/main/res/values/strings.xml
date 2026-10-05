@@ -180,6 +180,13 @@
     <string name="opt_gyro_recalibrate">Recalibrate gyro</string>
     <string name="opt_gyro_recalibrate_hint">Hold the phone as you play and press: that becomes straight ahead</string>
     <string name="gyro_recalibrated">Gyro recalibrated</string>
+    <string name="opt_drawdone">Experimental: GX2DrawDone</string>
+    <string name="opt_drawdone_hint">Lets the game prepare the next frame while the renderer works. May cause visual glitches: for testing only.</string>
+    <string-array name="drawdone_modes">
+        <item>Wait (default)</item>
+        <item>One behind</item>
+        <item>No wait</item>
+    </string-array>
     <string name="opt_resolution">Rendering resolution</string>
     <string name="opt_framegen">Frame generation</string>
     <string name="opt_aspect">Aspect ratio</string>

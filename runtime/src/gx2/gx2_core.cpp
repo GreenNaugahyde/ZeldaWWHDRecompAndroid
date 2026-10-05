@@ -125,9 +125,8 @@ static void enqueue(Op op, const uint32* payload, uint32 n) {
     if (g_q_waiting) g_q_cv.notify_one();
 }
 
-// block the game thread until the render thread has executed everything queued so far
-static void render_sync() {
-    if (!g_render_thread) return;
+// a fence after everything queued so far, and waiting for the render thread to reach one
+static uint64_t issue_fence() {
     uint64_t id;
     {
         std::lock_guard<std::mutex> lk(g_q_mutex);
@@ -135,9 +134,29 @@ static void render_sync() {
     }
     uint32 w = (uint32)id;
     enqueue(OP_FENCE, &w, 1);
+    return id;
+}
+static void wait_fence(uint64_t id) {
     std::unique_lock<std::mutex> lk(g_q_mutex);
     g_q_done_cv.wait(lk, [&] { return g_fence_done >= id; });
 }
+
+// block the game thread until the render thread has executed everything queued so far
+static void render_sync() {
+    if (!g_render_thread) return;
+    wait_fence(issue_fence());
+}
+
+// experiment (app option): how GX2DrawDone waits for the render thread. 0 for everything queued
+// (correct), 1 only for what was queued before the previous GX2DrawDone, 2 not at all. 1 and 2 let
+// the game run ahead while the render thread works, at the risk of the game rewriting data the
+// render thread still has to read (it reads vertex, index and uniform data when it gets to a draw)
+static std::atomic<int> g_drawdone_mode{0};
+void set_drawdone_mode(int m) {
+    g_drawdone_mode = std::clamp(m, 0, 2);
+    LOG("[gx2] GX2DrawDone waits %s", m == 0 ? "for the render thread" : m == 1 ? "one GX2DrawDone behind" : "never");
+}
+int drawdone_mode() { return g_drawdone_mode; }
 
 void emit(Op op, const uint32* payload, uint32 n) {
     if (t_rec.start) {
@@ -511,7 +530,15 @@ HLE(gx2, GX2DrawDone) {
     BlockingScope b;
     auto t0 = std::chrono::steady_clock::now();
     emit_host(OP_DRAW_DONE, {});
-    render_sync();
+    int mode = g_drawdone_mode.load(std::memory_order_relaxed);
+    if (mode == 0 || !g_render_thread) {
+        render_sync();
+    } else {
+        static uint64_t previous = 0;
+        uint64_t id = issue_fence();
+        if (mode == 1 && previous) wait_fence(previous);
+        previous = id;
+    }
     g_drawdone_calls++;
     g_drawdone_us += (uint64_t)std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - t0).count();
     ret(c, 1);

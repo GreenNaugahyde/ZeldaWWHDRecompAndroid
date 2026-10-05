@@ -11,6 +11,8 @@ struct GX2DepthBuffer;
 namespace gx2 {
 uint32_t color_buffer_address(const GX2::GX2ColorBuffer* cb);
 LatteFetchShader* build_fetch_shader(uint32_t program);  // from our encoded fetch "program"
+void set_drawdone_mode(int m);  // experiment: 0 GX2DrawDone waits for the render thread, 1 one behind, 2 never
+int drawdone_mode();
 }  // namespace gx2
 
 // The renderer backend (Metal on macOS, Vulkan on Android). All calls come from the thread executing GX2

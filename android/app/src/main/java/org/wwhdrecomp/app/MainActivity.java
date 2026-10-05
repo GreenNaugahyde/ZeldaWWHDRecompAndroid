@@ -309,6 +309,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         Native.setOption("tv_aspect", prefs.getInt("tv_aspect", 0));
         Native.setOption("fps_mode", prefs.getBoolean("fg_enabled", false) ? 0 : prefs.getInt("fps_mode", 0));
         applyGyro();
+        Native.setOption("drawdone_mode", prefs.getInt("drawdone_mode", 0));
         for (String m : MODS) Native.setOption(m, prefs.getBoolean(m, false) ? 1 : 0);
         Native.setOption("mod_camera_speed", prefs.getInt("mod_camera_speed", 100));
     }
