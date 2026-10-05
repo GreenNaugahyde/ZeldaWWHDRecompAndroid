@@ -1241,6 +1241,7 @@ static void resolve_textures(const uint32_t* regs, Shader* sh, bool vertex, Surf
 // Descriptor sets for shaders with dynamic uniform buffers, kept across draws and frames. Everything
 // they reference (image views, samplers, transient buffers) lives as long as the renderer.
 static std::unordered_map<uint64_t, VkDescriptorSet> g_set_cache;
+static uint64_t g_set_cache_epoch = 0;  // bumped when cached sets are dropped (bind_stage's last-set check)
 static std::vector<VkDescriptorPool> g_set_pools;
 
 static VkDescriptorSet cached_descriptor_set(uint64_t key, VkDescriptorSetLayout dsl, VkWriteDescriptorSet* writes, uint32_t nw) {
@@ -1294,6 +1295,7 @@ void retire_image(const Image& old) {
     for (auto& [k, fb] : g_framebuffers) fbs.push_back(fb);
     g_framebuffers.clear();
     g_set_cache.clear();
+    g_set_cache_epoch++;
     Image img = old;
     on_complete([img, views, fbs] {
         for (VkFramebuffer fb : fbs) vkDestroyFramebuffer(R.device, fb, nullptr);
@@ -1308,6 +1310,7 @@ void descriptor_cache_trim() {
     wait_idle();
     for (VkDescriptorPool p : g_set_pools) vkResetDescriptorPool(R.device, p, 0);
     g_set_cache.clear();
+    g_set_cache_epoch++;
     LOG("[gfx] descriptor set cache reset");
 }
 
@@ -1430,11 +1433,36 @@ static void bind_stage(VkCommandBuffer cmd, VkPipelineLayout layout, const uint3
         vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, layout, vertex ? 0 : 1, 1, &set, 0, nullptr);
         return;
     }
-    // cached set: identified by its layout and contents (offsets are dynamic)
-    uint64_t key = hash_bytes(&sh->dsl, sizeof(sh->dsl));
-    for (uint32_t i = 0; i < (uint32_t)rm.getTextureCount(); i++) key = hash_bytes(&images[i], 2 * sizeof(void*), key);
-    for (uint32_t i = 0; i < nb; i++) key = hash_bytes(&buffers[i], sizeof(VkBuffer) + sizeof(VkDeviceSize) * 2, key);
-    set = cached_descriptor_set(key, sh->dsl, writes, nw);
+    // cached set: identified by its layout and contents (offsets are dynamic). Consecutive draws of a
+    // stage mostly use the same textures and buffers: compare with the previous one before hashing
+    struct LastSet {
+        VkDescriptorSetLayout dsl = VK_NULL_HANDLE;
+        uint32_t nt = 0, nb = 0;
+        VkDescriptorImageInfo images[LATTE_NUM_MAX_TEX_UNITS];
+        VkDescriptorBufferInfo buffers[LATTE_NUM_MAX_UNIFORM_BUFFERS + 1];
+        VkDescriptorSet set = VK_NULL_HANDLE;
+        uint64_t epoch = ~0ull;
+    };
+    static LastSet lastSet[2];
+    LastSet& L = lastSet[vertex ? 0 : 1];
+    const uint32_t nt = (uint32_t)rm.getTextureCount();
+    if (L.epoch == g_set_cache_epoch && L.dsl == sh->dsl && L.nt == nt && L.nb == nb &&
+        memcmp(L.images, images, nt * sizeof(VkDescriptorImageInfo)) == 0 &&
+        memcmp(L.buffers, buffers, nb * sizeof(VkDescriptorBufferInfo)) == 0) {
+        set = L.set;
+    } else {
+        uint64_t key = hash_bytes(&sh->dsl, sizeof(sh->dsl));
+        for (uint32_t i = 0; i < nt; i++) key = hash_bytes(&images[i], 2 * sizeof(void*), key);
+        for (uint32_t i = 0; i < nb; i++) key = hash_bytes(&buffers[i], sizeof(VkBuffer) + sizeof(VkDeviceSize) * 2, key);
+        set = cached_descriptor_set(key, sh->dsl, writes, nw);
+        L.dsl = sh->dsl;
+        L.nt = nt;
+        L.nb = nb;
+        memcpy(L.images, images, nt * sizeof(VkDescriptorImageInfo));
+        memcpy(L.buffers, buffers, nb * sizeof(VkDescriptorBufferInfo));
+        L.set = set;
+        L.epoch = g_set_cache_epoch;
+    }
     // dynamic offsets go in binding order
     std::sort(dynOffsets, dynOffsets + nd, [](const Dyn& a, const Dyn& b) { return a.binding < b.binding; });
     uint32_t offs[LATTE_NUM_MAX_UNIFORM_BUFFERS + 1];
@@ -1456,6 +1484,7 @@ struct DrawState {
     VkRect2D scissor{};
     VkBuffer vb[16] = {};
     VkDeviceSize vbOffset[16] = {};
+    VkBuffer ib = VK_NULL_HANDLE;
     bool valid = false;
 };
 static DrawState g_ds;
@@ -1985,9 +2014,13 @@ static void record_draw(const uint32_t* regs, const Prepared& P, uint32_t prim, 
     if (indices.empty()) {
         vkCmdDraw(cmd, count, instances, baseVertex, 0);
     } else {
+        // the index buffer stays bound at the start of its chunk; draws select theirs with firstIndex
         Upload u = upload(indices.data(), indices.size() * 4, 16);
-        vkCmdBindIndexBuffer(cmd, u.buf, u.offset, VK_INDEX_TYPE_UINT32);
-        vkCmdDrawIndexed(cmd, (uint32_t)indices.size(), instances, 0, (int32_t)baseVertex, 0);
+        if (!g_ds.valid || g_ds.ib != u.buf) {
+            vkCmdBindIndexBuffer(cmd, u.buf, 0, VK_INDEX_TYPE_UINT32);
+            g_ds.ib = u.buf;
+        }
+        vkCmdDrawIndexed(cmd, (uint32_t)indices.size(), instances, (uint32_t)(u.offset / 4), (int32_t)baseVertex, 0);
     }
     // debug: WWHD_DUMP_DRAWS=frame:i,j,k dumps color target 0 after those draws
     static uint64_t dumpFrame = ~0ull;
