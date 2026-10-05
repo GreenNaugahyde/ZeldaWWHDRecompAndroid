@@ -391,10 +391,11 @@ final class OptionsMenu extends Dialog {
                    a.prefs.edit().putInt("drawdone_mode", i).apply();
                    Native.setOption("drawdone_mode", i);
                });
-        toggle(R.string.opt_prime_core, 0, a.prefs.getBoolean("prime_core", true), on -> {
-            a.prefs.edit().putBoolean("prime_core", on).apply();
-            Native.setOption("prime_core", on ? 1 : 0);
-        });
+        choice(R.string.opt_core_mode, R.string.opt_core_mode_hint, a.getResources().getStringArray(R.array.core_modes),
+               a.prefs.getInt("core_mode", 0), i -> {
+                   a.prefs.edit().putInt("core_mode", i).apply();
+                   Native.setOption("core_mode", i);
+               });
         choice(R.string.opt_resolution, 0, res, indexOf(MainActivity.RES_SCALES, a.prefs.getString("res_scale", "1"), 2), a::setResolution);
         submenu(R.string.opt_framegen, 0, a.frameGenLabel(), () -> openPage(this::frameGenPage));
         choice(R.string.opt_aspect, 0, a.getResources().getStringArray(R.array.aspect_modes), a.prefs.getInt("tv_aspect", 0), i -> {

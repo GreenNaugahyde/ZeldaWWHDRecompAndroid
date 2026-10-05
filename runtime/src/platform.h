@@ -13,13 +13,12 @@ void set_thread_name(const char* name);
 // game, render and service threads: ask the OS to keep them on fast cores
 // (macOS QoS user-interactive; Android: a raised nice value). WWHD_NO_QOS=1 skips it.
 void set_thread_high_priority();
-// Android: run the calling thread on the CPU cluster with the highest clock (the "prime" core of
-// big.LITTLE phones), for the render thread, the usual bottleneck. Call again from time to time: it
-// restores the affinity if the system changed it, and gives inherited affinities back to other
-// threads. WWHD_NO_PRIME_CORE=1 skips it.
-void set_thread_fastest_cores();
-void set_prime_core(bool on);  // the app's switch for the above (applied at the next check)
-bool prime_core();
+// Android: where the render and game threads run (0 automatic, 1 performance cores, 2 prime core
+// for the render thread); the threads call apply_thread_cores from time to time, which also restores
+// an affinity the system changed. WWHD_CORE_MODE sets the initial mode.
+void set_core_mode(int m);
+int core_mode();
+void apply_thread_cores(bool render);
 // bounds of the calling thread's stack: [lo, hi)
 void thread_stack_bounds(uintptr_t& lo, uintptr_t& hi);
 // CPU time consumed by a thread so far, in microseconds (0 if unavailable)

@@ -392,7 +392,7 @@ JNI_FN(void, setOption)(JNIEnv* env, jclass, jstring name, jint value) {
     else if (n == "tv_aspect") gfx::set_tv_aspect(value);
     else if (n == "fps_mode") fps60::set_mode(value);
     else if (n == "drawdone_mode") gx2::set_drawdone_mode(value);
-    else if (n == "prime_core") platform::set_prime_core(value != 0);
+    else if (n == "core_mode") platform::set_core_mode(value);
     // gameplay mods (runtime/src/mods)
     else if (n == "mod_direct_camera") mods::set_direct_camera(value != 0);
     else if (n == "mod_camera_speed") mods::set_camera_speed(value / 100.0f);
@@ -411,7 +411,7 @@ JNI_FN(jint, getOption)(JNIEnv* env, jclass, jstring name) {
     if (n == "tv_aspect") return gfx::tv_aspect();
     if (n == "fps_mode") return fps60::mode();
     if (n == "drawdone_mode") return gx2::drawdone_mode();
-    if (n == "prime_core") return platform::prime_core();
+    if (n == "core_mode") return platform::core_mode();
     if (n == "mod_direct_camera") return mods::direct_camera();
     if (n == "mod_camera_speed") return (int)lroundf(mods::camera_speed() * 100);
     if (n == "mod_first_person") return mods::first_person_wheel();

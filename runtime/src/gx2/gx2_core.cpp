@@ -99,7 +99,7 @@ static void render_thread_main() {
     platform::set_thread_high_priority();
 #ifdef __ANDROID__
     perf_hint::register_render_thread();
-    platform::set_thread_fastest_cores();  // the render thread is the usual bottleneck
+    platform::apply_thread_cores(true);  // the app's core setting
 #endif
     for (;;) {
         {
@@ -288,7 +288,7 @@ static void execute_one(Op op, const uint32* p, uint32 n) {
 #ifdef __ANDROID__
         {
             static uint32_t swaps = 0;
-            if (++swaps % 30 == 0) platform::set_thread_fastest_cores();  // keep (or get back) the prime core
+            if (++swaps % 30 == 0) platform::apply_thread_cores(true);  // the app's core setting (restored if changed)
         }
 #endif
         break;
@@ -577,6 +577,10 @@ HLE(gx2, GX2SwapScanBuffers) {
     }
 #ifdef __ANDROID__
     fps60::on_swap();
+    {
+        static uint32_t swaps = 0;
+        if (swaps++ % 30 == 0) platform::apply_thread_cores(false);  // the game thread follows the core setting
+    }
     perf_hint::on_swap(interp::effective_swap_interval(g_swap_interval));
 #endif
     if (g_swap_count % 300 == 1) {

@@ -71,71 +71,82 @@ void set_thread_high_priority() {
 #endif
 }
 
+// Where the render and game threads run (the app's setting): 0 automatic (the system decides), 1 the
+// performance cores (neither the efficiency cores nor the prime core: the best performance per
+// watt, so the least heat), 2 the prime core for the render thread (the fastest single core, and
+// the hottest). Applied by the threads themselves when they call apply_thread_cores.
+static std::atomic<int> g_core_mode{getenv("WWHD_CORE_MODE") ? atoi(getenv("WWHD_CORE_MODE")) : 0};
+void set_core_mode(int m) { g_core_mode = std::clamp(m, 0, 2); }
+int core_mode() { return g_core_mode; }
+
 #if defined(__ANDROID__)
-// the cores whose maximum clock is the highest of all, and all cores; false if there is one cluster
-static bool core_sets(cpu_set_t& fastest, cpu_set_t& all, int& count) {
-    long best = 0, freq[64] = {};
-    int n = 0;
-    for (; n < 64; n++) {
-        char path[96];
-        snprintf(path, sizeof path, "/sys/devices/system/cpu/cpu%d/cpufreq/cpuinfo_max_freq", n);
-        FILE* f = fopen(path, "r");
-        if (!f) break;
-        if (fscanf(f, "%ld", &freq[n]) != 1) freq[n] = 0;
-        fclose(f);
-        best = std::max(best, freq[n]);
-    }
-    CPU_ZERO(&fastest);
-    CPU_ZERO(&all);
-    count = 0;
-    for (int i = 0; i < n; i++) {
-        CPU_SET(i, &all);
-        if (freq[i] == best) {
-            CPU_SET(i, &fastest);
-            count++;
+namespace {
+struct CoreSets {
+    cpu_set_t all, prime, perf;
+    int nPrime = 0, nPerf = 0;
+    bool clusters = false;  // more than one kind of core
+};
+// clusters by maximum clock: the highest is the prime core(s), the lowest the efficiency cores
+const CoreSets& core_sets() {
+    static CoreSets c = [] {
+        CoreSets r;
+        long freq[64] = {}, best = 0, low = 0;
+        int n = 0;
+        for (; n < 64; n++) {
+            char path[96];
+            snprintf(path, sizeof path, "/sys/devices/system/cpu/cpu%d/cpufreq/cpuinfo_max_freq", n);
+            FILE* f = fopen(path, "r");
+            if (!f) break;
+            if (fscanf(f, "%ld", &freq[n]) != 1) freq[n] = 0;
+            fclose(f);
+            best = std::max(best, freq[n]);
+            low = n == 0 ? freq[n] : std::min(low, freq[n]);
         }
-    }
-    return best > 0 && count < n;
+        CPU_ZERO(&r.all);
+        CPU_ZERO(&r.prime);
+        CPU_ZERO(&r.perf);
+        for (int i = 0; i < n; i++) {
+            CPU_SET(i, &r.all);
+            if (freq[i] == best) { CPU_SET(i, &r.prime); r.nPrime++; }
+            else if (freq[i] != low) { CPU_SET(i, &r.perf); r.nPerf++; }
+        }
+        r.clusters = best > 0 && r.nPrime < n;
+        if (r.nPerf == 0) { r.perf = r.prime; r.nPerf = r.nPrime; }  // two clusters: the big one
+        return r;
+    }();
+    return c;
 }
+}  // namespace
 #endif
 
-static std::atomic<bool> g_prime_core{getenv("WWHD_NO_PRIME_CORE") == nullptr};
-void set_prime_core(bool on) { g_prime_core = on; }
-bool prime_core() { return g_prime_core; }
-
-void set_thread_fastest_cores() {
+void apply_thread_cores(bool render) {
 #if defined(__ANDROID__)
-    static cpu_set_t fastest, all;
-    static int count = 0;
-    static const bool multi = core_sets(fastest, all, count);
-    if (!multi) return;
-    static pid_t self = 0;
-    pid_t tid = (pid_t)syscall(SYS_gettid);
-    if (!g_prime_core) {  // switched off: every core again (once)
-        if (self == tid) {
-            sched_setaffinity(0, sizeof all, &all);
-            self = 0;
-            __android_log_print(ANDROID_LOG_INFO, "wwhd", "[platform] render thread on every core");
-        }
-        return;
-    }
+    const CoreSets& c = core_sets();
+    if (!c.clusters) return;
+    int mode = g_core_mode.load();
+    const cpu_set_t* want = &c.all;
+    if (mode == 1) want = &c.perf;
+    else if (mode == 2 && render) want = &c.prime;
+    static thread_local int applied = -1;  // the mode this thread last applied
     cpu_set_t now;
-    bool pinned = sched_getaffinity(0, sizeof now, &now) == 0 && CPU_EQUAL(&now, &fastest);
-    if (!pinned) {
-        if (sched_setaffinity(0, sizeof fastest, &fastest) != 0) return;
-        if (self != tid)
-            __android_log_print(ANDROID_LOG_INFO, "wwhd", "[platform] render thread on the %d fastest core(s)", count);
-        else
-            __android_log_print(ANDROID_LOG_INFO, "wwhd", "[platform] render thread affinity restored");
+    bool same = sched_getaffinity(0, sizeof now, &now) == 0 && CPU_EQUAL(&now, want);
+    if (same && applied == mode) return;
+    if (!same && sched_setaffinity(0, sizeof *want, want) != 0) return;
+    if (applied != mode) {
+        static const char* names[] = {"every core", "the performance cores", "the prime core"};
+        __android_log_print(ANDROID_LOG_INFO, "wwhd", "[platform] %s thread on %s", render ? "render" : "game",
+                            names[mode == 2 && !render ? 0 : mode]);
     }
-    self = tid;
-    // threads created from this one (driver threads) inherit the affinity: give them every core back
+    applied = mode;
+    if (!render || mode == 0) return;
+    // threads created from the render thread (driver threads) inherit its affinity: every core back
     if (DIR* d = opendir("/proc/self/task")) {
+        pid_t tid = (pid_t)syscall(SYS_gettid);
         while (dirent* e = readdir(d)) {
             pid_t t = (pid_t)atoi(e->d_name);
             cpu_set_t a;
-            if (t <= 0 || t == tid || sched_getaffinity(t, sizeof a, &a) != 0 || !CPU_EQUAL(&a, &fastest)) continue;
-            sched_setaffinity(t, sizeof all, &all);
+            if (t <= 0 || t == tid || sched_getaffinity(t, sizeof a, &a) != 0 || !CPU_EQUAL(&a, want)) continue;
+            sched_setaffinity(t, sizeof c.all, &c.all);
         }
         closedir(d);
     }
