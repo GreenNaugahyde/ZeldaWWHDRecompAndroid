@@ -36,7 +36,8 @@ final class ControlsView extends View {
     private static final int M_JUMP = 1, M_VERTICAL = 2, M_SPIN = 3, M_DODGE = 4;
 
     // game state from Native.hudState(): {flags, A action, B action, ZR action, X item, Y item, R item}
-    static final int HUD_KNOWN = 1, HUD_ON_BOAT = 2, HUD_SWORD_OUT = 4, HUD_TARGETING = 8, HUD_FIRST_PERSON = 16;
+    static final int HUD_KNOWN = 1, HUD_ON_BOAT = 2, HUD_SWORD_OUT = 4, HUD_TARGETING = 8, HUD_FIRST_PERSON = 16,
+            HUD_HAS_SWORD = 32, HUD_HAS_SHIELD = 64, HUD_HAS_BATON = 128, HUD_HAS_GRAPPLE = 256, HUD_HAS_BOMBS = 512;
     private static final int HUD_FLAGS = 0, HUD_A = 1, HUD_B = 2, HUD_ZR = 3, HUD_X = 4, HUD_Y = 5, HUD_R = 6;
 
     private static final class Ctl {
@@ -429,7 +430,7 @@ final class ControlsView extends View {
         if (editMode) return true;
         if (combatMode == 1) return true;
         if (combatMode == 2) return false;
-        return !hudKnown() || hudFlag(HUD_SWORD_OUT) || hudFlag(HUD_TARGETING);
+        return !hudKnown() || hudFlag(HUD_HAS_SWORD);  // the combat moves need a sword
     }
 
     private boolean shown(Ctl c) {
@@ -438,8 +439,13 @@ final class ControlsView extends View {
         if (c.kind == K_MENU || c.kind == K_EDIT) return menuShown;
         if (!controlsVisible) return false;
         if (c.kind == K_MACRO) return combatShown();
-        // the cannon and the salvage hook only work on the boat
-        if (c.kind == K_BUTTON && (c.bit == Native.LEFT || c.bit == Native.RIGHT)) return !hudKnown() || hudFlag(HUD_ON_BOAT);
+        // D-pad items Link doesn't have yet are hidden: the Wind Waker (up), the cannon (left: it fires
+        // bombs) and the salvage hook (right)
+        if (c.kind == K_BUTTON && hudKnown()) {
+            if (c.bit == Native.UP) return hudFlag(HUD_HAS_BATON);
+            if (c.bit == Native.LEFT) return hudFlag(HUD_HAS_BOMBS);
+            if (c.bit == Native.RIGHT) return hudFlag(HUD_HAS_GRAPPLE);
+        }
         return true;
     }
 

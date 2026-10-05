@@ -171,7 +171,7 @@
     <string name="opt_combat_buttons">Combat buttons</string>
     <string name="opt_combat_buttons_hint">Jump attack, vertical slash, spin attack and dodge in one touch</string>
     <string-array name="combat_buttons">
-        <item>With the sword out</item>
+        <item>With a sword</item>
         <item>Always</item>
         <item>Hidden</item>
     </string-array>
