@@ -705,6 +705,8 @@ bool ensure_swapchain() {
     // that is a multiple of it (a 144 Hz panel can't space 60 or 120 fps evenly; 120 Hz can)
     if (fg::loaded()) ANativeWindow_setFrameRate(g_sc.window, 30.0f * fg::config().multiplier,
                                                  ANATIVEWINDOW_FRAME_RATE_COMPATIBILITY_FIXED_SOURCE);
+    // without it the game flips at most 60 times a second: let a 90/120 Hz panel drop to 60 Hz
+    else ANativeWindow_setFrameRate(g_sc.window, 60.0f, ANATIVEWINDOW_FRAME_RATE_COMPATIBILITY_DEFAULT);
     VkSurfaceCapabilitiesKHR caps{};
     vkGetPhysicalDeviceSurfaceCapabilitiesKHR(R.pd, g_sc.surface, &caps);
     uint32_t n = 0;
@@ -1237,7 +1239,7 @@ void apply_frame_generation() {
     // present mode (FIFO with frame generation) and the display rate hint differ: new swapchain
     std::lock_guard<std::mutex> wl(g_window_mutex);
     if (g_sc.window && !fg::loaded())
-        ANativeWindow_setFrameRate(g_sc.window, 0, ANATIVEWINDOW_FRAME_RATE_COMPATIBILITY_DEFAULT);
+        ANativeWindow_setFrameRate(g_sc.window, 60.0f, ANATIVEWINDOW_FRAME_RATE_COMPATIBILITY_DEFAULT);
     g_sc.stale = true;
 }
 
