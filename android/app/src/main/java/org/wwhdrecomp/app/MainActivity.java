@@ -72,6 +72,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         if (!libraryLoaded) {
             // static initializers in the library read these, so they must be set before it loads
             setenv("WWHD_RES_SCALE", prefs.getString("res_scale", "1"));  // wwhd.env / intent extras below override
+            setenv("WWHD_LANGUAGE", String.valueOf(prefs.getInt("language", 1)));
             applyFrameGenSettings();
             applyEnvironment();
             System.loadLibrary("wwhd");
@@ -593,6 +594,15 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         Native.setOption("res_scale", Math.round(Float.parseFloat(RES_SCALES[i]) * 100));
     }
 
+    void setLanguage(int i) {
+        if (LANGUAGES[i] == prefs.getInt("language", 1)) return;
+        prefs.edit().putInt("language", LANGUAGES[i]).commit();
+        // the game reads the system language once at boot
+        new GameDialog(this).title(R.string.opt_language).message(R.string.lang_restart)
+                .button(R.string.res_restart_later, null)
+                .button(R.string.res_restart_now, this::restartApp).show();
+    }
+
     void setMod(String key, boolean on) {
         prefs.edit().putBoolean(key, on).apply();
         Native.setOption(key, on ? 1 : 0);
@@ -619,6 +629,8 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     String onOff(boolean on) { return getString(on ? R.string.on : R.string.off); }
 
     // ------------------------------------------------------------------ resolution
+    /** Cafe OS language codes of the languages on the USA disc: English, Spanish, French */
+    static final int[] LANGUAGES = {1, 5, 2};
     static final String[] RES_SCALES = {"0.5", "0.75", "1", "1.5", "2", "3"};
 
     String resolutionLabel(String scale) {

@@ -148,6 +148,13 @@
     <string name="opt_on">ON</string>
     <string name="opt_off">OFF</string>
     <string name="opt_pad_hint">Controller: hold Select or press Home to open and close · L / R switch tabs · D-pad moves and changes values · right button selects · bottom button goes back</string>
+    <string name="opt_language">Game language</string>
+    <string-array name="languages">
+        <item>English</item>
+        <item>Español</item>
+        <item>Français</item>
+    </string-array>
+    <string name="lang_restart">The new language takes effect when the game restarts. Progress since your last save is lost.</string>
     <string name="opt_resolution">Rendering resolution</string>
     <string name="opt_framegen">Frame generation</string>
     <string name="opt_aspect">Aspect ratio</string>

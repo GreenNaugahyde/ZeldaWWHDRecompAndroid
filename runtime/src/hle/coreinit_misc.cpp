@@ -259,7 +259,10 @@ HLE(coreinit, UCReadSysConfig) {
         std::string name = mem::read_cstr(e);
         uint32_t size = ld32(e + 0x4C), data = ld32(e + 0x50);
         uint32_t value = 0;
-        if (name == "cafe.language") value = 1;          // English
+        if (name == "cafe.language") {                   // 1 English, 2 French, 5 Spanish (USA disc)
+            const char* lang = getenv("WWHD_LANGUAGE");
+            value = lang && *lang ? (uint32_t)atoi(lang) : 1;
+        }
         else if (name == "cafe.cntry_reg") value = 49;   // USA
         else if (name == "cafe.eula_agree") value = 1;
         else if (name == "cafe.initial_launch") value = 2;

@@ -381,6 +381,9 @@ final class OptionsMenu extends Dialog {
     private void graphics() {
         String[] res = new String[MainActivity.RES_SCALES.length];
         for (int i = 0; i < res.length; i++) res[i] = a.resolutionLabel(MainActivity.RES_SCALES[i]);
+        int lang = 0;
+        for (int i = 0; i < MainActivity.LANGUAGES.length; i++) if (MainActivity.LANGUAGES[i] == a.prefs.getInt("language", 1)) lang = i;
+        choice(R.string.opt_language, 0, a.getResources().getStringArray(R.array.languages), lang, a::setLanguage);
         choice(R.string.opt_resolution, 0, res, indexOf(MainActivity.RES_SCALES, a.prefs.getString("res_scale", "1"), 2), a::setResolution);
         submenu(R.string.opt_framegen, 0, a.frameGenLabel(), () -> openPage(this::frameGenPage));
         choice(R.string.opt_aspect, 0, a.getResources().getStringArray(R.array.aspect_modes), a.prefs.getInt("tv_aspect", 0), i -> {
