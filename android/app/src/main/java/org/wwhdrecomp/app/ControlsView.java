@@ -31,7 +31,7 @@ final class ControlsView extends View {
         void onLayoutSaved(String layout);
     }
 
-    private static final int K_STICK = 0, K_BUTTON = 1, K_DPAD = 2, K_MACRO = 3, K_MENU = 4, K_EDIT = 5;
+    private static final int K_STICK = 0, K_BUTTON = 1, K_MACRO = 3, K_MENU = 4, K_EDIT = 5;
     // combat moves (K_MACRO controls' bit field)
     private static final int M_JUMP = 1, M_VERTICAL = 2, M_SPIN = 3, M_DODGE = 4;
 
@@ -48,7 +48,6 @@ final class ControlsView extends View {
         float fx = Float.NaN, fy = Float.NaN, fd = Float.NaN;
         float cx, cy, r;            // on screen
         boolean pressed;
-        int dpadBits;
         Ctl(String id, int kind, int bit, int color, String label, String icon, float ax, float ox, float ay, float oy, float d) {
             this.id = id;
             this.kind = kind;
@@ -100,7 +99,11 @@ final class ControlsView extends View {
         text.setFakeBoldText(true);
         final int T = TouchIcons.TEAL, B = TouchIcons.BONE, O = TouchIcons.ORANGE, S = TouchIcons.SKY;
         add(new Ctl("stick", K_STICK, 0, S, "", "stick_base", 0, 2.0f, 1, -1.9f, 2.2f));
-        add(new Ctl("dpad", K_DPAD, 0, T, "", "dpad_base", 0, 1.7f, 0, 2.75f, 2.1f));
+        // the D-pad as four separate buttons: baton, cannon, salvage hook, down
+        add(new Ctl("dpad_up", K_BUTTON, Native.UP, T, "↑", "dpad_up_wind_waker", 0, 1.7f, 0, 2.1f, 0.85f));
+        add(new Ctl("dpad_left", K_BUTTON, Native.LEFT, T, "←", "dpad_left_cannon", 0, 1.05f, 0, 2.75f, 0.85f));
+        add(new Ctl("dpad_right", K_BUTTON, Native.RIGHT, T, "→", "dpad_right_grapple", 0, 2.35f, 0, 2.75f, 0.85f));
+        add(new Ctl("dpad_down", K_BUTTON, Native.DOWN, T, "↓", "dpad_down", 0, 1.7f, 0, 3.4f, 0.85f));
         add(new Ctl("zl", K_BUTTON, Native.ZL, TouchIcons.VIOLET, "ZL", "zl_target", 0, 1.1f, 0, 0.9f, 1.2f));
         add(new Ctl("zr", K_BUTTON, Native.ZR, TouchIcons.AMBER, "ZR", "zr_shield", 1, -1.1f, 0, 0.9f, 1.2f));
         add(new Ctl("fp", K_BUTTON, Native.STICK_R, B, "◉", "btn_first_person", 1, -2.6f, 0, 0.9f, 0.9f));
@@ -426,6 +429,8 @@ final class ControlsView extends View {
         if (c.kind == K_MENU || c.kind == K_EDIT) return menuShown;
         if (!controlsVisible) return false;
         if (c.kind == K_MACRO) return combatShown();
+        // the cannon and the salvage hook only work on the boat
+        if (c.kind == K_BUTTON && (c.bit == Native.LEFT || c.bit == Native.RIGHT)) return !hudKnown() || hudFlag(HUD_ON_BOAT);
         return true;
     }
 
@@ -451,7 +456,6 @@ final class ControlsView extends View {
         int b = pulseBits | macroBits;
         for (Ctl c : controls) {
             if (c.kind == K_BUTTON && c.pressed) b |= c.bit;
-            if (c.kind == K_DPAD) b |= c.dpadBits;
         }
         return b;
     }
@@ -638,17 +642,6 @@ final class ControlsView extends View {
         return null;
     }
 
-    private void updateDpad(Ctl c, float x, float y) {
-        float dx = x - c.cx, dy = y - c.cy, dead = c.r * 0.25f;
-        int b = 0;
-        if (dx < -dead && Math.abs(dy) < Math.abs(dx) * 2.4f) b |= Native.LEFT;
-        if (dx > dead && Math.abs(dy) < Math.abs(dx) * 2.4f) b |= Native.RIGHT;
-        if (dy < -dead && Math.abs(dx) < Math.abs(dy) * 2.4f) b |= Native.UP;
-        if (dy > dead && Math.abs(dx) < Math.abs(dy) * 2.4f) b |= Native.DOWN;
-        if (b != 0 && b != c.dpadBits) buzz();
-        c.dpadBits = b;
-    }
-
     private void updateStick(float x, float y) {
         Ctl s = byId.get("stick");
         float r = s.r * 0.8f;
@@ -665,7 +658,6 @@ final class ControlsView extends View {
 
     private void release(Ctl c) {
         c.pressed = false;
-        c.dpadBits = 0;
     }
 
     private void releaseAll() {
@@ -713,8 +705,7 @@ final class ControlsView extends View {
                         return true;
                     }
                     pointers.put(id, c);
-                    if (c.kind == K_DPAD) updateDpad(c, x, y);
-                    else if (c.kind == K_MACRO) {
+                    if (c.kind == K_MACRO) {
                         buzz();
                         startMacro(c.bit);
                         c.pressed = true;
@@ -767,8 +758,7 @@ final class ControlsView extends View {
                     }
                     Ctl c = pointers.get(id);
                     if (c == null) continue;
-                    if (c.kind == K_DPAD) updateDpad(c, x, y);
-                    else if (c.kind == K_BUTTON) {
+                    if (c.kind == K_BUTTON) {
                         // sliding between buttons moves the press (e.g. from B to A)
                         Ctl now = controlAt(x, y);
                         if (now != null && now != c && now.kind == K_BUTTON) {
@@ -959,7 +949,6 @@ final class ControlsView extends View {
             if (!shown(c)) continue;
             switch (c.kind) {
                 case K_STICK: drawStick(canvas, c, a); break;
-                case K_DPAD: drawDpad(canvas, c, a); break;
                 default: drawButton(canvas, c, a); break;
             }
             if (editMode && c == editSel) {
@@ -1026,18 +1015,6 @@ final class ControlsView extends View {
         }
         float kx = bx + stickX * c.r * 0.8f, ky = by - stickY * c.r * 0.8f;
         icons.draw(canvas, "stick_knob", TouchIcons.BONE, "", kx, ky, c.r * 0.42f, alpha, false);
-    }
-
-    private void drawDpad(Canvas canvas, Ctl c, int a) {
-        if (icons.get("dpad_base") != null) icons.draw(canvas, "dpad_base", 0, null, c.cx, c.cy, c.r, a, false);
-        boolean known = hudKnown(), boat = hudFlag(HUD_ON_BOAT);
-        // the cannon and the salvage hook only work on the boat: dimmed elsewhere
-        int dim = known && !boat && !editMode ? a / 2 : a;
-        float s = c.r * 0.6f, rr = c.r * 0.36f;
-        icons.draw(canvas, "dpad_up_wind_waker", c.color, "↑", c.cx, c.cy - s, rr, a, (c.dpadBits & Native.UP) != 0);
-        icons.draw(canvas, "dpad_down", c.color, "↓", c.cx, c.cy + s, rr, a, (c.dpadBits & Native.DOWN) != 0);
-        icons.draw(canvas, "dpad_left_cannon", c.color, "←", c.cx - s, c.cy, rr, dim, (c.dpadBits & Native.LEFT) != 0);
-        icons.draw(canvas, "dpad_right_grapple", c.color, "→", c.cx + s, c.cy, rr, dim, (c.dpadBits & Native.RIGHT) != 0);
     }
 
     private void drawGrid(Canvas canvas) {

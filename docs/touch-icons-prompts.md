@@ -32,6 +32,16 @@ like a soap bubble or the game's HUD buttons. The symbol inside is white or crea
 outline, unless a color is specified. No text, no letters, no numbers unless asked. Transparent
 background, 1024x1024 PNG, centered, the bubble fills about 90% of the canvas. Keep the exact same
 bubble, outline thickness, lighting and palette across all icons.
+Hard rules: never draw hands, gloves, arms, people, faces, Link or any character; show actions
+only with objects from the game world (pots, rupees, stone blocks, ledges, ropes, the red boat)
+plus bold arrows. Never draw a Viking/dragon longship: the boat is always the small red Wind
+Waker boat described below. Real alpha transparency outside the bubble (no checkerboard pattern).
+Every symbol must be recognisably from The Legend of Zelda: The Wind Waker: use its own
+objects and motifs (Hylian Shield, Hero's Sword, rupees, clay pots, the Wind Waker baton,
+wind swirls, the red boat, the Triforce) instead of generic icons.
+The red boat, whenever it appears: a small chubby red wooden sailboat seen from the side, rounded
+hull, a carved red lion head with a golden mane as the figurehead at the front, one white
+triangular sail with a single horizontal red band, cartoon proportions.
 ```
 
 ## Paleta de burbujas
@@ -54,7 +64,7 @@ bubble, outline thickness, lighting and palette across all icons.
 | Archivo | Prompt |
 |---|---|
 | `bubble_empty_item.png` | Wind Waker cel-shaded style. An empty sky-blue bubble (#4FA9E8) for an unassigned item slot: inside, only a faint dashed white circle outline, as if waiting for an item. Same bubble style, transparent background. |
-| `bubble_blank_a.png` | Wind Waker cel-shaded style. A plain green bubble (#3DBE5A) with nothing inside, same glossy bubble style. Transparent background. |
+| `bubble_blank_a.png` | Wind Waker cel-shaded style. A plain clean green bubble (#3DBE5A) with nothing inside: flat green, one darker crescent lower-right, white shine upper-left, no smudges or dark spots. Transparent background. |
 | `bubble_blank_b.png` | Same as before but a plain red bubble (#E0453A), nothing inside. |
 | `bubble_blank_zr.png` | Same as before but a plain amber bubble (#F2B634), nothing inside. |
 | `bubble_pressed_overlay.png` | Wind Waker style. A semi-transparent dark navy circle overlay, same size as the bubbles, used to darken a button while pressed, soft edge. Transparent background. |
@@ -64,7 +74,7 @@ bubble, outline thickness, lighting and palette across all icons.
 | `btn_menu.png` | Wind Waker cel-shaded style. Bone-white bubble with three thick rounded navy horizontal lines (hamburger menu). Transparent background. |
 | `btn_layout_edit.png` | Wind Waker cel-shaded style. Bone-white bubble with a navy 3x3 grid and a small pencil crossing its corner, meaning "edit layout". Transparent background. |
 | `btn_first_person.png` | Wind Waker cel-shaded style. Bone-white bubble with a big cartoon eye in the Wind Waker style (large black pupil, white shine, thick navy outline), meaning "look around in first person". Transparent background. |
-| `btn_camera_center.png` | Wind Waker cel-shaded style. Bone-white bubble with a navy circular arrow wrapping around a small simple cartoon figure silhouette seen from behind, meaning "center the camera behind the hero". Transparent background. |
+| `btn_camera_center.png` | Wind Waker cel-shaded style. Bone-white bubble with a small green pointed floppy elf cap (only the hat, no person) in the center and a bold navy circular arrow looping around it, meaning "center the camera". Transparent background. |
 
 ## 2. ZL — fijar objetivo
 
@@ -84,23 +94,23 @@ Burbuja verde `#3DBE5A`, símbolo blanco/crema salvo donde se indique.
 | `a_read.png` | Leer | Green bubble with a small open wooden signpost board / scroll with a few wavy lines suggesting writing (no real letters). Same style. |
 | `a_open.png` | Abrir | Green bubble with a small cartoon treasure chest with its lid open and a little sparkle, brown wood and gold trim. Same style. |
 | `a_door.png` | Abrir puerta | Green bubble with a small arched wooden door half open. Same style. |
-| `a_lift.png` | Levantar | Green bubble with a white cartoon gloved hand lifting a round clay pot upward, small up arrow. Same style. |
+| `a_lift.png` | Levantar | Wind Waker cel-shaded style. Green bubble with a round clay pot rising off the ground, a bold yellow up arrow under it and small dust puffs. No hands. Same style. |
 | `a_throw.png` | Lanzar | Green bubble with a clay pot flying in an arc with motion lines. Same style. |
 | `a_put_down.png` | Dejar | Green bubble with a clay pot being placed down, small down arrow. Same style. |
-| `a_pick_up.png` | Coger | Green bubble with an open white gloved hand reaching for a small green rupee. Same style. |
-| `a_grab.png` | Agarrar / empujar bloque | Green bubble with two white hands pressing against a grey stone block. Same style. |
-| `a_climb.png` | Trepar | Green bubble with a white hand grabbing the top of a ledge with a small up arrow. Same style. |
+| `a_pick_up.png` | Coger | Wind Waker cel-shaded style. Green bubble with a small green rupee floating up with sparkles and a small yellow up arrow. No hands. Same style. |
+| `a_grab.png` | Agarrar / empujar bloque | Wind Waker cel-shaded style. Green bubble with a grey stone block with two bold yellow arrows on its sides pointing left and right (push and pull). No hands. Same style. |
+| `a_climb.png` | Trepar | Wind Waker cel-shaded style. Green bubble with the edge of a rocky ledge and a bold yellow arrow curving up and over the edge. No hands. Same style. |
 | `a_jump.png` | Saltar | Green bubble with a curved jumping arc arrow over a small gap. Same style. |
-| `a_let_go.png` | Soltar | Green bubble with an open hand releasing a rope, small down arrow. Same style. |
+| `a_let_go.png` | Soltar | Wind Waker cel-shaded style. Green bubble with a hanging rope whose end is loose and a bold yellow down arrow falling away from it. No hands. Same style. |
 | `a_roll.png` | Rodar | Green bubble with a circular rolling arrow and small dust puffs. Same style. |
-| `a_board_boat.png` | Subir al barco | Green bubble with a small red cartoon sailboat with a dragon head prow and a white sail, up arrow. Same style. |
-| `a_leave_boat.png` | Bajar del barco | Same small red sailboat with an arrow pointing out of it. Same style. |
+| `a_board_boat.png` | Subir al barco | Wind Waker cel-shaded style. Green bubble with the small red Wind Waker boat (lion head figurehead, white sail with a red band) and a bold yellow arrow pointing down into it. Same style. |
+| `a_leave_boat.png` | Bajar del barco | Wind Waker cel-shaded style. Green bubble with the small red Wind Waker boat and a bold yellow arrow leaving it upward and to the side. Same style. |
 | `a_stop.png` | Parar / bajar vela | Green bubble with a white sail being lowered (folded sail and a down arrow). Same style. |
 | `a_put_away.png` | Guardar espada | Green bubble with a sword sliding into a blue scabbard, down arrow. Same style. |
 | `a_next.png` | Siguiente (diálogo) | Green bubble with a white rounded triangle pointing right, like a "next" arrow in a dialogue box. Same style. |
 | `a_parry.png` | Contraataque | Green bubble with a sword clashing with a spark star, bright yellow spark. Same style. |
 | `a_swim.png` | Nadar | Green bubble with stylized cartoon waves and a small splash. Same style. |
-| `a_drink.png` | Beber | Green bubble with a glass bottle tilted with red liquid pouring. Same style. |
+| `a_drink.png` | Beber | Wind Waker cel-shaded style. Green bubble with a tilted glass bottle with a cork, red potion pouring out in a small arc. No hands. Same style. |
 | `a_generic.png` | Acción genérica | Green bubble with a bold white four-point sparkle. Same style. |
 
 ## 4. B — acciones
@@ -111,7 +121,7 @@ Burbuja roja `#E0453A`.
 |---|---|---|
 | `b_sword.png` | Espada | Wind Waker cel-shaded style. Red bubble with a diagonal Hero's-style sword: silver blade, blue hilt with a small yellow gem, navy outline. Transparent background. |
 | `b_cancel.png` | Cancelar / volver | Red bubble with a white curved arrow turning back to the left. Same style. |
-| `b_drop.png` | Soltar objeto | Red bubble with an open hand and a small falling pot. Same style. |
+| `b_drop.png` | Soltar objeto | Wind Waker cel-shaded style. Red bubble with a clay pot falling with a bold white down arrow and small motion lines. No hands. Same style. |
 | `b_empty.png` | Sin acción | Red bubble with only a faint white dashed circle inside. Same style. |
 
 ## 5. ZR — acciones
@@ -120,12 +130,12 @@ Burbuja ámbar `#F2B634`.
 
 | Archivo | Acción | Prompt |
 |---|---|---|
-| `zr_shield.png` | Escudo | Wind Waker cel-shaded style. Amber bubble with a round wooden-and-blue hero shield seen from the front, simple emblem-free design with a silver rim. Transparent background. |
-| `zr_crouch.png` | Agacharse / gatear | Amber bubble with a white arrow pointing down onto a small crouching cartoon silhouette. Same style. |
-| `zr_grab.png` | Agarrar | Amber bubble with a white hand clenched on a rope handle. Same style. |
-| `zr_boat_jump.png` | Saltar con el barco | Amber bubble with the small red sailboat leaping over a wave with motion lines. Same style. |
-| `zr_no_sail.png` | Navegar sin vela | Amber bubble with the small red sailboat with its sail folded, moving slowly with small ripples. Same style. |
-| `zr_brake.png` | Frenar (cuerda) | Amber bubble with a hand stopping a swinging rope, small stop lines. Same style. |
+| `zr_shield.png` | Escudo | Wind Waker cel-shaded style. Amber bubble (#F2B634) with the Hylian Shield seen from the front: a tall blue kite-shaped shield with a rounded top, a thick silver rim, a red bird crest with spread wings in the lower half and a small golden Triforce above it, drawn in Wind Waker's toon style with flat colors and navy outlines. No hands. Transparent background. |
+| `zr_crouch.png` | Agacharse / gatear | Wind Waker cel-shaded style. Amber bubble with a bold white down arrow pressing onto a short flat bar, like ducking low. No figures. Same style. |
+| `zr_grab.png` | Agarrar | Wind Waker cel-shaded style. Amber bubble with a coiled rope tied around a wooden post. No hands. Same style. |
+| `zr_boat_jump.png` | Saltar con el barco | Wind Waker cel-shaded style. Amber bubble with the small red Wind Waker boat leaping over a wave with motion lines. Same style. |
+| `zr_no_sail.png` | Navegar sin vela | Wind Waker cel-shaded style. Amber bubble with the small red Wind Waker boat with its sail folded down, small ripples behind it. Same style. |
+| `zr_brake.png` | Frenar (cuerda) | Wind Waker cel-shaded style. Amber bubble with a hanging rope and two short white stop bars across it. No hands. Same style. |
 
 ## 6. Botones de combate (macros)
 
@@ -136,7 +146,7 @@ Burbuja naranja `#F07A2A`.
 | `combat_jump_attack.png` | Ataque con salto | Wind Waker cel-shaded style. Orange bubble with a sword pointing down in a high arc jump, a curved motion trail above it. Transparent background. |
 | `combat_spin_attack.png` | Ataque giratorio | Orange bubble with a sword surrounded by a full circular blue-white swirl trail. Same style. |
 | `combat_vertical_slash.png` | Tajo vertical | Orange bubble with a sword slashing straight down with a vertical white arc trail. Same style. |
-| `combat_dodge.png` | Esquiva / salto atrás | Orange bubble with a small cartoon silhouette hopping sideways and backward, two curved arrows (left and back). Same style. |
+| `combat_dodge.png` | Esquiva / salto atrás | Wind Waker cel-shaded style. Orange bubble with two bold curved white arrows, one sweeping left and one sweeping backward, around a small sword. No figures. Same style. |
 
 ## 7. Cruceta
 

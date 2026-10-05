@@ -8,14 +8,14 @@ import android.graphics.drawable.Drawable;
 import java.util.HashMap;
 
 /**
- * Icons of the touch controls: PNGs in res/drawable-nodpi named as in docs/touch-icons-prompts.md.
+ * Icons of the touch controls: PNGs in res/drawable-nodpi named as in docs/touch-icons-prompts-v2.md.
  * An icon that isn't there yet is drawn as a plain bubble in its group's colour with a short label,
  * so the controls work before the artwork exists.
  */
 final class TouchIcons {
-    // bubble colours (docs/touch-icons-prompts.md)
-    static final int GREEN = 0xFF3DBE5A, RED = 0xFFE0453A, SKY = 0xFF4FA9E8, VIOLET = 0xFF8C5BD6, AMBER = 0xFFF2B634,
-            ORANGE = 0xFFF07A2A, TEAL = 0xFF2BB3B0, BONE = 0xFFF4EEDC, NAVY = 0xFF1B2A4A;
+    // button colours (docs/touch-icons-prompts-v2.md)
+    static final int GREEN = 0xFF3CB043, RED = 0xFFD9362B, SKY = 0xFF2F8FD8, VIOLET = 0xFF7E4FC9, AMBER = 0xFFE9A925,
+            ORANGE = 0xFFE8702A, TEAL = 0xFF22A6A0, BONE = 0xFFF1E6C8, NAVY = 0xFF1B2A4A;
 
     // the game's state as the native side reports it (Native.hudState); codes index these tables.
     // Code 0 = unknown (state not read yet), 1 = no action / empty slot.
