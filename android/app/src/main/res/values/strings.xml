@@ -192,7 +192,8 @@
     <string-array name="core_modes">
         <item>Automatic</item>
         <item>Performance cores</item>
-        <item>Prime core</item>
+        <item>Prime core (renderer)</item>
+        <item>Prime core (game)</item>
     </string-array>
     <string name="opt_resolution">Rendering resolution</string>
     <string name="opt_framegen">Frame generation</string>

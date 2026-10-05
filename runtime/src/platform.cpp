@@ -74,9 +74,11 @@ void set_thread_high_priority() {
 // Where the render and game threads run (the app's setting): 0 automatic (the system decides), 1 the
 // performance cores (neither the efficiency cores nor the prime core: the best performance per
 // watt, so the least heat), 2 the prime core for the render thread (the fastest single core, and
-// the hottest). Applied by the threads themselves when they call apply_thread_cores.
+// the hottest), 3 the prime core for the game thread and the performance cores for the render thread
+// (when the game's own logic is the slower of the two). Applied by the threads themselves when they
+// call apply_thread_cores.
 static std::atomic<int> g_core_mode{getenv("WWHD_CORE_MODE") ? atoi(getenv("WWHD_CORE_MODE")) : 0};
-void set_core_mode(int m) { g_core_mode = std::clamp(m, 0, 2); }
+void set_core_mode(int m) { g_core_mode = std::clamp(m, 0, 3); }
 int core_mode() { return g_core_mode; }
 
 #if defined(__ANDROID__)
@@ -127,18 +129,18 @@ void apply_thread_cores(bool render) {
     const cpu_set_t* want = &c.all;
     if (mode == 1) want = &c.perf;
     else if (mode == 2 && render) want = &c.prime;
+    else if (mode == 3) want = render ? &c.perf : &c.prime;
     static thread_local int applied = -1;  // the mode this thread last applied
     cpu_set_t now;
     bool same = sched_getaffinity(0, sizeof now, &now) == 0 && CPU_EQUAL(&now, want);
     if (same && applied == mode) return;
     if (!same && sched_setaffinity(0, sizeof *want, want) != 0) return;
     if (applied != mode) {
-        static const char* names[] = {"every core", "the performance cores", "the prime core"};
-        __android_log_print(ANDROID_LOG_INFO, "wwhd", "[platform] %s thread on %s", render ? "render" : "game",
-                            names[mode == 2 && !render ? 0 : mode]);
+        const char* where = want == &c.prime ? "the prime core" : want == &c.perf ? "the performance cores" : "every core";
+        __android_log_print(ANDROID_LOG_INFO, "wwhd", "[platform] %s thread on %s", render ? "render" : "game", where);
     }
     applied = mode;
-    if (!render || mode == 0) return;
+    if (want == &c.all) return;
     // threads created from the render thread (driver threads) inherit its affinity: every core back
     if (DIR* d = opendir("/proc/self/task")) {
         pid_t tid = (pid_t)syscall(SYS_gettid);
