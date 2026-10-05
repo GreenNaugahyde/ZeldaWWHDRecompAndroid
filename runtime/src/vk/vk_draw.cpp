@@ -418,28 +418,22 @@ static void create_set_layout(Shader* sh) {
     cache[h] = sh->dsl;
 }
 
-// registers that influence how a shader stage is translated (gathered, then hashed in one pass)
+// The registers the shader key takes whole (stage_state_hash); shader_reg_relevant below derives
+// from this table and the masked ones in stage_state_hash, so keep both in step.
+static const struct { uint32_t first, count; } kKeyRegs[] = {
+    {mmSQ_VTX_SEMANTIC_0, 32}, {mmSPI_VS_OUT_ID_0, 10}, {mmSPI_VS_OUT_CONFIG, 1}, {mmPA_CL_VS_OUT_CNTL, 1},
+    {mmSPI_PS_IN_CONTROL_0, 2}, {mmSPI_PS_INPUT_CNTL_0, 32}, {REGADDR::SQ_CONFIG, 1}, {mmCB_SHADER_MASK, 1},
+    {mmCB_SHADER_CONTROL, 1}, {mmDB_SHADER_CONTROL, 1}, {mmSPI_INPUT_Z, 1}, {REGADDR::SX_ALPHA_TEST_CONTROL, 1},
+    {REGADDR::PA_CL_VTE_CNTL, 1}, {REGADDR::PA_CL_CLIP_CNTL, 1}, {REGADDR::CB_COLOR_CONTROL, 1}, {REGADDR::CB_TARGET_MASK, 1},
+    {mmCB_COLOR0_INFO, 8}};
+
 // the register state that shapes a stage's translation, as words (hashed into the shader key)
 static uint32_t stage_state_words(const uint32_t* regs, uint32_t texBase, uint32_t* buf) {
     uint32_t n = 0;
-    auto put = [&](uint32_t first, uint32_t count) { memcpy(&buf[n], &regs[first], count * 4); n += count; };
-    put(mmSQ_VTX_SEMANTIC_0, 32);
-    put(mmSPI_VS_OUT_ID_0, 10);
-    put(mmSPI_VS_OUT_CONFIG, 1);
-    put(mmPA_CL_VS_OUT_CNTL, 1);
-    put(mmSPI_PS_IN_CONTROL_0, 2);
-    put(mmSPI_PS_INPUT_CNTL_0, 32);
-    put(REGADDR::SQ_CONFIG, 1);
-    put(mmCB_SHADER_MASK, 1);
-    put(mmCB_SHADER_CONTROL, 1);
-    put(mmDB_SHADER_CONTROL, 1);
-    put(mmSPI_INPUT_Z, 1);
-    put(REGADDR::SX_ALPHA_TEST_CONTROL, 1);
-    put(REGADDR::PA_CL_VTE_CNTL, 1);
-    put(REGADDR::PA_CL_CLIP_CNTL, 1);
-    put(REGADDR::CB_COLOR_CONTROL, 1);
-    put(REGADDR::CB_TARGET_MASK, 1);
-    put(mmCB_COLOR0_INFO, 8);
+    for (auto& k : kKeyRegs) {
+        memcpy(&buf[n], &regs[k.first], k.count * 4);
+        n += k.count;
+    }
     uint32_t cbBase[8];
     for (int i = 0; i < 8; i++) {
         cbBase[i] = regs[mmCB_COLOR0_BASE + i] & ~0xFFu;
@@ -468,16 +462,77 @@ static uint64_t stage_state_hash(const uint32_t* regs, uint64_t h, uint32_t texB
     return hash_bytes(buf, n * 4, h);
 }
 
+// Does a register change alter the shader key? gx2_core.cpp counts only those in g_shader_state_gen
+// (plugged in below). The programs' addresses aren't counted: get_shader compares them itself.
+extern "C" bool (*g_shader_reg_filter)(uint32_t reg, uint32_t oldv, uint32_t newv);
+static bool shader_reg_relevant(uint32_t reg, uint32_t oldv, uint32_t newv) {
+    static const std::vector<bool> whole = [] {
+        std::vector<bool> m(0x10000);
+        for (auto& k : kKeyRegs)
+            for (uint32_t i = 0; i < k.count; i++) m[k.first + i] = true;
+        return m;
+    }();
+    if (reg < whole.size() && whole[reg]) return true;
+    const uint32_t* regs = gx2::regs();
+    auto isColorBuffer = [&](uint32_t base) {
+        if (!base) return false;
+        for (int i = 0; i < 8; i++)
+            if ((regs[mmCB_COLOR0_BASE + i] & ~0xFFu) == base) return true;
+        return false;
+    };
+    uint32_t d = oldv ^ newv;
+    for (uint32_t tb : {(uint32_t)REGADDR::SQ_TEX_RESOURCE_WORD0_N_PS, (uint32_t)REGADDR::SQ_TEX_RESOURCE_WORD0_N_VS,
+                        (uint32_t)REGADDR::SQ_TEX_RESOURCE_WORD0_N_GS}) {
+        if (reg < tb || reg >= tb + 18 * 7) continue;
+        switch ((reg - tb) % 7) {
+        case 0: return (d & 7) != 0;
+        case 1: return (d & 0x3F00000) != 0;
+        case 2: return isColorBuffer(oldv << 8) || isColorBuffer(newv << 8);  // a texture is (no longer) a color buffer
+        case 4: return (d & 0x300) != 0;
+        default: return false;
+        }
+    }
+    const uint32_t sb = REGADDR::SQ_TEX_SAMPLER_WORD0_0;
+    if (reg >= sb && reg < sb + 18 * 3 * 3) return (reg - sb) % 3 == 0 && (d & 0xF8000000) != 0;
+    if (reg >= mmCB_COLOR0_BASE && reg < mmCB_COLOR0_BASE + 8) {
+        // the key holds whether a color buffer is set, and which textures are color buffers
+        if (((oldv & ~0xFFu) != 0) != ((newv & ~0xFFu) != 0)) return true;
+        for (uint32_t tb : {(uint32_t)REGADDR::SQ_TEX_RESOURCE_WORD0_N_PS, (uint32_t)REGADDR::SQ_TEX_RESOURCE_WORD0_N_VS})
+            for (int t = 0; t < 18; t++) {
+                uint32_t base = regs[tb + t * 7 + 2] << 8;
+                if (base && (base == (oldv & ~0xFFu) || base == (newv & ~0xFFu))) return true;
+            }
+        return false;
+    }
+    if (reg == REGADDR::DB_DEPTH_CONTROL) return (d & 0x83) != 0;
+    return false;
+}
+static bool g_reg_filter_set = (g_shader_reg_filter = &shader_reg_relevant, true);
+
 static Shader* get_shader_uncached(const uint32_t* regs, bool vertex, LatteFetchShader* fs, uint64_t fsKey);
 
 static Shader* get_shader(const uint32_t* regs, bool vertex, LatteFetchShader* fs, uint64_t fsKey) {
+    const uint32_t start = vertex ? mmSQ_PGM_START_VS : mmSQ_PGM_START_PS;
+    const uint32_t addr = regs[start], size = regs[start + 1];
     // nothing shader-relevant changed since the previous draw: same shader
-    struct Last { uint64_t gen = 0, frame = ~0ull, fsKey = 0; Shader* s = nullptr; };
+    struct Last { uint64_t gen = 0, frame = ~0ull, fsKey = 0; uint32_t addr = 0, size = 0; Shader* s = nullptr; };
     static Last last[2];
     Last& L = last[vertex ? 0 : 1];
-    if (L.gen == g_shader_state_gen && L.frame == R.frame && (!vertex || L.fsKey == fsKey)) return L.s;
-    Shader* s = get_shader_uncached(regs, vertex, fs, fsKey);
-    L = Last{g_shader_state_gen, R.frame, fsKey, s};
+    if (L.gen == g_shader_state_gen && L.frame == R.frame && L.addr == addr && L.size == size && (!vertex || L.fsKey == fsKey))
+        return L.s;
+    // the same state with another program (the game switches between a few): remembered per program
+    struct Memo { uint64_t gen = 0, frame = ~0ull; std::unordered_map<uint64_t, Shader*> m; };
+    static Memo memo[2];
+    Memo& M = memo[vertex ? 0 : 1];
+    if (M.gen != g_shader_state_gen || M.frame != R.frame) {
+        M.m.clear();
+        M.gen = g_shader_state_gen;
+        M.frame = R.frame;
+    }
+    uint64_t mk = ((uint64_t)addr << 32 | size) ^ (vertex ? fsKey * 0x9E3779B97F4A7C15ull : 0);
+    auto it = M.m.find(mk);
+    Shader* s = it != M.m.end() ? it->second : (M.m[mk] = get_shader_uncached(regs, vertex, fs, fsKey));
+    L = Last{g_shader_state_gen, R.frame, fsKey, addr, size, s};
     return s;
 }
 
@@ -540,11 +595,13 @@ static Shader* get_shader_uncached(const uint32_t* regs, bool vertex, LatteFetch
     create_set_layout(s);
     cache_record_shader(regs, vertex);
     g_t_decompile += now_ms() - t0;
-    if (getenv("WWHD_DUMP_SHADERS")) {
-        mkdir("shaders", 0755);
+    // debug: WWHD_DUMP_SHADERS=1 writes the translated GLSL to ./shaders, =/some/dir there
+    if (const char* dump = getenv("WWHD_DUMP_SHADERS")) {
+        std::string dir = dump[0] == '/' ? dump : "shaders";
+        mkdir(dir.c_str(), 0755);
         char name[96];
-        snprintf(name, sizeof name, "shaders/%s_%08X_%016llx.glsl", vertex ? "vs" : "ps", addr, (unsigned long long)key);
-        if (FILE* f = fopen(name, "w")) { fputs(s->dec->strBuf_shaderSource->c_str(), f); fclose(f); }
+        snprintf(name, sizeof name, "/%s_%08X_%016llx.glsl", vertex ? "vs" : "ps", addr, (unsigned long long)key);
+        if (FILE* f = fopen((dir + name).c_str(), "w")) { fputs(s->dec->strBuf_shaderSource->c_str(), f); fclose(f); }
     }
     if (g_defer_compiles) {
         s->state = CS_DEFERRED;  // cache replay: compile on first use or gradually in the background
@@ -654,12 +711,22 @@ static VkRenderPass get_render_pass(const PassFormats& pf) {
     sp.colorAttachmentCount = colorCount;
     sp.pColorAttachments = colorRefs;
     sp.pDepthStencilAttachment = pf.depth ? &depthRef : nullptr;
-    // order attachment accesses against earlier and later passes and transfers
-    VkSubpassDependency deps[2] = {
-        {VK_SUBPASS_EXTERNAL, 0, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_ALL_GRAPHICS_BIT, VK_ACCESS_MEMORY_WRITE_BIT,
-         VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT, 0},
-        {0, VK_SUBPASS_EXTERNAL, VK_PIPELINE_STAGE_ALL_GRAPHICS_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_ACCESS_MEMORY_WRITE_BIT,
-         VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT, 0}};
+    // Order attachment accesses against earlier and later passes on the same images. Other uses
+    // (sampling, copies, clears) change the image's layout first, and that barrier orders them
+    // (prepare). Precise stages let the next pass's vertex work overlap this one's pixels;
+    // WWHD_BROAD_BARRIERS=1: everything waits for everything (as before).
+    static const bool broad = getenv("WWHD_BROAD_BARRIERS") != nullptr;
+    const VkPipelineStageFlags att = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT |
+                                     VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
+    const VkAccessFlags attWrite = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+    const VkAccessFlags attAll = attWrite | VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT;
+    VkSubpassDependency deps[2] = {{VK_SUBPASS_EXTERNAL, 0, att, att, attWrite, attAll, 0}, {0, VK_SUBPASS_EXTERNAL, att, att, attWrite, attAll, 0}};
+    if (broad) {
+        deps[0] = {VK_SUBPASS_EXTERNAL, 0, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_ALL_GRAPHICS_BIT, VK_ACCESS_MEMORY_WRITE_BIT,
+                   VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT, 0};
+        deps[1] = {0, VK_SUBPASS_EXTERNAL, VK_PIPELINE_STAGE_ALL_GRAPHICS_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_ACCESS_MEMORY_WRITE_BIT,
+                   VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT, 0};
+    }
     VkRenderPassCreateInfo ci{VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO};
     ci.attachmentCount = (uint32_t)atts.size();
     ci.pAttachments = atts.data();
@@ -1541,7 +1608,15 @@ static bool ensure_pass(Surface* const* colors, const uint32_t* colorSlices, Sur
     bi.renderPass = rp;
     bi.framebuffer = get_framebuffer(rp, views, n, w, h);
     bi.renderArea = {{0, 0}, {w, h}};
-    vkCmdBeginRenderPass(command_buffer(), &bi, VK_SUBPASS_CONTENTS_INLINE);
+    VkCommandBuffer cb = command_buffer();
+    {
+        VkFormat cf[8];
+        uint32_t nc = 0;
+        for (int i = 0; i < 8; i++)
+            if (pf.color[i]) cf[nc++] = (VkFormat)pf.color[i];
+        prof_pass_begin(w, h, cf, nc, (VkFormat)pf.depth);
+    }
+    vkCmdBeginRenderPass(cb, &bi, VK_SUBPASS_CONTENTS_INLINE);
     g_ds = DrawState{};  // dynamic state and bindings recorded from here on are tracked again
     g_pass_serial++;
     g_ds.valid = true;
@@ -1619,7 +1694,7 @@ static bool build_indices(uint32_t prim, uint32_t count, uint32_t indexType, uin
 // Every newly translated shader and every new pipeline is appended to a recipe file: the shader
 // microcode plus the register state that shaped its translation. At startup the recipes are
 // replayed, so shaders and pipelines are ready before the game asks for them (the driver's own
-// compiled pipelines persist in pipelines.vkcache next to it). Shader records use the same format
+// compiled pipelines persist in pipelines-*.vkcache next to it, one per driver). Shader records use the same format
 // as the macOS build; pipeline records have their own type since Vulkan pipelines carry more state.
 // WWHD_SHADER_CACHE=<file> overrides the location, WWHD_SHADER_CACHE=0 disables it.
 namespace {
@@ -2113,6 +2188,7 @@ void draw(const uint32_t* regs, uint32_t prim, uint32_t count, uint32_t indexTyp
     static bool cacheLoaded = (cache_load(), true);
     (void)cacheLoaded;
     R.drawCount++;
+    prof_draw(regs[mmSQ_PGM_START_PS] << 8);
     draws_since_commit()++;
     DLOG("[draw] prim %X count %u idx %u@%08X VS %08X PS %08X CB0 %08X info %08X DB %08X depthctl %08X blend %08X mask %08X",
          prim, count, indexType, indexAddr, regs[mmSQ_PGM_START_VS] << 8, regs[mmSQ_PGM_START_PS] << 8, regs[mmCB_COLOR0_BASE],
@@ -2154,6 +2230,33 @@ void draw(const uint32_t* regs, uint32_t prim, uint32_t count, uint32_t indexTyp
     if (!vs || !ps || shader_state(vs) == CS_FAILED || shader_state(ps) == CS_FAILED) { g_skip[SK_NO_SHADER]++; return; }
     compile_deferred(vs);
     compile_deferred(ps);
+    // debug: WWHD_DUMP_PS=addr,addr,... writes the translated pixel shader (and its vertex shader) of
+    // the first draw with that pixel shader address into WWHD_DUMP_SHADERS's folder (or ./shaders)
+    static std::set<uint32_t> dumpPS = [] {
+        std::set<uint32_t> d;
+        if (const char* e = getenv("WWHD_DUMP_PS"))
+            for (char* p = (char*)e; *p;) {
+                d.insert((uint32_t)strtoul(p, &p, 16));
+                while (*p == ',') p++;
+            }
+        return d;
+    }();
+    if (!dumpPS.empty()) {
+        uint32_t psAddr = regs[mmSQ_PGM_START_PS] << 8;
+        if (dumpPS.erase(psAddr)) {
+            const char* d = getenv("WWHD_DUMP_SHADERS");
+            std::string dir = d && d[0] == '/' ? d : "shaders";
+            mkdir(dir.c_str(), 0755);
+            for (Shader* sh : {ps, vs}) {
+                char name[64];
+                snprintf(name, sizeof name, "/live_%s_%08X.glsl", sh == ps ? "ps" : "vs", psAddr);
+                if (FILE* f = fopen((dir + name).c_str(), "w")) {
+                    fputs(sh->dec->strBuf_shaderSource->c_str(), f);
+                    fclose(f);
+                }
+            }
+        }
+    }
 
     const LatteContextRegister& lcr = *(const LatteContextRegister*)regs;
     Surface* colors[8] = {};

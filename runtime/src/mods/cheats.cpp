@@ -20,6 +20,7 @@
 #include <string>
 
 #include "mods.h"
+#include "release.h"
 #include "runtime.h"
 
 namespace mods {
@@ -37,14 +38,19 @@ constexpr uint32_t kTact = 0xBD, kTriforce = 0xBE;  // song bits (6), Triforce s
 // dSv_info_c::mMemory: the current stage's dSv_memBit_c (copied back to its save table on leaving)
 constexpr uint32_t kStageKeys = 0x778 + 0x20, kStageDungeonItems = 0x778 + 0x21;  // bits: map, compass, boss key
 
+// the heap block g_dComIfG_gameInfo lives in (pointer in static data; the save data at +0xC92C,
+// 0x145AC92C in USA sessions); USA addresses, release::Data maps them for EUR
+const release::Data kInfoPointer{0x10114B90}, kStageInfo{0x1046F0B0};
+
 uint32_t save_addr() {
-    static const uint32_t a = getenv("WWHD_CHEAT_SAVE_ADDR") ? (uint32_t)strtoul(getenv("WWHD_CHEAT_SAVE_ADDR"), nullptr, 16) : 0x145AC92C;
-    return a;
+    static const uint32_t over = getenv("WWHD_CHEAT_SAVE_ADDR") ? (uint32_t)strtoul(getenv("WWHD_CHEAT_SAVE_ADDR"), nullptr, 16) : 0;
+    return over ? over : ld32(kInfoPointer) + 0xC92C;
 }
 
-constexpr uint32_t kStageName = 0x1046F0B0 + 0x5134;  // current stage, as in savestate.cpp
-
-std::string stage() { return std::string((const char*)mem::ptr(kStageName), strnlen((const char*)mem::ptr(kStageName), 8)); }
+std::string stage() {
+    const char* s = (const char*)mem::ptr(kStageInfo + 0x5134);  // current stage, as in savestate.cpp
+    return std::string(s, strnlen(s, 8));
+}
 
 // false on the title screen (it has placeholder save data that a file load replaces), before a file
 // is loaded, or if the address is wrong
@@ -139,7 +145,7 @@ void cheats_service() {
     int inf = g_infinite.load(std::memory_order_relaxed);
     if (!g_pending.load(std::memory_order_relaxed) && !inf) return;
     uint32_t s = save_addr();
-    if (!save_loaded(s)) return;  // stays pending until a file is loaded
+    if (s < 0x10000000 || !save_loaded(s)) return;  // stays pending until a file is loaded
     // ponytail: topped up once per frame, so a single hit bigger than your whole health still kills
     if (inf & kInfHealth) st16(s + kLife, ld16(s + kMaxLife));
     if (inf & kInfMagic) st8(s + kMagic, ld8(s + kMaxMagic));

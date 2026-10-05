@@ -1,13 +1,27 @@
+// GamePad motion (accelerometer, gyroscope, orientation) from the host's sensors: the device's
+// own, or a controller's. Samples go through a Mahony sensor fusion and come out in the units and
+// axes of the VPAD library (VPADRead). Conventions follow Cemu's input/motion (MPL-2.0).
 #pragma once
-#include <cstdint>
 
-// GamePad motion (gyro aiming) from the host's sensors (motion.cpp)
 namespace motion {
-// a sensor sample in GamePad axes (x right, y up, z out of the screen): angular velocity in rad/s,
-// acceleration in m/s^2 as the host reports it, timestamp in ns
-void push(float gx, float gy, float gz, float ax, float ay, float az, int64_t t_ns);
-void set_enabled(bool on);  // off: the GamePad reads as lying still (the old behaviour)
-void recalibrate();         // the current orientation becomes "straight ahead"
-// writes the VPADStatus motion fields: acc 0x1C, gyro 0x38, angle 0x44, direction 0x6C
-void fill(uint32_t status);
+
+// One sensor sample in SDL's controller axes (held flat in front of you: +x right, +y up out of
+// the face, +z toward you): gyro in rad/s, acceleration in m/s² (gravity included). dt in seconds.
+void sample(float dt, float gx, float gy, float gz, float ax, float ay, float az);
+// forget the state (sensors switched off or another source): VPAD reports the resting values again
+void reset();
+
+// what VPADStatus carries
+struct Vpad {
+    float acc[3];       // in g
+    float accMagnitude;
+    float accAcceleration;
+    float accXY[2];
+    float gyro[3];      // revolutions per second
+    float angle[3];     // revolutions (accumulated)
+    float dir[9];       // attitude: x, y, z axis vectors
+};
+// false if there are no recent samples (the caller writes the resting values)
+bool vpad(Vpad& out);
+
 }  // namespace motion

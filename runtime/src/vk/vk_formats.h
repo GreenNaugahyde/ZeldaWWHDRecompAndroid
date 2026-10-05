@@ -1,7 +1,7 @@
 // GX2 surface formats -> Vulkan formats, and texel conversion for formats the device can't use
 // directly (mobile GPUs typically lack BC compression and some 16-bit normalized formats).
 #pragma once
-#include <vulkan/vulkan.h>
+#include <volk.h>  // Vulkan through function pointers (no prototypes; see create_device)
 
 #include <cstdint>
 

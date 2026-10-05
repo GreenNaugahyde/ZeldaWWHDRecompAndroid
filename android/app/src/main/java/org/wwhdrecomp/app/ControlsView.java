@@ -214,7 +214,9 @@ final class ControlsView extends View {
 
     // what it shows (bits) and where (top left corner as fractions of the view; negative: default spot)
     static final int PERF_FPS = 1, PERF_FRAME = 2, PERF_CPU = 4, PERF_GPU = 8, PERF_TEMP_CPU = 16, PERF_TEMP_GPU = 32,
-            PERF_TEMP_BAT = 64, PERF_ALL = 127;
+            PERF_TEMP_BAT = 64, PERF_SETTINGS = 128, PERF_ALL = 255;
+    /** the settings lines (resolution, effects, GPU driver), from the activity */
+    java.util.function.Supplier<java.util.List<String>> perfSettings;
     private int perfItems = PERF_ALL;
     private float perfFx = -1, perfFy = -1;
     private final android.graphics.RectF perfRect = new android.graphics.RectF();  // as last drawn
@@ -228,6 +230,13 @@ final class ControlsView extends View {
         perf = on ? new PerfStats(getContext()) : null;
         if (on) post(pollPerf);
         if (!on) perfMoveMode = false;
+        invalidate();
+    }
+
+    /** a new average frame rate from now on (e.g. another resolution) */
+    void resetPerfAverage() {
+        PerfStats p = perf;
+        if (p != null) p.resetAverage();
         invalidate();
     }
 
@@ -275,28 +284,47 @@ final class ControlsView extends View {
         invalidate();
     }
 
+    // a number with its unit, or "–" without one when it is unknown
+    private static String unit(float v, String fmt, String u) {
+        String n = num(v, fmt);
+        return n.equals("–") ? n : n + u;
+    }
+
     private static String num(float v, String fmt) { return Float.isNaN(v) || v < 0 ? "–" : String.format(java.util.Locale.ROOT, fmt, v); }
 
     private void drawPerfHud(Canvas canvas) {
         PerfStats p = perf;
         if (p == null) return;
         int it = perfItems;
+        // measurements, then (below a separator line) the device: chip, GPU and driver
         java.util.List<String> list = new java.util.ArrayList<>();
         if ((it & PERF_FPS) != 0)
-            list.add("FPS " + num(p.gameFps, "%.1f") + (Math.abs(p.shownFps - p.gameFps) > 0.5f ? "  shown " + num(p.shownFps, "%.0f") : ""));
-        if ((it & PERF_FRAME) != 0) list.add("Frame " + num(p.frameMs, "%.1f") + " ms  max " + num(p.frameMaxMs, "%.1f"));
+            list.add("FPS: " + num(p.gameFps, "%.1f") + "  Avg: " + num(p.avgFps, "%.1f")
+                    + (Math.abs(p.shownFps - p.gameFps) > 0.5f ? "  Shown: " + num(p.shownFps, "%.0f") : ""));
+        if ((it & PERF_FRAME) != 0)
+            list.add("Frame: " + unit(p.frameMs, "%.1f", " ms") + "  Max: " + unit(p.frameMaxMs, "%.1f", " ms"));
         StringBuilder load = new StringBuilder();
-        if ((it & PERF_CPU) != 0) load.append("CPU ").append(num(p.cpuPercent, "%.0f")).append("% app  ");
+        if ((it & PERF_CPU) != 0) load.append("CPU: ").append(unit(p.cpuPercent, "%.0f", "%")).append("  ");
         if ((it & PERF_GPU) != 0) {
-            load.append("GPU ").append(num(p.gpuPercent, "%.0f")).append("%  ");
-            if (p.fgGpuMs > 0) load.append("FG ").append(num(p.fgGpuMs, "%.1f")).append(" ms");
+            load.append("GPU: ").append(unit(p.gpuPercent, "%.0f", "%")).append("  ");
+            if (p.fgGpuMs > 0) load.append("FG: ").append(unit(p.fgGpuMs, "%.1f", " ms"));
         }
         if (load.length() > 0) list.add(load.toString().trim());
         StringBuilder temp = new StringBuilder();
-        if ((it & PERF_TEMP_CPU) != 0) temp.append("CPU ").append(num(p.cpuTemp, "%.0f")).append("  ");
-        if ((it & PERF_TEMP_GPU) != 0) temp.append("GPU ").append(num(p.gpuTemp, "%.0f")).append("  ");
-        if ((it & PERF_TEMP_BAT) != 0) temp.append("Bat ").append(num(p.batteryTemp, "%.0f"));
-        if (temp.length() > 0) list.add("°C " + temp.toString().trim());
+        if ((it & PERF_TEMP_CPU) != 0) temp.append("CPU ").append(unit(p.cpuTemp, "%.0f", " °C")).append("  ");
+        if ((it & PERF_TEMP_GPU) != 0) temp.append("GPU ").append(unit(p.gpuTemp, "%.0f", " °C")).append("  ");
+        if ((it & PERF_TEMP_BAT) != 0) temp.append("Bat ").append(unit(p.batteryTemp, "%.0f", " °C"));
+        if (temp.length() > 0) list.add("Temp: " + temp.toString().trim());
+        boolean settings = (it & PERF_SETTINGS) != 0;
+        if (settings && perfSettings != null) list.addAll(perfSettings.get());
+        java.util.List<String> device = new java.util.ArrayList<>();
+        String chip = (it & PERF_CPU) != 0 ? PerfStats.socName() : "", gpu = (it & PERF_GPU) != 0 ? PerfStats.gpuName() : "";
+        if (!chip.isEmpty() || !gpu.isEmpty())
+            device.add(((chip.isEmpty() ? "" : "SoC: " + chip + "  ") + (gpu.isEmpty() ? "" : "GPU: " + gpu)).trim());
+        String driver = settings ? Native.gpuDriverInfo() : "";
+        if (!driver.isEmpty()) device.add("Driver: " + MainActivity.shortDriverName(driver));
+        if (!list.isEmpty() && !device.isEmpty()) list.add(null);  // the separator line
+        list.addAll(device);
         if (perfMoveMode) list.add(getContext().getString(R.string.perf_move_hint));
         if (list.isEmpty()) {
             perfRect.setEmpty();
@@ -309,7 +337,7 @@ final class ControlsView extends View {
         perfText.setColor(0xFFFFFFFF);
         perfBox.setColor(0x99000000);
         float pad = 6 * density, lineH = perfText.getFontSpacing(), w = 0;
-        for (String l : lines) w = Math.max(w, perfText.measureText(l));
+        for (String l : lines) if (l != null) w = Math.max(w, perfText.measureText(l));
         float bw = w + 2 * pad, bh = lines.length * lineH + 2 * pad;
         // default: below the top edge's system overlays, at the left; else where the user put it
         float x = perfFx < 0 ? 12 * density : perfFx * getWidth(), y = perfFy < 0 ? 40 * density : perfFy * getHeight();
@@ -323,8 +351,14 @@ final class ControlsView extends View {
             stroke.setAlpha(255);
             canvas.drawRoundRect(tmp, 4 * density, 4 * density, stroke);
         }
-        for (int i = 0; i < lines.length; i++)
-            canvas.drawText(lines[i], x + pad, y + pad + (i + 1) * lineH - perfText.descent(), perfText);
+        for (int i = 0; i < lines.length; i++) {
+            if (lines[i] == null) {
+                float ly = y + pad + (i + 0.5f) * lineH;
+                canvas.drawRect(x + pad, ly - density / 2, x + bw - pad, ly + density / 2, perfText);
+            } else {
+                canvas.drawText(lines[i], x + pad, y + pad + (i + 1) * lineH - perfText.descent(), perfText);
+            }
+        }
     }
 
     private static int mix(int a, int b, float t) {

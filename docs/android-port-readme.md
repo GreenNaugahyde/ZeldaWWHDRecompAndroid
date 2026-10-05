@@ -1,9 +1,7 @@
-# TLoZ:TWW HD Recompiled — Android (the port this fork is based on)
-
-> The README of [GreenNaugahyde/ZeldaWWHDRecompAndroid](https://github.com/GreenNaugahyde/ZeldaWWHDRecompAndroid) as of the version this fork is based on. For this fork, see the [README](../README.md).
+# TLoZ:TWW HD Recompiled — Android
 
 An Android port of the [ZeldaWWHDRecomp](https://github.com/ZeldaWWHDRecomp/ZeldaWWHDRecomp) project:
-The Legend of Zelda: The Wind Waker HD (Wii U, USA version) as a native app for 64-bit ARM Android
+The Legend of Zelda: The Wind Waker HD (Wii U, USA and European versions) as a native app for 64-bit ARM Android
 devices. The game's PowerPC code is recompiled to native ARM code, the Wii U system libraries the
 game uses are reimplemented, and its graphics run directly on Vulkan. There is no emulator in
 between.
@@ -21,24 +19,76 @@ The original project (macOS, the 60 fps modes, decompilation tools) is described
 - **Android port**: Vulkan renderer, AAudio sound, touch screen, game controllers and hardware
   keyboards.
 - **An APK without game code**: on the first start the app extracts the game from your disc image
-  and recompiles its code on the device with LLVM (about 5 minutes, once). Later starts load the
+  and recompiles its code on the device with LLVM (once; a few minutes on a fast phone, longer on
+  slower ones). Later starts load the
   compiled code in about half a second. The work continues in the background with a progress
   notification, and resumes where it stopped if the app is closed.
 - **Frame generation** with Lossless Scaling's LSFG 3 (see below): 60, 90 or 120 fps.
-- **An in-game options menu** in the style of the game's own menus, with tabs for saves, graphics,
-  mods and controls, usable by touch and with a controller (see below).
-- **Save states**: five slots with a picture, time and place of each state.
+- **An in-game options menu** in the style of the game's own menus, with tabs for saves, the game,
+  graphics, mods and controls, usable by touch and with a controller (see below).
+- **Save states**: five slots with a picture, time and place of each state, and the controls it was
+  saved with (GamePad or Pro Controller), which loading it switches back to.
 - **Import and export** of the game save and the save states to a folder of your choice.
-- **Performance overlay**: frame rate, frame time, CPU and GPU load, CPU, GPU and battery
-  temperatures; you choose the values and drag it where you want it.
+- **Performance overlay**: frame rate with its average, frame time, CPU and GPU load, CPU, GPU and
+  battery temperatures, the graphics settings in use, the SoC, GPU and GPU driver; you choose the
+  values and drag it where you want it.
+- **The European version** as well as the USA one, with all features: the game code of both is
+  the same program at shifted addresses, and the app's hooks and mods find their places in either
+  (`tools/recomp/port_addresses.py` matches the two executables; the address map it writes is in
+  `tools/recomp/release_eur.txt`).
+- **Game language**: the languages of your copy (USA: English, French, Spanish; Europe: also German
+  and Italian), by default the device's language setting is used.
+- **Custom GPU drivers** on Adreno GPUs (see below): Mesa Turnip or newer Qualcomm drivers.
 - **Display options**: rendering resolution from 0.5× to 3×, aspect ratio (bars, stretched, or
   filling the screen), screen layouts for the TV and GamePad pictures (GamePad inset, side by side,
   TV only, GamePad with TV inset). All of them apply immediately, without a restart.
+- **Dual-screen devices** (AYN Thor and the like): the GamePad picture goes to the second screen by
+  itself, with touch, and the main screen shows the TV picture; Graphics › GamePad screen switches
+  back to the screen layouts.
 - **On-screen controls** for the whole GamePad, which hide while a controller is in use.
+- **Gyro aiming** with the device's motion sensors or a controller's (DualSense, DualShock 4, Switch
+  Pro and others that Android reports with sensors), also with "Wii U Pro Controller" selected,
+  where the original game has no gyro aiming.
+- **Rumble** on the controller in use, or on the device while playing by touch.
 - **The original project's gameplay mods** on Android: climb any wall, direct right-stick camera,
   first person on R3, quick doors, fast scene changes.
-- **Fixes**: correct lighting on the first visit to a scene with an empty shader cache.
+- **Faster running and swimming** (a new mod): Link runs and swims 1.25 up to 4 times as fast;
+  everything else keeps its speed.
+- **Performance work for weaker devices**: BC textures unpacked on the GPU where it can't sample
+  them (most Mali and PowerVR GPUs), precise Vulkan barriers (on a Mali-G52 the GPU time per frame
+  drops from 52 to 40 ms), less work on the render thread, Android performance hints and game
+  modes, and SVE where the processor has it.
+- **Fixes**: correct lighting on the first visit to a scene with an empty shader cache; game files
+  found on devices whose storage tells upper and lower case apart.
 - **No internet access**: the app doesn't request it, and its manifest explicitly excludes it.
+
+## Version history
+
+**0.4**
+
+- Controller buttons can be assigned to other Wii U buttons (Controls › Controller buttons).
+- A new mod: faster running and swimming, each 1.25× up to 4×, always or with L3 (press to switch
+  on and off, or hold).
+- Updating from 0.3 keeps the prepared game code: no new compile.
+
+**0.3**
+
+- The European version of the game is now supported. A Game tab to choose the game language was added in the overlay options menu.
+- Custom GPU drivers on Adreno GPUs (Turnip, newer Qualcomm drivers). Install them in the overlay options menu in the graphics settings.
+- Gyro aiming with the device or a controller motion sensors, also in Pro Controller mode which is useful for single screen devices.
+- Force feedback is working on the device in touchscreen mode or with a connected controller.
+- The WiiU GamePad picture on the second screen of dual-screen devices.
+- Save states keep the controller mode and switch back to it when loaded.
+- Performance overlay: average frame rate, the graphics settings in use, SoC, GPU and GPU driver,
+  with labelled values.
+- Faster on Mali and other GPUs without BC textures; less CPU time on the render thread; Android
+  performance hints, game modes and SVE.
+- Fixes:
+  - A crash at boot where the device's storage tells upper and lower case apart
+  - The Saves tab shows a new state as soon as it is written
+  - Removing a GPU driver removes its pipeline cache
+
+**0.2**: the first release (USA version).
 
 ## Getting started
 
@@ -46,7 +96,7 @@ You need:
 
 - an Android 11 (or newer) device with a 64-bit ARM processor and Vulkan 1.1, about 2 GB of free
   storage and, for the one-time compile, about 2 GB of free memory;
-- your own dump of The Wind Waker HD (USA): the disc image (`.wux` or `.wud`), its disc key (a
+- your own dump of The Wind Waker HD (USA or Europe): the disc image (`.wux` or `.wud`), its disc key (a
   `.key` file with the image's name) and the Wii U common key (`common.key`).
 
 None of these are included or provided here.
@@ -54,7 +104,8 @@ None of these are included or provided here.
 1. Put the image and both keys in one folder on your device.
 2. Install the APK and start it. Choose **Extract from your disc image…** and select that folder.
 3. The app extracts the game files (a few seconds to minutes), then prepares the game code for
-   your device (about 5 minutes, depends on your hardware). You can leave the app meanwhile and read a Wind Waker walkthrough guide. A notification shows the progress and keeps the process alive.
+   your device (once; how long depends on the processor: about 6 minutes on a Snapdragon 7+ Gen 3,
+   7.5 minutes on a Snapdragon 855, 16 minutes on a Helio G85). You can leave the app meanwhile and read a Wind Waker walkthrough guide. A notification shows the progress and keeps the process alive.
 4. The game starts. The first visit to each place may stutter briefly while its shaders compile as usual.
    After that they are cached.
 
@@ -65,7 +116,12 @@ The **on-screen controls** cover the Wii U GamePad: both sticks, the D-pad, A/B/
 controls hide while a game controller is in use and come back on the next touch.
 
 **Game controllers** map by button position, as the game uses them: the bottom face button is the
-Wii U's B, the right one A, the left one Y and the top one X; Select is −, Start is +.
+Wii U's B, the right one A, the left one Y and the top one X; Select is −, Start is +. Under
+Controls › **Controller buttons** you can assign each Wii U button to another controller button:
+choose the Wii U button, then press the controller button (analog triggers and a D-pad that reports
+as a hat count too). A controller button already in use swaps places, so no Wii U button is lost.
+Home / Guide and holding Select always open the menu, and the menu itself keeps using the buttons by
+position.
 
 **Keyboards**: WASD move, the arrow keys turn the camera, K or Space = A, J = B, L = X, I = Y, Q/E =
 L/R, Left Shift = ZL, C = ZR, Enter = +, Tab = −, H = HOME, 1–4 = D-pad, X/V = stick clicks.
@@ -89,14 +145,23 @@ back.)
 **The tabs**
 
 - **Saves**: five save state slots with Save and Load (a state can only be loaded during
-  gameplay, for example the save select screen or anywhere in the game, and only with the build that saved it); exporting and importing saves. An imported game
+  gameplay, for example the save select screen or anywhere in the game, and only with the build that saved it).
+  A state also keeps whether the controls acted as GamePad or Pro Controller; loading it switches
+  back to that, since the game only listens to the controller it was saved with. Exporting and importing saves. An imported game
   save restarts the game.  
-- **Graphics**: rendering resolution, frame generation, aspect ratio, screen layout, ambient
-  occlusion, full-size occlusion depth, 16× anisotropic filtering, the performance overlay, and
-  deleting the shader cache (restarts the game as on its first start).
-- **Mods**: the gameplay mods, all off by default.
-- **Controls**: on-screen controls on or off, their size, and whether the controls act as a Wii U
-  GamePad or a Pro Controller.
+- **Game**: the game language (the languages of your copy; applies after a restart).
+- **Graphics**: rendering resolution, frame generation, aspect ratio, the GamePad screen (with a
+  second display), screen layout, ambient
+  occlusion, full-size occlusion depth, 16× anisotropic filtering, the performance overlay, the GPU
+  driver (Adreno only), and deleting the shader cache (restarts the game as on its first start).
+- **Mods**: the gameplay mods, all off by default, and faster running and swimming (each 1.25× up
+  to 4×: Link covers more ground while running or swimming; jumps, rolls, climbing and the boat
+  stay as they are). Each applies always or with L3, set separately: one press switches it on and
+  the next off (a press switches the one for what Link is doing, swimming or not), or only while L3
+  is held.
+- **Controls**: on-screen controls on or off, their size, whether the controls act as a Wii U
+  GamePad or a Pro Controller, motion controls (gyro aiming), rumble, and which controller button
+  presses which Wii U button.
 
 About (with the licenses) and Quit are always on the left.
 
@@ -129,6 +194,27 @@ frame for ×2, 9 ms for ×3; ×4 needs a 25% flow scale.
 
 `runtime/src/vk/lsfg.cpp` is an independent implementation that runs the DLL's shaders; how they
 connect was worked out from the DLL itself. It contains no code from other LSFG projects.
+
+## GPU drivers (Adreno)
+
+On devices with an Adreno GPU the game can run on another Vulkan driver than the one the device came
+with, for example a Mesa Turnip build or a newer Qualcomm driver. The app loads it with
+[libadrenotools](https://github.com/bylaws/libadrenotools) and takes the
+usual driver packages: a `.zip` with a `meta.json` and the driver's `.so` file.
+
+1. Copy the driver package to your device.
+2. In the menu, open Graphics › GPU driver › **Install driver package…** and pick the file.
+3. Choose **Use and restart**. The first start with a driver takes a little longer while it compiles
+   the game's pipelines; each driver keeps its own pipeline cache.
+
+The page shows which driver is running. If the game doesn't start with a driver (it crashes, hangs or
+can't be loaded), the next start goes back to the system driver and says so. Drivers differ a lot in
+speed for this game: try a few, and compare with the performance overlay.
+
+On some older Snapdragon phones the system driver makes the GPU hang after a few seconds to minutes
+of play and the game closes (seen on a Snapdragon 855 / Adreno 640 with a Qualcomm driver from
+2021). A Turnip driver runs the game there without these crashes, so if the game keeps closing on
+such a device, install one.
 
 ## Building
 
@@ -179,7 +265,8 @@ created on your device from your own legal dump and must not be redistributed.
 
 The code of this project is licensed under the Mozilla Public License 2.0 (see `LICENSE`).
 Third-party code keeps its own license: Cemu (MPL-2.0), {fmt} (MIT), glslang (BSD-3-Clause and
-others), the Vulkan Memory Allocator (MIT), and in the APK without game code
+others), the Vulkan Memory Allocator (MIT), volk (MIT), libadrenotools (BSD-2-Clause), and in the
+APK without game code
 [LLVM](https://llvm.org) and the NDK's libc++ (Apache-2.0 with LLVM Exceptions). The app shows all
 of these licenses under About.
 

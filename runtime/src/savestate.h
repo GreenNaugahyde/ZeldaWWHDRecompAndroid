@@ -62,6 +62,7 @@ struct SlotInfo {
     bool compatible = true;
     std::string when;  // local time of the save
     std::string area;  // stage name, if known
+    int controller = 0;  // controls when saved: 0 unknown (older states), 1 GamePad, 2 Pro Controller
 };
 SlotInfo slot_info(int slot);           // 1..5
 void request_save(int slot);

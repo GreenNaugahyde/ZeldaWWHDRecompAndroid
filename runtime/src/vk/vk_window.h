@@ -16,12 +16,21 @@ struct ScreenRect {
 };
 void set_layout(ScreenRect tv, ScreenRect drc, bool drcVisible);
 
+// The GamePad picture on its own display (the second screen of dual-screen devices): its window
+// surface, or null. The main window's layout then usually leaves the GamePad picture out.
+void set_drc_window(ANativeWindow* w);
+
 // write the Vulkan pipeline cache to disk (the app is going to the background)
 void save_caches();
 
 // performance overlay: {game fps, game frame time avg ms, worst ms, presented fps, frame generation GPU ms}
 // over the last second (any thread)
-void perf_stats(float out[5]);
+void perf_stats(float out[7]);
+// the running GPU driver's name and version ("" before the renderer started)
+const char* driver_info();
+const char* gpu_name();
+// an installed GPU driver was chosen but couldn't be loaded: the system's runs
+bool driver_fallback();
 
 // rendering resolution scale (the app's setting); applied from the next frame on (any thread)
 void set_resolution_scale(float scale);

@@ -12,3 +12,5 @@
 0252A684  # dDoor_info_c::getDemoAction: a door event cut is running
 021C0078  # daMbdoor_c::getDemoAction
 025DC86C  # fopScnM_ChangeReq: scene change trigger (traces)
+# Gyro aiming with the Pro Controller selected (mods/gyro_pro.cpp): "is the Pro Controller active"
+02617AE4  # pad state: controller mode == 0 (Pro Controller); answered "no" for the gyro code

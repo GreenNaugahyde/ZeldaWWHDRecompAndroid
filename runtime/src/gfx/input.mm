@@ -344,4 +344,7 @@ void prompt_text(const std::u16string& initial, int max_len,
     });
 }
 
+void rumble(const uint8_t*, int) {}  // no rumble on macOS
+void rumble_hold(bool) {}
+
 }  // namespace input

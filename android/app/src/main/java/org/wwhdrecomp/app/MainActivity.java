@@ -12,6 +12,7 @@ import android.text.InputFilter;
 import android.text.InputType;
 import android.util.Log;
 import android.view.Gravity;
+import android.view.InputDevice;
 import android.view.KeyEvent;
 import android.view.MotionEvent;
 import android.view.SurfaceHolder;
@@ -58,7 +59,6 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     SharedPreferences prefs;
     private SurfaceView surface;
     private ControlsView controls;
-    private Gyro gyro;
     private final InputMapper mapper = new InputMapper();
     private boolean autoHidden;
     private int surfaceW, surfaceH;
@@ -73,14 +73,46 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         if (!libraryLoaded) {
             // static initializers in the library read these, so they must be set before it loads
             setenv("WWHD_RES_SCALE", prefs.getString("res_scale", "1"));  // wwhd.env / intent extras below override
-            setenv("WWHD_LANGUAGE", String.valueOf(prefs.getInt("language", 1)));
+            setenv("WWHD_LANGUAGE", gameLanguage());
             applyFrameGenSettings();
             applyEnvironment();
+            // a shader dump (WWHD_DUMP_SHADERS=<files>/shaders, debugging) left from an earlier start
+            if (Os.getenv("WWHD_DUMP_SHADERS") == null) Backup.deleteTree(new File(baseDir(), "shaders"));
             System.loadLibrary("wwhd");
             libraryLoaded = true;
         }
         if (started) showGame();
         else checkAndStart();
+    }
+
+    // ------------------------------------------------------------------ game language
+    // The console language the game sees (runtime: UCReadSysConfig), from the release's languages;
+    // by default the device's, else English. Applies at the next start.
+    static final String[] LANGUAGES = {"en", "fr", "de", "it", "es"};
+    static final String[] LANGUAGE_NAMES = {"English", "Français", "Deutsch", "Italiano", "Español"};
+
+    /** the release's languages (indexes into LANGUAGES): USA English, French, Spanish; EUR all five */
+    int[] gameLanguages() {
+        return "EUR".equals(Native.gameRelease(gameDir())) ? new int[] {0, 1, 2, 3, 4} : new int[] {0, 1, 4};
+    }
+
+    String gameLanguage() {
+        String l = prefs.getString("language", "");
+        if (l.isEmpty()) l = java.util.Locale.getDefault().getLanguage();
+        for (String s : LANGUAGES)
+            if (s.equals(l)) return l;
+        return "en";
+    }
+
+    void setGameLanguage(String l) {
+        prefs.edit().putString("language", l).commit();
+    }
+
+    /** after the options menu closed with another language than it opened with */
+    void askRestartForLanguage() {
+        new GameDialog(this).title(R.string.opt_language).message(R.string.language_restart)
+                .button(R.string.gpu_driver_later, null)
+                .button(R.string.res_restart_now, this::restartApp).show();
     }
 
     File baseDir() {
@@ -191,11 +223,110 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
                 if (IconForge.build(this, game)) runOnUiThread(() -> { if (controls != null) controls.iconsChanged(); });
             }, "icons").start();
         }
+        String failedDriver = applyGpuDriver();
         Native.start(gameDir(), new File(base, "save").getAbsolutePath(),
                 new File(getNoBackupFilesDir(), "shadercache").getAbsolutePath(), base.getAbsolutePath());
         started = true;
         applyOptions();
+        startMotion();
         showGame();
+        updateDrcDisplay();
+        if (failedDriver != null)
+            new GameDialog(this).title(R.string.opt_gpu_driver).message(getString(R.string.gpu_driver_failed, failedDriver))
+                    .button(R.string.opt_ok, null).show();
+    }
+
+    // ------------------------------------------------------------------ GPU driver (Adreno)
+    // A driver package the user installed (GpuDrivers), used instead of the system driver from the
+    // next start on. Returns the name of a driver that failed at its last start (then the system
+    // driver runs and the choice is reset), else null.
+    private static final int PICK_DRIVER = 5;
+
+    private String applyGpuDriver() {
+        if (!GpuDrivers.supported()) return null;
+        GpuDrivers.Driver d = GpuDrivers.find(this, prefs.getString("gpu_driver", ""));
+        if (d == null) return null;
+        File probe = new File(d.dir, ".probe");
+        if (probe.exists()) {  // crashed, hung or couldn't be loaded at its last start
+            //noinspection ResultOfMethodCallIgnored
+            probe.delete();
+            prefs.edit().putString("gpu_driver", "").commit();
+            return d.name;
+        }
+        if (!GpuDrivers.prepareHooks(this)) return null;
+        setenv("WWHD_GPU_DRIVER_DIR", d.dir.getAbsolutePath() + "/");
+        setenv("WWHD_GPU_DRIVER_LIB", d.library);
+        setenv("WWHD_GPU_HOOK_DIR", GpuDrivers.hookDir(this).getAbsolutePath() + "/");
+        try {
+            //noinspection ResultOfMethodCallIgnored
+            probe.createNewFile();
+            setenv("WWHD_GPU_DRIVER_PROBE", probe.getAbsolutePath());
+        } catch (IOException e) {
+            Log.w(TAG, "cannot create " + probe, e);
+        }
+        return null;
+    }
+
+    String gpuDriverLabel() {
+        GpuDrivers.Driver d = GpuDrivers.find(this, prefs.getString("gpu_driver", ""));
+        return d != null ? d.name : getString(R.string.gpu_driver_system);
+    }
+
+    String gpuDriverId() { return prefs.getString("gpu_driver", ""); }
+
+    /** Uses driver `id` ("" = the system's) from a restart on, after asking. */
+    void chooseGpuDriver(String id, String name) {
+        if (id.equals(gpuDriverId())) return;
+        new GameDialog(this).title(R.string.opt_gpu_driver).message(getString(R.string.gpu_driver_switch, name))
+                .button(R.string.opt_cancel, null)
+                .button(R.string.res_restart_now, () -> {
+                    prefs.edit().putString("gpu_driver", id).commit();
+                    restartApp();
+                }).show();
+    }
+
+    /** Deletes an installed driver; the one in use only with a restart onto the system driver. */
+    void removeGpuDriver(String id, Runnable refresh) {
+        if (!id.equals(gpuDriverId())) {
+            GpuDrivers.remove(this, id);
+            refresh.run();
+            return;
+        }
+        new GameDialog(this).title(R.string.opt_gpu_driver).message(R.string.gpu_driver_remove_active)
+                .button(R.string.opt_cancel, null)
+                .button(R.string.res_restart_now, () -> {
+                    prefs.edit().putString("gpu_driver", "").commit();
+                    // the game writes this driver's pipeline cache once more while it closes: the
+                    // restart deletes it once the game's process has ended
+                    File cache = GpuDrivers.pipelineCache(this, id);
+                    GpuDrivers.remove(this, id);  // the running process keeps its mapping
+                    restartApp(false, cache);
+                }).show();
+    }
+
+    void pickDriver() {
+        Intent i = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+        i.addCategory(Intent.CATEGORY_OPENABLE);
+        i.setType("*/*");
+        startActivityForResult(i, PICK_DRIVER);
+    }
+
+    private void installDriver(android.net.Uri uri) {
+        withProgress(R.string.gpu_driver_installing, () -> GpuDrivers.install(this, uri), res -> {
+            if (res.startsWith("!")) {
+                new GameDialog(this).title(R.string.opt_gpu_driver).message(getString(R.string.gpu_driver_install_failed, res.substring(1)))
+                        .button(R.string.opt_ok, null).show();
+                return;
+            }
+            GpuDrivers.Driver d = GpuDrivers.find(this, res);
+            String name = d != null ? d.name + (d.version.isEmpty() ? "" : " (" + d.version + ")") : res;
+            new GameDialog(this).title(R.string.opt_gpu_driver).message(getString(R.string.gpu_driver_installed, name))
+                    .button(R.string.gpu_driver_later, null)
+                    .button(R.string.gpu_driver_use_now, () -> {
+                        prefs.edit().putString("gpu_driver", res).commit();
+                        restartApp();
+                    }).show();
+        });
     }
 
     // ------------------------------------------------------------------ setup screens
@@ -308,12 +439,15 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         Native.setOption("pro_controller", prefs.getBoolean("pro_controller", Native.getOption("pro_controller") != 0) ? 1 : 0);
         Native.setOption("tv_aspect", prefs.getInt("tv_aspect", 0));
         Native.setOption("fps_mode", prefs.getBoolean("fg_enabled", false) ? 0 : prefs.getInt("fps_mode", 0));
-        applyGyro();
         Native.setOption("drawdone_mode", prefs.getInt("drawdone_mode", 0));
         Native.setOption("core_mode", prefs.getInt("core_mode", 0));
         for (String k : new String[] {"inf_health", "inf_magic", "inf_ammo"}) Native.setOption(k, prefs.getBoolean(k, false) ? 1 : 0);
         for (String m : MODS) Native.setOption(m, prefs.getBoolean(m, false) ? 1 : 0);
         Native.setOption("mod_camera_speed", prefs.getInt("mod_camera_speed", 100));
+        Native.setOption("mod_run_speed", prefs.getInt("mod_run_speed", 100));
+        Native.setOption("mod_swim_speed", prefs.getInt("mod_swim_speed", 100));
+        Native.setOption("mod_run_mode", moveMode("mod_run"));
+        Native.setOption("mod_swim_mode", moveMode("mod_swim"));
     }
 
     void applyControlsAppearance() {
@@ -357,12 +491,32 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         return o;
     }
 
+    // ------------------------------------------------------------------ GamePad on a second display
+    // dual-screen devices: the GamePad picture on the second screen (DrcDisplay), the TV picture
+    // alone in the main window; the option "GamePad screen" in Graphics (on by default)
+    private DrcDisplay drcDisplay;
+
+    boolean hasSecondDisplay() { return drcDisplay != null && drcDisplay.available() != null; }
+
+    boolean drcOnSecondDisplay() { return prefs.getBoolean("drc_second_display", true); }
+
+    void setDrcOnSecondDisplay(boolean on) {
+        prefs.edit().putBoolean("drc_second_display", on).apply();
+        updateDrcDisplay();
+    }
+
+    private void updateDrcDisplay() {
+        if (drcDisplay == null) drcDisplay = new DrcDisplay(this, active -> updateLayout());
+        drcDisplay.setWanted(started && resumed && drcOnSecondDisplay());
+    }
+
     void updateLayout() {
         if (surfaceW == 0 || surfaceH == 0 || controls == null) return;
         float W = surfaceW, H = surfaceH;
         RectF full = new RectF(0, 0, W, H);
         RectF tv, drc;
         int layout = prefs.getInt("layout", LAYOUT_INSET);
+        if (drcDisplay != null && drcDisplay.active()) layout = LAYOUT_TV;  // the GamePad has its own display
         // the inset sits between the shoulder buttons, sized to leave them free
         float insetW = Math.min(W * 0.3f, W - 2 * (Math.min(W, H) / 7f * 3.6f));
         RectF inset = new RectF((W - insetW) / 2, 0, (W + insetW) / 2, insetW / DRC_ASPECT);
@@ -391,6 +545,8 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         controls.setClimbHud(prefs.getBoolean("mod_climb", false));
         controls.setPerfHud(prefs.getBoolean("perf_hud", false));
         controls.setPerfItems(prefs.getInt("perf_items", ControlsView.PERF_ALL));
+        mapper.loadMap(prefs.getString("pad_map", ""));
+        controls.perfSettings = this::perfSettingsLines;
         controls.setPerfPosition(prefs.getFloat("perf_x", -1), prefs.getFloat("perf_y", -1));
     }
 
@@ -413,6 +569,63 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         return v;
     }
 
+    // ------------------------------------------------------------------ motion and rumble
+    // The GamePad's gyro (MotionInput) and rumble (Rumble) follow the controller in use, or this
+    // device while playing by touch.
+    private MotionInput motion;
+    private Rumble rumble;
+    private InputDevice lastController;  // the controller in use, null while playing by touch
+
+    private void startMotion() {
+        if (motion == null) motion = new MotionInput(this);
+        if (prefs.getBoolean("motion", true)) motion.start(lastController);
+        else motion.stop();
+    }
+
+    void setMotion(boolean on) {
+        prefs.edit().putBoolean("motion", on).apply();
+        if (started) startMotion();
+    }
+
+    void setRumble(boolean on) {
+        prefs.edit().putBoolean("rumble", on).apply();
+        rumbler().enabled = on;
+        if (!on) rumbler().stop();
+    }
+
+    Rumble rumbler() {
+        if (rumble == null) {
+            rumble = new Rumble(this);
+            rumble.enabled = prefs.getBoolean("rumble", true);
+        }
+        return rumble;
+    }
+
+    // the input source changed: a controller (or touch, null)
+    private void inputSource(InputDevice d) {
+        if (d == lastController || (d != null && lastController != null && d.getId() == lastController.getId())) return;
+        if (debuggable()) Log.d(TAG, "input source: " + (d == null ? "touch" : d.getName() + " (motion " + MotionInput.hasMotion(d) + ")"));
+        lastController = d;
+        rumbler().setController(d);
+        if (started) startMotion();
+    }
+
+    private long lastMotionRecheck;
+
+    private void controllerUsed(InputDevice d) {
+        if (d != null && InputMapper.isController(d)) {
+            inputSource(d);
+            // a controller's sensors can come up after its first input (just connected): check
+            // again now and then while the device's sensors stand in for them
+            long now = android.os.SystemClock.uptimeMillis();
+            if (started && motion != null && !motion.fromController() && now - lastMotionRecheck > 1000) {
+                lastMotionRecheck = now;
+                if (MotionInput.hasMotion(d)) startMotion();
+            }
+        }
+        controllerUsed();
+    }
+
     private void controllerUsed() {
         if (!autoHidden && prefs.getBoolean("auto_hide", true) && controls != null && controls.controlsVisible()) {
             autoHidden = true;
@@ -428,40 +641,8 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         prefs.edit().putString("touch_layout", layout).apply();
     }
 
-    // ---- the game's rumble as the phone's vibration (Native.rumble, from a game thread)
-    void rumble(float strength, int ms) {
-        if (!prefs.getBoolean("rumble", true)) return;
-        android.os.Vibrator v = getSystemService(android.os.Vibrator.class);
-        if (v == null || !v.hasVibrator()) return;
-        if (strength <= 0 || ms <= 0) {
-            v.cancel();
-            return;
-        }
-        int amp = Math.max(1, Math.min(255, Math.round(strength * 255)));
-        v.vibrate(android.os.VibrationEffect.createOneShot(ms, v.hasAmplitudeControl() ? amp : android.os.VibrationEffect.DEFAULT_AMPLITUDE));
-    }
-
-    // ---- gyro aiming (Gyro, runtime/src/motion.cpp); off by default
-    private void applyGyro() {
-        boolean on = prefs.getBoolean("gyro_enabled", false);
-        if (gyro == null) gyro = new Gyro(this);
-        Native.setMotionEnabled(on && gyro.available());
-        if (on) gyro.start();
-        else gyro.stop();
-    }
-
-    boolean gyroAvailable() {
-        if (gyro == null) gyro = new Gyro(this);
-        return gyro.available();
-    }
-
-    void setGyro(boolean on) {
-        prefs.edit().putBoolean("gyro_enabled", on).apply();
-        applyGyro();
-    }
-
     void recalibrateGyro() {
-        Native.recalibrateMotion();
+        Native.motionReset();
         info(getString(R.string.gyro_recalibrated));
     }
 
@@ -480,9 +661,39 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     // ------------------------------------------------------------------ performance overlay
     // shown or not, which values, and where (dragged; "Move" also lets it move over the controls)
     static final int[] PERF_BITS = {ControlsView.PERF_FPS, ControlsView.PERF_FRAME, ControlsView.PERF_CPU,
-            ControlsView.PERF_GPU, ControlsView.PERF_TEMP_CPU, ControlsView.PERF_TEMP_GPU, ControlsView.PERF_TEMP_BAT};
+            ControlsView.PERF_GPU, ControlsView.PERF_TEMP_CPU, ControlsView.PERF_TEMP_GPU, ControlsView.PERF_TEMP_BAT,
+            ControlsView.PERF_SETTINGS};
     static final int[] PERF_LABELS = {R.string.perf_fps, R.string.perf_frame, R.string.perf_cpu, R.string.perf_gpu,
-            R.string.perf_temp_cpu, R.string.perf_temp_gpu, R.string.perf_temp_bat};
+            R.string.perf_temp_cpu, R.string.perf_temp_gpu, R.string.perf_temp_bat, R.string.perf_settings};
+
+    /** the overlay's settings lines: resolution, ambient occlusion and the optional effects (the driver is in ControlsView) */
+    java.util.List<String> perfSettingsLines() {
+        java.util.List<String> l = new java.util.ArrayList<>();
+        String scale = prefs.getString("res_scale", "1");
+        float f;
+        try {
+            f = Float.parseFloat(scale);
+        } catch (NumberFormatException e) {
+            f = 1;
+        }
+        String[] ao = {"Wii U", "centre fix", "centre+noise"};
+        int aoMode = Math.max(0, Math.min(2, Native.getOption("ao_mode")));
+        l.add("Res: " + scale + "× " + Math.round(720 * f) + "p  AO: " + ao[aoMode]);
+        StringBuilder fx = new StringBuilder();
+        if (Native.getOption("aniso") != 0) fx.append("Aniso: 16×  ");
+        if (Native.getOption("ao_hires") != 0) fx.append("AO depth: full size");
+        if (fx.length() > 0) l.add(fx.toString().trim());
+        return l;
+    }
+
+    // "Qualcomm Adreno driver v762.24 (07/17/24)" -> "Qualcomm v762.24",
+    // "turnip Mesa driver Mesa 26.3.0-devel (git-...)" -> "Turnip Mesa 26.3.0-devel"
+    static String shortDriverName(String d) {
+        int p = d.indexOf(" (");
+        if (p > 0) d = d.substring(0, p);
+        d = d.replace(" Adreno driver", "").replace("turnip Mesa driver Mesa", "Turnip Mesa").replace("Mesa driver Mesa", "Mesa");
+        return d.length() > 32 ? d.substring(0, 31) + "…" : d;
+    }
 
     // ---- used by the performance overlay page of OptionsMenu
     void setPerfHud(boolean on) {
@@ -515,6 +726,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
             autoHidden = false;
             applyControlsAppearance();
         }
+        if (e.getActionMasked() == MotionEvent.ACTION_DOWN && lastController != null) inputSource(null);  // playing by touch
         return super.dispatchTouchEvent(e);
     }
 
@@ -545,7 +757,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
             return true;
         }
         if (mapper.onKey(e)) {
-            if (controller) controllerUsed();
+            if (controller) controllerUsed(e.getDevice());
             pushInput();
             return true;
         }
@@ -564,7 +776,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     };
 
     private void selectButton(KeyEvent e) {
-        controllerUsed();
+        controllerUsed(e.getDevice());
         if (e.getAction() == KeyEvent.ACTION_DOWN) {
             if (e.getRepeatCount() > 0) return;
             selectDown = true;
@@ -577,10 +789,11 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
             selectDown = false;
             keyHandler.removeCallbacks(selectHeld);
             if (!pressedHere || selectOpenedMenu) return;
-            mapper.padButtons |= Native.MINUS;
+            int bits = mapper.bitFor(KeyEvent.KEYCODE_BUTTON_SELECT);  // the − unless assigned otherwise
+            mapper.pulse(bits, true);
             pushInput();
             keyHandler.postDelayed(() -> {
-                mapper.padButtons &= ~Native.MINUS;
+                mapper.pulse(bits, false);
                 pushInput();
             }, 80);
         }
@@ -601,7 +814,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     @Override
     public boolean dispatchGenericMotionEvent(MotionEvent e) {
         if (started && mapper.onMotion(e)) {
-            controllerUsed();
+            controllerUsed(e.getDevice());
             pushInput();
             return true;
         }
@@ -619,23 +832,33 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     }
 
     // ------------------------------------------------------------------ lifecycle
+    private boolean resumed;
+
     @Override
     protected void onPause() {
         super.onPause();
-        if (gyro != null) gyro.stop();
+        resumed = false;
+        updateDrcDisplay();
         if (started) Native.setPaused(true);
+        if (motion != null) motion.stop();
+        if (rumble != null) rumble.stop();
     }
 
     @Override
     protected void onResume() {
         super.onResume();
-        if (started) Native.setPaused(false);
-        if (started) applyGyro();
+        resumed = true;
+        updateDrcDisplay();
+        if (started) {
+            Native.setPaused(false);
+            startMotion();
+        }
         hideSystemBars();
     }
 
     @Override
     protected void onDestroy() {
+        if (drcDisplay != null) drcDisplay.release();
         if (instance == this) instance = null;
         super.onDestroy();
     }
@@ -644,6 +867,19 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     void setAo(int mode) {
         Native.setOption("ao_mode", mode);
         prefs.edit().putInt("ao_mode", mode).apply();
+    }
+
+    // ---- controller buttons (OptionsMenu's Controller buttons page)
+    InputMapper inputMapper() { return mapper; }
+
+    void assignButton(int wiiuIndex, int code) {
+        mapper.assign(wiiuIndex, code);
+        prefs.edit().putString("pad_map", mapper.mapString()).apply();
+    }
+
+    void resetButtons() {
+        mapper.loadMap("");
+        prefs.edit().remove("pad_map").apply();
     }
 
     void setBool(String key, boolean v) {
@@ -665,15 +901,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         if (RES_SCALES[i].equals(prefs.getString("res_scale", "1"))) return;
         prefs.edit().putString("res_scale", RES_SCALES[i]).commit();
         Native.setOption("res_scale", Math.round(Float.parseFloat(RES_SCALES[i]) * 100));
-    }
-
-    void setLanguage(int i) {
-        if (LANGUAGES[i] == prefs.getInt("language", 1)) return;
-        prefs.edit().putInt("language", LANGUAGES[i]).commit();
-        // the game reads the system language once at boot
-        new GameDialog(this).title(R.string.opt_language).message(R.string.lang_restart)
-                .button(R.string.res_restart_later, null)
-                .button(R.string.res_restart_now, this::restartApp).show();
+        controls.resetPerfAverage();
     }
 
     void setMod(String key, boolean on) {
@@ -702,8 +930,6 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     String onOff(boolean on) { return getString(on ? R.string.on : R.string.off); }
 
     // ------------------------------------------------------------------ resolution
-    /** Cafe OS language codes of the languages on the USA disc: English, Spanish, French */
-    static final int[] LANGUAGES = {1, 5, 2};
     static final String[] RES_SCALES = {"0.5", "0.75", "1", "1.5", "2", "3"};
 
     String resolutionLabel(String scale) {
@@ -736,6 +962,8 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
             public void run() {
                 String m = Native.saveStateMessage();
                 if (!m.isEmpty() && !m.equals(before)) {
+                    // a loaded state brings its controls along: keep the setting in step
+                    prefs.edit().putBoolean("pro_controller", Native.getOption("pro_controller") != 0).apply();
                     android.widget.Toast.makeText(MainActivity.this, m, android.widget.Toast.LENGTH_SHORT).show();
                 } else if (android.os.SystemClock.uptimeMillis() < until) {
                     h.postDelayed(this, 200);
@@ -748,6 +976,19 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     // optional changes to how the game plays (runtime/src/mods), all off by default
     static final String[] MODS = {"mod_direct_camera", "mod_first_person", "mod_climb", "mod_quick_doors", "mod_fast_scenes"};
     static final int[] CAMERA_SPEEDS = {50, 100, 150, 200};
+    static final int[] RUN_SPEEDS = {100, 125, 150, 200, 250, 300, 400};  // 100: off
+
+    // faster running ("mod_run") and swimming ("mod_swim") each apply always, or with L3: held, or
+    // one press switches it on and off
+    int moveMode(String mod) {
+        if (!prefs.getBoolean(mod + "_l3", false)) return 0;
+        return prefs.getBoolean(mod + "_l3_hold", false) ? 1 : 2;
+    }
+
+    void setMoveL3(String mod, boolean withL3, boolean hold) {
+        prefs.edit().putBoolean(mod + "_l3", withL3).putBoolean(mod + "_l3_hold", hold).apply();
+        Native.setOption(mod + "_mode", moveMode(mod));
+    }
 
     // ------------------------------------------------------------------ game from a disc image
     // The user picks a folder holding their .wux/.wud image, its disc key (same name, .key) and
@@ -1177,6 +1418,10 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     @Override
     protected void onActivityResult(int request, int result, Intent data) {
         super.onActivityResult(request, result, data);
+        if (request == PICK_DRIVER && result == RESULT_OK && data != null && data.getData() != null) {
+            installDriver(data.getData());
+            return;
+        }
         if (request == PICK_DISC && result == RESULT_OK && data != null && data.getData() != null) {
             startExtraction(data.getData());
             return;
@@ -1221,11 +1466,15 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     // the resolution applies to render targets as the game creates them: start a fresh process
     private void restartApp() { restartApp(false); }
 
-    private void restartApp(boolean clearShaders) {
+    private void restartApp(boolean clearShaders) { restartApp(clearShaders, null); }
+
+    /** restarts the game; `deleteAfter`: a file to delete once this process has ended */
+    private void restartApp(boolean clearShaders, File deleteAfter) {
         Native.setPaused(true);  // also writes the pipeline cache
         android.content.Intent i = new android.content.Intent(this, RestartActivity.class);
         i.putExtra(RestartActivity.EXTRA_PID, android.os.Process.myPid());
         i.putExtra(RestartActivity.EXTRA_CLEAR_SHADERS, clearShaders);
+        if (deleteAfter != null) i.putExtra(RestartActivity.EXTRA_DELETE, deleteAfter.getAbsolutePath());
         startActivity(i);
     }
 

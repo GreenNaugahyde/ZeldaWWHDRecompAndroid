@@ -6,12 +6,123 @@ import android.view.MotionEvent;
 
 /**
  * Game controllers and hardware keyboards, read as a Wii U GamePad. Controllers map by button
- * position (the bottom face button is the Wii U's B, as on macOS); the keyboard layout matches the
- * macOS build: WASD move, arrows camera, K/Space = A, J = B, L = X, I = Y, Q/E = L/R,
- * Left Shift = ZL, C = ZR, Enter = +, Tab = -, H = Home, 1-4 = D-pad, X/V = stick clicks.
+ * position by default (the bottom face button is the Wii U's B, as on macOS), and the user can
+ * assign every Wii U button to another controller button (Controls › Controller buttons); the
+ * keyboard layout matches the macOS build: WASD move, arrows camera, K/Space = A, J = B, L = X,
+ * I = Y, Q/E = L/R, Left Shift = ZL, C = ZR, Enter = +, Tab = -, H = Home, 1-4 = D-pad, X/V =
+ * stick clicks.
  */
 final class InputMapper {
     int padButtons, keyButtons;
+
+    // ---- controller button assignment: for each Wii U button, the Android key code of the
+    // controller button that presses it (analog triggers count as L2 / R2, a hat D-pad as the D-pad)
+    static final int[] WIIU = {Native.A, Native.B, Native.X, Native.Y, Native.L, Native.R, Native.ZL, Native.ZR,
+            Native.MINUS, Native.PLUS, Native.STICK_L, Native.STICK_R, Native.UP, Native.DOWN, Native.LEFT, Native.RIGHT};
+    static final int[] DEFAULT_MAP = {KeyEvent.KEYCODE_BUTTON_B, KeyEvent.KEYCODE_BUTTON_A, KeyEvent.KEYCODE_BUTTON_Y,
+            KeyEvent.KEYCODE_BUTTON_X, KeyEvent.KEYCODE_BUTTON_L1, KeyEvent.KEYCODE_BUTTON_R1, KeyEvent.KEYCODE_BUTTON_L2,
+            KeyEvent.KEYCODE_BUTTON_R2, KeyEvent.KEYCODE_BUTTON_SELECT, KeyEvent.KEYCODE_BUTTON_START,
+            KeyEvent.KEYCODE_BUTTON_THUMBL, KeyEvent.KEYCODE_BUTTON_THUMBR, KeyEvent.KEYCODE_DPAD_UP,
+            KeyEvent.KEYCODE_DPAD_DOWN, KeyEvent.KEYCODE_DPAD_LEFT, KeyEvent.KEYCODE_DPAD_RIGHT};
+    final int[] map = DEFAULT_MAP.clone();
+    private final java.util.Set<Integer> pressed = new java.util.HashSet<>();  // controller buttons held
+    private int pulse;  // Wii U buttons held for a moment by the activity (a short press of Select)
+
+    /** the stored assignment ("" or anything unreadable: the default) */
+    void loadMap(String s) {
+        System.arraycopy(DEFAULT_MAP, 0, map, 0, map.length);
+        String[] f = s == null ? new String[0] : s.split(",");
+        if (f.length != map.length) return;
+        try {
+            for (int i = 0; i < map.length; i++) map[i] = Integer.parseInt(f[i].trim());
+        } catch (NumberFormatException e) {
+            System.arraycopy(DEFAULT_MAP, 0, map, 0, map.length);
+        }
+    }
+
+    String mapString() {
+        StringBuilder b = new StringBuilder();
+        for (int i = 0; i < map.length; i++) b.append(i == 0 ? "" : ",").append(map[i]);
+        return b.toString();
+    }
+
+    boolean isDefaultMap() { return java.util.Arrays.equals(map, DEFAULT_MAP); }
+
+    /** Wii U button i goes to controller button `code`; the button that had it gets i's old one */
+    void assign(int i, int code) {
+        for (int j = 0; j < map.length; j++)
+            if (j != i && map[j] == code) map[j] = map[i];
+        map[i] = code;
+        recompute();
+    }
+
+    /** the Wii U buttons the controller button presses */
+    int bitFor(int code) {
+        if (code == KeyEvent.KEYCODE_BACK) code = KeyEvent.KEYCODE_BUTTON_SELECT;  // some controllers send BACK for View
+        int bits = 0;
+        for (int i = 0; i < map.length; i++)
+            if (map[i] == code) bits |= WIIU[i];
+        return bits;
+    }
+
+    void pulse(int bits, boolean on) {
+        pulse = on ? (pulse | bits) : (pulse & ~bits);
+        recompute();
+    }
+
+    private void press(int code, boolean down) {
+        if (down) pressed.add(code);
+        else pressed.remove(code);
+    }
+
+    private void recompute() {
+        int b = pulse;
+        for (int code : pressed) b |= bitFor(code);
+        padButtons = b;
+    }
+
+    /** a controller button a user can assign (not Home / Guide, which opens the menu) */
+    static boolean assignable(int code) {
+        return code != KeyEvent.KEYCODE_BUTTON_MODE && code != KeyEvent.KEYCODE_HOME
+                && (KeyEvent.isGamepadButton(code) || code == KeyEvent.KEYCODE_BACK || code == KeyEvent.KEYCODE_DPAD_UP
+                        || code == KeyEvent.KEYCODE_DPAD_DOWN || code == KeyEvent.KEYCODE_DPAD_LEFT || code == KeyEvent.KEYCODE_DPAD_RIGHT);
+    }
+
+    /** the controller buttons an analog event holds down right now: triggers as L2 / R2, a hat as the D-pad */
+    static java.util.List<Integer> analogButtons(MotionEvent e) {
+        java.util.List<Integer> l = new java.util.ArrayList<>();
+        if (Math.max(e.getAxisValue(MotionEvent.AXIS_LTRIGGER), e.getAxisValue(MotionEvent.AXIS_BRAKE)) > 0.5f) l.add(KeyEvent.KEYCODE_BUTTON_L2);
+        if (Math.max(e.getAxisValue(MotionEvent.AXIS_RTRIGGER), e.getAxisValue(MotionEvent.AXIS_GAS)) > 0.5f) l.add(KeyEvent.KEYCODE_BUTTON_R2);
+        float hx = e.getAxisValue(MotionEvent.AXIS_HAT_X), hy = e.getAxisValue(MotionEvent.AXIS_HAT_Y);
+        if (hx < -0.5f) l.add(KeyEvent.KEYCODE_DPAD_LEFT);
+        if (hx > 0.5f) l.add(KeyEvent.KEYCODE_DPAD_RIGHT);
+        if (hy < -0.5f) l.add(KeyEvent.KEYCODE_DPAD_UP);
+        if (hy > 0.5f) l.add(KeyEvent.KEYCODE_DPAD_DOWN);
+        return l;
+    }
+
+    /** a controller button's name, by position for the face buttons (their letters differ by brand) */
+    static String buttonName(int code) {
+        switch (code) {
+            case KeyEvent.KEYCODE_BUTTON_A: return "Bottom face button (A / Cross)";
+            case KeyEvent.KEYCODE_BUTTON_B: return "Right face button (B / Circle)";
+            case KeyEvent.KEYCODE_BUTTON_X: return "Left face button (X / Square)";
+            case KeyEvent.KEYCODE_BUTTON_Y: return "Top face button (Y / Triangle)";
+            case KeyEvent.KEYCODE_BUTTON_L1: return "L1 / LB";
+            case KeyEvent.KEYCODE_BUTTON_R1: return "R1 / RB";
+            case KeyEvent.KEYCODE_BUTTON_L2: return "L2 / LT";
+            case KeyEvent.KEYCODE_BUTTON_R2: return "R2 / RT";
+            case KeyEvent.KEYCODE_BUTTON_SELECT: case KeyEvent.KEYCODE_BACK: return "Select / View / Share";
+            case KeyEvent.KEYCODE_BUTTON_START: return "Start / Menu / Options";
+            case KeyEvent.KEYCODE_BUTTON_THUMBL: return "Left stick click";
+            case KeyEvent.KEYCODE_BUTTON_THUMBR: return "Right stick click";
+            case KeyEvent.KEYCODE_DPAD_UP: return "D-pad up";
+            case KeyEvent.KEYCODE_DPAD_DOWN: return "D-pad down";
+            case KeyEvent.KEYCODE_DPAD_LEFT: return "D-pad left";
+            case KeyEvent.KEYCODE_DPAD_RIGHT: return "D-pad right";
+            default: return KeyEvent.keyCodeToString(code).replace("KEYCODE_", "").replace('_', ' ');
+        }
+    }
     float lx, ly, rx, ry;          // controller sticks
     private boolean kW, kA, kS, kD, kUp, kDown, kLeft, kRight;
     private float hatX, hatY;
@@ -22,29 +133,6 @@ final class InputMapper {
         int s = d.getSources();
         return (s & InputDevice.SOURCE_GAMEPAD) == InputDevice.SOURCE_GAMEPAD
                 || (s & InputDevice.SOURCE_JOYSTICK) == InputDevice.SOURCE_JOYSTICK;
-    }
-
-    private static int controllerBit(int code) {
-        switch (code) {
-            case KeyEvent.KEYCODE_BUTTON_A: return Native.B;   // bottom
-            case KeyEvent.KEYCODE_BUTTON_B: return Native.A;   // right
-            case KeyEvent.KEYCODE_BUTTON_X: return Native.Y;   // left
-            case KeyEvent.KEYCODE_BUTTON_Y: return Native.X;   // top
-            case KeyEvent.KEYCODE_BUTTON_L1: return Native.L;
-            case KeyEvent.KEYCODE_BUTTON_R1: return Native.R;
-            case KeyEvent.KEYCODE_BUTTON_L2: return Native.ZL;
-            case KeyEvent.KEYCODE_BUTTON_R2: return Native.ZR;
-            case KeyEvent.KEYCODE_BUTTON_START: return Native.PLUS;
-            case KeyEvent.KEYCODE_BUTTON_SELECT: case KeyEvent.KEYCODE_BACK: return Native.MINUS;  // some send BACK for View
-            case KeyEvent.KEYCODE_BUTTON_MODE: return Native.HOME;
-            case KeyEvent.KEYCODE_BUTTON_THUMBL: return Native.STICK_L;
-            case KeyEvent.KEYCODE_BUTTON_THUMBR: return Native.STICK_R;
-            case KeyEvent.KEYCODE_DPAD_UP: return Native.UP;
-            case KeyEvent.KEYCODE_DPAD_DOWN: return Native.DOWN;
-            case KeyEvent.KEYCODE_DPAD_LEFT: return Native.LEFT;
-            case KeyEvent.KEYCODE_DPAD_RIGHT: return Native.RIGHT;
-            default: return 0;
-        }
     }
 
     private static int keyboardBit(int code) {
@@ -77,9 +165,10 @@ final class InputMapper {
         int code = e.getKeyCode();
         InputDevice dev = e.getDevice();
         if (isController(dev) || KeyEvent.isGamepadButton(code)) {
-            int bit = controllerBit(code);
-            if (bit == 0) return false;
-            padButtons = down ? (padButtons | bit) : (padButtons & ~bit);
+            if (code == KeyEvent.KEYCODE_BACK) code = KeyEvent.KEYCODE_BUTTON_SELECT;
+            if (bitFor(code) == 0) return false;
+            press(code, down);
+            recompute();
             lastControllerInput = e.getEventTime();
             return true;
         }
@@ -119,24 +208,24 @@ final class InputMapper {
         boolean zrz = dev.getMotionRange(MotionEvent.AXIS_Z) != null && dev.getMotionRange(MotionEvent.AXIS_RZ) != null;
         rx = zrz ? axis(e, dev, MotionEvent.AXIS_Z) : axis(e, dev, MotionEvent.AXIS_RX);
         ry = -(zrz ? axis(e, dev, MotionEvent.AXIS_RZ) : axis(e, dev, MotionEvent.AXIS_RY));
-        // analog triggers (controllers without L2/R2 key events)
+        // analog triggers (controllers without L2/R2 key events) as L2 / R2
         float lt = Math.max(axis(e, dev, MotionEvent.AXIS_LTRIGGER), axis(e, dev, MotionEvent.AXIS_BRAKE));
         float rt = Math.max(axis(e, dev, MotionEvent.AXIS_RTRIGGER), axis(e, dev, MotionEvent.AXIS_GAS));
         if (dev.getMotionRange(MotionEvent.AXIS_LTRIGGER) != null || dev.getMotionRange(MotionEvent.AXIS_BRAKE) != null)
-            padButtons = lt > 0.5f ? (padButtons | Native.ZL) : (padButtons & ~Native.ZL);
+            press(KeyEvent.KEYCODE_BUTTON_L2, lt > 0.5f);
         if (dev.getMotionRange(MotionEvent.AXIS_RTRIGGER) != null || dev.getMotionRange(MotionEvent.AXIS_GAS) != null)
-            padButtons = rt > 0.5f ? (padButtons | Native.ZR) : (padButtons & ~Native.ZR);
-        // D-pad reported as a hat
+            press(KeyEvent.KEYCODE_BUTTON_R2, rt > 0.5f);
+        // D-pad reported as a hat, as the D-pad's buttons
         float hx = e.getAxisValue(MotionEvent.AXIS_HAT_X), hy = e.getAxisValue(MotionEvent.AXIS_HAT_Y);
         if (hx != hatX || hy != hatY) {
             hatX = hx;
             hatY = hy;
-            padButtons &= ~(Native.UP | Native.DOWN | Native.LEFT | Native.RIGHT);
-            if (hx < -0.5f) padButtons |= Native.LEFT;
-            if (hx > 0.5f) padButtons |= Native.RIGHT;
-            if (hy < -0.5f) padButtons |= Native.UP;
-            if (hy > 0.5f) padButtons |= Native.DOWN;
+            press(KeyEvent.KEYCODE_DPAD_LEFT, hx < -0.5f);
+            press(KeyEvent.KEYCODE_DPAD_RIGHT, hx > 0.5f);
+            press(KeyEvent.KEYCODE_DPAD_UP, hy < -0.5f);
+            press(KeyEvent.KEYCODE_DPAD_DOWN, hy > 0.5f);
         }
+        recompute();
         lastControllerInput = e.getEventTime();
         return true;
     }
@@ -148,7 +237,8 @@ final class InputMapper {
 
     /** Drop everything held (the activity lost focus). */
     void reset() {
-        padButtons = keyButtons = 0;
+        padButtons = keyButtons = pulse = 0;
+        pressed.clear();
         lx = ly = rx = ry = 0;
         kW = kA = kS = kD = kUp = kDown = kLeft = kRight = false;
         hatX = hatY = 0;

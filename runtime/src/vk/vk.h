@@ -1,13 +1,14 @@
 // Vulkan renderer internals (Android). Mirrors the Metal renderer (runtime/src/gfx/metal.h):
 // the same surface model and caches, on Vulkan objects.
 #pragma once
-#include <vulkan/vulkan.h>
+#include <volk.h>  // Vulkan through function pointers (no prototypes; see create_device)
 
 #include <atomic>
 #include <cstdint>
 #include <functional>
 #include <memory>
 #include <mutex>
+#include <string>
 #include <unordered_map>
 #include <vector>
 
@@ -91,6 +92,7 @@ struct Renderer {
     uint32_t queueFamily = 0;
     VmaAllocator vma = nullptr;
     VkPhysicalDeviceProperties props{};
+    std::string driverInfo;  // the running driver's name and version
     VkPhysicalDeviceFeatures features{};  // enabled features
     bool mirrorClampToEdge = false;
     bool uploadCached = false;   // transient upload memory is CPU-cached (copy_deduped compares in it)
@@ -129,6 +131,17 @@ VkDescriptorSet alloc_descriptor_set(VkDescriptorSetLayout layout);
 uint32_t& draws_since_commit();  // draws recorded since the last submission
 // make an image ready for `use` (records a barrier; ends the render pass if needed)
 void prepare(Image& img, Use use);
+
+// a surface was added or its data size changed (invalidate's address index)
+void surfaces_changed();
+
+// ---- GPU profiling (vk_profile.cpp; WWHD_GPU_PROFILE=1)
+void prof_cmd_begin();
+void prof_cmd_end();
+void prof_pass_begin(uint32_t w, uint32_t h, const VkFormat* colors, uint32_t nColors, VkFormat depth);
+void prof_pass_end();
+void prof_draw(uint32_t ps);
+void prof_frame();
 
 // ---- transient memory
 Upload upload_alloc(VkDeviceSize size, VkDeviceSize align = 256);
@@ -169,6 +182,7 @@ void retire_image(const Image& old);
 void shader_compiler_init();
 // GLSL (Cemu decompiler output, Vulkan flavour) -> SPIR-V; false and a log message on errors
 bool compile_glsl(const char* src, bool vertex, std::vector<uint32_t>& spirv, std::string& log);
+bool compile_glsl_compute(const char* src, std::vector<uint32_t>& spirv, std::string& log);
 
 // ---- debugging (vk_device.cpp)
 void dump_texture(Image& img, const char* name, bool async, bool srgbEncode);

@@ -7,7 +7,7 @@
 
 namespace recomp {
 
-constexpr uint32_t kSupportedEntryPoint = 0x028EA120;  // cking.rpx of the USA release
+constexpr uint32_t kSupportedEntryPoint = 0x028EA120;  // cking.rpx of the USA release (others: release.h)
 
 // What the cached code was compiled from: the recompiler's version (a hash of its sources, the
 // instruction semantics and LLVM; recomp_version.h), the hook lists, the executable's SHA-1 and

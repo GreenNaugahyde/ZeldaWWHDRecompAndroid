@@ -11,11 +11,13 @@
 
 #include <cstring>
 
+#include "../release.h"
 #include "../runtime.h"
 
 namespace touch_hud {
 namespace {
-constexpr uint32_t kInfoPointer = 0x10114B90, kSaveOffset = 0xC92C;
+const release::Data kInfoPointer{0x10114B90}, kStageInfo{0x1046F0B0};  // USA addresses
+constexpr uint32_t kSaveOffset = 0xC92C;
 constexpr uint32_t kSelectItems = 0x09, kSelectEquip = 0x0E, kInventory = 0x3C;
 constexpr int kSlots = 21;
 constexpr uint8_t kNone = 0xFF;
@@ -67,7 +69,7 @@ uint32_t save_address() {
     uint16_t maxLife = ld16(s), life = ld16(s + 2);
     if (maxLife < 12 || maxLife > 80 || maxLife % 4 || life > maxLife) return 0;
     // the title screen and the file select have placeholder save data (as mods/cheats.cpp checks)
-    const char* stage = (const char*)mem::ptr(0x1046F0B0 + 0x5134);
+    const char* stage = (const char*)mem::ptr(kStageInfo + 0x5134);
     size_t n = strnlen(stage, 8);
     if (n == 0 || (n == 5 && !memcmp(stage, "sea_T", 5)) || (n == 4 && !memcmp(stage, "Name", 4))) return 0;
     return s;

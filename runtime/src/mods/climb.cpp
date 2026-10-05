@@ -38,6 +38,7 @@
 #include "input.h"
 #include "runtime.h"
 #include "true60.h"
+#include "../release.h"
 
 extern "C" {
 void f_023E3850_orig(Cpu* c);  // daPy_lk_c::setFrontWallType
@@ -156,8 +157,8 @@ extern "C" void site_02429570(Cpu* c) { relax(c, 8, c->r[3]); }
 namespace {
 constexpr uint32_t kGndChk = 0xB14;         // daPy_lk_c::mGndChk (dBgS_GndChk): position at +0x24
 constexpr uint32_t kGndPoly = 0xB28;        // ... its poly info: bg index u16 +0, poly index u16 +2
-constexpr uint32_t kBgsAccess = 0x025200D4; // returns the game info; + 0x12A0 = dComIfG_Bgsp()
-constexpr uint32_t kGroundCross = 0x02008974, kGetTriPla = 0x020084C8;
+const release::Code kBgsAccess{0x025200D4}; // returns the game info; + 0x12A0 = dComIfG_Bgsp()
+const release::Code kGroundCross{0x02008974}, kGetTriPla{0x020084C8};
 
 bool ground_ok(Cpu* c, uint32_t self, uint32_t bgs, float g, float min_y) {
     if (!(g > -1e30f) || g < min_y) return false;

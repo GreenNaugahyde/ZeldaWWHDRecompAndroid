@@ -14,12 +14,15 @@ import java.util.List;
 /**
  * Numbers for the performance overlay. Android lets apps read little of the system's state: the
  * whole-system CPU load (/proc/stat) is hidden, so CPU is this app's share of all cores
- * (/proc/self/stat); GPU load is the Adreno driver's busy counter (kgsl gpubusy) where readable;
+ * (/proc/self/stat); GPU load is the GPU driver's busy counter (Adreno kgsl, Mali, MediaTek GED)
+ * where readable;
  * temperatures come from the thermal zones whose names say cpu / gpu, and the battery from the
  * system's battery broadcast. Anything not readable on a device shows as "–".
  */
 final class PerfStats {
     float gameFps, frameMs, frameMaxMs, shownFps, fgGpuMs;
+    float avgFps = Float.NaN;  // since the overlay was switched on
+    private float frames0 = -1, sec0;
     float cpuPercent = -1, gpuPercent = -1;
     float cpuTemp = Float.NaN, gpuTemp = Float.NaN, batteryTemp = Float.NaN;
 
@@ -31,6 +34,27 @@ final class PerfStats {
 
     PerfStats(Context context) { this.context = context; }
 
+    /** the SoC's model as the system reports it (e.g. "QTI SM8150"), else the board name */
+    static String socName() {
+        String m = android.os.Build.VERSION.SDK_INT >= 31 ? android.os.Build.SOC_MODEL : "";
+        if (m == null || m.isEmpty() || m.equals(android.os.Build.UNKNOWN)) return android.os.Build.BOARD;
+        String maker = android.os.Build.SOC_MANUFACTURER;
+        return maker == null || maker.isEmpty() || maker.equals(android.os.Build.UNKNOWN) ? m : maker + " " + m;
+    }
+
+    private static String gpu = "";
+    /** the GPU's name without the trademark sign, "" until the renderer has started */
+    static String gpuName() {
+        if (gpu.isEmpty()) gpu = Native.gpuName().replace(" (TM)", "").replace("(TM)", "").trim();
+        return gpu;
+    }
+
+    /** the average starts again with the next numbers */
+    void resetAverage() {
+        frames0 = -1;
+        avgFps = Float.NaN;
+    }
+
     void update() {
         float[] n = Native.perfStats();
         gameFps = n[0];
@@ -38,6 +62,12 @@ final class PerfStats {
         frameMaxMs = n[2];
         shownFps = n[3];
         fgGpuMs = n[4];
+        if (frames0 < 0) {
+            frames0 = n[5];
+            sec0 = n[6];
+        } else if (n[6] - sec0 >= 1) {
+            avgFps = (n[5] - frames0) / (n[6] - sec0);
+        }
         readCpu();
         readGpu();
         if (cpuZones == null) findZones();
@@ -61,14 +91,44 @@ final class PerfStats {
         lastWallMs = now;
     }
 
-    // "busy total" over the driver's last sampling window
+    // GPU load files: Adreno's "busy total" counter, else the first number of a percentage file
+    // (Mali: utilization of the kernel driver, MediaTek GED, Exynos). The first readable one is used.
+    private static final String KGSL = "/sys/class/kgsl/kgsl-3d0/gpubusy";
+    private static final String[] PERCENT_FILES = {
+        "/sys/class/kgsl/kgsl-3d0/gpu_busy_percentage",
+        "/sys/kernel/ged/hal/gpu_utilization",
+        "/sys/class/misc/mali0/device/utilization",
+        "/sys/kernel/gpu/gpu_busy",
+        "/sys/class/devfreq/gpufreq/device/utilization",
+    };
+    private static final java.util.regex.Pattern NUMBER = java.util.regex.Pattern.compile("\\d+(\\.\\d+)?");
+    private String gpuFile;  // chosen source; "" if none is readable
+
     private void readGpu() {
-        String s = readLine("/sys/class/kgsl/kgsl-3d0/gpubusy");
+        if (gpuFile == null) {
+            gpuFile = "";
+            if (readLine(KGSL) != null) gpuFile = KGSL;
+            else for (String p : PERCENT_FILES)
+                if (!Float.isNaN(firstNumber(readLine(p)))) { gpuFile = p; break; }
+        }
+        if (gpuFile.isEmpty()) return;
+        String s = readLine(gpuFile);
         if (s == null) return;
-        String[] f = s.trim().split("\\s+");
-        if (f.length < 2) return;
-        long busy = Long.parseLong(f[0]), total = Long.parseLong(f[1]);
-        if (total > 0) gpuPercent = 100f * busy / total;
+        if (gpuFile.equals(KGSL)) {
+            String[] f = s.trim().split("\\s+");
+            if (f.length < 2) return;
+            long busy = Long.parseLong(f[0]), total = Long.parseLong(f[1]);
+            if (total > 0) gpuPercent = 100f * busy / total;
+        } else {
+            float v = firstNumber(s);
+            if (v >= 0 && v <= 100) gpuPercent = v;
+        }
+    }
+
+    private static float firstNumber(String s) {
+        if (s == null) return Float.NaN;
+        java.util.regex.Matcher m = NUMBER.matcher(s);
+        return m.find() ? Float.parseFloat(m.group()) : Float.NaN;
     }
 
     private void findZones() {

@@ -20,7 +20,7 @@
 #include "recomp_table.h"
 #include "runtime.h"
 
-bool g_trace_hle = false;
+bool g_trace_hle = getenv("WWHD_TRACE_HLE") != nullptr;  // log HLE calls and file accesses (macOS: --trace)
 namespace config {
 std::string game_dir = "game";
 std::string save_dir = "save";

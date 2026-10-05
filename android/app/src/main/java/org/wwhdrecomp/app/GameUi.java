@@ -61,6 +61,7 @@ final class GameUi {
     static final Palette BLUE = new Palette(0xFF6FD8FA, CYAN, CYAN_DARK);
     static final Palette AMBER = new Palette(0xFFFFDA82, 0xFFF0A630, 0xFF9E5A0C);
     static final Palette CORAL = new Palette(0xFFFFA796, 0xFFE5604B, 0xFF94291C);
+    static final Palette VIOLET = new Palette(0xFFD7BBFF, 0xFFA06AE0, 0xFF5A2D91);
 
     static int px(Context c, float v) { return Math.round(v * c.getResources().getDisplayMetrics().density); }
 

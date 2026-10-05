@@ -53,14 +53,17 @@ final class OptionsMenu extends Dialog {
     private int tab;
     private LinearLayout rows;
     private ScrollView scroll;
-    private static final int TABS = 4;
+    private static final int TABS = 5;
     // Saves, Graphics, Mods, Controls
-    private static final GameUi.Palette[] TAB_COLORS = {GameUi.GREEN, GameUi.BLUE, GameUi.AMBER, GameUi.CORAL};
+    private static final GameUi.Palette[] TAB_COLORS = {GameUi.GREEN, GameUi.VIOLET, GameUi.BLUE, GameUi.AMBER, GameUi.CORAL};
     private final TextView[] tabs = new TextView[TABS];
+
+    private String languageAtOpen;  // the game language when the menu opened: a change asks for a restart on closing
 
     OptionsMenu(MainActivity a) {
         super(a, android.R.style.Theme_Translucent_NoTitleBar_Fullscreen);
         this.a = a;
+        languageAtOpen = a.gameLanguage();
         dp = a.getResources().getDisplayMetrics().density;
         tab = lastTab;
     }
@@ -87,7 +90,7 @@ final class OptionsMenu extends Dialog {
         // tabs and Back
         LinearLayout top = new LinearLayout(getContext());
         top.setGravity(Gravity.CENTER_VERTICAL);
-        int[] names = {R.string.opt_saves, R.string.opt_graphics, R.string.opt_mods, R.string.opt_controls};
+        int[] names = {R.string.opt_saves, R.string.opt_game, R.string.opt_graphics, R.string.opt_mods, R.string.opt_controls};
         for (int i = 0; i < TABS; i++) {
             final int t = i;
             TextView v = new GameUi.OutlinedText(getContext());
@@ -234,6 +237,41 @@ final class OptionsMenu extends Dialog {
                 .button(R.string.opt_fg_remove_dll, () -> { a.removeFrameGenDll(); fill(); }).show());
     }
 
+    // the GPU driver (Adreno): the system's or a driver package the user installed
+    private void gpuDriverPage() {
+        pageTitle(R.string.opt_gpu_driver);
+        note(a.getString(R.string.gpu_driver_about));
+        String running = Native.gpuDriverInfo();
+        if (!running.isEmpty()) note(a.getString(R.string.gpu_driver_running, running));
+        if (Native.gpuDriverFellBack()) note(a.getString(R.string.gpu_driver_fell_back, a.gpuDriverLabel()));
+        String cur = a.gpuDriverId();
+        driverRow(a.getString(R.string.gpu_driver_system), a.getString(R.string.gpu_driver_system_hint), cur.isEmpty(),
+                () -> a.chooseGpuDriver("", a.getString(R.string.gpu_driver_system)));
+        for (GpuDrivers.Driver d : GpuDrivers.list(getContext())) {
+            boolean active = d.id.equals(cur);
+            driverRow(d.name, d.version, active, () -> {
+                GameDialog dlg = new GameDialog(getContext()).title(d.name)
+                        .message(d.version + (d.description.isEmpty() ? "" : "\n\n" + d.description))
+                        .button(R.string.opt_cancel, null)
+                        .button(R.string.gpu_driver_remove, () -> a.removeGpuDriver(d.id, this::fill));
+                if (!active) dlg.button(R.string.gpu_driver_use, () -> a.chooseGpuDriver(d.id, d.name));
+                dlg.show();
+            });
+        }
+        submenu(R.string.gpu_driver_install, R.string.gpu_driver_install_hint, "", a::pickDriver);
+    }
+
+    private void driverRow(String label, String hint, boolean active, Runnable click) {
+        LinearLayout r = rowText(label, hint == null || hint.isEmpty() ? null : hint);
+        TextView v = new TextView(getContext());
+        v.setText(active ? "✓" : "›");
+        v.setTextColor(active ? GameUi.GREEN.dark : INK);
+        v.setTextSize(active ? 22 : 16);
+        v.setTypeface(Typeface.create("sans-serif-medium", Typeface.BOLD));
+        r.addView(v, new LinearLayout.LayoutParams(-2, -2));
+        r.setOnClickListener(x -> click.run());
+    }
+
     // a paragraph of explanation on a page
     private void note(String text) {
         TextView t = new TextView(getContext());
@@ -278,6 +316,10 @@ final class OptionsMenu extends Dialog {
 
     @Override
     public void dismiss() {
+        if (!a.gameLanguage().equals(languageAtOpen)) {
+            languageAtOpen = a.gameLanguage();
+            a.askRestartForLanguage();
+        }
         rows.removeCallbacks(selectHeld);
         super.dismiss();
     }
@@ -304,8 +346,9 @@ final class OptionsMenu extends Dialog {
         rows.removeAllViews();
         if (page != null) page.run();
         else if (tab == 0) saves();
-        else if (tab == 1) graphics();
-        else if (tab == 2) mods();
+        else if (tab == 1) game();
+        else if (tab == 2) graphics();
+        else if (tab == 3) mods();
         else controls();
         if (focusIndex >= 0 && focusIndex < rows.getChildCount()) rows.getChildAt(focusIndex).requestFocus();
     }
@@ -317,6 +360,8 @@ final class OptionsMenu extends Dialog {
             boolean used = info[0].equals("1"), compatible = info[1].equals("1");
             String desc = !used ? a.getString(R.string.opt_slot_empty)
                     : info[3].isEmpty() ? info[2] : info[2] + " · " + info[3];
+            if (used && !info[4].isEmpty())  // the controls it was saved with (and loads with)
+                desc += " · " + a.getString(info[4].equals("pro") ? R.string.controller_pro : R.string.controller_gamepad);
             if (used && !compatible) desc = a.getString(R.string.opt_slot_incompatible, desc);
             LinearLayout r = rowText(a.getString(R.string.opt_slot, slot), desc);
             ImageView pic = new ImageView(getContext());
@@ -355,10 +400,23 @@ final class OptionsMenu extends Dialog {
         submenu(R.string.opt_import, R.string.opt_import_hint, "", () -> a.pickFolder(MainActivity.PICK_IMPORT));
     }
 
-    // a state is written at the next frame boundary: show the new slot once it's there
+    // a state is captured at the next frame boundary and written in the background (a few seconds
+    // for its ~250 MB): show the slot again once its file has changed
     private void saveTo(int slot) {
+        final String before = String.join("|", Native.saveSlotInfo(slot));
+        final long until = android.os.SystemClock.uptimeMillis() + 20000;
         a.saveState(slot);
-        rows.postDelayed(this::fill, 1500);
+        rows.postDelayed(new Runnable() {
+            @Override
+            public void run() {
+                if (!isShowing()) return;
+                if (!String.join("|", Native.saveSlotInfo(slot)).equals(before)) {
+                    fill();
+                    rows.postDelayed(() -> { if (isShowing()) fill(); }, 1500);  // its picture is written separately
+                }
+                else if (android.os.SystemClock.uptimeMillis() < until) rows.postDelayed(this, 300);
+            }
+        }, 300);
     }
 
     private android.graphics.Bitmap thumbnail(int slot) {
@@ -381,9 +439,6 @@ final class OptionsMenu extends Dialog {
     private void graphics() {
         String[] res = new String[MainActivity.RES_SCALES.length];
         for (int i = 0; i < res.length; i++) res[i] = a.resolutionLabel(MainActivity.RES_SCALES[i]);
-        int lang = 0;
-        for (int i = 0; i < MainActivity.LANGUAGES.length; i++) if (MainActivity.LANGUAGES[i] == a.prefs.getInt("language", 1)) lang = i;
-        choice(R.string.opt_language, 0, a.getResources().getStringArray(R.array.languages), lang, a::setLanguage);
         choice(R.string.opt_fps, R.string.opt_fps_hint, a.getResources().getStringArray(R.array.fps_modes),
                a.prefs.getBoolean("fg_enabled", false) ? 0 : a.prefs.getInt("fps_mode", 0), a::setFpsMode);
         choice(R.string.opt_drawdone, R.string.opt_drawdone_hint, a.getResources().getStringArray(R.array.drawdone_modes),
@@ -402,6 +457,11 @@ final class OptionsMenu extends Dialog {
             a.prefs.edit().putInt("tv_aspect", i).apply();
             Native.setOption("tv_aspect", i);
         });
+        if (a.hasSecondDisplay()) {
+            String[] where = {a.getString(R.string.drc_second_display), a.getString(R.string.drc_in_layout)};
+            choice(R.string.opt_drc_display, R.string.opt_drc_display_hint, where, a.drcOnSecondDisplay() ? 0 : 1,
+                    i -> a.setDrcOnSecondDisplay(i == 0));
+        }
         choice(R.string.opt_layout, 0, a.getResources().getStringArray(R.array.layouts), a.prefs.getInt("layout", MainActivity.LAYOUT_INSET), i -> {
             a.prefs.edit().putInt("layout", i).apply();
             a.updateLayout();
@@ -411,6 +471,8 @@ final class OptionsMenu extends Dialog {
         toggle(R.string.opt_aniso, 0, Native.getOption("aniso") != 0, on -> a.setBool("aniso", on));
         submenu(R.string.opt_perf, R.string.opt_perf_hint, a.getString(a.prefs.getBoolean("perf_hud", false) ? R.string.opt_on : R.string.opt_off),
                 () -> openPage(this::perfPage));
+        if (GpuDrivers.supported())
+            submenu(R.string.opt_gpu_driver, R.string.opt_gpu_driver_hint, a.gpuDriverLabel(), () -> openPage(this::gpuDriverPage));
         submenu(R.string.opt_shaders, R.string.opt_shaders_hint, "", a::askClearShaders);
         if (a.debuggable())  // a debugging aid: debug builds only
             submenu(R.string.opt_capture, R.string.opt_capture_hint, "", () -> Native.setOption("capture", 1));
@@ -440,6 +502,18 @@ final class OptionsMenu extends Dialog {
         }
     }
 
+    // the game itself: its language (the release's languages; applies after a restart)
+    private void game() {
+        int[] langs = a.gameLanguages();
+        String[] names = new String[langs.length];
+        int curLang = 0;
+        for (int i = 0; i < langs.length; i++) {
+            names[i] = MainActivity.LANGUAGE_NAMES[langs[i]];
+            if (MainActivity.LANGUAGES[langs[i]].equals(a.gameLanguage())) curLang = i;
+        }
+        choice(R.string.opt_language, R.string.opt_language_hint, names, curLang, i -> a.setGameLanguage(MainActivity.LANGUAGES[langs[i]]));
+    }
+
     private void mods() {
         submenu(R.string.opt_cheats, R.string.opt_cheats_hint, "", () -> openPage(this::cheatsPage));
         int[] labels = {R.string.opt_mod_direct_camera, R.string.opt_mod_first_person, R.string.opt_mod_climb,
@@ -462,6 +536,34 @@ final class OptionsMenu extends Dialog {
                     Native.setOption("mod_camera_speed", MainActivity.CAMERA_SPEEDS[k]);
                 });
             }
+        }
+        String[] runs = new String[MainActivity.RUN_SPEEDS.length];
+        int curRun = 0, curSwim = 0;
+        for (int k = 0; k < runs.length; k++) {
+            runs[k] = MainActivity.RUN_SPEEDS[k] == 100 ? a.getString(R.string.opt_mod_run_off)
+                    : String.format(java.util.Locale.ROOT, "%.2f×", MainActivity.RUN_SPEEDS[k] / 100f).replace("0×", "×");
+            if (MainActivity.RUN_SPEEDS[k] == a.prefs.getInt("mod_run_speed", 100)) curRun = k;
+            if (MainActivity.RUN_SPEEDS[k] == a.prefs.getInt("mod_swim_speed", 100)) curSwim = k;
+        }
+        moveSpeed("mod_run", R.string.opt_mod_run, R.string.opt_mod_run_hint, runs, curRun);
+        moveSpeed("mod_swim", R.string.opt_mod_swim, R.string.opt_mod_swim_hint, runs, curSwim);
+    }
+
+    // faster running or swimming: its speed, and below it (when on) when it applies and how L3 works
+    private void moveSpeed(String mod, int label, int hint, String[] values, int cur) {
+        choice(label, hint, values, cur, k -> {
+            a.prefs.edit().putInt(mod + "_speed", MainActivity.RUN_SPEEDS[k]).apply();
+            Native.setOption(mod + "_speed", MainActivity.RUN_SPEEDS[k]);
+        });
+        if (MainActivity.RUN_SPEEDS[cur] == 100) return;
+        boolean withL3 = a.prefs.getBoolean(mod + "_l3", false), hold = a.prefs.getBoolean(mod + "_l3_hold", false);
+        String[] when = {a.getString(R.string.opt_mod_run_always), a.getString(R.string.opt_mod_run_with_l3)};
+        indentNext = true;
+        choice(R.string.opt_mod_run_when, 0, when, withL3 ? 1 : 0, k -> a.setMoveL3(mod, k == 1, hold));
+        if (withL3) {
+            String[] how = {a.getString(R.string.opt_mod_run_l3_switch), a.getString(R.string.opt_mod_run_l3_hold)};
+            indentNext = true;
+            choice(R.string.opt_mod_run_l3, 0, how, hold ? 1 : 0, k -> a.setMoveL3(mod, true, k == 1));
         }
     }
 
@@ -496,19 +598,43 @@ final class OptionsMenu extends Dialog {
                    a.prefs.edit().putInt("combat_buttons", i).apply();
                    a.applyControlsAppearance();
                });
-        if (a.gyroAvailable()) {
-            toggle(R.string.opt_gyro, R.string.opt_gyro_hint, a.prefs.getBoolean("gyro_enabled", false), a::setGyro);
-            if (a.prefs.getBoolean("gyro_enabled", false))
-                submenu(R.string.opt_gyro_recalibrate, R.string.opt_gyro_recalibrate_hint, "", a::recalibrateGyro);
-        }
-        toggle(R.string.opt_rumble, R.string.opt_rumble_hint, a.prefs.getBoolean("rumble", true),
-               on -> a.prefs.edit().putBoolean("rumble", on).apply());
         toggle(R.string.opt_haptics, 0, a.prefs.getBoolean("haptics", true), on -> {
             a.prefs.edit().putBoolean("haptics", on).apply();
             a.applyControlsAppearance();
         });
         String[] kinds = {a.getString(R.string.controller_gamepad), a.getString(R.string.controller_pro)};
         choice(R.string.opt_controller, 0, kinds, Native.getOption("pro_controller") != 0 ? 1 : 0, i -> a.setBool("pro_controller", i == 1));
+        toggle(R.string.opt_motion, R.string.opt_motion_hint, a.prefs.getBoolean("motion", true), a::setMotion);
+        if (a.prefs.getBoolean("motion", true))
+            submenu(R.string.opt_gyro_recalibrate, R.string.opt_gyro_recalibrate_hint, "", a::recalibrateGyro);
+        toggle(R.string.opt_rumble, R.string.opt_rumble_hint, a.prefs.getBoolean("rumble", true), a::setRumble);
+        submenu(R.string.opt_buttons, R.string.opt_buttons_hint,
+                a.getString(a.inputMapper().isDefaultMap() ? R.string.opt_buttons_default : R.string.opt_buttons_custom),
+                () -> openPage(this::buttonsPage));
+    }
+
+    // controller buttons: each Wii U button and the controller button that presses it
+    private void buttonsPage() {
+        pageTitle(R.string.opt_buttons);
+        note(a.getString(R.string.opt_buttons_note));
+        InputMapper m = a.inputMapper();
+        String[] names = a.getResources().getStringArray(R.array.wiiu_buttons);
+        for (int i = 0; i < InputMapper.WIIU.length; i++) {
+            final int n = i;
+            LinearLayout r = rowText(names[i], null);
+            TextView v = new TextView(getContext());
+            v.setText(InputMapper.buttonName(m.map[i]) + "  ›");
+            v.setTextColor(INK);
+            v.setTextSize(16);
+            v.setTypeface(Typeface.create("sans-serif-medium", Typeface.BOLD));
+            r.addView(v, new LinearLayout.LayoutParams(-2, -2));
+            r.setOnClickListener(x -> new GameDialog(getContext()).title(names[n])
+                    .message(a.getString(R.string.opt_buttons_press, names[n], InputMapper.buttonName(m.map[n])))
+                    .button(R.string.opt_cancel, null)
+                    .captureButton(code -> { a.assignButton(n, code); fill(); })
+                    .show());
+        }
+        submenu(R.string.opt_buttons_reset, 0, "", () -> { a.resetButtons(); fill(); });
     }
 
     private static int indexOf(String[] arr, String v, int fallback) {

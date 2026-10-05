@@ -44,6 +44,9 @@ void set_pad(uint32_t buttons, float lx, float ly, float rx, float ry) {
 
 void init() {}
 
+void rumble(const uint8_t* pattern, int bits) { jni::rumble(pattern, bits); }
+void rumble_hold(bool on) { jni::rumble_hold(on); }
+
 // debug: WWHD_PRESS=1000-1010:8000,1500-1505:0008 holds VPAD buttons (hex) during TV frame ranges
 struct Press { uint64_t from, to; uint32_t bits; };
 static std::vector<Press> scripted() {
@@ -112,21 +115,3 @@ bool mouse_captured() { return false; }
 void mouse_release() {}
 }  // namespace mods
 
-// ---- rumble: the game repeats its request while the effect lasts; forward only changes (or a
-// request after the previous one ran out) so the vibrator isn't restarted every frame
-namespace input {
-void set_rumble(float strength, uint32_t duration_ms) {
-    static float last = -1;
-    static auto until = std::chrono::steady_clock::time_point{};
-    auto now = std::chrono::steady_clock::now();
-    if (strength <= 0.01f) {
-        if (last > 0) jni::rumble(0, 0);
-        last = 0;
-        return;
-    }
-    if (std::fabs(strength - last) < 0.1f && now < until - std::chrono::milliseconds(100)) return;
-    last = strength;
-    until = now + std::chrono::milliseconds(duration_ms);
-    jni::rumble(strength, duration_ms);
-}
-}  // namespace input

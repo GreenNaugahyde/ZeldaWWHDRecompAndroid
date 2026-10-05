@@ -4,7 +4,7 @@
 
     <string name="setup_text">The game files were not found or don\'t match this build.\n\nThis app contains only the recompiled code built from your own copy of the game; it needs the extracted game files from the same dump. Extract them on a computer (see README.md: tools/wudextract.py), then copy the resulting folder (with code/, content/ and meta/ inside) to:\n\n%1$s\n\nFor example: adb push game /sdcard/Android/data/org.wwhdrecomp.app/files/\n\nProblem: %2$s</string>
     <string name="setup_retry">Check again</string>
-    <string name="setup_welcome">Welcome!\n\nThis app contains no game files. It plays your own copy of The Legend of Zelda: The Wind Waker HD for Wii U (USA version).\n\nPut these three files in one folder on this device, then choose that folder:\n•  your disc image (.wux or .wud)\n•  its disc key (the image\'s name with .key)\n•  the console\'s common key (common.key)\n\nThe app then extracts the game files (about 1.7 GB) and prepares the game code for this device (about 5 minutes, once).</string>
+    <string name="setup_welcome">Welcome!\n\nThis app contains no game files. It plays your own copy of The Legend of Zelda: The Wind Waker HD for Wii U (USA or European version).\n\nPut these three files in one folder on this device, then choose that folder:\n•  your disc image (.wux or .wud)\n•  its disc key (the image\'s name with .key)\n•  the console\'s common key (common.key)\n\nThe app then extracts the game files (about 1.7 GB) and prepares the game code for this device. That happens once and takes a while, depending on the device\'s processor.</string>
     <string name="setup_problem">The game files found don\'t work: %1$s</string>
     <string name="setup_extract">Extract from your disc image…</string>
     <string name="extract_missing">Choose the folder that holds your disc image, its disc key and the console\'s common key:\n\n%1$s the image (.wux or .wud)\n%2$s its disc key (the image\'s name with .key)\n%3$s common.key</string>
@@ -18,7 +18,7 @@
     <string name="space_title">Not enough free storage</string>
     <string name="space_text">This step needs about %1$d MB of free storage; %2$d MB are free. Free up some space and try again.</string>
     <string name="extract_failed">Extraction failed: %1$s</string>
-    <string name="compile_running">Preparing the game code for this device…\n\nThis happens once and takes about five minutes. You can leave the app meanwhile: it continues in the background (see the notification), and if it is closed, it continues where it stopped.</string>
+    <string name="compile_running">Preparing the game code for this device…\n\nThis happens once and takes a while, depending on this device\'s processor: a few minutes on fast devices, longer on slower ones. You can leave the app meanwhile: it continues in the background (see the notification), and if it is closed, it continues where it stopped.</string>
     <string name="compile_detail">%1$d of %2$d parts (%3$d:%4$02d)</string>
     <string name="compile_failed">Preparing the game code failed: %1$s</string>
     <string name="menu_about">About and licenses</string>
@@ -124,6 +124,7 @@
     <string name="perf_temp_cpu">CPU temperature</string>
     <string name="perf_temp_gpu">GPU temperature</string>
     <string name="perf_temp_bat">Battery temperature</string>
+    <string name="perf_settings">Settings (resolution, effects, GPU driver)</string>
     <string name="perf_done">Done</string>
     <string name="perf_move">Move overlay</string>
     <string name="perf_reset">Reset position</string>
@@ -148,12 +149,6 @@
     <string name="opt_on">ON</string>
     <string name="opt_off">OFF</string>
     <string name="opt_pad_hint">Controller: hold Select or press Home to open and close · L / R switch tabs · D-pad moves and changes values · right button selects · bottom button goes back</string>
-    <string name="opt_language">Game language</string>
-    <string-array name="languages">
-        <item>English</item>
-        <item>Español</item>
-        <item>Français</item>
-    </string-array>
     <string name="lang_restart">The new language takes effect when the game restarts. Progress since your last save is lost.</string>
     <string name="opt_fps">Frame rate</string>
     <string name="opt_fps_hint">60 fps draws a frame between each two game steps: the game itself keeps its original speed. Adaptive drops to 30 while the device can\'t hold 60. Turns frame generation off.</string>
@@ -177,8 +172,6 @@
         <item>Hidden</item>
     </string-array>
     <string name="opt_haptics">Vibrate on touch</string>
-    <string name="opt_rumble">Rumble</string>
-    <string name="opt_rumble_hint">The phone vibrates when the game rumbles the GamePad</string>
     <string name="opt_cheats">Cheats</string>
     <string name="opt_cheats_hint">Items, sword and shield, hearts, infinite health…</string>
     <string name="cheat_note">Cheats change the loaded save file; they last once the game is saved. The game itself takes the sword away in Forsaken Fortress and the bow in the Tower of the Gods.</string>
@@ -195,8 +188,6 @@
     <string name="cheat_inf_health">Infinite health</string>
     <string name="cheat_inf_magic">Infinite magic</string>
     <string name="cheat_inf_ammo">Infinite arrows and bombs</string>
-    <string name="opt_gyro">Gyro aiming</string>
-    <string name="opt_gyro_hint">Aim by moving the phone. Also turn on motion controls in the game\'s own options.</string>
     <string name="opt_gyro_recalibrate">Recalibrate gyro</string>
     <string name="opt_gyro_recalibrate_hint">Hold the phone as you play and press: that becomes straight ahead</string>
     <string name="gyro_recalibrated">Gyro recalibrated</string>
@@ -249,11 +240,79 @@
     <string name="opt_mod_quick_doors">Quick doors</string>
     <string name="opt_mod_fast_scenes">Fast scene changes</string>
     <string name="opt_mod_speed_hint">4× speed</string>
+    <string name="opt_mod_run">Faster running</string>
+    <string name="opt_mod_run_hint">Link covers more ground while running; jumps and rolls stay as they are</string>
+    <string name="opt_mod_swim">Faster swimming</string>
+    <string name="opt_mod_swim_hint">The same while Link swims</string>
+    <string name="opt_mod_run_off">Off</string>
+    <string name="opt_mod_run_when">Applies</string>
+    <string name="opt_mod_run_always">Always</string>
+    <string name="opt_mod_run_with_l3">With L3</string>
+    <string name="opt_mod_run_l3">L3</string>
+    <string name="opt_mod_run_l3_switch">Press: on / off</string>
+    <string name="opt_mod_run_l3_hold">Hold</string>
     <string name="opt_onscreen">On-screen controls</string>
     <string name="opt_onscreen_size">On-screen controls size</string>
     <string name="opt_controller">Controls act as</string>
     <string name="opt_states">Save states</string>
     <string name="opt_backup">Import / export saves</string>
+    <string name="opt_game">Game</string>
+    <string name="opt_language">Game language</string>
+    <string name="opt_language_hint">The languages of your copy of the game; applies after a restart</string>
+    <string name="language_restart">The game uses the new language after a restart.</string>
+    <string name="opt_motion">Motion controls</string>
+    <string name="opt_motion_hint">Aim by tilting the device, or a controller with motion sensors</string>
+    <string name="opt_rumble">Rumble</string>
+    <string name="opt_rumble_hint">On the controller, or this device while playing by touch</string>
+    <string name="opt_buttons">Controller buttons</string>
+    <string name="opt_buttons_hint">Which controller button presses which Wii U button</string>
+    <string name="opt_buttons_default">Default</string>
+    <string name="opt_buttons_custom">Custom</string>
+    <string name="opt_buttons_note">Choose a Wii U button, then press the controller button for it. A button that is already in use swaps places, so every Wii U button keeps one. Home / Guide and holding Select always open the menu, and the menu keeps using the buttons by position.</string>
+    <string name="opt_buttons_press">Press the controller button for %1$s (now: %2$s).\n\nHome / Guide or Cancel keeps it as it is.</string>
+    <string name="opt_buttons_reset">Reset to default</string>
+    <string-array name="wiiu_buttons">
+        <item>A</item>
+        <item>B</item>
+        <item>X</item>
+        <item>Y</item>
+        <item>L</item>
+        <item>R</item>
+        <item>ZL</item>
+        <item>ZR</item>
+        <item>− (minus)</item>
+        <item>+ (plus)</item>
+        <item>Left stick click</item>
+        <item>Right stick click</item>
+        <item>D-pad up</item>
+        <item>D-pad down</item>
+        <item>D-pad left</item>
+        <item>D-pad right</item>
+    </string-array>
+    <string name="opt_drc_display">GamePad screen</string>
+    <string name="opt_drc_display_hint">A second display was found (e.g. the lower screen of a dual-screen device)</string>
+    <string name="drc_second_display">Second display</string>
+    <string name="drc_in_layout">In the screen layout</string>
+    <string name="opt_gpu_driver">GPU driver</string>
+    <string name="opt_gpu_driver_hint">The system\'s, or an installed driver package</string>
+    <string name="gpu_driver_about">On Adreno GPUs the game can run on another Vulkan driver than the system\'s, for example a Mesa Turnip build or a newer Qualcomm driver. Use driver packages in the AdrenoTools format (a .zip with meta.json and the driver), as other emulators use them. A new driver applies after a restart. If the game doesn\'t start with it, the next start goes back to the system driver.</string>
+    <string name="gpu_driver_running">Running now: %1$s</string>
+    <string name="gpu_driver_fell_back">%1$s couldn\'t be loaded, so the system driver runs. The next start switches back to it.</string>
+    <string name="gpu_driver_system">System driver</string>
+    <string name="gpu_driver_system_hint">The driver that came with the device</string>
+    <string name="gpu_driver_install">Install driver package…</string>
+    <string name="gpu_driver_install_hint">A .zip with meta.json and the driver</string>
+    <string name="gpu_driver_installing">Installing the driver package…</string>
+    <string name="gpu_driver_install_failed">The driver package couldn\'t be installed: %1$s</string>
+    <string name="gpu_driver_not_package">this is not a driver package (a .zip with meta.json and the driver\'s .so file)</string>
+    <string name="gpu_driver_installed">%1$s is installed. Use it now? The game restarts.</string>
+    <string name="gpu_driver_use_now">Use and restart</string>
+    <string name="gpu_driver_later">Later</string>
+    <string name="gpu_driver_use">Use</string>
+    <string name="gpu_driver_remove">Remove</string>
+    <string name="gpu_driver_switch">Switch to %1$s? The game restarts; the first start with another driver compiles its pipelines again and takes longer.</string>
+    <string name="gpu_driver_remove_active">This driver is in use. Remove it and restart with the system driver?</string>
+    <string name="gpu_driver_failed">The game didn\'t start with the GPU driver %1$s, so it runs on the system driver again. You can choose the driver again under Graphics › GPU driver.</string>
     <string name="opt_shaders">Delete shader cache</string>
     <string name="opt_shaders_hint">Restarts the game as on its first start</string>
     <string name="opt_about">About</string>

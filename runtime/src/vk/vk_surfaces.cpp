@@ -212,6 +212,7 @@ Surface* find_or_create_surface(const SurfaceDesc& d, bool forRendering) {
             s->slices, s->format, s->tileMode);
     Surface* raw = s.get();
     R.surfaces.emplace(d.addr, std::move(s));
+    surfaces_changed();
     return raw;
 }
 
@@ -394,11 +395,257 @@ static Surface* check_texture(Surface* s) {
     return s;
 }
 
+// ---------------------------------------------------------------- BC decoding on the GPU
+// Where the GPU can't sample BC textures (most Mali and PowerVR GPUs), a compute shader unpacks
+// them to RGBA8 / R8 / RG8 instead of the CPU. Bit-exact with convert_row() in vk_formats.cpp.
+// One invocation per 4x4 block; input = the detiled blocks, output = rows of texels as the copy
+// to the image expects them. WWHD_BC_DECODE=cpu keeps the CPU decoder (for comparisons).
+static const char* kBcDecodeGlsl = R"(#version 450
+layout(local_size_x = 64) in;
+layout(std430, binding = 0) readonly buffer Src { uint src[]; };
+layout(std430, binding = 1) writeonly buffer Dst { uint dst[]; };
+layout(push_constant) uniform PC { uint mode, bw, bh, blocks; } pc;
+
+uint ex5(uint v) { return (v << 3) | (v >> 2); }
+uint ex6(uint v) { return (v << 2) | (v >> 4); }
+uint ex4(uint v) { return (v << 4) | v; }
+int tdiv(int n, int d) { return n < 0 ? -((-n) / d) : n / d; }  // C division (truncates)
+
+// BC4 block in words lo/hi -> 16 bytes (signed values as two's complement bytes)
+void bc4(uint lo, uint hi, bool sgn, out uint v[16]) {
+    int a0 = int(lo & 0xFFu), a1 = int((lo >> 8) & 0xFFu);
+    if (sgn) {
+        a0 = (a0 << 24) >> 24; a1 = (a1 << 24) >> 24;
+        if (a0 == -128) a0 = -127;
+        if (a1 == -128) a1 = -127;
+    }
+    int p[8];
+    p[0] = a0; p[1] = a1;
+    if (a0 > a1) {
+        for (int i = 1; i < 7; i++) p[i + 1] = tdiv((7 - i) * a0 + i * a1 + 3, 7);
+    } else {
+        for (int i = 1; i < 5; i++) p[i + 1] = tdiv((5 - i) * a0 + i * a1 + 2, 5);
+        p[6] = sgn ? -127 : 0;
+        p[7] = sgn ? 127 : 255;
+    }
+    uint il = (lo >> 16) | (hi << 16), ih = hi >> 16;  // 48 index bits
+    for (int i = 0; i < 16; i++) {
+        int b = 3 * i;
+        uint x = b < 32 ? ((il >> b) | (b > 0 ? ih << (32 - b) : 0u)) : (ih >> (b - 32));
+        v[i] = uint(p[x & 7u]) & 0xFFu;
+    }
+}
+
+// BC1 color block -> 16 RGBA8 words
+void bc1(uint w0, uint w1, bool punch, out uint px[16]) {
+    uint c0 = w0 & 0xFFFFu, c1 = w0 >> 16;
+    uvec4 p[4];
+    p[0] = uvec4(ex5((c0 >> 11) & 31u), ex6((c0 >> 5) & 63u), ex5(c0 & 31u), 255u);
+    p[1] = uvec4(ex5((c1 >> 11) & 31u), ex6((c1 >> 5) & 63u), ex5(c1 & 31u), 255u);
+    if (c0 > c1 || !punch) {
+        p[2] = uvec4((2u * p[0].rgb + p[1].rgb + 1u) / 3u, 255u);
+        p[3] = uvec4((p[0].rgb + 2u * p[1].rgb + 1u) / 3u, 255u);
+    } else {
+        p[2] = uvec4((p[0].rgb + p[1].rgb) / 2u, 255u);
+        p[3] = uvec4(0u);
+    }
+    uint q[4];
+    for (int i = 0; i < 4; i++) q[i] = p[i].r | (p[i].g << 8) | (p[i].b << 16) | (p[i].a << 24);
+    for (int i = 0; i < 16; i++) px[i] = q[(w1 >> (2 * i)) & 3u];
+}
+
+void main() {
+    uint id = gl_GlobalInvocationID.x + gl_GlobalInvocationID.y * gl_NumWorkGroups.x * 64u;
+    if (id >= pc.blocks) return;
+    uint x = id % pc.bw, t = id / pc.bw, y = t % pc.bh, z = t / pc.bh;
+    uint wpb = pc.mode <= 2u ? 4u : (pc.mode <= 4u ? 1u : 2u);  // output words per block row
+    uint row0 = (z * pc.bh + y) * 4u, rowWords = pc.bw * wpb;
+    if (pc.mode <= 2u) {  // BC1, BC2, BC3 -> RGBA8
+        uint px[16];
+        if (pc.mode == 0u) {
+            bc1(src[id * 2u], src[id * 2u + 1u], true, px);
+        } else {
+            uint w0 = src[id * 4u], w1 = src[id * 4u + 1u];
+            bc1(src[id * 4u + 2u], src[id * 4u + 3u], false, px);
+            uint a[16];
+            if (pc.mode == 1u) {
+                for (int i = 0; i < 16; i++) a[i] = ex4(((i < 8 ? w0 : w1) >> (4 * (i & 7))) & 15u);
+            } else {
+                bc4(w0, w1, false, a);
+            }
+            for (int i = 0; i < 16; i++) px[i] = (px[i] & 0x00FFFFFFu) | (a[i] << 24);
+        }
+        for (uint r = 0u; r < 4u; r++)
+            for (uint c = 0u; c < 4u; c++) dst[(row0 + r) * rowWords + x * 4u + c] = px[r * 4u + c];
+    } else if (pc.mode <= 4u) {  // BC4 -> R8
+        uint v[16];
+        bc4(src[id * 2u], src[id * 2u + 1u], pc.mode == 4u, v);
+        for (uint r = 0u; r < 4u; r++)
+            dst[(row0 + r) * rowWords + x] = v[r * 4u] | (v[r * 4u + 1u] << 8) | (v[r * 4u + 2u] << 16) | (v[r * 4u + 3u] << 24);
+    } else {  // BC5 -> RG8
+        uint rr[16], gg[16];
+        bool sgn = pc.mode == 6u;
+        bc4(src[id * 4u], src[id * 4u + 1u], sgn, rr);
+        bc4(src[id * 4u + 2u], src[id * 4u + 3u], sgn, gg);
+        for (uint r = 0u; r < 4u; r++) {
+            uint i = r * 4u;
+            dst[(row0 + r) * rowWords + x * 2u] = rr[i] | (gg[i] << 8) | (rr[i + 1u] << 16) | (gg[i + 1u] << 24);
+            dst[(row0 + r) * rowWords + x * 2u + 1u] = rr[i + 2u] | (gg[i + 2u] << 8) | (rr[i + 3u] << 16) | (gg[i + 3u] << 24);
+        }
+    }
+}
+)";
+
+namespace {
+struct BcDecoder {
+    bool tried = false;
+    VkDescriptorSetLayout dsl = VK_NULL_HANDLE;
+    VkPipelineLayout layout = VK_NULL_HANDLE;
+    VkPipeline pipe = VK_NULL_HANDLE;
+} g_bc;
+}  // namespace
+
+// the compute pipeline, created on first use; null if unavailable (then the CPU decodes)
+static VkPipeline bc_decoder() {
+    if (g_bc.tried) return g_bc.pipe;
+    g_bc.tried = true;
+    const char* env = getenv("WWHD_BC_DECODE");
+    if (env && !strcmp(env, "cpu")) {
+        LOG("[vk] BC textures: decoded on the CPU (WWHD_BC_DECODE=cpu)");
+        return VK_NULL_HANDLE;
+    }
+    std::vector<uint32_t> spirv;
+    std::string log;
+    if (!compile_glsl_compute(kBcDecodeGlsl, spirv, log)) {
+        LOG("[vk] BC decode shader failed, decoding on the CPU: %s", log.c_str());
+        return VK_NULL_HANDLE;
+    }
+    VkShaderModuleCreateInfo mi{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
+    mi.codeSize = spirv.size() * 4;
+    mi.pCode = spirv.data();
+    VkShaderModule mod;
+    VK_CHECK(vkCreateShaderModule(R.device, &mi, nullptr, &mod));
+    VkDescriptorSetLayoutBinding b[2]{};
+    for (uint32_t i = 0; i < 2; i++) {
+        b[i].binding = i;
+        b[i].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        b[i].descriptorCount = 1;
+        b[i].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+    }
+    VkDescriptorSetLayoutCreateInfo dl{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
+    dl.bindingCount = 2;
+    dl.pBindings = b;
+    VK_CHECK(vkCreateDescriptorSetLayout(R.device, &dl, nullptr, &g_bc.dsl));
+    VkPushConstantRange pr{VK_SHADER_STAGE_COMPUTE_BIT, 0, 16};
+    VkPipelineLayoutCreateInfo pl{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
+    pl.setLayoutCount = 1;
+    pl.pSetLayouts = &g_bc.dsl;
+    pl.pushConstantRangeCount = 1;
+    pl.pPushConstantRanges = &pr;
+    VK_CHECK(vkCreatePipelineLayout(R.device, &pl, nullptr, &g_bc.layout));
+    VkComputePipelineCreateInfo ci{VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO};
+    ci.stage = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO};
+    ci.stage.stage = VK_SHADER_STAGE_COMPUTE_BIT;
+    ci.stage.module = mod;
+    ci.stage.pName = "main";
+    ci.layout = g_bc.layout;
+    VkResult r = vkCreateComputePipelines(R.device, R.pipelineCache, 1, &ci, nullptr, &g_bc.pipe);
+    vkDestroyShaderModule(R.device, mod, nullptr);
+    if (r != VK_SUCCESS) g_bc.pipe = VK_NULL_HANDLE;
+    LOG("[vk] BC textures: %s", g_bc.pipe ? "decoded on the GPU" : "decoded on the CPU (pipeline failed)");
+    return g_bc.pipe;
+}
+
+static void bc_verify();
+// the decoder for upload_surface(); runs the debug comparison on first use
+static VkPipeline bc_decoder_checked() {
+    static bool verified = false;
+    VkPipeline p = bc_decoder();
+    if (p && !verified) {
+        verified = true;
+        if (getenv("WWHD_BC_VERIFY")) bc_verify();
+    }
+    return p;
+}
+
+// records the decode of `blocks` (detiled BC blocks) into a fresh staging range; returns that range
+static Upload bc_decode_gpu(const FormatInfo& f, const std::vector<uint8_t>& blocks, uint32_t bw, uint32_t bh, uint32_t slices) {
+    const VkDeviceSize align = std::max<VkDeviceSize>(R.props.limits.minStorageBufferOffsetAlignment, 16);
+    Upload in = upload(blocks.data(), blocks.size(), align);
+    const VkDeviceSize outSize = (VkDeviceSize)bw * 4 * f.hostBytesPerBlock * bh * 4 * slices;
+    Upload out = upload_alloc(outSize, align);
+    VkDescriptorSet set = alloc_descriptor_set(g_bc.dsl);
+    VkDescriptorBufferInfo bi[2] = {{in.buf, in.offset, blocks.size()}, {out.buf, out.offset, outSize}};
+    VkWriteDescriptorSet w[2]{};
+    for (int i = 0; i < 2; i++) {
+        w[i] = {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+        w[i].dstSet = set;
+        w[i].dstBinding = i;
+        w[i].descriptorCount = 1;
+        w[i].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        w[i].pBufferInfo = &bi[i];
+    }
+    vkUpdateDescriptorSets(R.device, 2, w, 0, nullptr);
+    VkCommandBuffer cmd = command_buffer();
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, g_bc.pipe);
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, g_bc.layout, 0, 1, &set, 0, nullptr);
+    const uint32_t n = bw * bh * slices;
+    const uint32_t pc[4] = {(uint32_t)f.convert - (uint32_t)Convert::BC1, bw, bh, n};
+    vkCmdPushConstants(cmd, g_bc.layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof pc, pc);
+    const uint32_t groups = (n + 63) / 64, gx = std::min(groups, 65535u);
+    vkCmdDispatch(cmd, gx, (groups + gx - 1) / gx, 1);
+    return out;
+}
+
+// debug: WWHD_BC_VERIFY=1 decodes random blocks of every BC format on both the GPU and the CPU
+// and logs whether they match byte for byte
+static void bc_verify() {
+    uint32_t rng = 12345;
+    auto next = [&] { rng = rng * 1664525u + 1013904223u; return (uint8_t)(rng >> 24); };
+    const Convert modes[] = {Convert::BC1, Convert::BC2, Convert::BC3, Convert::BC4U, Convert::BC4S, Convert::BC5U, Convert::BC5S};
+    const uint32_t bw = 9, bh = 5, slices = 2;
+    int failed = 0;
+    for (Convert c : modes) {
+        FormatInfo f;
+        f.convert = c;
+        f.bytesPerBlock = (c == Convert::BC1 || c == Convert::BC4U || c == Convert::BC4S) ? 8 : 16;
+        f.hostBytesPerBlock = c <= Convert::BC3 ? 4 : (c <= Convert::BC4S ? 1 : 2);
+        std::vector<uint8_t> blocks((size_t)bw * bh * slices * f.bytesPerBlock);
+        for (size_t i = 0; i < blocks.size(); i++) blocks[i] = next();
+        // edge cases: equal endpoints, and -128 endpoints for the signed formats
+        memset(&blocks[0], 0x80, 4);
+        memcpy(&blocks[f.bytesPerBlock], &blocks[f.bytesPerBlock + 2], 2);
+        const uint32_t rowBytes = bw * 4 * f.hostBytesPerBlock, rows = bh * 4;
+        std::vector<uint8_t> cpu((size_t)rowBytes * rows * slices);
+        for (uint32_t z = 0; z < slices; z++)
+            for (uint32_t y = 0; y < bh; y++)
+                convert_row(c, &blocks[((size_t)z * bh + y) * bw * f.bytesPerBlock], &cpu[((size_t)z * rows + y * 4) * rowBytes], bw,
+                            rowBytes);
+        Upload out = bc_decode_gpu(f, blocks, bw, bh, slices);
+        VkMemoryBarrier mb{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
+        mb.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+        mb.dstAccessMask = VK_ACCESS_HOST_READ_BIT;
+        vkCmdPipelineBarrier(command_buffer(), VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_HOST_BIT, 0, 1, &mb, 0, nullptr, 0,
+                             nullptr);
+        wait_idle();
+        size_t bad = 0, first = 0;
+        for (size_t i = 0; i < cpu.size(); i++)
+            if (cpu[i] != out.ptr[i] && !bad++) first = i;
+        if (bad) {
+            failed++;
+            LOG("[vk] BC verify: mode %d: %zu of %zu bytes differ (first at %zu: GPU %d, CPU %d)", (int)c - (int)Convert::BC1, bad,
+                cpu.size(), first, out.ptr[first], cpu[first]);
+        }
+    }
+    LOG("[vk] BC verify: %s", failed ? "MISMATCH" : "GPU and CPU decoders match for all 7 formats");
+}
+
 // ---------------------------------------------------------------- upload (detile + convert)
 // Decodes one mip level into `out` in host layout: texels, or 4x4 blocks if the host image is
-// block compressed. outW/outH are the level's texel size.
+// block compressed (or if `rawBC`: BC blocks left for the GPU decoder). outW/outH are the level's
+// texel size.
 static void decode_level(Surface* s, uint32_t level, uint32_t base, std::vector<uint8_t>& out, uint32_t& outW, uint32_t& outH,
-                         uint32_t& outSlices) {
+                         uint32_t& outSlices, bool rawBC) {
     const FormatInfo& f = s->fmt;
     uint32_t w = std::max(s->width >> level, 1u), h = std::max(s->height >> level, 1u);
     uint32_t slices = s->dim == (uint32_t)Latte::E_DIM::DIM_3D ? std::max(s->slices >> level, 1u) : s->slices;
@@ -406,9 +653,9 @@ static void decode_level(Surface* s, uint32_t level, uint32_t base, std::vector<
     outW = w;
     outH = h;
     outSlices = slices;
-    const bool decodeBC = is_bc_decode(f.convert);
+    const bool decodeBC = is_bc_decode(f.convert) && !rawBC;
     // host row pitch and rows per slice
-    const uint32_t hostRowBytes = decodeBC ? bw * 4 * f.hostBytesPerBlock : bw * f.hostBytesPerBlock;
+    const uint32_t hostRowBytes = rawBC ? bw * f.bytesPerBlock : decodeBC ? bw * 4 * f.hostBytesPerBlock : bw * f.hostBytesPerBlock;
     const uint32_t hostRows = decodeBC ? bh * 4 : bh;
 
     // level geometry from the address library
@@ -445,7 +692,7 @@ static void decode_level(Surface* s, uint32_t level, uint32_t base, std::vector<
                 convert_row(f.convert, row.data(), dst, bw, hostRowBytes);
             } else {
                 uint8_t* dst = &out[((size_t)z * hostRows + y) * hostRowBytes];
-                if (f.convert == Convert::NONE) memcpy(dst, row.data(), row.size());
+                if (f.convert == Convert::NONE || rawBC) memcpy(dst, row.data(), row.size());
                 else convert_row(f.convert, row.data(), dst, norm16 ? bw * f.bytesPerBlock / 2 : bw);
             }
         }
@@ -472,7 +719,10 @@ void upload_surface(Surface* s) {
     LatteAddrLib::AddrSurfaceInfo_OUT info{};
     LatteAddrLib::GX2CalculateSurfaceInfo((Latte::E_GX2SURFFMT)s->format, s->width, s->height, s->slices, (Latte::E_DIM)s->dim,
                                           Latte::MakeGX2TileMode((Latte::E_HWTILEMODE)s->tileMode), 0, 0, &info);
-    s->dataSize = (uint32_t)info.surfSize;
+    if (s->dataSize != (uint32_t)info.surfSize) {
+        s->dataSize = (uint32_t)info.surfSize;
+        surfaces_changed();  // invalidate's index (vk_device.cpp)
+    }
     uint64_t hash = fnv(mem::ptr(s->addr), (size_t)info.surfSize);
     if (hash == s->contentHash) return;
     s->contentHash = hash;
@@ -483,6 +733,9 @@ void upload_surface(Surface* s) {
     std::vector<uint8_t> data;
     std::vector<VkBufferImageCopy> regions;
     const bool is3D = s->img.type == VK_IMAGE_TYPE_3D;
+    // BC without device support: decode all levels with one dispatch each, then copy them after one barrier
+    const bool gpuBC = is_bc_decode(f.convert) && bc_decoder_checked();
+    std::vector<std::pair<Upload, VkBufferImageCopy>> decoded;
     for (uint32_t level = 0; level < s->img.mips; level++) {
         uint32_t base;
         if (level == 0) base = s->addr;
@@ -498,8 +751,8 @@ void upload_surface(Surface* s) {
             base = sliceOffset;
         }
         uint32_t w, h, slices;
-        decode_level(s, level, base, data, w, h, slices);
-        Upload u = upload(data.data(), data.size(), 16);
+        decode_level(s, level, base, data, w, h, slices, gpuBC);
+        Upload u = gpuBC ? bc_decode_gpu(f, data, (w + 3) / 4, (h + 3) / 4, slices) : upload(data.data(), data.size(), 16);
         uint32_t layers = is3D ? 1 : std::min(slices, s->img.layers);
         uint32_t lw = std::max(s->img.width >> level, 1u), lh = std::max(s->img.height >> level, 1u);
         VkBufferImageCopy c{};
@@ -511,10 +764,22 @@ void upload_surface(Surface* s) {
         }
         c.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, level, 0, layers};
         c.imageExtent = {lw, lh, is3D ? slices : 1};
+        if (gpuBC) {
+            decoded.emplace_back(u, c);
+            continue;
+        }
         regions.clear();
         regions.push_back(c);
         vkCmdCopyBufferToImage(command_buffer(), u.buf, s->img.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, regions.data());
     }
+    if (decoded.empty()) return;
+    VkMemoryBarrier mb{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
+    mb.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+    mb.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+    vkCmdPipelineBarrier(command_buffer(), VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 1, &mb, 0, nullptr,
+                         0, nullptr);
+    for (auto& [u, c] : decoded)
+        vkCmdCopyBufferToImage(command_buffer(), u.buf, s->img.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &c);
 }
 
 // ---------------------------------------------------------------- GX2CopySurface

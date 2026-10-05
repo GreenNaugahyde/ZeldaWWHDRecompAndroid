@@ -29,6 +29,11 @@ void set_touch(bool down, float x, float y);  // mouse on the GamePad window
 bool pro_controller();
 void set_pro_controller(bool on);
 
+// GamePad rumble: a VPADControlMotor pattern (bit i = motor on during the i-th 1/120 s, least
+// significant bit first; bits == 0 stops), and the Pro Controller's motor on or off
+void rumble(const uint8_t* pattern, int bits);
+void rumble_hold(bool on);
+
 void init();       // main thread, after NSApplication exists
 PadState read();   // any thread
 void release_keys();                // forget held keys (another window took the keyboard)
@@ -40,11 +45,5 @@ void held_keys(bool* keys);         // 256 entries: keys held for the game (keyb
 // main thread with ok = false when cancelled. Text is UTF-16.
 void prompt_text(const std::u16string& initial, int max_len,
                  std::function<void(bool ok, std::u16string text)> done);
-
-// Run the rumble motor of the host controllers. The game asks for it from a guest thread
-// (VPADControlMotor / WPADControlMotor, see runtime/src/hle), so this only records the request;
-// the host input layer applies it with the next update. `strength` is 0..1 and `duration_ms`
-// how long the motor runs; a strength of 0 stops it.
-void set_rumble(float strength, uint32_t duration_ms);
 
 }  // namespace input

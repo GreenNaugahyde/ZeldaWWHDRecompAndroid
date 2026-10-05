@@ -58,6 +58,55 @@ final class GameDialog extends Dialog {
     }
 
     GameDialog cancelable(boolean c) { cancelable = c; return this; }
+
+    interface Capture { void got(int keyCode); }
+    private Capture capture;
+    private int captureCode;  // the controller button pressed, taken when it is released
+
+    /**
+     * Waits for a controller button (InputMapper.assignable; analog triggers and a hat D-pad count
+     * as their buttons) and passes it on once released, so its release doesn't reach anything else;
+     * Home / Guide cancels. While waiting, the controller doesn't operate the dialog.
+     */
+    GameDialog captureButton(Capture c) { capture = c; return this; }
+
+    @Override
+    public boolean dispatchKeyEvent(KeyEvent e) {
+        int code = e.getKeyCode();
+        if (capture == null || !(InputMapper.isController(e.getDevice()) || KeyEvent.isGamepadButton(code)))
+            return super.dispatchKeyEvent(e);
+        if (code == KeyEvent.KEYCODE_BACK) code = KeyEvent.KEYCODE_BUTTON_SELECT;
+        if (code == KeyEvent.KEYCODE_BUTTON_MODE) {
+            if (e.getAction() == KeyEvent.ACTION_UP) dismiss();
+            return true;
+        }
+        if (!InputMapper.assignable(code)) return true;
+        if (e.getAction() == KeyEvent.ACTION_DOWN && captureCode == 0) captureCode = code;
+        else if (e.getAction() == KeyEvent.ACTION_UP && code == captureCode) captured();
+        return true;
+    }
+
+    @Override
+    public boolean dispatchGenericMotionEvent(android.view.MotionEvent e) {
+        if (capture == null || !InputMapper.isController(e.getDevice())) return super.dispatchGenericMotionEvent(e);
+        java.util.List<Integer> held = InputMapper.analogButtons(e);
+        if (captureCode == 0 && !held.isEmpty()) captureCode = held.get(0);
+        else if (captureCode != 0 && !held.contains(captureCode) && isAnalog(captureCode)) captured();
+        return true;
+    }
+
+    private static boolean isAnalog(int code) {
+        return code == KeyEvent.KEYCODE_BUTTON_L2 || code == KeyEvent.KEYCODE_BUTTON_R2 || code == KeyEvent.KEYCODE_DPAD_UP
+                || code == KeyEvent.KEYCODE_DPAD_DOWN || code == KeyEvent.KEYCODE_DPAD_LEFT || code == KeyEvent.KEYCODE_DPAD_RIGHT;
+    }
+
+    private void captured() {
+        Capture c = capture;
+        int code = captureCode;
+        capture = null;
+        dismiss();
+        c.got(code);
+    }
     GameDialog top() { top = true; return this; }
 
     /** Presses the button at `index` (in the order added), as a tap would. */
