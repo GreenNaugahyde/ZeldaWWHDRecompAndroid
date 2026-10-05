@@ -16,6 +16,7 @@ extern "C" uint64_t g_draw_state_gen;    // gx2_core.cpp: bumped by any non-data
 #include "runtime.h"
 #include "util/helpers/StringBuf.h"
 #include "vk.h"
+#include "../mem_writes.h"
 
 #include <climits>
 #include <condition_variable>
@@ -100,13 +101,15 @@ static uint64_t hash_bytes(const void* data, size_t n, uint64_t h = 0x9E3779B97F
 
 // bytes copied to the GPU per category since the last report (vertex data, uniform blocks, uniform variables)
 static uint64_t g_bytes_vtx, g_bytes_vtx_shared, g_bytes_ubo, g_bytes_vars, g_bytes_vtx_reused, g_bytes_ubo_reused;
+static uint64_t g_stale_reuses;  // tracked reuses a comparison found outdated (copy_tracked)
 static uint64_t g_fast_draws, g_slow_draws;  // draws through the fast path (state reused) and the full one
 
 // Guest data copied for draws, per submission by address and size: a draw whose data is
 // byte-identical to an earlier copy in the same submission reuses it (the same mesh or uniform block
 // drawn many times). The comparison reads cached upload memory, much cheaper than another copy.
 struct SubmissionCopies {
-    std::unordered_map<uint64_t, Upload> map;
+    struct Copy { Upload u; uint32_t gen; };
+    std::unordered_map<uint64_t, Copy> map;
     uint64_t serial = ~0ull;
 };
 static Upload copy_deduped(SubmissionCopies& c, const void* src, uint32_t addr, uint32_t size, VkDeviceSize align,
@@ -119,15 +122,53 @@ static Upload copy_deduped(SubmissionCopies& c, const void* src, uint32_t addr, 
     uint64_t key = (uint64_t)addr << 32 | size;
     if (R.uploadCached) {
         auto it = c.map.find(key);
-        if (it != c.map.end() && memcmp(it->second.ptr, src, size) == 0) {
+        if (it != c.map.end() && memcmp(it->second.u.ptr, src, size) == 0) {
             reused += size;
-            return it->second;
+            return it->second.u;
         }
     }
     Upload u = upload_alloc(size, align);
     memcpy(u.ptr, src, size);
     copied += size;
-    if (R.uploadCached) c.map[key] = u;
+    if (R.uploadCached) c.map[key] = {u, 0};
+    return u;
+}
+
+// The same, but a copy is reused while the game hasn't written its pages since it was made
+// (mem_writes.h: the flushes the console needs) instead of comparing the bytes, which cost the
+// render thread ~10% in busy views (tens of MB a frame). Each copy is still compared on one frame
+// in 16 (spread by address), counting what the tracking missed. WWHD_TRACK_WRITES=0: compare always.
+static const bool g_track_writes = [] { const char* e = getenv("WWHD_TRACK_WRITES"); return !e || atoi(e) != 0; }();
+static Upload copy_tracked(SubmissionCopies& c, uint32_t addr, uint32_t size, VkDeviceSize align, uint64_t& copied, uint64_t& reused) {
+    command_buffer();
+    if (R.cmdSerial != c.serial) {  // transient memory is only valid within one submission
+        c.map.clear();
+        c.serial = R.cmdSerial;
+    }
+    const uint8_t* src = mem::ptr(addr);
+    uint64_t key = (uint64_t)addr << 32 | size;
+    auto it = c.map.find(key);
+    if (it != c.map.end() && memw::unchanged_since(addr, size, it->second.gen)) {
+        bool verify = ((addr >> 6) + R.frame) % 16 == 0;
+        if (!verify || memcmp(it->second.u.ptr, src, size) == 0) {
+            reused += size;
+            return it->second.u;
+        }
+        g_stale_reuses++;
+        static int logged = 0;
+        if (logged < 40) {
+            logged++;
+            uint32_t at = 0;
+            while (at < size && ((const uint8_t*)it->second.u.ptr)[at] == src[at]) at++;
+            LOG("[gfx] write tracking: %s %08X+%X outdated (first difference at +%X, frame %llu)", &copied == &g_bytes_ubo ? "uniform block" : "vertices",
+                addr, size, at, (unsigned long long)R.frame);
+        }
+    }
+    uint32_t gen = memw::now();  // before the copy: a write during it makes the next use copy again
+    Upload u = upload_alloc(size, align);
+    memcpy(u.ptr, src, size);
+    copied += size;
+    c.map[key] = {u, gen};
     return u;
 }
 
@@ -1502,10 +1543,19 @@ static void bind_stage(VkCommandBuffer cmd, VkPipelineLayout layout, const uint3
         uint32_t addr = regs[blockBase + i * 7];
         // the shader's declared array size (reading past the game's block in guest memory is harmless)
         uint32_t size = sh->blockRange[i];
+        // shaders that index a block dynamically (skinning palettes) declare 64 KiB: the game's own
+        // block size bounds what they can read (GX2Set*UniformBlock, word 1 = size - 1). Rounded to
+        // a power of two so the cached descriptor sets keep matching.
+        if (uint32_t game = regs[blockBase + i * 7 + 1] + 1; game > 16 && game < size) {
+            uint32_t p = 256;
+            while (p < game) p <<= 1;
+            size = std::min(size, p);
+        }
         static SubmissionCopies blocks;
         Upload u;
         if (addr && addr + (uint64_t)size <= 0x100000000ull) {
-            u = copy_deduped(blocks, mem::ptr(addr), addr, size, uboAlign, g_bytes_ubo, g_bytes_ubo_reused);
+            u = g_track_writes ? copy_tracked(blocks, addr, size, uboAlign, g_bytes_ubo, g_bytes_ubo_reused)
+                               : copy_deduped(blocks, mem::ptr(addr), addr, size, uboAlign, g_bytes_ubo, g_bytes_ubo_reused);
         } else {
             u = upload_alloc(size, uboAlign);
             memset(u.ptr, 0, size);
@@ -1958,6 +2008,8 @@ void report_skips() {
         g_bytes_ubo_reused / 300.0 / 1024, g_bytes_vars / 300.0 / 1024);
     g_bytes_vtx = g_bytes_vtx_shared = g_bytes_ubo = g_bytes_vars = g_bytes_vtx_reused = g_bytes_ubo_reused = 0;
     LOG("[gfx] last 300 frames, draws/frame: %.0f with state reused, %.0f resolved", g_fast_draws / 300.0, g_slow_draws / 300.0);
+    if (g_stale_reuses) LOG("[gfx] write tracking: %llu reuses were outdated (written without a flush)", (unsigned long long)g_stale_reuses);
+    g_stale_reuses = 0;
     g_fast_draws = g_slow_draws = 0;
 }
 
@@ -1969,6 +2021,7 @@ static Upload vertex_buffer(uint32_t addr, uint32_t size) {
     static uint64_t sharedSerial = ~0ull;
     if (size < 64 * 1024) {
         static SubmissionCopies small;
+        if (g_track_writes) return copy_tracked(small, addr, size, 16, g_bytes_vtx, g_bytes_vtx_reused);
         return copy_deduped(small, mem::ptr(addr), addr, size, 16, g_bytes_vtx, g_bytes_vtx_reused);
     }
     command_buffer();

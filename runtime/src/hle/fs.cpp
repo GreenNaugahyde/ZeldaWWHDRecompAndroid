@@ -13,6 +13,7 @@
 #include <string>
 #include <unordered_map>
 
+#include "../mem_writes.h"
 #include "../runtime.h"
 
 namespace {
@@ -196,6 +197,7 @@ HLE(coreinit, FSReadFile) {
     {
         BlockingScope b;  // the calling thread waits for the disc; others on its core run
         n = fread(mem::ptr(dst), 1, (size_t)size * count, f);
+        memw::mark(dst, (uint32_t)n);  // DMA on the console: no flush follows
     }
     ret(c, (uint32_t)(n / size));
 }

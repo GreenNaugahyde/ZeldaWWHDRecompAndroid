@@ -22,6 +22,7 @@
 #include "android/fps60.h"
 #include "android/perf_hint.h"
 #endif
+#include "mem_writes.h"
 
 using namespace Latte;
 
@@ -580,7 +581,11 @@ HLE(gx2, GX2CopyColorBufferToScanBuffer) {
 }
 HLE(gx2, GX2ExpandAAColorBuffer) { emit(OP_EXPAND_COLOR, {arg(c, 0)}); }
 HLE(gx2, GX2ExpandDepthBuffer) { emit(OP_EXPAND_DEPTH, {arg(c, 0)}); }
-HLE(gx2, GX2Invalidate) { emit(OP_INVALIDATE, {arg(c, 0), arg(c, 1), arg(c, 2)}); }
+HLE(gx2, GX2Invalidate) {
+    // the CPU bit flushes the range on the console (mem_writes.h); "everything" carries no information
+    if ((arg(c, 0) & 0x40) && arg(c, 2) < 0x10000000) memw::mark(arg(c, 1), arg(c, 2));
+    emit(OP_INVALIDATE, {arg(c, 0), arg(c, 1), arg(c, 2)});
+}
 
 // ---------------------------------------------------------------- submission and presentation
 HLE(gx2, GX2Flush) { emit_host(OP_FLUSH, {}); }
