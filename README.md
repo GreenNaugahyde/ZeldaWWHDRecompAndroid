@@ -52,6 +52,8 @@ The original project (macOS, the 60 fps modes, decompilation tools) is described
 - **Rumble** on the controller in use, or on the device while playing by touch.
 - **The original project's gameplay mods** on Android: climb any wall, direct right-stick camera,
   first person on R3, quick doors, fast scene changes.
+- **Faster running and swimming** (a new mod): Link runs and swims 1.25 up to 4 times as fast;
+  everything else keeps its speed.
 - **Performance work for weaker devices**: BC textures unpacked on the GPU where it can't sample
   them (most Mali and PowerVR GPUs), precise Vulkan barriers (on a Mali-G52 the GPU time per frame
   drops from 52 to 40 ms), less work on the render thread, Android performance hints and game
@@ -61,6 +63,13 @@ The original project (macOS, the 60 fps modes, decompilation tools) is described
 - **No internet access**: the app doesn't request it, and its manifest explicitly excludes it.
 
 ## Version history
+
+**0.4**
+
+- Controller buttons can be assigned to other Wii U buttons (Controls › Controller buttons).
+- A new mod: faster running and swimming, each 1.25× up to 4×, always or with L3 (press to switch
+  on and off, or hold).
+- Updating from 0.3 keeps the prepared game code: no new compile.
 
 **0.3**
 
@@ -107,7 +116,12 @@ The **on-screen controls** cover the Wii U GamePad: both sticks, the D-pad, A/B/
 controls hide while a game controller is in use and come back on the next touch.
 
 **Game controllers** map by button position, as the game uses them: the bottom face button is the
-Wii U's B, the right one A, the left one Y and the top one X; Select is −, Start is +.
+Wii U's B, the right one A, the left one Y and the top one X; Select is −, Start is +. Under
+Controls › **Controller buttons** you can assign each Wii U button to another controller button:
+choose the Wii U button, then press the controller button (analog triggers and a D-pad that reports
+as a hat count too). A controller button already in use swaps places, so no Wii U button is lost.
+Home / Guide and holding Select always open the menu, and the menu itself keeps using the buttons by
+position.
 
 **Keyboards**: WASD move, the arrow keys turn the camera, K or Space = A, J = B, L = X, I = Y, Q/E =
 L/R, Left Shift = ZL, C = ZR, Enter = +, Tab = −, H = HOME, 1–4 = D-pad, X/V = stick clicks.
@@ -140,9 +154,14 @@ back.)
   second display), screen layout, ambient
   occlusion, full-size occlusion depth, 16× anisotropic filtering, the performance overlay, the GPU
   driver (Adreno only), and deleting the shader cache (restarts the game as on its first start).
-- **Mods**: the gameplay mods, all off by default.
+- **Mods**: the gameplay mods, all off by default, and faster running and swimming (each 1.25× up
+  to 4×: Link covers more ground while running or swimming; jumps, rolls, climbing and the boat
+  stay as they are). Each applies always or with L3, set separately: one press switches it on and
+  the next off (a press switches the one for what Link is doing, swimming or not), or only while L3
+  is held.
 - **Controls**: on-screen controls on or off, their size, whether the controls act as a Wii U
-  GamePad or a Pro Controller, motion controls (gyro aiming) and rumble.
+  GamePad or a Pro Controller, motion controls (gyro aiming), rumble, and which controller button
+  presses which Wii U button.
 
 About (with the licenses) and Quit are always on the left.
 

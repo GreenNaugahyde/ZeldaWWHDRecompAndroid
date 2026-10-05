@@ -433,6 +433,10 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         Native.setOption("tv_aspect", prefs.getInt("tv_aspect", 0));
         for (String m : MODS) Native.setOption(m, prefs.getBoolean(m, false) ? 1 : 0);
         Native.setOption("mod_camera_speed", prefs.getInt("mod_camera_speed", 100));
+        Native.setOption("mod_run_speed", prefs.getInt("mod_run_speed", 100));
+        Native.setOption("mod_swim_speed", prefs.getInt("mod_swim_speed", 100));
+        Native.setOption("mod_run_mode", moveMode("mod_run"));
+        Native.setOption("mod_swim_mode", moveMode("mod_swim"));
     }
 
     void applyControlsAppearance() {
@@ -528,6 +532,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         controls.setClimbHud(prefs.getBoolean("mod_climb", false));
         controls.setPerfHud(prefs.getBoolean("perf_hud", false));
         controls.setPerfItems(prefs.getInt("perf_items", ControlsView.PERF_ALL));
+        mapper.loadMap(prefs.getString("pad_map", ""));
         controls.perfSettings = this::perfSettingsLines;
         controls.setPerfPosition(prefs.getFloat("perf_x", -1), prefs.getFloat("perf_y", -1));
     }
@@ -748,10 +753,11 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
             selectDown = false;
             keyHandler.removeCallbacks(selectHeld);
             if (!pressedHere || selectOpenedMenu) return;
-            mapper.padButtons |= Native.MINUS;
+            int bits = mapper.bitFor(KeyEvent.KEYCODE_BUTTON_SELECT);  // the − unless assigned otherwise
+            mapper.pulse(bits, true);
             pushInput();
             keyHandler.postDelayed(() -> {
-                mapper.padButtons &= ~Native.MINUS;
+                mapper.pulse(bits, false);
                 pushInput();
             }, 80);
         }
@@ -825,6 +831,19 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     void setAo(int mode) {
         Native.setOption("ao_mode", mode);
         prefs.edit().putInt("ao_mode", mode).apply();
+    }
+
+    // ---- controller buttons (OptionsMenu's Controller buttons page)
+    InputMapper inputMapper() { return mapper; }
+
+    void assignButton(int wiiuIndex, int code) {
+        mapper.assign(wiiuIndex, code);
+        prefs.edit().putString("pad_map", mapper.mapString()).apply();
+    }
+
+    void resetButtons() {
+        mapper.loadMap("");
+        prefs.edit().remove("pad_map").apply();
     }
 
     void setBool(String key, boolean v) {
@@ -920,6 +939,19 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     // optional changes to how the game plays (runtime/src/mods), all off by default
     static final String[] MODS = {"mod_direct_camera", "mod_first_person", "mod_climb", "mod_quick_doors", "mod_fast_scenes"};
     static final int[] CAMERA_SPEEDS = {50, 100, 150, 200};
+    static final int[] RUN_SPEEDS = {100, 125, 150, 200, 250, 300, 400};  // 100: off
+
+    // faster running ("mod_run") and swimming ("mod_swim") each apply always, or with L3: held, or
+    // one press switches it on and off
+    int moveMode(String mod) {
+        if (!prefs.getBoolean(mod + "_l3", false)) return 0;
+        return prefs.getBoolean(mod + "_l3_hold", false) ? 1 : 2;
+    }
+
+    void setMoveL3(String mod, boolean withL3, boolean hold) {
+        prefs.edit().putBoolean(mod + "_l3", withL3).putBoolean(mod + "_l3_hold", hold).apply();
+        Native.setOption(mod + "_mode", moveMode(mod));
+    }
 
     // ------------------------------------------------------------------ game from a disc image
     // The user picks a folder holding their .wux/.wud image, its disc key (same name, .key) and

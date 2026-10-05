@@ -9,6 +9,7 @@
 // the GameCube source lines are in tww/src/d/actor/d_a_player_main.cpp.
 #include <cmath>
 
+#include "mods/mods.h"
 #include "runtime.h"
 #include "true60.h"
 
@@ -51,16 +52,19 @@ extern "C" void site_023FD35C(Cpu* c) {
 // `current.pos += speed` (PSVECAdd(pos, speed, pos) at 023FD39C): pos += speed * dt. Gravity changed
 // speed.y by dv during this step (f31 = speed.y before); adding dv * (1-dt)/2 makes the half steps
 // land exactly on the 30 Hz path (v += g; p += v), so jump arcs keep their height and length.
+// The faster-running mod (mods.cpp) multiplies the horizontal part while Link runs, at any frame rate.
 extern "C" void site_023FD39C(Cpu* c) {
-    if (!link60()) return;
-    const float dt = true60::dt();
     uint32_t sp = c->r[4];  // &speed
+    const float k = mods::link_move_factor(sp - kSpeed);
+    const bool half = link60();
+    if (!half && k == 1.0f) return;
+    const float dt = half ? true60::dt() : 1.0f;
     float vx = u32_as_f32(ld32(sp)), vy = u32_as_f32(ld32(sp + 4)), vz = u32_as_f32(ld32(sp + 8));
     float dv = vy - (float)c->f[31].ps0;
     uint32_t v = scratch_vec();
-    st32(v, f32_as_u32(vx * dt));
+    st32(v, f32_as_u32(vx * dt * k));
     st32(v + 4, f32_as_u32(vy * dt + dv * (1.0f - dt) * 0.5f));
-    st32(v + 8, f32_as_u32(vz * dt));
+    st32(v + 8, f32_as_u32(vz * dt * k));
     c->r[4] = v;
 }
 

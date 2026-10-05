@@ -500,6 +500,34 @@ final class OptionsMenu extends Dialog {
                 });
             }
         }
+        String[] runs = new String[MainActivity.RUN_SPEEDS.length];
+        int curRun = 0, curSwim = 0;
+        for (int k = 0; k < runs.length; k++) {
+            runs[k] = MainActivity.RUN_SPEEDS[k] == 100 ? a.getString(R.string.opt_mod_run_off)
+                    : String.format(java.util.Locale.ROOT, "%.2f×", MainActivity.RUN_SPEEDS[k] / 100f).replace("0×", "×");
+            if (MainActivity.RUN_SPEEDS[k] == a.prefs.getInt("mod_run_speed", 100)) curRun = k;
+            if (MainActivity.RUN_SPEEDS[k] == a.prefs.getInt("mod_swim_speed", 100)) curSwim = k;
+        }
+        moveSpeed("mod_run", R.string.opt_mod_run, R.string.opt_mod_run_hint, runs, curRun);
+        moveSpeed("mod_swim", R.string.opt_mod_swim, R.string.opt_mod_swim_hint, runs, curSwim);
+    }
+
+    // faster running or swimming: its speed, and below it (when on) when it applies and how L3 works
+    private void moveSpeed(String mod, int label, int hint, String[] values, int cur) {
+        choice(label, hint, values, cur, k -> {
+            a.prefs.edit().putInt(mod + "_speed", MainActivity.RUN_SPEEDS[k]).apply();
+            Native.setOption(mod + "_speed", MainActivity.RUN_SPEEDS[k]);
+        });
+        if (MainActivity.RUN_SPEEDS[cur] == 100) return;
+        boolean withL3 = a.prefs.getBoolean(mod + "_l3", false), hold = a.prefs.getBoolean(mod + "_l3_hold", false);
+        String[] when = {a.getString(R.string.opt_mod_run_always), a.getString(R.string.opt_mod_run_with_l3)};
+        indentNext = true;
+        choice(R.string.opt_mod_run_when, 0, when, withL3 ? 1 : 0, k -> a.setMoveL3(mod, k == 1, hold));
+        if (withL3) {
+            String[] how = {a.getString(R.string.opt_mod_run_l3_switch), a.getString(R.string.opt_mod_run_l3_hold)};
+            indentNext = true;
+            choice(R.string.opt_mod_run_l3, 0, how, hold ? 1 : 0, k -> a.setMoveL3(mod, true, k == 1));
+        }
     }
 
     private void controls() {
@@ -518,6 +546,33 @@ final class OptionsMenu extends Dialog {
         choice(R.string.opt_controller, 0, kinds, Native.getOption("pro_controller") != 0 ? 1 : 0, i -> a.setBool("pro_controller", i == 1));
         toggle(R.string.opt_motion, R.string.opt_motion_hint, a.prefs.getBoolean("motion", true), a::setMotion);
         toggle(R.string.opt_rumble, R.string.opt_rumble_hint, a.prefs.getBoolean("rumble", true), a::setRumble);
+        submenu(R.string.opt_buttons, R.string.opt_buttons_hint,
+                a.getString(a.inputMapper().isDefaultMap() ? R.string.opt_buttons_default : R.string.opt_buttons_custom),
+                () -> openPage(this::buttonsPage));
+    }
+
+    // controller buttons: each Wii U button and the controller button that presses it
+    private void buttonsPage() {
+        pageTitle(R.string.opt_buttons);
+        note(a.getString(R.string.opt_buttons_note));
+        InputMapper m = a.inputMapper();
+        String[] names = a.getResources().getStringArray(R.array.wiiu_buttons);
+        for (int i = 0; i < InputMapper.WIIU.length; i++) {
+            final int n = i;
+            LinearLayout r = rowText(names[i], null);
+            TextView v = new TextView(getContext());
+            v.setText(InputMapper.buttonName(m.map[i]) + "  ›");
+            v.setTextColor(INK);
+            v.setTextSize(16);
+            v.setTypeface(Typeface.create("sans-serif-medium", Typeface.BOLD));
+            r.addView(v, new LinearLayout.LayoutParams(-2, -2));
+            r.setOnClickListener(x -> new GameDialog(getContext()).title(names[n])
+                    .message(a.getString(R.string.opt_buttons_press, names[n], InputMapper.buttonName(m.map[n])))
+                    .button(R.string.opt_cancel, null)
+                    .captureButton(code -> { a.assignButton(n, code); fill(); })
+                    .show());
+        }
+        submenu(R.string.opt_buttons_reset, 0, "", () -> { a.resetButtons(); fill(); });
     }
 
     private static int indexOf(String[] arr, String v, int fallback) {

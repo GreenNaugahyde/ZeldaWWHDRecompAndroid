@@ -424,6 +424,10 @@ JNI_FN(void, setOption)(JNIEnv* env, jclass, jstring name, jint value) {
     else if (n == "mod_climb") mods::set_climb_enabled(value != 0);
     else if (n == "mod_quick_doors") mods::set_quick_doors(value != 0);
     else if (n == "mod_fast_scenes") mods::set_fast_scenes(value != 0);
+    else if (n == "mod_run_speed") mods::set_run_speed(value / 100.0f);
+    else if (n == "mod_run_mode") mods::set_run_mode(value);
+    else if (n == "mod_swim_mode") mods::set_swim_mode(value);
+    else if (n == "mod_swim_speed") mods::set_swim_speed(value / 100.0f);
 }
 
 JNI_FN(jint, getOption)(JNIEnv* env, jclass, jstring name) {
@@ -439,6 +443,10 @@ JNI_FN(jint, getOption)(JNIEnv* env, jclass, jstring name) {
     if (n == "mod_climb") return mods::climb_enabled();
     if (n == "mod_quick_doors") return mods::quick_doors();
     if (n == "mod_fast_scenes") return mods::fast_scenes();
+    if (n == "mod_run_speed") return (int)lroundf(mods::run_speed() * 100);
+    if (n == "mod_run_mode") return mods::run_mode();
+    if (n == "mod_swim_mode") return mods::swim_mode();
+    if (n == "mod_swim_speed") return (int)lroundf(mods::swim_speed() * 100);
     return 0;
 }
 

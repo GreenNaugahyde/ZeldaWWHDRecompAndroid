@@ -183,6 +183,17 @@
     <string name="opt_mod_quick_doors">Quick doors</string>
     <string name="opt_mod_fast_scenes">Fast scene changes</string>
     <string name="opt_mod_speed_hint">4× speed</string>
+    <string name="opt_mod_run">Faster running</string>
+    <string name="opt_mod_run_hint">Link covers more ground while running; jumps and rolls stay as they are</string>
+    <string name="opt_mod_swim">Faster swimming</string>
+    <string name="opt_mod_swim_hint">The same while Link swims</string>
+    <string name="opt_mod_run_off">Off</string>
+    <string name="opt_mod_run_when">Applies</string>
+    <string name="opt_mod_run_always">Always</string>
+    <string name="opt_mod_run_with_l3">With L3</string>
+    <string name="opt_mod_run_l3">L3</string>
+    <string name="opt_mod_run_l3_switch">Press: on / off</string>
+    <string name="opt_mod_run_l3_hold">Hold</string>
     <string name="opt_onscreen">On-screen controls</string>
     <string name="opt_onscreen_size">On-screen controls size</string>
     <string name="opt_controller">Controls act as</string>
@@ -196,6 +207,31 @@
     <string name="opt_motion_hint">Aim by tilting the device, or a controller with motion sensors</string>
     <string name="opt_rumble">Rumble</string>
     <string name="opt_rumble_hint">On the controller, or this device while playing by touch</string>
+    <string name="opt_buttons">Controller buttons</string>
+    <string name="opt_buttons_hint">Which controller button presses which Wii U button</string>
+    <string name="opt_buttons_default">Default</string>
+    <string name="opt_buttons_custom">Custom</string>
+    <string name="opt_buttons_note">Choose a Wii U button, then press the controller button for it. A button that is already in use swaps places, so every Wii U button keeps one. Home / Guide and holding Select always open the menu, and the menu keeps using the buttons by position.</string>
+    <string name="opt_buttons_press">Press the controller button for %1$s (now: %2$s).\n\nHome / Guide or Cancel keeps it as it is.</string>
+    <string name="opt_buttons_reset">Reset to default</string>
+    <string-array name="wiiu_buttons">
+        <item>A</item>
+        <item>B</item>
+        <item>X</item>
+        <item>Y</item>
+        <item>L</item>
+        <item>R</item>
+        <item>ZL</item>
+        <item>ZR</item>
+        <item>− (minus)</item>
+        <item>+ (plus)</item>
+        <item>Left stick click</item>
+        <item>Right stick click</item>
+        <item>D-pad up</item>
+        <item>D-pad down</item>
+        <item>D-pad left</item>
+        <item>D-pad right</item>
+    </string-array>
     <string name="opt_drc_display">GamePad screen</string>
     <string name="opt_drc_display_hint">A second display was found (e.g. the lower screen of a dual-screen device)</string>
     <string name="drc_second_display">Second display</string>

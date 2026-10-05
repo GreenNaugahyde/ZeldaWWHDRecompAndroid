@@ -63,7 +63,8 @@ final class Native {
 
     /**
      * ao_mode (0..2), ao_hires, aniso, pro_controller (0/1); capture (any value); gameplay mods:
-     * mod_direct_camera, mod_camera_speed (percent), mod_first_person, mod_climb, mod_quick_doors, mod_fast_scenes.
+     * mod_direct_camera, mod_camera_speed (percent), mod_first_person, mod_climb, mod_quick_doors, mod_fast_scenes,
+     * mod_run_speed (percent), mod_run_mode (0 always, 1 hold L3, 2 L3 switches), mod_swim_speed (percent), mod_swim_mode (as run).
      */
     static native void setOption(String name, int value);
     static native int getOption(String name);
