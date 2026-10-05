@@ -1,5 +1,6 @@
 #include <chrono>
 extern "C" uint64_t g_shader_state_gen;  // gx2_core.cpp: bumped by shader-relevant register changes
+extern "C" uint64_t g_draw_state_gen;    // gx2_core.cpp: bumped by any non-data register change
 // Draw calls on Vulkan: shader translation (Cemu decompiler, GLSL -> SPIR-V), pipelines, resource
 // binding and primitive submission. Follows gfx/metal_draw.mm; binding conventions are those of
 // the Vulkan GLSL the decompiler emits (one descriptor set per stage, as in Cemu's Vulkan renderer).
@@ -2204,7 +2205,7 @@ void draw(const uint32_t* regs, uint32_t prim, uint32_t count, uint32_t indexTyp
     // created, written or invalidated since: everything resolved for it still holds (runs of draws of
     // the same object with different matrices: grass, trees, crowds)
     static std::vector<uint32_t> indices;  // render thread; storage reused across draws
-    if (g_prep_key.valid && !g_hires_redraw && g_prep_key.gen == g_shader_state_gen && g_prep_key.prim == prim &&
+    if (g_prep_key.valid && !g_hires_redraw && g_prep_key.gen == g_draw_state_gen && g_prep_key.prim == prim &&
         g_prep_key.frame == R.frame && g_prep_key.writeSeq == write_seq() && g_prep_key.surfaces == R.surfaces.size() &&
         g_prep_key.pass == g_pass_serial && R.pass != VK_NULL_HANDLE) {
         VkPrimitiveTopology ptype;
@@ -2383,7 +2384,7 @@ void draw(const uint32_t* regs, uint32_t prim, uint32_t count, uint32_t indexTyp
     P.pipe = pipe;
     P.depthControl = st.depthControl;
     if (!g_hires_redraw) {  // state after ensure_pass: it may have begun the render pass and marked targets written
-        g_prep_key = {g_shader_state_gen, R.frame, write_seq(), R.surfaces.size(), g_pass_serial, prim, true};
+        g_prep_key = {g_draw_state_gen, R.frame, write_seq(), R.surfaces.size(), g_pass_serial, prim, true};
         g_slow_draws++;
     }
     record_draw(regs, P, prim, count, indexType, indexAddr, baseVertex, instances, indices);

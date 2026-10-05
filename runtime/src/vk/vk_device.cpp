@@ -61,7 +61,9 @@ Chunk* new_chunk(VkDeviceSize size) {
     // compare guest data with what earlier draws already copied here (vk_draw.cpp, copy_deduped)
     ai.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT;
     ai.requiredFlags = VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;  // written without explicit flushes
-    ai.preferredFlags = VK_MEMORY_PROPERTY_HOST_CACHED_BIT;
+    // debug: WWHD_UPLOAD_UNCACHED=1 avoids cached memory (GPU reads of it may be snooped)
+    static const bool uncached = getenv("WWHD_UPLOAD_UNCACHED") != nullptr;
+    if (!uncached) ai.preferredFlags = VK_MEMORY_PROPERTY_HOST_CACHED_BIT;
     VmaAllocationInfo info{};
     VK_CHECK(vmaCreateBuffer(R.vma, &bi, &ai, &c->buf, &c->alloc, &info));
     c->ptr = (uint8_t*)info.pMappedData;
@@ -2091,7 +2093,10 @@ void perf_stats(float out[7]) {
 void swap() {
     cache_warm_step();
     perf_frame();
-    platform::perf_hint_frame();
+    // the upstream ADPF session (platform.cpp) would compete with ours on the same threads
+    // (android/perf_hint.cpp, game + render thread work); WWHD_UPSTREAM_PERF_HINT=1 uses it too
+    static const bool upstreamHint = getenv("WWHD_UPSTREAM_PERF_HINT") != nullptr;
+    if (upstreamHint) platform::perf_hint_frame();
     prof_frame();
     latch_resolution_scale();
     apply_frame_generation();

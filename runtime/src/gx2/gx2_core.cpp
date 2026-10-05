@@ -53,6 +53,9 @@ uint32* regs() { return g_regs; }
 // renderer reuses its last shader lookup while it is unchanged. Uniforms, uniform/vertex buffer
 // addresses and rewrites of an identical value don't count.
 extern "C" { uint64_t g_shader_state_gen = 1; }
+// any register change outside shader_irrelevant (the draw fast path in vk_draw.cpp: the shader
+// filter leaves out texture addresses and the like, which a draw must resolve again)
+extern "C" { uint64_t g_draw_state_gen = 1; }
 
 static bool shader_irrelevant(uint32 reg) {
     if (reg >= mmSQ_ALU_CONSTANT0_0 && reg < mmSQ_ALU_CONSTANT0_0 + 0x1000) return true;
@@ -79,16 +82,20 @@ static void apply_regs(uint32 first, const uint32* v, uint32 n) {
     touch_regs(first, n);
     if (memcmp(&g_regs[first], v, n * 4) != 0) {
         static const bool coarse = getenv("WWHD_COARSE_SHADER_GEN") != nullptr;  // debug: the old rule
-        for (uint32 i = 0; i < n; i++)
-            if (g_regs[first + i] != v[i] &&
-                (g_shader_reg_filter && !coarse ? g_shader_reg_filter(first + i, g_regs[first + i], v[i]) : !shader_irrelevant(first + i))) {
-                g_shader_state_gen++;
+        bool draw = false, shader = false;
+        for (uint32 i = 0; i < n && !(draw && shader); i++) {
+            if (g_regs[first + i] == v[i] || shader_irrelevant(first + i)) continue;
+            draw = true;  // any state a draw resolves (textures, samplers, targets, ...)
+            if (!shader && (g_shader_reg_filter && !coarse ? g_shader_reg_filter(first + i, g_regs[first + i], v[i]) : true)) {
+                shader = true;
                 if (g_gen_stats) {
                     g_gen_regs++;
                     g_gen_by_reg[first + i]++;
                 }
-                break;
             }
+        }
+        if (shader) g_shader_state_gen++;
+        if (draw) g_draw_state_gen++;
         memcpy(&g_regs[first], v, n * 4);
     }
     if (g_shadow) memcpy(&g_shadow[first], v, n * 4);
@@ -249,6 +256,7 @@ static void set_context(uint32 ctx) {
     (void)init;
     for (uint16_t b : g_reg_blocks) memcpy(&g_regs[b * kRegBlock], &g_shadow[b * kRegBlock], kRegBlock * 4);
     g_shader_state_gen++;
+    g_draw_state_gen++;
     if (g_gen_stats) g_gen_ctx++;
 }
 
@@ -782,6 +790,7 @@ void gx2_ss_load(ss::Reader& r) {
     auto it = g_contexts.find(active);
     g_shadow = active && it != g_contexts.end() ? it->second.data() : nullptr;
     g_shader_state_gen++;
+    g_draw_state_gen++;
     g_swap_interval = std::max<uint32>(r.u32(), 1);
     uint64_t guest_swaps = r.u64();
     {

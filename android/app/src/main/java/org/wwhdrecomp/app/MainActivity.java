@@ -97,6 +97,11 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     }
 
     String gameLanguage() {
+        Object old = prefs.getAll().get("language");
+        if (old instanceof Integer) {  // earlier builds of this fork: a Cafe OS language code
+            int c = (Integer) old;
+            prefs.edit().putString("language", c == 5 ? "es" : c == 2 ? "fr" : c == 3 ? "de" : c == 4 ? "it" : "en").commit();
+        }
         String l = prefs.getString("language", "");
         if (l.isEmpty()) l = java.util.Locale.getDefault().getLanguage();
         for (String s : LANGUAGES)
@@ -256,6 +261,10 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         if (!GpuDrivers.prepareHooks(this)) return null;
         setenv("WWHD_GPU_DRIVER_DIR", d.dir.getAbsolutePath() + "/");
         setenv("WWHD_GPU_DRIVER_LIB", d.library);
+        // Turnip: always render in tiles (GMEM). Its automatic choice falls back to direct rendering for
+        // many of the game's passes, which measured slower on an Adreno 740 (25 -> 28.5 fps in a heavy
+        // scene); a TU_DEBUG in wwhd.env wins
+        if (d.library.contains("freedreno") && Os.getenv("TU_DEBUG") == null) setenv("TU_DEBUG", "gmem");
         setenv("WWHD_GPU_HOOK_DIR", GpuDrivers.hookDir(this).getAbsolutePath() + "/");
         try {
             //noinspection ResultOfMethodCallIgnored
