@@ -55,11 +55,22 @@ Chunk* new_chunk(VkDeviceSize size) {
                VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
     VmaAllocationCreateInfo ai{};
     ai.usage = VMA_MEMORY_USAGE_AUTO;
-    ai.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT;
+    // cached memory where the device has it coherent (mobile GPUs share memory with the CPU): draws
+    // compare guest data with what earlier draws already copied here (vk_draw.cpp, copy_deduped)
+    ai.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT;
     ai.requiredFlags = VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;  // written without explicit flushes
+    ai.preferredFlags = VK_MEMORY_PROPERTY_HOST_CACHED_BIT;
     VmaAllocationInfo info{};
     VK_CHECK(vmaCreateBuffer(R.vma, &bi, &ai, &c->buf, &c->alloc, &info));
     c->ptr = (uint8_t*)info.pMappedData;
+    VkMemoryPropertyFlags mf = 0;
+    vmaGetAllocationMemoryProperties(R.vma, c->alloc, &mf);
+    static bool logged = false;
+    if (!logged) {
+        logged = true;
+        R.uploadCached = (mf & VK_MEMORY_PROPERTY_HOST_CACHED_BIT) != 0;
+        LOG("[vk] transient upload memory: %s", R.uploadCached ? "cached (copies deduplicated)" : "uncached");
+    }
     return c;
 }
 

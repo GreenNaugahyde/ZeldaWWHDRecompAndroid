@@ -92,6 +92,7 @@ struct Renderer {
     VkPhysicalDeviceProperties props{};
     VkPhysicalDeviceFeatures features{};  // enabled features
     bool mirrorClampToEdge = false;
+    bool uploadCached = false;   // transient upload memory is CPU-cached (copy_deduped compares in it)
     bool shaderFloat16 = false;  // 16-bit float arithmetic in shaders (frame generation)
     VkPipelineCache pipelineCache = VK_NULL_HANDLE;
     std::mutex queueMutex;  // vkQueueSubmit/Present from the render thread, waits from the UI thread
