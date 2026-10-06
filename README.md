@@ -1,6 +1,6 @@
 # Wind Waker HD Recompiled — Android Enhanced
 
-**Better touch controls and performance** for the Android port of
+**Better touch controls, graphics and performance** for the Android port of
 [ZeldaWWHDRecomp](https://github.com/ZeldaWWHDRecomp/ZeldaWWHDRecomp): The Legend of Zelda: The Wind
 Waker HD (Wii U, USA) as a native app for 64-bit ARM phones and tablets, recompiled from the game's
 PowerPC code to ARM, with its graphics running directly on Vulkan. No emulator.
@@ -33,6 +33,26 @@ controllers, frame generation, building) is in [docs/android-port-readme.md](doc
 - **Icons in the art style of the game**. Item, equipment and HUD icons are built **on your device
   from your own game files** the first time it starts; nothing of the game is shipped.
 
+### Graphics
+- **Native widescreen**: the game renders at your screen's shape (21:9, 20:9...) instead of
+  stretching 16:9. The camera sees more to the sides with the same vertical view (Hor+), the
+  culling follows, and the HUD keeps its proportions with hearts, rupees and buttons at the new
+  screen edges (Options → *Widescreen*, switchable while playing). Ported from the official
+  project's aspect-ratio support.
+- **Shadows fixed**: no more flickering between the near (detailed) and far (basic) shading when
+  moving the camera, and no more grid / moire pattern on sand and other ground. The causes were
+  dynamic depth bias left over from the previous render pass and work submitted in chunks in the
+  middle of a frame.
+- Renderer fixes ported from the official Vulkan backend: invariant vertex positions for multipass
+  depth tests, depth-compare samplers bound to depth surfaces, `GX2CopySurface` of depth and array
+  slices, uniform blocks compared instead of trusted to write tracking.
+- Ambient occlusion modes, including **Off**.
+
+### Camera
+- **Pinch to zoom** on the camera side: spread two fingers to bring the camera closer, pinch to
+  move it further away (half to twice the game's distance). Zoomed out, the camera uses the game's
+  own collision check and stays in front of walls. Not applied in first person.
+
 ### Performance
 The renderer's CPU work per frame was cut to a fraction in busy scenes, measured with simpleperf on a
 Snapdragon 8 Gen 2:
@@ -51,7 +71,7 @@ Snapdragon 8 Gen 2:
 
 ### More
 - **60 fps** by frame interpolation (game logic stays at 30 steps a second, nothing speeds up),
-  an **adaptive** mode that falls back to 30 where the device can't hold 60, and the original
+  holding full speed anywhere between 30 and 60 fps, an **adaptive** mode that falls back to 30 where the device can't hold 60, and the original
   project's redesigned **True 60** (experimental).
 - **Game language** selector: English, Spanish, French (the USA disc's languages).
 - **Cheats** from the original project: items, sword and shield, hearts, songs, Triforce, dungeon
@@ -111,7 +131,8 @@ its own license (see the [Android port's README](docs/android-port-readme.md#lic
 ## Credits
 
 - [ZeldaWWHDRecomp](https://github.com/ZeldaWWHDRecomp/ZeldaWWHDRecomp): the recompilation, the
-  Wii U system libraries, the 60 fps modes, the cheats, rumble and the performance fixes ported here.
+  Wii U system libraries, the 60 fps modes, the cheats, rumble, the aspect-ratio support and the
+  renderer and performance fixes ported here.
 - [GreenNaugahyde/ZeldaWWHDRecompAndroid](https://github.com/GreenNaugahyde/ZeldaWWHDRecompAndroid):
   the Android port (Vulkan renderer, on-device compilation, options menu, frame generation).
 - [Cemu](https://github.com/cemu-project/Cemu): the GPU address library and shader decompiler (MPL-2.0).
