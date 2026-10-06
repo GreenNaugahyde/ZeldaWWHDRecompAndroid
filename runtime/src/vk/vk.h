@@ -60,6 +60,7 @@ struct Surface {
     bool dirty = true;         // new, or invalidated by the game: do a full check
     FormatInfo fmt;
     float rscale = 1.0f;              // resolution scale: image size / guest size (render targets only)
+    float ax = 1.0f, ay = 1.0f;       // aspect ratio widening (taller) of TV-shaped targets, on top of rscale
     Surface* feedbackCopy = nullptr;  // copy sampled while this surface is a bound attachment
     uint64_t lastDrawFrame = ~0ull;   // render targets: the last frame drawn into,
     uint32_t drawStreak = 0;          // and in how many consecutive frames up to it

@@ -447,6 +447,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         Native.setOption("aniso", prefs.getBoolean("aniso", Native.getOption("aniso") != 0) ? 1 : 0);
         Native.setOption("pro_controller", prefs.getBoolean("pro_controller", Native.getOption("pro_controller") != 0) ? 1 : 0);
         Native.setOption("tv_aspect", prefs.getInt("tv_aspect", 0));
+        Native.setOption("render_aspect", prefs.getInt("render_aspect", 0));
         Native.setOption("fps_mode", prefs.getBoolean("fg_enabled", false) ? 0 : prefs.getInt("fps_mode", 0));
         Native.setOption("drawdone_mode", prefs.getInt("drawdone_mode", 0));
         Native.setOption("core_mode", prefs.getInt("core_mode", 0));

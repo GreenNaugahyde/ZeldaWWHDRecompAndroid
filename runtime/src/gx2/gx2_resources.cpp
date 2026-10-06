@@ -7,6 +7,7 @@
 #include "gx2_surface_calc.h"
 #include "gx2_texture_regs.h"
 #include "runtime.h"
+#include "../aspect.h"
 
 using namespace Latte;
 using gx2::set_reg;
@@ -286,6 +287,13 @@ static void uniform_regs(uint32 stageBase, uint32 offset, uint32 count, uint32 v
     if (offset + count > 0x400) count = 0x400 - std::min<uint32>(offset, 0x400);
     static thread_local uint32 tmp[0x400];  // per thread: several cores record display lists at once
     for (uint32 i = 0; i < count; i++) tmp[i] = ld32(values + 4 * i);
+    if (stageBase == 0x400 && count == 16 && aspect::tagged_projection()) {  // a layout projection (aspect.cpp)
+        uint32 w[17];
+        w[0] = mmSQ_ALU_CONSTANT0_0 + stageBase + offset;
+        memcpy(w + 1, tmp, 16 * 4);
+        gx2::emit(gx2::OP_SET_PROJ_REGS, w, 17);
+        return;
+    }
     set_regs(mmSQ_ALU_CONSTANT0_0 + stageBase + offset, tmp, count);
 }
 HLE(gx2, GX2SetVertexUniformReg) { uniform_regs(0x400, arg(c, 0), arg(c, 1), arg(c, 2)); }

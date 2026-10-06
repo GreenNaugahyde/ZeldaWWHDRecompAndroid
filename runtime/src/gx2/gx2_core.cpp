@@ -23,6 +23,7 @@
 #include "android/perf_hint.h"
 #endif
 #include "mem_writes.h"
+#include "../aspect.h"
 
 using namespace Latte;
 
@@ -312,7 +313,25 @@ static void execute_one(Op op, const uint32* p, uint32 n) {
     case OP_EXPAND_COLOR: case OP_EXPAND_DEPTH: break;  // MSAA/HiZ decompression: nothing to do on the host
     case OP_FLUSH: gfx::flush(); break;
     case OP_DRAW_DONE: gfx::draw_done(); break;
+    case OP_SET_PROJ_REGS: {
+        uint32 v[16];
+        memcpy(v, p + 1, sizeof v);
+        float kx, ky;
+        if (n == 17 && gfx::target_aspect_factors(g_regs[mmCB_COLOR0_TILE] & 0xFFFF, g_regs[mmCB_COLOR0_FRAG], kx, ky))
+            for (int i = 0; i < 4; i++) {  // rows x and y: the 16:9 layout space centred in the wider picture
+                v[i] = gx2::fbits(gx2::bitsf(v[i]) / kx);
+                v[4 + i] = gx2::fbits(gx2::bitsf(v[4 + i]) / ky);
+            }
+        apply_regs(p[0], v, std::min<uint32>(n - 1, 16));
+        break;
+    }
+    case OP_LAYOUT_ROOT: {
+        float kx, ky;
+        aspect::layout_root_target(p[0], gfx::target_aspect_factors(g_regs[mmCB_COLOR0_TILE] & 0xFFFF, g_regs[mmCB_COLOR0_FRAG], kx, ky));
+        break;
+    }
     case OP_SWAP:
+        if (n) gfx::set_frame_aspect(gx2::bitsf(p[0]));  // aspect ratio from the next frame on (aspect.cpp)
         gfx::swap();
 #ifdef __ANDROID__
         {
@@ -624,7 +643,8 @@ HLE(gx2, GX2SwapScanBuffers) {
         }
         LOG("%s", buf);
     }
-    emit_host(OP_SWAP, {});
+    float a = aspect::on_swap();  // aspect ratio of the next frame (game projections, render targets)
+    emit_host(OP_SWAP, {gx2::fbits(a)});
     {
         std::lock_guard<std::mutex> lk(g_flip_mutex);
         update_flips();
@@ -803,4 +823,5 @@ void gx2_ss_load(ss::Reader& r) {
         g_count_offset = (int64_t)guest_swaps - (int64_t)g_swap_count;
     }
     gfx::ss_reset_surfaces();
+    aspect::ss_reset();  // layouts recompute their matrices for the current aspect
 }

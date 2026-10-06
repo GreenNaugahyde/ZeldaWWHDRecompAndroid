@@ -25,6 +25,7 @@
 #include "runtime.h"
 #include "vk.h"
 #include "vk_window.h"
+#include "../aspect.h"
 
 namespace gfx {
 Renderer R;
@@ -1053,6 +1054,12 @@ VkRect2D rotate_rect(VkRect2D r, VkExtent2D ext, uint32_t rot) {
     }
 }
 
+// the shape of the TV picture's rect on screen: the aspect the game renders at in "screen" mode (aspect.cpp)
+void report_tv_shape(const ScreenRect& r, VkExtent2D ext) {
+    float w = r.w > 0 ? r.w : (float)ext.width, h = r.h > 0 ? r.h : (float)ext.height;
+    if (h > 0) aspect::set_window_aspect(w / h);
+}
+
 void draw_screen(VkCommandBuffer cmd, Screen& scr, const ScreenRect& r, VkExtent2D ext, int mode = 0, uint32_t rot = 0) {
     if (!scr.img.image) return;
     float pc[8];
@@ -1145,6 +1152,7 @@ bool present_frame() {
     vkCmdSetViewport(cmd, 0, 1, &vp);
     vkCmdSetScissor(cmd, 0, 1, &sc);
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g_sc.pipeline);
+    report_tv_shape(g_tv_rect, g_sc.extent);
     draw_screen(cmd, R.tv, g_tv_rect, g_sc.extent, g_tv_aspect.load(std::memory_order_relaxed), g_sc.rot);
     if (g_drc_visible) draw_screen(cmd, R.drc, g_drc_rect, g_sc.extent, 0, g_sc.rot);
     vkCmdEndRenderPass(cmd);
@@ -1596,6 +1604,7 @@ bool present_frame_fg() {
         drcRect = g_drc_rect;
         drcVisible = g_drc_visible;
     }
+    report_tv_shape(tvRect, {w, h});
     draw_screen(cmd, R.tv, tvRect, {w, h}, g_tv_aspect.load(std::memory_order_relaxed));
     if (drcVisible) draw_screen(cmd, R.drc, drcRect, {w, h});
     vkCmdEndRenderPass(cmd);

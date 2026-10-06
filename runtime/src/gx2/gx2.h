@@ -32,6 +32,9 @@ void clear_depth_stencil(const uint32_t* regs, uint32_t depthBuffer, float depth
 void copy_surface(uint32_t src, uint32_t srcMip, uint32_t srcSlice, uint32_t dst, uint32_t dstMip, uint32_t dstSlice);
 void copy_to_scan(uint32_t colorBuffer, uint32_t target);  // target: 1 = TV, 4 = DRC (GamePad)
 void swap();                     // present the TV scan buffer
+void set_frame_aspect(float a);  // aspect ratio of the TV picture from the next frame on (aspect.cpp)
+// a render target of this guest size is widened (taller) for the aspect ratio: by kx, ky
+bool target_aspect_factors(uint32_t w, uint32_t h, float& kx, float& ky);
 uint64_t frames_completed();     // swaps whose GPU work has finished
 uint64_t frames_submitted();     // swaps the render thread has submitted
 void with_autorelease_pool(void (*fn)());  // render thread: drain Objective-C temporaries per batch

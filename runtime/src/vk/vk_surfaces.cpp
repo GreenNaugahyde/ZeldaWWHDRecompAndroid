@@ -92,16 +92,51 @@ static bool screen_shaped(const Surface* s) {
     return aspect > 1.70f && aspect < 1.84f;
 }
 
+// Aspect ratio of the TV picture (aspect.cpp): the game's TV-shaped buffers (1280x720 ... and their
+// reductions, not the GamePad's 854x480 family) are created kx times wider (ky taller) on top of the
+// resolution scale. Draws keep their guest viewports, which then cover the wider image, and the
+// game's projections are widened to match (Hor+), so every full-screen pass lines up. The factor
+// travels with the swap command and changes between frames only (render thread).
+static float g_aspect_kx = 1.0f, g_aspect_ky = 1.0f;
+void set_frame_aspect(float a) {
+    const float base = 16.0f / 9.0f;
+    if (!(a > 0.5f && a < 8.0f)) a = base;
+    float kx = a >= base ? a / base : 1.0f, ky = a >= base ? 1.0f : base / a;
+    if (kx != g_aspect_kx || ky != g_aspect_ky) LOG("[gfx] aspect %.4f: TV targets x%.4f wide, x%.4f tall", a, kx, ky);
+    g_aspect_kx = kx;
+    g_aspect_ky = ky;
+}
+static bool tv_shaped(uint32_t width, uint32_t height) {
+    if (width < 32 || height < 18) return false;
+    for (uint32_t w = 854, h = 480; w >= 32; w >>= 1, h >>= 1)
+        if ((width == w || width == w + 1) && height == h) return false;
+    float r = (float)width * 9.0f / ((float)height * 16.0f);
+    return r > 0.97f && r < 1.03f;
+}
+bool target_aspect_factors(uint32_t w, uint32_t h, float& kx, float& ky) {
+    bool on = tv_shaped(w, h) && (g_aspect_kx != 1.0f || g_aspect_ky != 1.0f);
+    kx = on ? g_aspect_kx : 1.0f;
+    ky = on ? g_aspect_ky : 1.0f;
+    return on;
+}
+static void target_aspect(const Surface* s, float& ax, float& ay) {
+    if (s->slices != 1 || s->mips > 1 || s->fmt.compressed) { ax = ay = 1.0f; return; }
+    target_aspect_factors(s->width, s->height, ax, ay);
+}
+
 Surface* rescaled(Surface* s) {
     if (!s || !s->img.image || s->img.type != VK_IMAGE_TYPE_2D || s->mips > 1 || !screen_shaped(s)) return s;
-    float want = resolution_scale();
-    if (std::fabs(s->rscale - want) < 1e-3f) return s;
+    float want = resolution_scale(), ax, ay;
+    target_aspect(s, ax, ay);
+    if (std::fabs(s->rscale - want) < 1e-3f && s->ax == ax && s->ay == ay) return s;
     Image old = s->img;
-    float oldScale = s->rscale;
+    float oldScale = s->rscale, oldAx = s->ax, oldAy = s->ay;
     s->img = Image{};
     if (!create_surface_image(s, true)) {
         s->img = old;
         s->rscale = oldScale;
+        s->ax = oldAx;
+        s->ay = oldAy;
         return s;
     }
     // keep the contents: a filtered copy where the format allows, else a nearest one; none if the
@@ -144,10 +179,12 @@ bool create_surface_image(Surface* s, bool forRendering) {
         usage |= s->fmt.depth ? VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT : VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
     uint32_t w = s->width, h = type == VK_IMAGE_TYPE_1D ? 1 : s->height;
     s->rscale = 1.0f;
-    if (forRendering && type == VK_IMAGE_TYPE_2D && resolution_scale() != 1.0f && screen_shaped(s)) {
+    s->ax = s->ay = 1.0f;
+    if (forRendering && type == VK_IMAGE_TYPE_2D && screen_shaped(s)) target_aspect(s, s->ax, s->ay);
+    if (forRendering && type == VK_IMAGE_TYPE_2D && (resolution_scale() != 1.0f || s->ax != 1.0f || s->ay != 1.0f) && screen_shaped(s)) {
         s->rscale = resolution_scale();
-        w = std::max<uint32_t>(1, (uint32_t)lroundf(s->width * s->rscale));
-        h = std::max<uint32_t>(1, (uint32_t)lroundf(s->height * s->rscale));
+        w = std::max<uint32_t>(1, (uint32_t)lroundf(s->width * s->rscale * s->ax));
+        h = std::max<uint32_t>(1, (uint32_t)lroundf(s->height * s->rscale * s->ay));
     }
     // a mip chain can't be longer than the size allows
     uint32_t maxMips = 1;

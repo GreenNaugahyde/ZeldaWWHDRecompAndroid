@@ -1318,7 +1318,8 @@ static Surface* feedback_copy(Surface* s) {
 struct StageTextures {
     VkImageView view[LATTE_NUM_MAX_TEX_UNITS];
     VkSampler sampler[LATTE_NUM_MAX_TEX_UNITS];
-    float unitScale[LATTE_NUM_MAX_TEX_UNITS];  // by texture unit: resolution scale of the bound surface
+    float unitScale[LATTE_NUM_MAX_TEX_UNITS];  // by texture unit: resolution scale of the bound surface (x)
+    float unitScaleY[LATTE_NUM_MAX_TEX_UNITS]; // ... (y; differs from x for aspect-widened targets)
 };
 
 static void resolve_textures(const uint32_t* regs, Shader* sh, bool vertex, Surface* const* colors, Surface* depth, StageTextures& out) {
@@ -1326,7 +1327,7 @@ static void resolve_textures(const uint32_t* regs, Shader* sh, bool vertex, Surf
     auto& rm = dec->resourceMapping;
     uint32_t texBase = vertex ? REGADDR::SQ_TEX_RESOURCE_WORD0_N_VS : REGADDR::SQ_TEX_RESOURCE_WORD0_N_PS;
     uint32_t samplerBase = vertex ? SAMPLER_BASE_INDEX_VERTEX : SAMPLER_BASE_INDEX_PIXEL;
-    for (int u = 0; u < LATTE_NUM_MAX_TEX_UNITS; u++) out.unitScale[u] = 1.0f;
+    for (int u = 0; u < LATTE_NUM_MAX_TEX_UNITS; u++) out.unitScale[u] = out.unitScaleY[u] = 1.0f;
     for (sint32 i = 0; i < rm.getTextureCount(); i++) {
         out.view[i] = VK_NULL_HANDLE;
         out.sampler[i] = VK_NULL_HANDLE;
@@ -1353,7 +1354,8 @@ static void resolve_textures(const uint32_t* regs, Shader* sh, bool vertex, Surf
              regs[REGADDR::SQ_TEX_SAMPLER_WORD0_0 + (std::min<uint32_t>(samplerIdx, 17) + samplerBase) * 3 + 2]);
         if (v) {
             prepare(s->img, Use::SAMPLED);
-            out.unitScale[unit] = s->rscale;
+            out.unitScale[unit] = s->rscale * s->ax;
+            out.unitScaleY[unit] = s->rscale * s->ay;
         }
         else v = null_texture(type == VK_IMAGE_VIEW_TYPE_CUBE_ARRAY && !R.features.imageCubeArray ? VK_IMAGE_VIEW_TYPE_CUBE : type);
         out.view[i] = v;
@@ -1452,7 +1454,7 @@ void descriptor_cache_trim() {
 // binds one stage's descriptor set: textures, support buffer (uniform registers, remapped
 // uniforms, helper values) and uniform blocks
 static void bind_stage(VkCommandBuffer cmd, VkPipelineLayout layout, const uint32_t* regs, Shader* sh, bool vertex,
-                       const StageTextures& tex, float targetScale) {
+                       const StageTextures& tex, float targetScale, float targetScaleY) {
     if (!sh->dsl || sh->bindings.empty()) return;
     LatteDecompilerShader* dec = sh->dec;
     auto& rm = dec->resourceMapping;
@@ -1529,13 +1531,14 @@ static void bind_stage(VkCommandBuffer cmd, VkPipelineLayout layout, const uint3
         }
         if (dec->uniform.loc_fragCoordScale >= 0) {
             float* v = at(dec->uniform.loc_fragCoordScale);
-            v[0] = v[1] = 1.0f / targetScale;  // xy: render target pixels -> guest pixels; zw origin (Vulkan layout)
+            v[0] = 1.0f / targetScale;  // xy: render target pixels -> guest pixels; zw origin (Vulkan layout)
+            v[1] = 1.0f / targetScaleY;
             v[2] = v[3] = 0.0f;
         }
         for (auto& e : dec->uniform.list_ufTexRescale) {  // texel coordinates: guest texels -> image texels
-            float sc = e.texUnit < LATTE_NUM_MAX_TEX_UNITS ? tex.unitScale[e.texUnit] : 1.0f;
-            at(e.uniformLocation)[0] = sc;
-            at(e.uniformLocation)[1] = sc;
+            bool known = e.texUnit < LATTE_NUM_MAX_TEX_UNITS;
+            at(e.uniformLocation)[0] = known ? tex.unitScale[e.texUnit] : 1.0f;
+            at(e.uniformLocation)[1] = known ? tex.unitScaleY[e.texUnit] : 1.0f;
         }
         buffers[nb] = {u.buf, dyn ? 0 : u.offset, size};
         if (dyn) dynOffsets[nd++] = {(uint32_t)rm.uniformVarsBufferBindingPoint, (uint32_t)u.offset};
@@ -2106,7 +2109,8 @@ struct Prepared {
     Surface* colors[8] = {};
     Surface* depth = nullptr;
     uint32_t depthSlice = 0, w = 0, h = 0, sx = 0, sy = 0, ex = 0, ey = 0, depthControl = 0;
-    float targetScale = 1.0f, k = 1.0f;
+    float targetScale = 1.0f, k = 1.0f;     // x: image pixels per guest pixel
+    float targetScaleY = 1.0f, ky = 1.0f;   // y (differs from x for aspect-widened targets)
     StageTextures vtex, ptex;
     Pipeline* pipe = nullptr;
 };
@@ -2130,7 +2134,7 @@ static void record_draw(const uint32_t* regs, const Prepared& P, uint32_t prim, 
     Surface* const* colors = P.colors;
     Surface* depth = P.depth;
     const uint32_t depthSlice = P.depthSlice;
-    const float targetScale = P.targetScale, k = P.k;
+    const float targetScale = P.targetScale, k = P.k, targetScaleY = P.targetScaleY, ky = P.ky;
     const uint32_t sx = P.sx, sy = P.sy, ex = P.ex, ey = P.ey, w = P.w, h = P.h;
     const uint32_t stDepthControl = P.depthControl;
     Pipeline* pipe = P.pipe;
@@ -2186,7 +2190,7 @@ static void record_draw(const uint32_t* regs, const Prepared& P, uint32_t prim, 
     float ys = gx2::bitsf(regs[REGADDR::PA_CL_VPORT_YSCALE]), yo = gx2::bitsf(regs[REGADDR::PA_CL_VPORT_YOFFSET]);
     float zs = gx2::bitsf(regs[REGADDR::PA_CL_VPORT_ZSCALE]), zo = gx2::bitsf(regs[REGADDR::PA_CL_VPORT_ZOFFSET]);
     bool halfZ = clipCntl.get_DX_CLIP_SPACE_DEF();
-    VkViewport vp{(xo - xs) * k, (yo - ys) * k, xs * 2.0f * k, ys * 2.0f * k, halfZ ? zo : zo - zs, zs + zo};
+    VkViewport vp{(xo - xs) * k, (yo - ys) * ky, xs * 2.0f * k, ys * 2.0f * ky, halfZ ? zo : zo - zs, zs + zo};
     if (vp.height == 0) vp.height = 1;  // Vulkan forbids an empty viewport
     if (vp.width <= 0) { vp.x += vp.width; vp.width = std::max(-vp.width, 1.0f); }
     vp.minDepth = std::clamp(vp.minDepth, 0.0f, 1.0f);
@@ -2217,8 +2221,8 @@ static void record_draw(const uint32_t* regs, const Prepared& P, uint32_t prim, 
             g_ds.vbOffset[slot] = off;
         }
     }
-    bind_stage(cmd, pipe->layout, regs, vs, true, vtex, targetScale);
-    bind_stage(cmd, pipe->layout, regs, ps, false, ptex, targetScale);
+    bind_stage(cmd, pipe->layout, regs, vs, true, vtex, targetScale, targetScaleY);
+    bind_stage(cmd, pipe->layout, regs, ps, false, ptex, targetScale, targetScaleY);
 
     static uint64_t drawInFrame = 0, lastFrame = 0;
     if (lastFrame != R.frame) { lastFrame = R.frame; drawInFrame = 0; }
@@ -2393,11 +2397,11 @@ void draw(const uint32_t* regs, uint32_t prim, uint32_t count, uint32_t indexTyp
     // one framebuffer size (image size, which includes the resolution scale) for all attachments;
     // drop mismatching ones (as the Metal renderer does)
     uint32_t w = 0, h = 0;
-    float targetScale = 1.0f;
+    float targetScale = 1.0f, targetScaleY = 1.0f;
     for (auto* c : colors)
-        if (c) { w = c->img.width; h = c->img.height; targetScale = c->rscale; break; }
+        if (c) { w = c->img.width; h = c->img.height; targetScale = c->rscale * c->ax; targetScaleY = c->rscale * c->ay; break; }
     if (depth && w && (depth->img.width < w || depth->img.height < h)) { depth = nullptr; g_skip[SK_DROPPED_DEPTH]++; }
-    if (!w && depth) { w = depth->img.width; h = depth->img.height; targetScale = depth->rscale; }
+    if (!w && depth) { w = depth->img.width; h = depth->img.height; targetScale = depth->rscale * depth->ax; targetScaleY = depth->rscale * depth->ay; }
     for (auto& c : colors)
         if (c && (c->img.width != w || c->img.height != h)) { c = nullptr; g_skip[SK_DROPPED_COLOR]++; }
     if (!w) { g_skip[SK_NO_TARGET]++; return; }
@@ -2441,10 +2445,10 @@ void draw(const uint32_t* regs, uint32_t prim, uint32_t count, uint32_t indexTyp
 
     // viewport and scissor (Vulkan's viewport transform is the hardware's: y = YOFFSET + YSCALE * ndc)
     // guest units -> image pixels: the resolution scale, times 1.5 for the private AO depth copy
-    const float k = (g_hires_redraw ? 1.5f : 1.0f) * targetScale;
+    const float k = (g_hires_redraw ? 1.5f : 1.0f) * targetScale, ky = (g_hires_redraw ? 1.5f : 1.0f) * targetScaleY;
     uint32_t tl = regs[REGADDR::PA_SC_GENERIC_SCISSOR_TL], br = regs[REGADDR::PA_SC_GENERIC_SCISSOR_BR];
-    uint32_t sx = std::min<uint32_t>((uint32_t)((tl & 0x7FFF) * k), w), sy = std::min<uint32_t>((uint32_t)(((tl >> 16) & 0x7FFF) * k), h);
-    uint32_t ex = std::min<uint32_t>((uint32_t)((br & 0x7FFF) * k), w), ey = std::min<uint32_t>((uint32_t)(((br >> 16) & 0x7FFF) * k), h);
+    uint32_t sx = std::min<uint32_t>((uint32_t)((tl & 0x7FFF) * k), w), sy = std::min<uint32_t>((uint32_t)(((tl >> 16) & 0x7FFF) * ky), h);
+    uint32_t ex = std::min<uint32_t>((uint32_t)((br & 0x7FFF) * k), w), ey = std::min<uint32_t>((uint32_t)(((br >> 16) & 0x7FFF) * ky), h);
     if (ex <= sx || ey <= sy) { g_skip[SK_SCISSOR]++; return; }
 
     // textures: uploads, layout changes and copies happen before the render pass begins
@@ -2491,6 +2495,8 @@ void draw(const uint32_t* regs, uint32_t prim, uint32_t count, uint32_t indexTyp
     P.h = h;
     P.targetScale = targetScale;
     P.k = k;
+    P.targetScaleY = targetScaleY;
+    P.ky = ky;
     P.sx = sx; P.sy = sy; P.ex = ex; P.ey = ey;
     P.vtex = vtex;
     P.ptex = ptex;

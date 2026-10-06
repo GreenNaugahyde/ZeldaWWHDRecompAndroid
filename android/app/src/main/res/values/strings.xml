@@ -209,6 +209,12 @@
     <string name="opt_resolution">Rendering resolution</string>
     <string name="opt_framegen">Frame generation</string>
     <string name="opt_aspect">Aspect ratio</string>
+    <string name="opt_render_aspect">Widescreen</string>
+    <string name="opt_render_aspect_hint">Screen shape: the game renders at your screen\'s aspect ratio and shows more to the sides; the HUD keeps its proportions at the screen edges</string>
+    <string-array name="render_aspect_modes">
+        <item>Original 16:9</item>
+        <item>Screen shape</item>
+    </string-array>
     <string name="opt_layout">Screen layout</string>
     <string name="opt_ao">Ambient occlusion</string>
     <string name="opt_ao_hires">Full-size occlusion depth</string>
