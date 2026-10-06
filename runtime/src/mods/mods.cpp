@@ -61,6 +61,11 @@ void set_camera_speed(float s) {
     g_speed = s;
     LOG("[mods] camera speed x%.2f", s);
 }
+// pinch zoom: applied where the camera is drawn (interp.cpp hook_024FFC40), never to the game's
+// own camera state, so the follow camera, collision and saves keep the game's distance
+static std::atomic<float> g_zoom{1.0f};
+float camera_zoom() { return g_zoom.load(std::memory_order_relaxed); }
+void set_camera_zoom(float z) { g_zoom = std::fmin(std::fmax(z, 0.5f), 2.0f); }
 bool mouse_camera() { return g_mouse.load(std::memory_order_relaxed); }
 void set_mouse_camera(bool on) {
     g_mouse = on;

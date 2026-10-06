@@ -24,6 +24,7 @@
 #include "release.h"
 #include "savestate.h"
 #include "true60.h"
+#include "mods/mods.h"
 
 
 extern "C" {
@@ -219,8 +220,56 @@ Prev* prev_for(uint32_t cam) {
 
 }  // namespace interp
 
-// camera_draw(camera_process_class*)
+static void camera_draw(Cpu* c);
+// camera_draw(camera_process_class*). Pinch zoom (mods::camera_zoom, touch): the eye moves along
+// its line to the target for the draw only and is put back after, so the game's camera logic,
+// the interpolation's remembered steps (blended from the zoomed eye, consistently) and the next
+// step never see it. Not in first person (the eye is a few units from the target there).
 extern "C" void hook_024FFC40(Cpu* c) {
+    const float zoom = mods::camera_zoom();
+    const uint32_t cam = c->r[3];
+    constexpr uint32_t kEye = 0xDC, kCenter = 0xE8;
+    float eye[3], d2 = 0;
+    for (int i = 0; i < 3; i++) {
+        eye[i] = (float)ldf32(cam + kEye + 4 * i);
+        float d = eye[i] - (float)ldf32(cam + kCenter + 4 * i);
+        d2 += d * d;
+    }
+    if (zoom == 1.0f || d2 < 60.0f * 60.0f) { camera_draw(c); return; }
+    float center[3];
+    for (int i = 0; i < 3; i++) center[i] = (float)ldf32(cam + kCenter + 4 * i);
+    float t = zoom;  // the eye's distance factor along its line to the target
+    // Zoomed out, the eye stays in front of walls: the camera's own line check
+    // (dCamera_c::lineBGCheck(start, end, flags) 024FCBE8, dBgS_CamLinChk, flags 0x7F as the game's
+    // cameras use) from the target to the zoomed eye; when it hits, a binary search between the
+    // game's eye (already clear of walls) and the zoomed one finds the furthest clear point.
+    // WWHD_ZOOM_COLLISION=0 turns it off.
+    static const bool collide = !getenv("WWHD_ZOOM_COLLISION") || atoi(getenv("WWHD_ZOOM_COLLISION")) != 0;
+    if (zoom > 1.0f && collide) {
+        static const release::Code kLineBGCheck{0x024FCBE8};
+        constexpr uint32_t kDCamera = 0x248;  // camera_process_class::mCamera (dCamera_c)
+        static const uint32_t pts = mem::host_alloc(0x20, 0x10);  // cXyz start, end
+        const Cpu saved = *c;
+        for (int i = 0; i < 3; i++) stf32(pts + 4 * i, center[i]);
+        auto blocked = [&](float f) {
+            for (int i = 0; i < 3; i++) stf32(pts + 0x10 + 4 * i, center[i] + (eye[i] - center[i]) * f);
+            return guest_call(c, kLineBGCheck, {cam + kDCamera, pts, pts + 0x10, 0x7F}) != 0;
+        };
+        if (blocked(zoom)) {
+            float lo = 1.0f, hi = zoom;
+            for (int k = 0; k < 6; k++) {
+                float mid = 0.5f * (lo + hi);
+                (blocked(mid) ? hi : lo) = mid;
+            }
+            t = 1.0f + (lo - 1.0f) * 0.9f;  // a little in front of the wall
+        }
+        *c = saved;
+    }
+    for (int i = 0; i < 3; i++) stf32(cam + kEye + 4 * i, center[i] + (eye[i] - center[i]) * t);
+    camera_draw(c);
+    for (int i = 0; i < 3; i++) stf32(cam + kEye + 4 * i, eye[i]);
+}
+static void camera_draw(Cpu* c) {
     using namespace interp;
     uint32_t cam = c->r[3];
     Prev* p = prev_for(cam);

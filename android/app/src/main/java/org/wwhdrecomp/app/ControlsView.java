@@ -492,6 +492,9 @@ final class ControlsView extends View {
     private float camLastX, camLastY, camAccX, camAccY, camX, camY;
     private long lastCamTap;
     private float camDownX, camDownY;
+    // pinch on the camera side (a second finger): zooms the camera in and out (Native "camera_zoom")
+    private int pinchPointer = -1;
+    private float pinchX, pinchY, pinchStartDist, pinchStartZoom, cameraZoom = 1f;
     // double tap on the camera side: a short ZL (centres the camera behind Link)
     private int pulseBits;
     // combat move in progress
@@ -557,6 +560,26 @@ final class ControlsView extends View {
                 changed();
             }, 150);
         }
+    }
+
+    private void pinchDown(int id, float x, float y) {
+        pinchPointer = id;
+        pinchX = x;
+        pinchY = y;
+        pinchStartDist = Math.max(1f, (float) Math.hypot(x - camLastX, y - camLastY));
+        pinchStartZoom = cameraZoom;
+        camAccX = camAccY = 0;
+        camX = camY = 0;
+        listener.onControlsChanged();
+    }
+
+    // fingers apart: closer (a smaller distance factor); together: further away
+    private void pinchMoved() {
+        float d = Math.max(1f, (float) Math.hypot(pinchX - camLastX, pinchY - camLastY));
+        float z = Math.max(0.5f, Math.min(2f, pinchStartZoom * pinchStartDist / d));
+        if (Math.abs(z - cameraZoom) < 0.005f) return;
+        cameraZoom = z;
+        Native.setOption("camera_zoom", Math.round(z * 100));
     }
 
     private void cameraUp(float x, float y) {
@@ -722,7 +745,7 @@ final class ControlsView extends View {
         pointers.clear();
         if (drcPointer >= 0) Native.setTouch(false, 0, 0);
         drcPointer = -1;
-        stickPointer = camPointer = -1;
+        stickPointer = camPointer = pinchPointer = -1;
         stickX = stickY = camX = camY = 0;
         removeCallbacks(macroTick);
         macro = null;
@@ -786,6 +809,8 @@ final class ControlsView extends View {
                     }
                 } else if (camPointer < 0) {
                     cameraDown(id, x, y);
+                } else if (pinchPointer < 0) {
+                    pinchDown(id, x, y);
                 }
                 break;
             }
@@ -806,11 +831,20 @@ final class ControlsView extends View {
                         changed = true;
                         continue;
                     }
+                    if (id == pinchPointer) {
+                        pinchX = x;
+                        pinchY = y;
+                        pinchMoved();
+                        continue;
+                    }
                     if (id == camPointer) {
-                        camAccX += x - camLastX;
-                        camAccY += y - camLastY;
+                        if (pinchPointer < 0) {  // turning; a pinch holds the camera still
+                            camAccX += x - camLastX;
+                            camAccY += y - camLastY;
+                        }
                         camLastX = x;
                         camLastY = y;
+                        if (pinchPointer >= 0) pinchMoved();
                         continue;
                     }
                     Ctl c = pointers.get(id);
@@ -853,7 +887,17 @@ final class ControlsView extends View {
                     stickX = stickY = 0;
                     changed = true;
                 }
-                if (id == camPointer) cameraUp(e.getX(idx), e.getY(idx));
+                if (id == pinchPointer) {
+                    pinchPointer = -1;
+                    lastCamTap = 0;
+                } else if (id == camPointer && pinchPointer >= 0) {
+                    // the first finger lifted during a pinch: the other one goes on turning the camera
+                    camPointer = pinchPointer;
+                    pinchPointer = -1;
+                    camLastX = camDownX = pinchX;
+                    camLastY = camDownY = pinchY;
+                    lastCamTap = 0;
+                } else if (id == camPointer) cameraUp(e.getX(idx), e.getY(idx));
                 Ctl c = pointers.get(id);
                 if (c != null) {
                     release(c);

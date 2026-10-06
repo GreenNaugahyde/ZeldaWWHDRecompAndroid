@@ -457,6 +457,7 @@ JNI_FN(void, setOption)(JNIEnv* env, jclass, jstring name, jint value) {
     // gameplay mods (runtime/src/mods)
     else if (n == "mod_direct_camera") mods::set_direct_camera(value != 0);
     else if (n == "mod_camera_speed") mods::set_camera_speed(value / 100.0f);
+    else if (n == "camera_zoom") mods::set_camera_zoom(value / 100.0f);  // touch pinch (ControlsView)
     else if (n == "mod_first_person") mods::set_first_person_wheel(value != 0);
     else if (n == "mod_climb") mods::set_climb_enabled(value != 0);
     else if (n == "mod_quick_doors") mods::set_quick_doors(value != 0);

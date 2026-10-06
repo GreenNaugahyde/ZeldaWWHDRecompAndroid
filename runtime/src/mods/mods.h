@@ -18,6 +18,8 @@ bool direct_camera();
 void set_direct_camera(bool on);
 float camera_speed();  // direct camera: multiplier of the game's own top turning speed
 void set_camera_speed(float s);
+float camera_zoom();   // pinch zoom (touch): the drawn camera's distance to its target x this (1 = the game's)
+void set_camera_zoom(float z);
 bool mouse_camera();
 void set_mouse_camera(bool on);
 float mouse_sensitivity();  // degrees per mouse point
