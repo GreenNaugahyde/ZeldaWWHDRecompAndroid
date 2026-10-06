@@ -46,6 +46,7 @@ bool logic_pass();      // inside the loop body of a logic pass (drawing halfway
 bool in_execute();      // inside fpcEx_Handler (actor Execute)
 uint64_t hold_pass_count();
 uint64_t logic_steps();   // logic steps run so far
+bool mode40();            // 40 fps: logic passes at 0.75 / 0.5 / 0.25, several in a row
 }  // namespace interp
 
 extern "C" {
@@ -83,8 +84,11 @@ uint32_t mask() {
 }
 bool on(uint32_t bit) { return interp::enabled() && (mask() & bit); }
 bool hold_back() { return interp::hold_pass() && on(8); }
+// effects are blended at 60 fps only: their histories come from the hold pass before, and at
+// 40 fps two of the three logic passes follow another logic pass (drawn exact there)
+bool blend_pass() { return interp::logic_pass() && !interp::mode40(); }
 // halfway frames: logic pass, outside actor Execute
-bool halfway() { return interp::logic_pass() && !interp::in_execute(); }
+bool halfway() { return blend_pass() && !interp::in_execute(); }
 
 int trace_left(int part) {
     static int left[8] = {-1, -1, -1, -1, -1, -1, -1, -1};
@@ -372,7 +376,7 @@ struct KankyoTrace { int moving = 0, words = 0; double frac = 0; };
 void kankyo_move(Cpu* c, int k, void (*orig)(Cpu*)) {
     const KankyoKind& kk = kKankyo[k];
     uint32_t pk = ld32(kEnvLight + kk.env_off);
-    if (!on(32) || !interp::logic_pass() || pk < 0x10000000 || pk >= 0x50000000) {
+    if (!on(32) || !blend_pass() || pk < 0x10000000 || pk >= 0x50000000) {
         orig(c);
         return;
     }
@@ -477,7 +481,7 @@ extern "C" void hook_0256A448(Cpu* c) {
             LOG("%s", b);
         }
     }
-    if (!on(2) || !interp::logic_pass() || !pk) {
+    if (!on(2) || !blend_pass() || !pk) {
         f_0256A448_orig(c);
         return;
     }

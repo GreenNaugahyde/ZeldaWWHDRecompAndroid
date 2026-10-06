@@ -398,7 +398,7 @@ using namespace gx2;
 static uint64_t g_swap_count = 0, g_flip_count = 0;
 namespace gx2 { uint64_t flips_presented() { return __atomic_load_n(&g_flip_count, __ATOMIC_RELAXED); } }  // live fps in the title
 static uint32 g_swap_interval = 1;  // as set by the game (frame interpolation halves it)
-namespace interp { uint32_t effective_swap_interval(uint32_t game); }
+namespace interp { uint32_t effective_swap_interval(uint32_t game); bool mode40(); }
 static std::mutex g_flip_mutex;
 static constexpr int64_t kVsyncPeriod = 16683333;  // ns, 59.94 Hz
 // The guest vsync clock: index = base_index + (now - base_ns) / period. It runs free at 59.94 Hz;
@@ -443,15 +443,17 @@ static std::chrono::steady_clock::time_point next_vsync_time() {
 void gx2_display_vsync(int64_t vsync_ns, int64_t display_period) {
     static const bool off = getenv("WWHD_NO_VSYNC_LOCK") != nullptr;
     if (off || display_period <= 0) return;
-    int64_t n = std::max<int64_t>(1, (kVsyncPeriod + display_period / 2) / display_period);
+    // 40 fps (interp.cpp): the clock runs at 120 Hz and a frame takes 3 of its vsyncs
+    const int64_t target = interp::mode40() ? kVsyncPeriod / 2 : kVsyncPeriod;
+    int64_t n = std::max<int64_t>(1, (target + display_period / 2) / display_period);
     int64_t period = n * display_period;
     std::lock_guard<std::mutex> lk(g_vclock_mutex);
-    if (std::abs(period - kVsyncPeriod) * 50 > kVsyncPeriod) {  // e.g. 90 Hz: no multiple near 60 Hz
-        if (g_vclock_period != kVsyncPeriod) {
+    if (std::abs(period - target) * 50 > target) {  // e.g. 90 Hz: no multiple near 60 Hz
+        if (g_vclock_period != target) {
             int64_t now = steady_ns();
             g_vclock_base_index = vclock_index(now);
             g_vclock_base_ns = now;
-            g_vclock_period = kVsyncPeriod;
+            g_vclock_period = target;
         }
         return;
     }

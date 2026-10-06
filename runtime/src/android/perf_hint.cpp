@@ -17,6 +17,8 @@
 
 #include "../runtime.h"
 
+namespace interp { bool mode40(); }  // interp.cpp: 40 fps
+
 namespace perf_hint {
 namespace {
 struct Manager;
@@ -107,7 +109,8 @@ void on_swap(uint32_t swap_interval) {
     if (!mgr || failed) return;
     const int32_t render = g_render_tid;
     const int32_t record = g_record_tid;
-    int64_t want = (int64_t)std::max<uint32_t>(swap_interval, 1) * 16683333;  // vsyncs at 59.94 Hz
+    // vsyncs at 59.94 Hz (at 40 fps the guest vsync clock runs at 120 Hz: interp.cpp)
+    int64_t want = (int64_t)std::max<uint32_t>(swap_interval, 1) * (interp::mode40() ? 8341667 : 16683333);
     if (!session || game != session_game || render != session_render || record != session_record) {
         if (session) p_close(session);
         int32_t tids[3] = {game, render, record};

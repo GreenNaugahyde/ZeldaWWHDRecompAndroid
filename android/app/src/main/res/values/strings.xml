@@ -158,6 +158,7 @@
         <item>60 fps (adaptive)</item>
         <item>True 60 (experimental)</item>
     </string-array>
+    <string name="fps_40">40 fps (120 Hz screen)</string>
     <string name="opt_layout_edit">Edit touch layout</string>
     <string name="opt_layout_edit_hint">Move and resize every control on a grid (also the ✎ button next to ≡)</string>
     <string name="layout_edit_hint">Drag to move · corner handle or pinch to resize · 🗑 removes the selected control · + puts removed ones back · Back cancels</string>

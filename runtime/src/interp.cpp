@@ -18,6 +18,7 @@
 #include <cstring>
 #include <mutex>
 #include <unordered_map>
+#include <functional>
 #include <vector>
 
 #include "runtime.h"
@@ -100,9 +101,25 @@ void set_mode(int m) {
     if (m == 2) true60::set_enabled(true);
 }
 
-// GX2SetSwapInterval: two paints per logic step need half the interval
+// 40 fps (needs a 120 Hz display): 4 frames per 3 logic steps. A hold pass (step N exact), then
+// three logic passes drawn at 0.75, 0.5 and 0.25 of the way from the previous step to the new one
+// (frame times 0, 0.75, 1.5, 2.25 steps). The guest vsync clock runs at the display's 120 Hz in
+// this mode (gx2_core.cpp) and flips every 3 vsyncs.
+static std::atomic<bool> g_mode40{false};
+bool mode40() { return g_mode40.load(std::memory_order_relaxed) && interp_on(); }
+void set_mode40(bool v) {
+    g_mode40 = v;
+    g_cadence_reset.store(true, std::memory_order_release);
+    if (v) LOG("[interp] 40 fps (120 Hz display, 3 vsyncs per frame)");
+}
+
+// GX2SetSwapInterval: two paints per logic step need half the interval (60 fps on a 60 Hz guest
+// vsync); 40 fps: the game's interval 2 (30 fps at 60 Hz) is 3 vsyncs of the 120 Hz clock
 // A catch-up pass temporarily bypasses interpolation hooks, but still presents at the fast cadence.
-uint32_t effective_swap_interval(uint32_t game) { return configured_enabled() ? std::max<uint32_t>(1, game / 2) : game; }
+uint32_t effective_swap_interval(uint32_t game) {
+    if (mode40()) return std::max<uint32_t>(1, (game * 3 + 1) / 2);
+    return configured_enabled() ? std::max<uint32_t>(1, game / 2) : game;
+}
 
 namespace {
 constexpr uint32_t kEye = 0xDC, kCenter = 0xE8, kUp = 0xF4, kFovy = 0xD4, kBank = 0x100;
@@ -147,8 +164,12 @@ float dist(const float* a, const float* b) {
 // - Orbits around the look-at point blend the eye's direction and distance separately, so the
 //   halfway eye stays on the arc instead of cutting the corner towards the target.
 float g_last_step = 0;  // camera eye movement over the previous step
+// how far the logic pass's frame is from the previous step (a) to the new one (b): 0.5 at 60 fps,
+// 0.75 / 0.5 / 0.25 at 40 fps
+float g_blend_w = 0.5f;
 
 CamState blend(const CamState& a, const CamState& b) {
+    const float w = g_blend_w, v = 1.0f - w;
     static const float kCut = getenv("WWHD_INTERP_CUT") ? (float)atof(getenv("WWHD_INTERP_CUT")) : 800.0f;
     float step = std::max(dist(a.eye, b.eye), dist(a.center, b.center));
     float prev = g_last_step;
@@ -157,8 +178,8 @@ CamState blend(const CamState& a, const CamState& b) {
     if (snap) return b;
     CamState m;
     for (int i = 0; i < 3; i++) {
-        m.center[i] = 0.5f * (a.center[i] + b.center[i]);
-        m.up[i] = 0.5f * (a.up[i] + b.up[i]);
+        m.center[i] = v * a.center[i] + w * b.center[i];
+        m.up[i] = v * a.up[i] + w * b.up[i];
     }
     // eye = center + direction * distance, each blended on its own
     float da[3], db[3], la = 0, lb = 0;
@@ -179,14 +200,14 @@ CamState blend(const CamState& a, const CamState& b) {
         if (std::fabs(la - lb) > 0.1f * std::max(la, lb)) return b;
         float dir[3], ld = 0;
         for (int i = 0; i < 3; i++) {
-            dir[i] = da[i] / la + db[i] / lb;  // halfway direction (normalised below)
+            dir[i] = v * da[i] / la + w * db[i] / lb;  // in-between direction (normalised below)
             ld += dir[i] * dir[i];
         }
         ld = std::sqrt(ld);
-        float len = 0.5f * (la + lb);
+        float len = v * la + w * lb;
         for (int i = 0; i < 3; i++) m.eye[i] = m.center[i] + (ld > 1e-3f ? dir[i] / ld : db[i] / lb) * len;
     } else {
-        for (int i = 0; i < 3; i++) m.eye[i] = 0.5f * (a.eye[i] + b.eye[i]);
+        for (int i = 0; i < 3; i++) m.eye[i] = v * a.eye[i] + w * b.eye[i];
     }
     // up: normalised and made perpendicular to the halfway view direction, so the in-between frame
     // gets no extra roll (matters most when looking down from above, where small differences in up
@@ -204,8 +225,8 @@ CamState blend(const CamState& a, const CamState& b) {
             for (int i = 0; i < 3; i++) m.up[i] = b.up[i];  // degenerate: keep the exact up vector
         }
     }
-    m.fovy = 0.5f * (a.fovy + b.fovy);
-    m.bank = (int16_t)(a.bank + (int16_t)(b.bank - a.bank) / 2);  // shortest way round
+    m.fovy = v * a.fovy + w * b.fovy;
+    m.bank = (int16_t)(a.bank + (int16_t)lroundf((int16_t)(b.bank - a.bank) * w));  // shortest way round
     return m;
 }
 
@@ -322,6 +343,10 @@ static void camera_draw(Cpu* c) {
         f_024FFC40_orig(c);
         g_cam_blended = false;
         write_cam(cam, cur);
+        if (mode40()) {  // the next logic pass blends from this step
+            p->s = cur;
+            p->valid = true;
+        }
         return;
     }
     p->s = read_cam(cam);  // exact step: remember it for the next halfway frame
@@ -383,6 +408,9 @@ struct ModelPrev {
 };
 std::unordered_map<uint32_t, ModelPrev> g_models;
 uint64_t g_hold_passes = 0;  // counts hold passes (record generation)
+// passes that record model history: hold passes, and at 40 fps every pass (consecutive logic
+// passes each blend from the step before)
+uint64_t g_model_pass = 0;
 struct ModelStats { uint32_t blended = 0, fresh = 0, cut = 0; std::atomic<uint32_t> changed{0}; } g_mstats;
 // halfway matrices waiting for the model's UBO update (update_ubo thread), per model
 struct UboBlend { uint32_t mtx = 0; std::vector<uint32_t> exact, mid; };
@@ -438,24 +466,26 @@ bool to_quat(const float* m, float* s, float* q) {
 
 // halfway between two 3x4 matrices: translation and scale linear, rotation slerp (nlerp at 1/2 is
 // exact); anything that is not rotation x scale is blended element-wise
+// (at weights other than 1/2, 40 fps, nlerp: steps are small)
 void blend_mtx(const float* a, const float* b, float* out) {
+    const float bw = g_blend_w, bv = 1.0f - bw;
     float sa[3], sb[3], qa[4], qb[4];
-    for (int i = 0; i < 3; i++) out[4 * i + 3] = 0.5f * (a[4 * i + 3] + b[4 * i + 3]);
+    for (int i = 0; i < 3; i++) out[4 * i + 3] = bv * a[4 * i + 3] + bw * b[4 * i + 3];
     if (!to_quat(a, sa, qa) || !to_quat(b, sb, qb)) {
         for (int i = 0; i < 3; i++)
-            for (int j = 0; j < 3; j++) out[4 * i + j] = 0.5f * (a[4 * i + j] + b[4 * i + j]);
+            for (int j = 0; j < 3; j++) out[4 * i + j] = bv * a[4 * i + j] + bw * b[4 * i + j];
         return;
     }
     float d = qa[0] * qb[0] + qa[1] * qb[1] + qa[2] * qb[2] + qa[3] * qb[3];
     float sg = d < 0 ? -1.0f : 1.0f, q[4], n = 0;
-    for (int k = 0; k < 4; k++) { q[k] = qa[k] + sg * qb[k]; n += q[k] * q[k]; }
+    for (int k = 0; k < 4; k++) { q[k] = bv * qa[k] + bw * sg * qb[k]; n += q[k] * q[k]; }
     n = 1.0f / std::sqrt(n);
     float w = q[0] * n, x = q[1] * n, y = q[2] * n, z = q[3] * n;
     const float r[3][3] = {{1 - 2 * (y * y + z * z), 2 * (x * y - w * z), 2 * (x * z + w * y)},
                            {2 * (x * y + w * z), 1 - 2 * (x * x + z * z), 2 * (y * z - w * x)},
                            {2 * (x * z - w * y), 2 * (y * z + w * x), 1 - 2 * (x * x + y * y)}};
     for (int j = 0; j < 3; j++) {
-        float s = 0.5f * (sa[j] + sb[j]);
+        float s = bv * sa[j] + bw * sb[j];
         for (int i = 0; i < 3; i++) out[4 * i + j] = r[i][j] * s;
     }
 }
@@ -480,19 +510,31 @@ extern "C" void hook_027F55FC(Cpu* c) {
     }
     const uint32_t words = 12 * n;
     const uint32_t* cur = (const uint32_t*)ppc_ptr(mtx);  // guest (big-endian) words
-    if (g_hold) {  // exact step: remember it for the next halfway frame
+    auto remember = [&](const uint32_t* exact) {  // exact step: the history the next in-between frame blends from
         ModelPrev& p = g_models[jnt];
         p.mtx = mtx;
-        p.pass = g_hold_passes;
-        p.w.assign(cur, cur + words);
+        p.pass = g_model_pass;
+        p.w.assign(exact, exact + words);
+    };
+    if (g_hold) {
+        remember(cur);
         trace_model("exact", jnt, n, cur);
         f_027F55FC_orig(c);
         return;
     }
+    // 40 fps: every logic pass also leaves its exact step for the next one (recorded on return,
+    // after the blend has read the previous one)
+    struct OnExit { std::function<void()> f; ~OnExit() { if (f) f(); } };
+    std::vector<uint32_t> exact40;
+    OnExit record40;
+    if (mode40()) {
+        exact40.assign(cur, cur + words);
+        record40.f = [&] { remember(exact40.data()); };
+    }
     // logic pass: halfway between the step drawn last and the new one
     auto it = g_models.find(jnt);
     if (it == g_models.end() || it->second.mtx != mtx || it->second.w.size() != words ||
-        it->second.pass + 1 < g_hold_passes) {  // new model, or not drawn on the last hold pass
+        it->second.pass + 1 < g_model_pass) {  // new model, or not drawn on the last recording pass
         g_mstats.fresh++;
         trace_model("new", jnt, n, cur);
         f_027F55FC_orig(c);
@@ -574,6 +616,7 @@ void ss_reset() {
         g_ubo.clear();
     }
     g_hold_passes += 8;  // step-stamped histories (models, effects) no longer match
+    g_model_pass += 8;
     g_hold_next = false;
     g_cadence_reset.store(true, std::memory_order_release);
     fx_ss_reset();
@@ -611,11 +654,14 @@ extern "C" void hook_0203593C(Cpu* c) {
             g_dropped_holds = 0;
             g_mstats.blended = g_mstats.fresh = g_mstats.cut = 0;
             for (auto it = g_models.begin(); it != g_models.end();)  // models no longer drawn
-                it = it->second.pass + 2 < g_hold_passes ? g_models.erase(it) : std::next(it);
+                it = it->second.pass + 2 < g_model_pass ? g_models.erase(it) : std::next(it);
         }
     };
 
     true60::new_pass();
+    static int phase40 = 0;  // 40 fps: 0 hold pass, 1..3 logic passes at 0.75 / 0.5 / 0.25
+    if (mode40()) g_hold_next = phase40 == 0;
+    else phase40 = 0;
     const bool exact_catchup = interp_on() && g_hold_next && logic_is_due_before_next_output(pass_at);
     true60::pass_begin(!enabled() || !g_hold_next || exact_catchup);  // full pass: take back Link's half-pass preview
     if (!enabled() || !g_hold_next) g_logic_steps++;
@@ -648,6 +694,8 @@ extern "C" void hook_0203593C(Cpu* c) {
         g_hold = true;
         g_hold_frame = true;
         g_hold_passes++;
+        g_model_pass++;
+        if (mode40()) phase40 = 1;
         f_0203593C_orig(c);
         g_hold_frame = false;
         g_hold = false;
@@ -658,8 +706,19 @@ extern "C" void hook_0203593C(Cpu* c) {
         std::lock_guard<std::mutex> lk(g_ubo_mu);
         g_ubo.clear();  // not updated last time (not drawn)
     }
+    static const float kW40[4] = {0.5f, 0.75f, 0.5f, 0.25f};
+    const bool m40 = mode40();
+    if (m40) {
+        g_blend_w = kW40[phase40 & 3];
+        g_model_pass++;
+    }
     f_0203593C_orig(c);  // logic pass (the loop body hook marks it)
+    g_blend_w = 0.5f;
     g_hold_next = true;
+    if (m40) {
+        phase40 = (phase40 + 1) & 3;
+        g_hold_next = phase40 == 0;
+    }
     finish_logic();
 }
 

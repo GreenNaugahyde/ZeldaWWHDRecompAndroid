@@ -448,7 +448,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         Native.setOption("pro_controller", prefs.getBoolean("pro_controller", Native.getOption("pro_controller") != 0) ? 1 : 0);
         Native.setOption("tv_aspect", prefs.getInt("tv_aspect", 0));
         Native.setOption("render_aspect", prefs.getInt("render_aspect", 0));
-        Native.setOption("fps_mode", prefs.getBoolean("fg_enabled", false) ? 0 : prefs.getInt("fps_mode", 0));
+        Native.setOption("fps_mode", prefs.getBoolean("fg_enabled", false) ? 0 : savedFpsMode());
         Native.setOption("drawdone_mode", prefs.getInt("drawdone_mode", 0));
         Native.setOption("core_mode", prefs.getInt("core_mode", 0));
         for (String k : new String[] {"inf_health", "inf_magic", "inf_ammo"}) Native.setOption(k, prefs.getBoolean(k, false) ? 1 : 0);
@@ -1284,6 +1284,19 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     }
 
     /** 0: 30 fps, 1: 60 fps (frame interpolation), 2: adaptive 60 (30 while the device can't hold 60) */
+    /** 40 fps needs a panel that runs at 120 Hz (a frame every 3 refreshes) */
+    boolean has120Hz() {
+        for (android.view.Display.Mode m : getWindowManager().getDefaultDisplay().getSupportedModes())
+            if (Math.abs(m.getRefreshRate() - 120f) < 1.5f) return true;
+        return false;
+    }
+
+    /** the saved frame rate mode; 40 fps (4) falls back to 60 where the panel has no 120 Hz */
+    int savedFpsMode() {
+        int m = prefs.getInt("fps_mode", 0);
+        return m == 4 && !has120Hz() ? 1 : m;
+    }
+
     void setFpsMode(int m) {
         prefs.edit().putInt("fps_mode", m).commit();
         if (m != 0 && prefs.getBoolean("fg_enabled", false)) {

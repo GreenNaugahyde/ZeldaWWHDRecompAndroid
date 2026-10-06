@@ -439,8 +439,13 @@ final class OptionsMenu extends Dialog {
     private void graphics() {
         String[] res = new String[MainActivity.RES_SCALES.length];
         for (int i = 0; i < res.length; i++) res[i] = a.resolutionLabel(MainActivity.RES_SCALES[i]);
-        choice(R.string.opt_fps, R.string.opt_fps_hint, a.getResources().getStringArray(R.array.fps_modes),
-               a.prefs.getBoolean("fg_enabled", false) ? 0 : a.prefs.getInt("fps_mode", 0), a::setFpsMode);
+        String[] fpsModes = a.getResources().getStringArray(R.array.fps_modes);
+        if (a.has120Hz()) {  // 40 fps (mode 4): only on 120 Hz panels
+            fpsModes = java.util.Arrays.copyOf(fpsModes, fpsModes.length + 1);
+            fpsModes[fpsModes.length - 1] = a.getString(R.string.fps_40);
+        }
+        choice(R.string.opt_fps, R.string.opt_fps_hint, fpsModes,
+               a.prefs.getBoolean("fg_enabled", false) ? 0 : a.savedFpsMode(), a::setFpsMode);
         choice(R.string.opt_drawdone, R.string.opt_drawdone_hint, a.getResources().getStringArray(R.array.drawdone_modes),
                a.prefs.getInt("drawdone_mode", 0), i -> {
                    a.prefs.edit().putInt("drawdone_mode", i).apply();

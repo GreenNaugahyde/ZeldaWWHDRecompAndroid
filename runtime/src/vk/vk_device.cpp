@@ -27,6 +27,7 @@
 #include "vk.h"
 #include "vk_window.h"
 #include "../aspect.h"
+namespace interp { bool mode40(); }  // interp.cpp: 40 fps needs the panel at 120 Hz
 
 namespace gfx {
 Renderer R;
@@ -532,10 +533,11 @@ void end_pass() {
         vkCmdEndRenderPass(R.cmd);
         prof_pass_end();
         R.pass = VK_NULL_HANDLE;
-        // Submitting work in chunks (the GPU starts while the frame is still being built) made the
-        // game's distant shading flicker between its two detail levels; the official renderer
-        // doesn't chunk either. Off by default; WWHD_CHUNK=1 turns it on (WWHD_NO_CHUNK still wins).
-        static const bool chunked = getenv("WWHD_CHUNK") != nullptr && getenv("WWHD_NO_CHUNK") == nullptr;
+        // submit work in chunks so the GPU starts while the frame is still being built (like the
+        // hardware command processor), instead of all at once on swap. The flicker of the distant
+        // shading it seemed to cause was dynamic state inherited across command buffers (fixed in
+        // record_draw's pass state). WWHD_NO_CHUNK=1: one submission per frame.
+        static const bool chunked = getenv("WWHD_NO_CHUNK") == nullptr;
         if (chunked && g_draws_since_commit_ >= 1024) submit();
     }
     for (auto& c : R.passColor) c = nullptr;
@@ -1182,7 +1184,8 @@ bool ensure_swapchain(Swapchain& sc, bool main = true) {
     if (main && fg::loaded()) request_window_frame_rate(sc.window, 30.0f * fg::config().multiplier,
                                                         ANATIVEWINDOW_FRAME_RATE_COMPATIBILITY_FIXED_SOURCE);
     // without it the game flips at most 60 times a second: let a 90/120 Hz panel drop to 60 Hz
-    else request_window_frame_rate(sc.window, 60.0f, ANATIVEWINDOW_FRAME_RATE_COMPATIBILITY_DEFAULT);
+    // (40 fps: 120 Hz, a frame every 3 refreshes; present_frame follows a switch)
+    else request_window_frame_rate(sc.window, main && interp::mode40() ? 120.0f : 60.0f, ANATIVEWINDOW_FRAME_RATE_COMPATIBILITY_DEFAULT);
     VkSurfaceCapabilitiesKHR caps{};
     vkGetPhysicalDeviceSurfaceCapabilitiesKHR(R.pd, sc.surface, &caps);
     uint32_t n = 0;
@@ -1401,6 +1404,14 @@ bool present_frame() {
     std::lock_guard<std::mutex> wl(g_window_mutex);
     if (g_present_outdated.exchange(false, std::memory_order_acquire)) g_sc.stale = true;
     if (!ensure_swapchain(g_sc)) return false;
+    {  // the frame rate setting changed between 40 fps (120 Hz panel) and the others (60 Hz)
+        static bool asked40 = false;
+        bool want40 = interp::mode40();
+        if (want40 != asked40 && !fg::loaded()) {
+            request_window_frame_rate(g_sc.window, want40 ? 120.0f : 60.0f, ANATIVEWINDOW_FRAME_RATE_COMPATIBILITY_DEFAULT);
+            asked40 = want40;
+        }
+    }
     VkSemaphore acquire;
     if (!g_acquire_free.empty()) {
         acquire = g_acquire_free.back();

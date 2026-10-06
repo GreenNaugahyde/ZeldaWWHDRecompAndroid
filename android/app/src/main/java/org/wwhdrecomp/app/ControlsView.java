@@ -725,12 +725,12 @@ final class ControlsView extends View {
     private void updateStick(float x, float y) {
         Ctl s = byId.get("stick");
         float r = s.r * 0.8f;
+        // the stick stays where the thumb landed until it lifts: beyond the rim it is pushed fully
+        // in the finger's direction
         float dx = x - stickOx, dy = y - stickOy, len = (float) Math.hypot(dx, dy);
-        if (len > r) {  // drag the stick along with the finger
-            stickOx = x - dx / len * r;
-            stickOy = y - dy / len * r;
-            dx = x - stickOx;
-            dy = y - stickOy;
+        if (len > r) {
+            dx = dx / len * r;
+            dy = dy / len * r;
         }
         stickX = clamp(dx / r);
         stickY = clamp(-dy / r);

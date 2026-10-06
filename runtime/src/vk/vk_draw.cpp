@@ -2093,9 +2093,13 @@ void report_skips() {
 
 // ---------------------------------------------------------------- vertex data
 // Guest vertex buffers are copied into transient memory per draw. Large buffers (static meshes) are
-// copied once per submission and shared by the draws in it.
+// copied once per submission and shared by the draws in it while the game hasn't written their
+// pages since (mem_writes.h; WWHD_TRACK_WRITES=0: compared instead), as the official renderer
+// never reuses a copy on its address alone: a mesh rewritten within a submission (cloth, morphs,
+// a buffer reused for another mesh) drew its old vertices.
 static Upload vertex_buffer(uint32_t addr, uint32_t size) {
-    static std::unordered_map<uint64_t, Upload> shared;
+    struct Shared { Upload u; uint32_t gen; };
+    static std::unordered_map<uint64_t, Shared> shared;
     static uint64_t sharedSerial = ~0ull;
     if (size < 64 * 1024) {
         static SubmissionCopies small;
@@ -2109,10 +2113,15 @@ static Upload vertex_buffer(uint32_t addr, uint32_t size) {
     }
     uint64_t key = (uint64_t)addr << 32 | size;
     auto it = shared.find(key);
-    if (it != shared.end()) return it->second;
+    if (it != shared.end()) {
+        bool same = g_track_writes ? memw::unchanged_since(addr, size, it->second.gen)
+                                   : R.uploadCached && memcmp(it->second.u.ptr, mem::ptr(addr), size) == 0;
+        if (same) return it->second.u;
+    }
+    uint32_t gen = memw::now();  // before the copy: a write during it makes the next use copy again
     Upload u = upload(mem::ptr(addr), size, 16);
     g_bytes_vtx_shared += size;
-    shared[key] = u;
+    shared[key] = {u, gen};
     return u;
 }
 

@@ -35,6 +35,6 @@ bool map_fixed(void* addr, size_t size);
 void log_line(const char* line);
 
 // print a host backtrace of the calling thread to stderr (async-signal-safe enough for the crash handler)
-void print_backtrace();
+void print_backtrace(int fd = -1);  // also into fd (a crash log) when >= 0
 
 }  // namespace platform

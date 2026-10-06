@@ -1,7 +1,14 @@
 // Wind Waker HD recompiled: boot sequence and the desktop entry point (Android starts from
 // android/jni_main.cpp instead).
+#include <dlfcn.h>
+#include <fcntl.h>
 #include <signal.h>
+#include <sys/stat.h>
+#include <ucontext.h>
 #include <unistd.h>
+
+#include <algorithm>
+#include <ctime>
 
 #include <cstring>
 #include <string>
@@ -24,24 +31,66 @@ void trace_dump(FILE* f, unsigned last);
 void mem_init_data_imports(uint32_t alloc_slot, uint32_t alloc_ex_slot, uint32_t free_slot);
 
 static struct sigaction g_prev_action[NSIG];  // handlers before ours (Android: ART/debuggerd)
+static int g_crash_fd = -1;  // the crash log file being written (captures/crash-*.log)
 
 static void crash_write(const char* buf, int n) {
     write(2, buf, n);
+    if (g_crash_fd >= 0) write(g_crash_fd, buf, n);
 #ifdef __ANDROID__
     __android_log_write(ANDROID_LOG_ERROR, "wwhd", buf);
 #endif
 }
 
-static void crash_handler(int sig, siginfo_t* si, void*) {
+// " in libfoo.so+0x1A2A01 [symbol+0x12]" for a host address inside a loaded module (as the official
+// project's crash_addr.cpp; dladdr is not async-signal-safe, the same exposure as the backtrace)
+static int describe_host(char* buf, size_t cap, uintptr_t addr) {
+    Dl_info di{};
+    if (!dladdr((const void*)addr, &di) || !di.dli_fname) return 0;
+    const char* name = strrchr(di.dli_fname, '/');
+    name = name ? name + 1 : di.dli_fname;
+    int n = snprintf(buf, cap, " in %s+%#lx", name, (unsigned long)(addr - (uintptr_t)di.dli_fbase));
+    if (di.dli_sname && n > 0 && (size_t)n < cap)
+        n += snprintf(buf + n, cap - n, " [%s+%#lx]", di.dli_sname, (unsigned long)(addr - (uintptr_t)di.dli_saddr));
+    return n < 0 ? 0 : (size_t)n >= cap ? (int)cap - 1 : n;
+}
+
+static void crash_handler(int sig, siginfo_t* si, void* uctx) {
     uintptr_t a = (uintptr_t)si->si_addr;
     uintptr_t base = (uintptr_t)PPC_MEM_BASE;
-    char buf[256];
+    // a crash log to send with a report: captures/crash-YYYYmmdd-HHMMSS.log (the app's files folder)
+    char path[96];
+    {
+        mkdir("captures", 0755);
+        time_t t = time(nullptr);
+        struct tm tmv;
+        localtime_r(&t, &tmv);
+        strftime(path, sizeof path, "captures/crash-%Y%m%d-%H%M%S.log", &tmv);
+        g_crash_fd = open(path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    }
+    char buf[512];
     int n;
     if (a >= base && a < base + 0x100000000ull)
         n = snprintf(buf, sizeof buf, "\nCRASH: signal %d at guest address %08X\n", sig, (unsigned)(a - base));
     else
         n = snprintf(buf, sizeof buf, "\nCRASH: signal %d at host address %p\n", sig, si->si_addr);
     crash_write(buf, n);
+    // the faulting instruction and the module holding it (a GPU driver, a Vulkan layer, the game code)
+    uintptr_t pc = 0;
+#if defined(__aarch64__)
+    if (uctx) pc = (uintptr_t)((ucontext_t*)uctx)->uc_mcontext.pc;
+#elif defined(__x86_64__) && defined(__linux__)
+    if (uctx) pc = (uintptr_t)((ucontext_t*)uctx)->uc_mcontext.gregs[REG_RIP];
+#endif
+    char where[384];
+    if (pc) {
+        where[describe_host(where, sizeof where, pc)] = 0;
+        n = snprintf(buf, sizeof buf, "  host pc %p%s\n", (void*)pc, where);
+        crash_write(buf, std::min<int>(n, sizeof buf - 1));
+    }
+    if (!(a >= base && a < base + 0x100000000ull) && describe_host(where, sizeof where, a)) {
+        n = snprintf(buf, sizeof buf, "  fault address %p%s\n", si->si_addr, where);
+        crash_write(buf, std::min<int>(n, sizeof buf - 1));
+    }
     Cpu* c = threads::current();
     if (c) {
         n = snprintf(buf, sizeof buf, "  guest lr=%08X ctr=%08X cr=%08X\n", c->lr, c->ctr, ppc_mfcr(c));
@@ -51,8 +100,26 @@ static void crash_handler(int sig, siginfo_t* si, void*) {
                          c->r[i + 2], c->r[i + 3], c->r[i + 4], c->r[i + 5], c->r[i + 6], c->r[i + 7]);
             crash_write(buf, n);
         }
+        // guest return chain (back-chain words on the guest stack)
+        crash_write("  guest call chain:", 19);
+        uint32_t sp = c->r[1];
+        for (int i = 0; i < 24 && sp >= 0x10000000u && sp < 0xF0000000u; i++) {
+            uint32_t prev = ld32(sp);
+            if (!prev || prev <= sp || prev - sp > 0x100000u) break;
+            n = snprintf(buf, sizeof buf, " %08X", ld32(prev + 4));
+            crash_write(buf, n);
+            sp = prev;
+        }
+        crash_write("\n", 1);
     }
-    platform::print_backtrace();
+    crash_write("  host backtrace:\n", 18);
+    platform::print_backtrace(g_crash_fd);
+    if (g_crash_fd >= 0) {
+        close(g_crash_fd);
+        g_crash_fd = -1;
+        n = snprintf(buf, sizeof buf, "[crash] wrote %s\n", path);
+        crash_write(buf, n);
+    }
     if (g_ppc_trace) {
         FILE* f = fopen("trace_dump.txt", "w");
         if (f) { trace_dump(f, 3000); fclose(f); crash_write("[trace] wrote trace_dump.txt\n", 29); }
