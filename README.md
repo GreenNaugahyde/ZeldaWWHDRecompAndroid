@@ -16,7 +16,8 @@ controllers, frame generation, building) is in [docs/android-port-readme.md](doc
 ## What this fork adds
 
 ### Touch controls made for a phone
-- **Floating left stick**: it appears where your thumb lands on the left side.
+- **Floating left stick**: it appears where your thumb lands on the left side and stays there until
+  you lift it.
 - **Camera by swiping** on the right side of the screen, with an adjustable speed; double tap to
   center it behind Link.
 - **Context buttons that follow your game**: the app reads your save data, so
@@ -71,7 +72,8 @@ Snapdragon 8 Gen 2:
 
 ### More
 - **60 fps** by frame interpolation (game logic stays at 30 steps a second, nothing speeds up),
-  holding full speed anywhere between 30 and 60 fps, an **adaptive** mode that falls back to 30 where the device can't hold 60, and the original
+  holding full speed anywhere between 30 and 60 fps, **40 fps** on 120 Hz screens (a frame every 3
+  refreshes, evenly paced, for phones that can't hold 60), an **adaptive** mode that falls back to 30 where the device can't hold 60, and the original
   project's redesigned **True 60** (experimental).
 - **Game language** selector: English, Spanish, French (the USA disc's languages).
 - **Cheats** from the original project: items, sword and shield, hearts, songs, Triforce, dungeon
