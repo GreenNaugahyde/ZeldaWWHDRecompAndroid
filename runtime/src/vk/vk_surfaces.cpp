@@ -364,7 +364,10 @@ Surface* sampled_texture(const uint32_t* w, bool isDepthSampler) {
     d.dim = (uint32_t)dim;
     d.tileMode = (uint32_t)tileMode;
     d.swizzle = swizzle;
-    d.isDepth = false;
+    // A depth-compare (shadow) sampler looks for the depth surfaces at this address, like the
+    // official renderer. Looking up a colour surface let a GPU-written colour image aliasing the
+    // shadow map's memory win over the cascade, so the shadows alternated between two states.
+    d.isDepth = isDepthSampler;
     Surface* s = find_or_create_surface(d, false);
     s = check_texture(s);
     memcpy(tl.w, w, sizeof tl.w);
@@ -817,21 +820,32 @@ void copy_surface_impl(uint32_t srcAddr, uint32_t srcMip, uint32_t srcSlice, uin
         dd.pitch = d->pitch;
         dd.format = (uint32_t)d->format.value();
         dd.tileMode = (uint32_t)d->tileMode.value();
+        // As the official renderer: the destination keeps the source's kind (a depth copy into a
+        // depth surface, e.g. a shadow cascade, instead of a colour one whose format never matched
+        // and dropped the copy) and the destination's array shape, and the copy honours the slices
+        // (every cascade landed in slice 0 before).
+        dd.swizzle = (uint32_t)d->swizzle;
+        dd.isDepth = src->isDepth;
+        dd.dim = (uint32_t)d->dim.value();
+        dd.slices = (dd.dim == (uint32_t)Latte::E_DIM::DIM_2D || dd.dim == (uint32_t)Latte::E_DIM::DIM_1D)
+                        ? 1 : std::max<uint32_t>((uint32_t)d->depth, 1);
         Surface* dst = find_or_create_surface(dd, true);
-        if (!dst || dst->img.format != src->img.format || dst == src) return;
+        if (!dst || dst->img.format != src->img.format) return;
+        if (srcSlice >= src->img.layers || dstSlice >= dst->img.layers) return;
+        if (dst == src) return;  // same image: only a slice-to-itself copy reaches here in practice
         prepare(src->img, Use::COPY_SRC);
         prepare(dst->img, Use::COPY_DST);
         if (src->img.width == dst->img.width && src->img.height == dst->img.height) {
             VkImageCopy c{};
-            c.srcSubresource = {src->img.aspect, 0, 0, 1};
-            c.dstSubresource = {dst->img.aspect, 0, 0, 1};
+            c.srcSubresource = {src->img.aspect, 0, srcSlice, 1};
+            c.dstSubresource = {dst->img.aspect, 0, dstSlice, 1};
             c.extent = {src->img.width, src->img.height, 1};
             vkCmdCopyImage(command_buffer(), src->img.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, dst->img.image,
                            VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &c);
         } else {  // different resolution scales: scale while copying
             VkImageBlit b{};
-            b.srcSubresource = {src->img.aspect, 0, 0, 1};
-            b.dstSubresource = {dst->img.aspect, 0, 0, 1};
+            b.srcSubresource = {src->img.aspect, 0, srcSlice, 1};
+            b.dstSubresource = {dst->img.aspect, 0, dstSlice, 1};
             b.srcOffsets[1] = {(int32_t)src->img.width, (int32_t)src->img.height, 1};
             b.dstOffsets[1] = {(int32_t)dst->img.width, (int32_t)dst->img.height, 1};
             vkCmdBlitImage(command_buffer(), src->img.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, dst->img.image,

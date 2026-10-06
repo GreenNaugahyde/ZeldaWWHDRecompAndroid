@@ -264,9 +264,10 @@ void end_pass() {
         vkCmdEndRenderPass(R.cmd);
         prof_pass_end();
         R.pass = VK_NULL_HANDLE;
-        // submit work in chunks so the GPU starts while the frame is still being built (like the
-        // hardware command processor), instead of all at once on swap
-        static const bool chunked = getenv("WWHD_NO_CHUNK") == nullptr;
+        // Submitting work in chunks (the GPU starts while the frame is still being built) made the
+        // game's distant shading flicker between its two detail levels; the official renderer
+        // doesn't chunk either. Off by default; WWHD_CHUNK=1 turns it on (WWHD_NO_CHUNK still wins).
+        static const bool chunked = getenv("WWHD_CHUNK") != nullptr && getenv("WWHD_NO_CHUNK") == nullptr;
         if (chunked && g_draws_since_commit_ >= 1024) submit();
     }
     for (auto& c : R.passColor) c = nullptr;

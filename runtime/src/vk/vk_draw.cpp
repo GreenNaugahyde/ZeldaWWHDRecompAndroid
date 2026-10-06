@@ -390,6 +390,14 @@ static void compile_now(Module* m, uint64_t hash, uint64_t key, bool vertex, con
 // attach the shader to the module for its translation, compiling that module if it is new
 static void compile_shader(Shader* sh) {
     std::string src = sh->dec->strBuf_shaderSource->c_str();
+    // Depth-only and shaded variants of the same geometry must rasterize identical positions:
+    // later passes depth-test EQUAL/LEQUAL against the first, and without invariance the driver
+    // may compute gl_Position differently per shader (camera-dependent z-fighting: shadow flicker,
+    // moire on the ground). Same as the official Vulkan renderer (and Metal's [[invariant]]).
+    if (sh->vertex) {
+        if (size_t main = src.find("void main("); main != std::string::npos)
+            src.insert(main, "invariant gl_Position;\n");
+    }
     uint64_t hash = hash_bytes(src.data(), src.size(), sh->vertex ? 0x5653ull : 0x5053ull) ^ src.size();
     auto it = g_modules.find(hash);
     if (it != g_modules.end()) {
@@ -1552,9 +1560,14 @@ static void bind_stage(VkCommandBuffer cmd, VkPipelineLayout layout, const uint3
             size = std::min(size, p);
         }
         static SubmissionCopies blocks;
+        // Uniform blocks are compared, not reused by write tracking (as the official renderer's
+        // uniform snapshots do): the game rewrites some (0x800-byte light/shadow blocks) without
+        // the flush the tracking relies on, and a stale copy drew the shadows with another frame's
+        // matrices. They are small (~100 KiB a frame). WWHD_TRACK_UBO_WRITES=1: the tracking again.
+        static const bool trackUbo = g_track_writes && getenv("WWHD_TRACK_UBO_WRITES") != nullptr;
         Upload u;
         if (addr && addr + (uint64_t)size <= 0x100000000ull) {
-            u = g_track_writes ? copy_tracked(blocks, addr, size, uboAlign, g_bytes_ubo, g_bytes_ubo_reused)
+            u = trackUbo ? copy_tracked(blocks, addr, size, uboAlign, g_bytes_ubo, g_bytes_ubo_reused)
                                : copy_deduped(blocks, mem::ptr(addr), addr, size, uboAlign, g_bytes_ubo, g_bytes_ubo_reused);
         } else {
             u = upload_alloc(size, uboAlign);
@@ -1668,9 +1681,12 @@ static bool ensure_pass(Surface* const* colors, const uint32_t* colorSlices, Sur
         prof_pass_begin(w, h, cf, nc, (VkFormat)pf.depth);
     }
     vkCmdBeginRenderPass(cb, &bi, VK_SUBPASS_CONTENTS_INLINE);
-    g_ds = DrawState{};  // dynamic state and bindings recorded from here on are tracked again
+    // Dynamic state and bindings recorded from here on are tracked again. Not valid until the first
+    // draw has set all of it: Vulkan keeps the previous pass's values within a command buffer (and
+    // leaves them undefined in a new one), so a first draw that wants a zero depth bias, stencil
+    // reference or blend constant must still set it rather than match the zeroed cache.
+    g_ds = DrawState{};
     g_pass_serial++;
-    g_ds.valid = true;
     R.pass = rp;
     for (int i = 0; i < 8; i++) {
         R.passColor[i] = colors[i];
@@ -2184,6 +2200,7 @@ static void record_draw(const uint32_t* regs, const Prepared& P, uint32_t prim, 
         vkCmdSetScissor(cmd, 0, 1, &scissor);
         g_ds.scissor = scissor;
     }
+    g_ds.valid = true;  // all dynamic state above is now set in this pass
 
     // vertex buffers
     for (auto& g : fs->bufferGroups) {
