@@ -72,13 +72,22 @@ void f_027F5018_orig(Cpu* c);  // J3DModel UBO update
 namespace interp {
 
 static std::atomic<bool> g_on{[] { const char* e = getenv("WWHD_INTERP"); return e && atoi(e) != 0 && !true60::enabled(); }()};
+// A late generated (hold) frame can be replaced by a full logic pass. During that pass every hook
+// behaves exactly like 30 fps: no stale halfway history is consumed. The following real hold pass
+// repopulates the interpolation histories before halfway drawing resumes.
+static std::atomic<bool> g_exact_catchup{false};
+static std::atomic<bool> g_cadence_reset{true};
+static uint64_t g_next_logic_due = 0, g_last_output_at = 0;
+static double g_output_period = (double)timebase::kTicksPerSec / 60.0;
 bool interp_on() { return g_on.load(std::memory_order_relaxed); }
 // the 60 Hz pass structure below is used by both 60 fps modes: interpolation (30 Hz logic) and
 // true 60 (true60.cpp: 60 Hz processes also execute on the in-between "hold" passes)
-bool enabled() { return interp_on() || true60::enabled(); }
+static bool configured_enabled() { return interp_on() || true60::enabled(); }
+bool enabled() { return configured_enabled() && !g_exact_catchup.load(std::memory_order_relaxed); }
 void set_enabled(bool v) {
     if (v) true60::set_enabled(false);
     g_on = v;
+    g_cadence_reset.store(true, std::memory_order_release);
     LOG("[interp] frame interpolation %s", v ? "on (60 fps)" : "off");
 }
 // the 60 fps mode: 0 off, 1 frame interpolation, 2 true 60 (game logic at 60 steps per second)
@@ -86,12 +95,14 @@ int mode() { return true60::enabled() ? 2 : interp_on() ? 1 : 0; }
 void set_mode(int m) {
     g_on = false;
     true60::set_enabled(false);
+    g_cadence_reset.store(true, std::memory_order_release);
     if (m == 1) set_enabled(true);
     if (m == 2) true60::set_enabled(true);
 }
 
 // GX2SetSwapInterval: two paints per logic step need half the interval
-uint32_t effective_swap_interval(uint32_t game) { return enabled() ? std::max<uint32_t>(1, game / 2) : game; }
+// A catch-up pass temporarily bypasses interpolation hooks, but still presents at the fast cadence.
+uint32_t effective_swap_interval(uint32_t game) { return configured_enabled() ? std::max<uint32_t>(1, game / 2) : game; }
 
 namespace {
 constexpr uint32_t kEye = 0xDC, kCenter = 0xE8, kUp = 0xF4, kFovy = 0xD4, kBank = 0x100;
@@ -204,6 +215,37 @@ bool g_cam_blended = false; // camera_draw is drawing the blended (halfway) came
 bool g_logic_pass = false;  // logic pass with interpolation on: camera drawn halfway
 bool g_hold_next = false;   // the next pass is a hold pass
 bool g_hold_frame = false;  // inside the per-frame function on a hold pass
+uint64_t g_dropped_holds = 0;
+
+void cadence_observe(uint64_t now) {
+    const double logic_period = (double)timebase::kTicksPerSec / 30.0;
+    if (g_cadence_reset.exchange(false, std::memory_order_acq_rel)) {
+        g_next_logic_due = g_last_output_at = 0;
+        g_output_period = 0.5 * logic_period;
+    }
+    if (g_last_output_at) {
+        double dt = (double)(now - g_last_output_at);
+        if (dt > 0.25 * logic_period && dt < 3.0 * logic_period)
+            g_output_period = 0.8 * g_output_period + 0.2 * dt;
+        else if (dt >= 3.0 * logic_period) {
+            g_next_logic_due = 0;  // pause/loading: never run a burst of catch-up logic
+            g_output_period = 0.5 * logic_period;
+        }
+    }
+    g_last_output_at = now;
+}
+
+bool logic_is_due_before_next_output(uint64_t now) {
+    return g_next_logic_due && (double)now + 0.5 * g_output_period >= (double)g_next_logic_due;
+}
+
+void cadence_logic(uint64_t now) {
+    const uint64_t period = timebase::kTicksPerSec / 30;
+    if (!g_next_logic_due || now > g_next_logic_due + 2 * period)
+        g_next_logic_due = now + period;
+    else
+        g_next_logic_due += period;
+}
 // last camera state that was drawn normally, per camera process
 struct Prev { uint32_t cam = 0; CamState s{}; bool valid = false; };
 Prev g_prev[4];
@@ -533,6 +575,7 @@ void ss_reset() {
     }
     g_hold_passes += 8;  // step-stamped histories (models, effects) no longer match
     g_hold_next = false;
+    g_cadence_reset.store(true, std::memory_order_release);
     fx_ss_reset();
     true60::ss_reset();
 }
@@ -552,12 +595,51 @@ extern "C" void hook_0203593C(Cpu* c) {
     static uint64_t at60 = getenv("WWHD_TRUE60_AT_STEP") ? strtoull(getenv("WWHD_TRUE60_AT_STEP"), nullptr, 10) : 0;
     static uint64_t passes60 = 0;
     if (at60 && ++passes60 == at60) set_mode(2);
+    const uint64_t pass_at = timebase::now();
+    cadence_observe(pass_at);
+
+    auto finish_logic = [pass_at] {
+        cadence_logic(pass_at);
+        static uint64_t n = 0, t0 = timebase::now();
+        if (++n % 300 == 0) {
+            uint64_t t = timebase::now();
+            LOG("[interp] %.1f logic steps/s; %.1f generated frames dropped/step; models per step: %.1f blended, %.1f new, %.1f cut, %.1f changed before UBO update",
+                300.0 * timebase::kTicksPerSec / (double)(t - t0), g_dropped_holds / 300.0,
+                g_mstats.blended / 300.0, g_mstats.fresh / 300.0, g_mstats.cut / 300.0,
+                g_mstats.changed.exchange(0) / 300.0);
+            t0 = t;
+            g_dropped_holds = 0;
+            g_mstats.blended = g_mstats.fresh = g_mstats.cut = 0;
+            for (auto it = g_models.begin(); it != g_models.end();)  // models no longer drawn
+                it = it->second.pass + 2 < g_hold_passes ? g_models.erase(it) : std::next(it);
+        }
+    };
+
     true60::new_pass();
-    true60::pass_begin(!enabled() || !g_hold_next);  // full pass: take back Link's half-pass preview
+    const bool exact_catchup = interp_on() && g_hold_next && logic_is_due_before_next_output(pass_at);
+    true60::pass_begin(!enabled() || !g_hold_next || exact_catchup);  // full pass: take back Link's half-pass preview
     if (!enabled() || !g_hold_next) g_logic_steps++;
     if (!enabled()) {
         g_hold_next = false;
+        g_next_logic_due = 0;
         f_0203593C_orig(c);
+        return;
+    }
+    if (exact_catchup) {
+        // There is no time for the generated frame before the next 30 Hz logic deadline. Advance
+        // the game now and draw its exact state. Keeping g_hold_next set lets consecutive exact
+        // steps occur down to 30 fps; the first spare output becomes a hold pass and refreshes all
+        // histories before interpolation resumes.
+        g_logic_steps++;
+        {
+            std::lock_guard<std::mutex> lk(g_ubo_mu);
+            g_ubo.clear();
+        }
+        g_exact_catchup.store(true, std::memory_order_relaxed);
+        f_0203593C_orig(c);
+        g_exact_catchup.store(false, std::memory_order_relaxed);
+        g_dropped_holds++;
+        finish_logic();
         return;
     }
     if (g_hold_next) {
@@ -578,17 +660,7 @@ extern "C" void hook_0203593C(Cpu* c) {
     }
     f_0203593C_orig(c);  // logic pass (the loop body hook marks it)
     g_hold_next = true;
-    static uint64_t n = 0, t0 = timebase::now();
-    if (++n % 300 == 0) {
-        uint64_t t = timebase::now();
-        LOG("[interp] %.1f logic steps/s; models per step: %.1f blended, %.1f new, %.1f cut, %.1f changed before UBO update",
-            300.0 * timebase::kTicksPerSec / (double)(t - t0), g_mstats.blended / 300.0, g_mstats.fresh / 300.0, g_mstats.cut / 300.0,
-            g_mstats.changed.exchange(0) / 300.0);
-        t0 = t;
-        g_mstats.blended = g_mstats.fresh = g_mstats.cut = 0;
-        for (auto it = g_models.begin(); it != g_models.end();)  // models no longer drawn
-            it = it->second.pass + 2 < g_hold_passes ? g_models.erase(it) : std::next(it);
-    }
+    finish_logic();
 }
 
 // main loop body (inside the per-frame function): logic pass -> camera drawn halfway;
@@ -750,9 +822,10 @@ bool logic_pass() { return g_logic_pass; }
 bool in_execute() { return g_in_execute; }
 uint64_t hold_pass_count() { return g_hold_passes; }
 const char* phase_name() { return !enabled() ? "interp off" : g_hold ? "IN-BETWEEN" : g_logic_pass ? "logic" : "other"; }
-// true 60: the sticks are read fresh on every pass (60 Hz processes use them on the half passes);
-// buttons still change on full passes only, so every press reaches the 30 Hz processes and menus
-bool fresh_sticks() { return true60::enabled(); }
+// Sample analogue sticks on every output pass. Buttons still change on full passes only, so every
+// press reaches the 30 Hz processes and menus exactly once. Keeping the latest sticks available
+// reduces camera and movement latency when variable cadence drops generated frames.
+bool fresh_sticks() { return enabled(); }
 bool repeat_input() {
     static const bool off = getenv("WWHD_INTERP_NO_REPEAT") != nullptr;  // debug
     return enabled() && g_hold_next && !off;

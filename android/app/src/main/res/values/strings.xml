@@ -151,7 +151,7 @@
     <string name="opt_pad_hint">Controller: hold Select or press Home to open and close · L / R switch tabs · D-pad moves and changes values · right button selects · bottom button goes back</string>
     <string name="lang_restart">The new language takes effect when the game restarts. Progress since your last save is lost.</string>
     <string name="opt_fps">Frame rate</string>
-    <string name="opt_fps_hint">60 fps draws a frame between each two game steps: the game itself keeps its original speed. Adaptive drops to 30 while the device can\'t hold 60. Turns frame generation off.</string>
+    <string name="opt_fps_hint">60 fps keeps the game at full speed from 30 to 60 fps by dropping late generated frames. Adaptive switches to a steady 30 when the device can\'t hold 60, then retries automatically.</string>
     <string-array name="fps_modes">
         <item>30 fps</item>
         <item>60 fps</item>
@@ -345,5 +345,6 @@
         <item>Original (as on Wii U)</item>
         <item>Centre fix</item>
         <item>Centre + noise fix</item>
+        <item>Off</item>
     </string-array>
 </resources>

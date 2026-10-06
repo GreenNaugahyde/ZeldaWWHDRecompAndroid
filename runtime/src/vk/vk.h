@@ -14,6 +14,7 @@
 
 #include "vk_formats.h"
 #include "vk_mem_alloc.h"
+#include "vk_record.h"
 
 namespace gfx {
 

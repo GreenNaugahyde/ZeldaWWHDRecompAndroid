@@ -398,6 +398,22 @@ static void compile_shader(Shader* sh) {
         if (size_t main = src.find("void main("); main != std::string::npos)
             src.insert(main, "invariant gl_Position;\n");
     }
+    // The Outset Island sun-shadow mask compares against a D16 cascade. Qualcomm's Vulkan driver
+    // does not reproduce Latte's large polygon offset closely enough here, leaving the receiver to
+    // self-shadow in a dense grid. Apply the game's 80-unit constant D16 bias at comparison time as
+    // a driver-independent equivalent (reference <= stored depth for the LEQUAL shadow sampler).
+    // Disabled by default (the official renderer has no such bias); WWHD_SHADOW_RECEIVER_BIAS=1 restores it.
+    static const bool receiverBiasOn = getenv("WWHD_SHADOW_RECEIVER_BIAS") != nullptr;
+    if (receiverBiasOn && !sh->vertex && src.find("// shader c2b1a9c7373b844a") != std::string::npos) {
+        const char* sample =
+            "R3i.x = floatBitsToInt(texture(textureUnitPS1, vec4(intBitsToFloat(R3i.x),intBitsToFloat(R3i.y),intBitsToFloat(R3i.z),intBitsToFloat(R3i.w))));";
+        if (size_t p = src.find(sample); p != std::string::npos) {
+            constexpr const char* receiverBias =
+                "R3i.w = floatBitsToInt(max(intBitsToFloat(R3i.w) - 0.001220703125, 0.0));\r\n"
+                "R0i.w = floatBitsToInt(max(intBitsToFloat(R0i.w) - 0.001220703125, 0.0));\r\n";
+            src.insert(p, receiverBias);
+        }
+    }
     uint64_t hash = hash_bytes(src.data(), src.size(), sh->vertex ? 0x5653ull : 0x5053ull) ^ src.size();
     auto it = g_modules.find(hash);
     if (it != g_modules.end()) {
@@ -852,17 +868,18 @@ static VkPipelineLayout get_pipeline_layout(Shader* vs, Shader* ps) {
     return l;
 }
 
-// Ambient-occlusion quirks, switchable in game (settings menu; WWHD_AO_MODE=0..2 sets the start):
+// Ambient-occlusion quirks, switchable in game (settings menu; WWHD_AO_MODE=0..3 sets the start):
 //   0 = as the hardware renders it
 //   1 = centre depth sampled bilinear (removes the every-third-row lines)
 //   2 = 1 + noise tiled per 960x540 pixel instead of per 640x360 pixel (removes the remaining
 //       uneven noise bands the game's blur can't average out)
+//   3 = disabled (the AO pass writes neutral white)
 static std::atomic<int> g_ao_mode{[] {
-    if (const char* e = getenv("WWHD_AO_MODE")) return atoi(e) % 3;
+    if (const char* e = getenv("WWHD_AO_MODE")) return std::clamp(atoi(e), 0, 3);
     return getenv("WWHD_NO_AO_QUIRK") ? 0 : 2;
 }()};
 int ao_mode() { return g_ao_mode.load(std::memory_order_relaxed); }
-void set_ao_mode(int m) { g_ao_mode = m % 3; LOG("[gfx] ambient occlusion mode %d", m % 3); }
+void set_ao_mode(int m) { m = std::clamp(m, 0, 3); g_ao_mode = m; LOG("[gfx] ambient occlusion mode %d", m); }
 
 // Draws whose shaders or pipeline are still compiling wait for the compile, up to a per-frame budget
 // (WWHD_COMPILE_WAIT_MS, default 8; the game's frame is 33 ms), and are skipped after it: new things
@@ -2176,9 +2193,20 @@ static void record_draw(const uint32_t* regs, const Prepared& P, uint32_t prim, 
         memcpy(g_ds.blend, &regs[REGADDR::CB_BLEND_RED], sizeof g_ds.blend);
     }
     float bias[3] = {0, 0, 0};  // constant, clamp, slope
-    if (pm.get_OFFSET_FRONT_ENABLED()) {
-        bias[2] = gx2::bitsf(regs[REGADDR::PA_SU_POLY_OFFSET_FRONT_SCALE]) / 16.0f;
-        bias[0] = gx2::bitsf(regs[REGADDR::PA_SU_POLY_OFFSET_FRONT_OFFSET]);
+    // Latte has independent polygon offsets for front and back faces. Shadow maps commonly cull
+    // their front faces and render only back faces, so ignoring the back offset removes the bias
+    // entirely and turns self-shadowing into a camera-dependent moire pattern. Vulkan exposes one
+    // bias for the draw; select the state of the face that can actually survive culling.
+    const bool frontBias = pm.get_OFFSET_FRONT_ENABLED();
+    // Disabled by default (the official renderer uses the front offset only); WWHD_BACK_POLY_OFFSET=1 restores it.
+    static const bool backBiasOn = getenv("WWHD_BACK_POLY_OFFSET") != nullptr;
+    const bool backBias = backBiasOn && pm.get_OFFSET_BACK_ENABLED();
+    const bool useBackBias = backBias && (!frontBias || (pm.get_CULL_FRONT() && !pm.get_CULL_BACK()));
+    if (frontBias || backBias) {
+        const uint32_t scaleReg = useBackBias ? REGADDR::PA_SU_POLY_OFFSET_BACK_SCALE : REGADDR::PA_SU_POLY_OFFSET_FRONT_SCALE;
+        const uint32_t offsetReg = useBackBias ? REGADDR::PA_SU_POLY_OFFSET_BACK_OFFSET : REGADDR::PA_SU_POLY_OFFSET_FRONT_OFFSET;
+        bias[2] = gx2::bitsf(regs[scaleReg]) / 16.0f;
+        bias[0] = gx2::bitsf(regs[offsetReg]);
         bias[1] = R.features.depthBiasClamp ? gx2::bitsf(regs[REGADDR::PA_SU_POLY_OFFSET_CLAMP]) : 0.0f;
     }
     if (!g_ds.valid || memcmp(bias, g_ds.bias, sizeof bias) != 0) {
@@ -2307,10 +2335,12 @@ void draw(const uint32_t* regs, uint32_t prim, uint32_t count, uint32_t indexTyp
     R.drawCount++;
     prof_draw(regs[mmSQ_PGM_START_PS] << 8);
     draws_since_commit()++;
-    DLOG("[draw] prim %X count %u idx %u@%08X VS %08X PS %08X CB0 %08X info %08X DB %08X depthctl %08X blend %08X mask %08X",
+    DLOG("[draw] prim %X count %u idx %u@%08X VS %08X PS %08X CB0 %08X info %08X DB %08X depthctl %08X blend %08X mask %08X scmode %08X bias %08X/%08X %08X/%08X",
          prim, count, indexType, indexAddr, regs[mmSQ_PGM_START_VS] << 8, regs[mmSQ_PGM_START_PS] << 8, regs[mmCB_COLOR0_BASE],
          regs[mmCB_COLOR0_INFO], regs[mmDB_DEPTH_BASE], regs[REGADDR::DB_DEPTH_CONTROL], regs[REGADDR::CB_COLOR_CONTROL],
-         regs[REGADDR::CB_TARGET_MASK]);
+         regs[REGADDR::CB_TARGET_MASK], regs[REGADDR::PA_SU_SC_MODE_CNTL],
+         regs[REGADDR::PA_SU_POLY_OFFSET_FRONT_SCALE], regs[REGADDR::PA_SU_POLY_OFFSET_FRONT_OFFSET],
+         regs[REGADDR::PA_SU_POLY_OFFSET_BACK_SCALE], regs[REGADDR::PA_SU_POLY_OFFSET_BACK_OFFSET]);
     if (!count || !instances) return;
     ((uint32_t*)regs)[REGADDR::VGT_PRIMITIVE_TYPE] = prim;
     if (regs[REGADDR::VGT_GS_MODE] & 3) { g_skip[SK_GS]++; return; }  // geometry shaders: not supported yet
@@ -2394,6 +2424,26 @@ void draw(const uint32_t* regs, uint32_t prim, uint32_t count, uint32_t indexTyp
     for (auto& c : colors)
         if (c && !renderable(c)) c = nullptr;
     if (depth && !renderable(depth)) depth = nullptr;
+
+    // Diagnostic and user option: remove ambient occlusion completely. The later lighting pass
+    // multiplies by this texture, so white is the neutral result. Clear the actual AO target rather
+    // than merely skipping its draw, which would leave the previous frame's occlusion behind.
+    if (ao_mode() == 3 && (regs[mmSQ_PGM_START_PS] << 8) == kOcclusionPS) {
+        VkClearColorValue neutral{{1.0f, 1.0f, 1.0f, 1.0f}};
+        for (Surface* s : colors) {
+            if (!s) continue;
+            prepare(s->img, Use::COPY_DST);
+            VkImageSubresourceRange range{s->img.aspect, 0, VK_REMAINING_MIP_LEVELS, 0, VK_REMAINING_ARRAY_LAYERS};
+            vkCmdClearColorImage(command_buffer(), s->img.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &neutral, 1, &range);
+            // The clear replaces this render target's contents just like a draw. Keep it the
+            // newest surface when multiple Vulkan images alias the same guest address; otherwise
+            // a later texture lookup can select an older AO image and make "off" ineffective.
+            mark_gpu_written(s);
+        }
+        g_prep_key.valid = false;
+        return;
+    }
+
     // one framebuffer size (image size, which includes the resolution scale) for all attachments;
     // drop mismatching ones (as the Metal renderer does)
     uint32_t w = 0, h = 0;

@@ -686,8 +686,8 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         } catch (NumberFormatException e) {
             f = 1;
         }
-        String[] ao = {"Wii U", "centre fix", "centre+noise"};
-        int aoMode = Math.max(0, Math.min(2, Native.getOption("ao_mode")));
+        String[] ao = {"Wii U", "centre fix", "centre+noise", "off"};
+        int aoMode = Math.max(0, Math.min(3, Native.getOption("ao_mode")));
         l.add("Res: " + scale + "× " + Math.round(720 * f) + "p  AO: " + ao[aoMode]);
         StringBuilder fx = new StringBuilder();
         if (Native.getOption("aniso") != 0) fx.append("Aniso: 16×  ");
@@ -813,7 +813,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     // depth, N anisotropic filtering, P capture
     private boolean hotkey(int code) {
         switch (code) {
-            case KeyEvent.KEYCODE_O: setAo((Native.getOption("ao_mode") + 1) % 3); return true;
+            case KeyEvent.KEYCODE_O: setAo((Native.getOption("ao_mode") + 1) % 4); return true;
             case KeyEvent.KEYCODE_M: setBool("ao_hires", Native.getOption("ao_hires") == 0); return true;
             case KeyEvent.KEYCODE_N: setBool("aniso", Native.getOption("aniso") == 0); return true;
             case KeyEvent.KEYCODE_P: case KeyEvent.KEYCODE_F12: Native.setOption("capture", 1); return true;

@@ -104,7 +104,7 @@ HLE(vpad, VPADRead) {
     static input::PadState last_p;
     const bool repeat = interp::repeat_input();
     input::PadState p = repeat ? last_p : input::read();
-    if (repeat && interp::fresh_sticks()) {  // true 60: sticks every pass, buttons on full passes
+    if (repeat && interp::fresh_sticks()) {  // sticks every pass, buttons on full passes
         input::PadState f = input::read();
         p.lx = f.lx; p.ly = f.ly; p.rx = f.rx; p.ry = f.ry;
     }
