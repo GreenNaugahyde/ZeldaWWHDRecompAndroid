@@ -441,6 +441,11 @@ final class OptionsMenu extends Dialog {
         for (int i = 0; i < res.length; i++) res[i] = a.resolutionLabel(MainActivity.RES_SCALES[i]);
         choice(R.string.opt_resolution, 0, res, indexOf(MainActivity.RES_SCALES, a.prefs.getString("res_scale", "1"), 2), a::setResolution);
         submenu(R.string.opt_framegen, 0, a.frameGenLabel(), () -> openPage(this::frameGenPage));
+        choice(R.string.opt_render_aspect, R.string.opt_render_aspect_hint, a.getResources().getStringArray(R.array.render_aspect_modes),
+               a.prefs.getInt("render_aspect", 0), i -> {
+                   a.prefs.edit().putInt("render_aspect", i).apply();
+                   Native.setOption("render_aspect", i);
+               });
         choice(R.string.opt_aspect, 0, a.getResources().getStringArray(R.array.aspect_modes), a.prefs.getInt("tv_aspect", 0), i -> {
             a.prefs.edit().putInt("tv_aspect", i).apply();
             Native.setOption("tv_aspect", i);

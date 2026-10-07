@@ -248,7 +248,7 @@ _Unwind_Reason_Code unwind_cb(struct _Unwind_Context* ctx, void* arg) {
 }  // namespace
 #endif
 
-void print_backtrace() {
+void print_backtrace(int fd) {
     void* frames[64];
 #ifdef __APPLE__
     int nf = backtrace(frames, 64);
@@ -270,6 +270,7 @@ void print_backtrace() {
         __android_log_write(ANDROID_LOG_ERROR, "wwhd", buf);
 #endif
         write(2, buf, len);
+        if (fd >= 0) write(fd, buf, len);
     }
 #endif
 }

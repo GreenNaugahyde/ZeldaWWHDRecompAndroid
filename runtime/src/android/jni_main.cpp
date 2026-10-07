@@ -238,6 +238,7 @@ extern "C" const char wwhd_ops_bc[], wwhd_ops_bc_end[], wwhd_hooks[], wwhd_hooks
 
 #ifdef WWHD_DEVICE_RECOMP
 #include "../recomp/loader.h"
+#include "../aspect.h"
 #endif
 
 static std::atomic<size_t> g_compile_done{0}, g_compile_total{0};
@@ -417,6 +418,8 @@ JNI_FN(void, setOption)(JNIEnv* env, jclass, jstring name, jint value) {
     else if (n == "capture") gfx::request_capture();
     else if (n == "res_scale") gfx::set_resolution_scale(value / 100.0f);
     else if (n == "tv_aspect") gfx::set_tv_aspect(value);
+    // aspect ratio the game renders at (aspect.cpp): 0 = 16:9 (original), 1 = the screen's shape
+    else if (n == "render_aspect") aspect::set_mode(value == 1 ? aspect::kWindow : aspect::kOriginal);
     // gameplay mods (runtime/src/mods)
     else if (n == "mod_direct_camera") mods::set_direct_camera(value != 0);
     else if (n == "mod_camera_speed") mods::set_camera_speed(value / 100.0f);
@@ -437,6 +440,7 @@ JNI_FN(jint, getOption)(JNIEnv* env, jclass, jstring name) {
     if (n == "aniso") return gfx::aniso_enabled();
     if (n == "pro_controller") return input::pro_controller();
     if (n == "tv_aspect") return gfx::tv_aspect();
+    if (n == "render_aspect") return aspect::mode() == aspect::kWindow ? 1 : 0;
     if (n == "mod_direct_camera") return mods::direct_camera();
     if (n == "mod_camera_speed") return (int)lroundf(mods::camera_speed() * 100);
     if (n == "mod_first_person") return mods::first_person_wheel();

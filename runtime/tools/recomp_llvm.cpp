@@ -25,7 +25,7 @@ int main(int argc, char** argv) {
     recomp::CompileOptions opt;
     opt.rpxPath = argv[1];
     opt.opsBitcode = slurp(argv[2]);
-    for (const char* f : {"hooks.txt", "hooks_climb.txt", "hooks_mods.txt"}) opt.hooksText += slurp(std::string(argv[3]) + "/" + f) + "\n";
+    for (const char* f : {"hooks.txt", "hooks_climb.txt", "hooks_mods.txt", "hooks_aspect.txt"}) opt.hooksText += slurp(std::string(argv[3]) + "/" + f) + "\n";
     opt.outDir = argv[4];
     opt.cpu = "generic";
     if (argc > 5) opt.perModule = strtoul(argv[5], nullptr, 10);

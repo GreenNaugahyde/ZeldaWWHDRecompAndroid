@@ -23,10 +23,9 @@ static uint64_t fnv(const uint8_t* p, size_t n) {
     return h ^ n;
 }
 
-uint64_t next_write_seq() {
-    static uint64_t seq = 0;
-    return ++seq;
-}
+static uint64_t g_write_seq = 0;
+uint64_t next_write_seq() { return ++g_write_seq; }
+uint64_t write_seq() { return g_write_seq; }
 
 // image shape for a surface: Vulkan image type, natural view type, layers, depth
 static void image_shape(uint32_t dim, uint32_t slices, bool forRendering, VkImageType& type, VkImageViewType& view, uint32_t& layers,
@@ -93,16 +92,51 @@ static bool screen_shaped(const Surface* s) {
     return aspect > 1.70f && aspect < 1.84f;
 }
 
+// Aspect ratio of the TV picture (aspect.cpp): the game's TV-shaped buffers (1280x720 ... and their
+// reductions, not the GamePad's 854x480 family) are created kx times wider (ky taller) on top of the
+// resolution scale. Draws keep their guest viewports, which then cover the wider image, and the
+// game's projections are widened to match (Hor+), so every full-screen pass lines up. The factor
+// travels with the swap command and changes between frames only (render thread).
+static float g_aspect_kx = 1.0f, g_aspect_ky = 1.0f;
+void set_frame_aspect(float a) {
+    const float base = 16.0f / 9.0f;
+    if (!(a > 0.5f && a < 8.0f)) a = base;
+    float kx = a >= base ? a / base : 1.0f, ky = a >= base ? 1.0f : base / a;
+    if (kx != g_aspect_kx || ky != g_aspect_ky) LOG("[gfx] aspect %.4f: TV targets x%.4f wide, x%.4f tall", a, kx, ky);
+    g_aspect_kx = kx;
+    g_aspect_ky = ky;
+}
+static bool tv_shaped(uint32_t width, uint32_t height) {
+    if (width < 32 || height < 18) return false;
+    for (uint32_t w = 854, h = 480; w >= 32; w >>= 1, h >>= 1)
+        if ((width == w || width == w + 1) && height == h) return false;
+    float r = (float)width * 9.0f / ((float)height * 16.0f);
+    return r > 0.97f && r < 1.03f;
+}
+bool target_aspect_factors(uint32_t w, uint32_t h, float& kx, float& ky) {
+    bool on = tv_shaped(w, h) && (g_aspect_kx != 1.0f || g_aspect_ky != 1.0f);
+    kx = on ? g_aspect_kx : 1.0f;
+    ky = on ? g_aspect_ky : 1.0f;
+    return on;
+}
+static void target_aspect(const Surface* s, float& ax, float& ay) {
+    if (s->slices != 1 || s->mips > 1 || s->fmt.compressed) { ax = ay = 1.0f; return; }
+    target_aspect_factors(s->width, s->height, ax, ay);
+}
+
 Surface* rescaled(Surface* s) {
     if (!s || !s->img.image || s->img.type != VK_IMAGE_TYPE_2D || s->mips > 1 || !screen_shaped(s)) return s;
-    float want = resolution_scale();
-    if (std::fabs(s->rscale - want) < 1e-3f) return s;
+    float want = resolution_scale(), ax, ay;
+    target_aspect(s, ax, ay);
+    if (std::fabs(s->rscale - want) < 1e-3f && s->ax == ax && s->ay == ay) return s;
     Image old = s->img;
-    float oldScale = s->rscale;
+    float oldScale = s->rscale, oldAx = s->ax, oldAy = s->ay;
     s->img = Image{};
     if (!create_surface_image(s, true)) {
         s->img = old;
         s->rscale = oldScale;
+        s->ax = oldAx;
+        s->ay = oldAy;
         return s;
     }
     // keep the contents: a filtered copy where the format allows, else a nearest one; none if the
@@ -145,10 +179,12 @@ bool create_surface_image(Surface* s, bool forRendering) {
         usage |= s->fmt.depth ? VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT : VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
     uint32_t w = s->width, h = type == VK_IMAGE_TYPE_1D ? 1 : s->height;
     s->rscale = 1.0f;
-    if (forRendering && type == VK_IMAGE_TYPE_2D && resolution_scale() != 1.0f && screen_shaped(s)) {
+    s->ax = s->ay = 1.0f;
+    if (forRendering && type == VK_IMAGE_TYPE_2D && screen_shaped(s)) target_aspect(s, s->ax, s->ay);
+    if (forRendering && type == VK_IMAGE_TYPE_2D && (resolution_scale() != 1.0f || s->ax != 1.0f || s->ay != 1.0f) && screen_shaped(s)) {
         s->rscale = resolution_scale();
-        w = std::max<uint32_t>(1, (uint32_t)lroundf(s->width * s->rscale));
-        h = std::max<uint32_t>(1, (uint32_t)lroundf(s->height * s->rscale));
+        w = std::max<uint32_t>(1, (uint32_t)lroundf(s->width * s->rscale * s->ax));
+        h = std::max<uint32_t>(1, (uint32_t)lroundf(s->height * s->rscale * s->ay));
     }
     // a mip chain can't be longer than the size allows
     uint32_t maxMips = 1;
@@ -305,7 +341,27 @@ Surface* surface_from_depth_buffer(uint32_t addr, uint32_t* firstSlice, uint32_t
 static uint64_t sparse_hash(Surface* s);
 uint64_t g_stat_full_checks, g_stat_uploads, g_stat_invalidates, g_stat_invalidated_surfaces;
 
+// The surface a set of texture words resolves to only changes when a surface is created or written
+// (the choice among surfaces aliasing one address depends on that): remember recent lookups.
+static Surface* check_texture(Surface* s);
+struct TexLookup {
+    uint32_t w[7];
+    bool depthSampler;
+    uint64_t writeSeq;
+    size_t surfaces;
+    Surface* s;
+    bool used;
+};
+static TexLookup g_tex_lookups[512];
+
 Surface* sampled_texture(const uint32_t* w, bool isDepthSampler) {
+    uint64_t key = 0x9E3779B97F4A7C15ull;
+    for (int i = 0; i < 7; i++) key = (key ^ w[i]) * 0xFF51AFD7ED558CCDull;
+    TexLookup& tl = g_tex_lookups[(key ^ (key >> 29)) & 511];
+    if (tl.used && tl.writeSeq == g_write_seq && tl.surfaces == R.surfaces.size() && tl.depthSampler == isDepthSampler &&
+        memcmp(tl.w, w, sizeof tl.w) == 0) {
+        return check_texture(tl.s);
+    }
     Latte::LATTE_SQ_TEX_RESOURCE_WORD0_N w0;
     Latte::LATTE_SQ_TEX_RESOURCE_WORD1_N w1;
     Latte::LATTE_SQ_TEX_RESOURCE_WORD4_N w4;
@@ -348,8 +404,23 @@ Surface* sampled_texture(const uint32_t* w, bool isDepthSampler) {
     d.dim = (uint32_t)dim;
     d.tileMode = (uint32_t)tileMode;
     d.swizzle = swizzle;
-    d.isDepth = false;
+    // A depth-compare (shadow) sampler looks for the depth surfaces at this address, as the original
+    // project's renderer does: a GPU-written colour image aliasing the shadow map's memory must not
+    // win over the cascade (the shadows alternated between two states).
+    d.isDepth = isDepthSampler;
     Surface* s = find_or_create_surface(d, false);
+    s = check_texture(s);
+    memcpy(tl.w, w, sizeof tl.w);
+    tl.depthSampler = isDepthSampler;
+    tl.writeSeq = g_write_seq;  // after the check: an upload counts as a write
+    tl.surfaces = R.surfaces.size();
+    tl.s = s;
+    tl.used = true;
+    return s;
+}
+
+// a sampled CPU texture: upload it if its memory changed (checked once per frame)
+static Surface* check_texture(Surface* s) {
     if (s && !s->gpuWritten && s->lastCheckedFrame != R.frame) {
         s->lastCheckedFrame = R.frame;
         // full hash only when new, invalidated, every 64 frames, or when a sparse sample changed
@@ -790,21 +861,32 @@ void copy_surface_impl(uint32_t srcAddr, uint32_t srcMip, uint32_t srcSlice, uin
         dd.pitch = d->pitch;
         dd.format = (uint32_t)d->format.value();
         dd.tileMode = (uint32_t)d->tileMode.value();
+        // As the original project's renderer: the destination keeps the source's kind (a depth copy
+        // goes into a depth surface, e.g. a shadow cascade, instead of a colour one whose format never
+        // matched and dropped the copy) and its own array shape, and the copy honours the slices
+        // (every cascade landed in slice 0 before).
+        dd.swizzle = (uint32_t)d->swizzle;
+        dd.isDepth = src->isDepth;
+        dd.dim = (uint32_t)d->dim.value();
+        dd.slices = (dd.dim == (uint32_t)Latte::E_DIM::DIM_2D || dd.dim == (uint32_t)Latte::E_DIM::DIM_1D)
+                        ? 1 : std::max<uint32_t>((uint32_t)d->depth, 1);
         Surface* dst = find_or_create_surface(dd, true);
-        if (!dst || dst->img.format != src->img.format || dst == src) return;
+        if (!dst || dst->img.format != src->img.format) return;
+        if (srcSlice >= src->img.layers || dstSlice >= dst->img.layers) return;
+        if (dst == src) return;  // same image: only a slice-to-itself copy reaches here in practice
         prepare(src->img, Use::COPY_SRC);
         prepare(dst->img, Use::COPY_DST);
         if (src->img.width == dst->img.width && src->img.height == dst->img.height) {
             VkImageCopy c{};
-            c.srcSubresource = {src->img.aspect, 0, 0, 1};
-            c.dstSubresource = {dst->img.aspect, 0, 0, 1};
+            c.srcSubresource = {src->img.aspect, 0, srcSlice, 1};
+            c.dstSubresource = {dst->img.aspect, 0, dstSlice, 1};
             c.extent = {src->img.width, src->img.height, 1};
             vkCmdCopyImage(command_buffer(), src->img.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, dst->img.image,
                            VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &c);
         } else {  // different resolution scales: scale while copying
             VkImageBlit b{};
-            b.srcSubresource = {src->img.aspect, 0, 0, 1};
-            b.dstSubresource = {dst->img.aspect, 0, 0, 1};
+            b.srcSubresource = {src->img.aspect, 0, srcSlice, 1};
+            b.dstSubresource = {dst->img.aspect, 0, dstSlice, 1};
             b.srcOffsets[1] = {(int32_t)src->img.width, (int32_t)src->img.height, 1};
             b.dstOffsets[1] = {(int32_t)dst->img.width, (int32_t)dst->img.height, 1};
             vkCmdBlitImage(command_buffer(), src->img.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, dst->img.image,

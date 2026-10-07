@@ -16,6 +16,11 @@
 #include "gx2_texture_regs.h"
 #include "platform.h"
 #include "runtime.h"
+#include "../aspect.h"
+#include <map>
+#include <unistd.h>
+#include <dirent.h>
+#include "mem_writes.h"
 
 using namespace Latte;
 
@@ -25,6 +30,20 @@ namespace gx2 {
 static uint32 g_regs[kNumRegs];
 static uint32* g_shadow = nullptr;  // register copy of the active GX2ContextState
 static std::unordered_map<uint32, std::vector<uint32>> g_contexts;
+// Register blocks ever written (in g_regs or any context). Every other block is zero everywhere, so
+// a context switch copies only these instead of the whole 256 KiB register file.
+constexpr uint32 kRegBlock = 64;
+static bool g_reg_touched[kNumRegs / kRegBlock];
+static std::vector<uint16_t> g_reg_blocks;
+static void touch_regs(uint32 first, uint32 n) {
+    if (!n) return;
+    for (uint32 b = first / kRegBlock, e = (first + n - 1) / kRegBlock; b <= e && b < kNumRegs / kRegBlock; b++)
+        if (!g_reg_touched[b]) {
+            g_reg_touched[b] = true;
+            g_reg_blocks.push_back((uint16_t)b);
+        }
+}
+static void touch_all_regs() { touch_regs(0, kNumRegs); }
 static std::recursive_mutex g_exec_mutex;
 
 uint32* regs() { return g_regs; }
@@ -33,6 +52,9 @@ uint32* regs() { return g_regs; }
 // renderer reuses its last shader lookup while it is unchanged. Uniforms, uniform/vertex buffer
 // addresses and rewrites of an identical value don't count.
 extern "C" { uint64_t g_shader_state_gen = 1; }
+// any register change outside shader_irrelevant (the draw fast path in vk_draw.cpp: the shader
+// filter leaves out texture addresses and the like, which a draw must resolve again)
+extern "C" { uint64_t g_draw_state_gen = 1; }
 
 static bool shader_irrelevant(uint32 reg) {
     if (reg >= mmSQ_ALU_CONSTANT0_0 && reg < mmSQ_ALU_CONSTANT0_0 + 0x1000) return true;
@@ -56,18 +78,23 @@ static std::unordered_map<uint32, uint64_t> g_gen_by_reg;
 
 static void apply_regs(uint32 first, const uint32* v, uint32 n) {
     if (first + n > kNumRegs) return;
+    touch_regs(first, n);
     if (memcmp(&g_regs[first], v, n * 4) != 0) {
         static const bool coarse = getenv("WWHD_COARSE_SHADER_GEN") != nullptr;  // debug: the old rule
-        for (uint32 i = 0; i < n; i++)
-            if (g_regs[first + i] != v[i] &&
-                (g_shader_reg_filter && !coarse ? g_shader_reg_filter(first + i, g_regs[first + i], v[i]) : !shader_irrelevant(first + i))) {
-                g_shader_state_gen++;
+        bool draw = false, shader = false;
+        for (uint32 i = 0; i < n && !(draw && shader); i++) {
+            if (g_regs[first + i] == v[i] || shader_irrelevant(first + i)) continue;
+            draw = true;  // any state a draw resolves (textures, samplers, targets, ...)
+            if (!shader && (g_shader_reg_filter && !coarse ? g_shader_reg_filter(first + i, g_regs[first + i], v[i]) : true)) {
+                shader = true;
                 if (g_gen_stats) {
                     g_gen_regs++;
                     g_gen_by_reg[first + i]++;
                 }
-                break;
             }
+        }
+        if (shader) g_shader_state_gen++;
+        if (draw) g_draw_state_gen++;
         memcpy(&g_regs[first], v, n * 4);
     }
     if (g_shadow) memcpy(&g_shadow[first], v, n * 4);
@@ -201,8 +228,11 @@ static void set_context(uint32 ctx) {
         return;
     }
     g_shadow = it->second.data();
-    memcpy(g_regs, g_shadow, sizeof(g_regs));
+    static const bool init = (touch_regs(REGADDR::VGT_PRIMITIVE_TYPE, 1), true);  // gfx::draw writes it
+    (void)init;
+    for (uint16_t b : g_reg_blocks) memcpy(&g_regs[b * kRegBlock], &g_shadow[b * kRegBlock], kRegBlock * 4);
     g_shader_state_gen++;
+    g_draw_state_gen++;
     if (g_gen_stats) g_gen_ctx++;
 }
 
@@ -257,7 +287,27 @@ static void execute_one(Op op, const uint32* p, uint32 n) {
     case OP_EXPAND_COLOR: case OP_EXPAND_DEPTH: break;  // MSAA/HiZ decompression: nothing to do on the host
     case OP_FLUSH: gfx::flush(); break;
     case OP_DRAW_DONE: gfx::draw_done(); break;
-    case OP_SWAP: gfx::swap(); break;
+    case OP_SET_PROJ_REGS: {
+        uint32 v[16];
+        memcpy(v, p + 1, sizeof v);
+        float kx, ky;
+        if (n == 17 && gfx::target_aspect_factors(g_regs[mmCB_COLOR0_TILE] & 0xFFFF, g_regs[mmCB_COLOR0_FRAG], kx, ky))
+            for (int i = 0; i < 4; i++) {  // rows x and y: the 16:9 layout space centred in the wider picture
+                v[i] = gx2::fbits(gx2::bitsf(v[i]) / kx);
+                v[4 + i] = gx2::fbits(gx2::bitsf(v[4 + i]) / ky);
+            }
+        apply_regs(p[0], v, std::min<uint32>(n - 1, 16));
+        break;
+    }
+    case OP_LAYOUT_ROOT: {
+        float kx, ky;
+        aspect::layout_root_target(p[0], gfx::target_aspect_factors(g_regs[mmCB_COLOR0_TILE] & 0xFFFF, g_regs[mmCB_COLOR0_FRAG], kx, ky));
+        break;
+    }
+    case OP_SWAP:
+        if (n) gfx::set_frame_aspect(gx2::bitsf(p[0]));  // aspect ratio from the next frame on (aspect.cpp)
+        gfx::swap();
+        break;
     case OP_SETUP_CONTEXT:
         g_contexts[p[0]].assign(kNumRegs, 0);
         g_shadow = g_contexts[p[0]].data();
@@ -437,10 +487,53 @@ HLE(gx2, GX2CopyColorBufferToScanBuffer) {
 }
 HLE(gx2, GX2ExpandAAColorBuffer) { emit(OP_EXPAND_COLOR, {arg(c, 0)}); }
 HLE(gx2, GX2ExpandDepthBuffer) { emit(OP_EXPAND_DEPTH, {arg(c, 0)}); }
-HLE(gx2, GX2Invalidate) { emit(OP_INVALIDATE, {arg(c, 0), arg(c, 1), arg(c, 2)}); }
+HLE(gx2, GX2Invalidate) {
+    // the CPU bit flushes the range on the console (mem_writes.h); "everything" carries no information
+    if ((arg(c, 0) & 0x40) && arg(c, 2) < 0x10000000) memw::mark(arg(c, 1), arg(c, 2));
+    emit(OP_INVALIDATE, {arg(c, 0), arg(c, 1), arg(c, 2)});
+}
 
 // ---------------------------------------------------------------- submission and presentation
 HLE(gx2, GX2Flush) { emit_host(OP_FLUSH, {}); }
+// CPU time a thread of this process (by its name) used since the previous call, in ms (Linux
+// /proc/self/task/<tid>/stat: utime + stime in clock ticks); 0 where unreadable
+static double thread_cpu_ms(const char* name) {
+#ifdef __linux__
+    static std::map<std::string, long long> last;
+    long long ticks = -1;
+    if (DIR* d = opendir("/proc/self/task")) {
+        while (dirent* e = readdir(d)) {
+            if (e->d_name[0] == '.') continue;
+            char path[64], comm[64] = {}, stat[512] = {};
+            snprintf(path, sizeof path, "/proc/self/task/%s/comm", e->d_name);
+            if (FILE* f = fopen(path, "r")) { if (!fgets(comm, sizeof comm, f)) comm[0] = 0; fclose(f); }
+            comm[strcspn(comm, "\n")] = 0;
+            if (strcmp(comm, name) != 0) continue;
+            snprintf(path, sizeof path, "/proc/self/task/%s/stat", e->d_name);
+            if (FILE* f = fopen(path, "r")) {
+                size_t n = fread(stat, 1, sizeof stat - 1, f);
+                stat[n] = 0;
+                fclose(f);
+                const char* p = strrchr(stat, ')');
+                unsigned long long ut = 0, st = 0;
+                // after ")": state ppid pgrp session tty tpgid flags minflt cminflt majflt cmajflt utime stime
+                if (p && sscanf(p + 2, "%*c %*d %*d %*d %*d %*d %*u %*u %*u %*u %*u %llu %llu", &ut, &st) == 2) ticks = (long long)(ut + st);
+            }
+            break;
+        }
+        closedir(d);
+    }
+    if (ticks < 0) return 0;
+    long long& prev = last[name];
+    double ms = prev ? (ticks - prev) * 1000.0 / sysconf(_SC_CLK_TCK) : 0;
+    prev = ticks;
+    return ms;
+#else
+    (void)name;
+    return 0;
+#endif
+}
+
 // GX2DrawDone calls and the time the game spent in them, for the periodic frame report
 static std::atomic<uint64_t> g_drawdone_calls{0}, g_drawdone_us{0};
 HLE(gx2, GX2DrawDone) {
@@ -468,7 +561,8 @@ HLE(gx2, GX2SwapScanBuffers) {
         }
         LOG("%s", buf);
     }
-    emit_host(OP_SWAP, {});
+    float a = aspect::on_swap();  // aspect ratio of the next frame (game projections, render targets)
+    emit_host(OP_SWAP, {gx2::fbits(a)});
     {
         std::lock_guard<std::mutex> lk(g_flip_mutex);
         update_flips();
@@ -480,8 +574,10 @@ HLE(gx2, GX2SwapScanBuffers) {
         auto now = std::chrono::steady_clock::now();
         double s = std::chrono::duration<double>(now - last).count();
         last = now;
-        LOG("[gx2] frame %llu, %.1f swaps/s, swap interval %u; GX2DrawDone %.1f/frame, %.1f ms/frame", (unsigned long long)g_swap_count,
-            300 / s, g_swap_interval, g_drawdone_calls.exchange(0) / 300.0, g_drawdone_us.exchange(0) / 300.0 / 1000.0);
+        double renderMs = thread_cpu_ms("GX2 render");
+        LOG("[gx2] frame %llu, %.1f swaps/s, swap interval %u; GX2DrawDone %.1f/frame, %.1f ms/frame; render thread CPU %.1f ms/frame",
+            (unsigned long long)g_swap_count, 300 / s, g_swap_interval, g_drawdone_calls.exchange(0) / 300.0,
+            g_drawdone_us.exchange(0) / 300.0 / 1000.0, renderMs / 300.0);
         if (getenv("WWHD_SCHED_STATS")) threads::report_sched();
         if (g_gen_stats) {
             std::vector<std::pair<uint64_t, uint32>> top;
@@ -608,6 +704,7 @@ void gx2_ss_load(ss::Reader& r) {
     std::lock_guard<std::recursive_mutex> lk(g_exec_mutex);
     r.u32();
     r.bytes(g_regs, sizeof g_regs);
+    touch_all_regs();  // a loaded state may use any register
     g_contexts.clear();
     uint32 n = r.u32();
     for (uint32 i = 0; i < n && r.ok; i++) {
@@ -620,6 +717,7 @@ void gx2_ss_load(ss::Reader& r) {
     auto it = g_contexts.find(active);
     g_shadow = active && it != g_contexts.end() ? it->second.data() : nullptr;
     g_shader_state_gen++;
+    g_draw_state_gen++;
     g_swap_interval = std::max<uint32>(r.u32(), 1);
     uint64_t guest_swaps = r.u64();
     {
@@ -627,4 +725,5 @@ void gx2_ss_load(ss::Reader& r) {
         g_count_offset = (int64_t)guest_swaps - (int64_t)g_swap_count;
     }
     gfx::ss_reset_surfaces();
+    aspect::ss_reset();  // layouts recompute their matrices for the current aspect
 }

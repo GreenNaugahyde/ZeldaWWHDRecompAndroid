@@ -134,6 +134,10 @@ struct CoreSched {
     std::deque<HostThread*> ready;  // FIFO among equal priorities
 };
 static CoreSched g_sched[3];
+// threads waiting in a ready queue; the tick thread sleeps while there are none (battery, heat)
+static std::atomic<int> g_ready_count{0};
+static std::mutex g_tick_m;
+static std::condition_variable g_tick_cv;
 
 static HostThread* best_ready(CoreSched& k) {  // k.m held
     HostThread* b = nullptr;
@@ -164,6 +168,10 @@ static void core_acquire(HostThread* t) {
     CoreSched& k = g_sched[core];
     std::unique_lock<std::mutex> lk(k.m);
     k.ready.push_back(t);
+    if (g_ready_count.fetch_add(1) == 0) {
+        { std::lock_guard<std::mutex> tl(g_tick_m); }
+        g_tick_cv.notify_one();
+    }
     if (k.owner && t->prio < k.owner->prio) g_core_preempt[core] = 1;
     auto start = std::chrono::steady_clock::now();
     t->acquired = start;
@@ -190,6 +198,7 @@ static void core_acquire(HostThread* t) {
     }
     for (auto it = k.ready.begin(); it != k.ready.end(); ++it)
         if (*it == t) { k.ready.erase(it); break; }
+    g_ready_count.fetch_sub(1);
     k.owner = t;
     t->holds_core = true;
     t->held_core = core;
@@ -293,6 +302,10 @@ static void sched_tick_thread() {
     static const bool timed_stats = getenv("WWHD_SCHED_STATS") && atoi(getenv("WWHD_SCHED_STATS")) == 2;
     auto next_report = std::chrono::steady_clock::now() + std::chrono::seconds(5);
     for (;;) {
+        if (g_ready_count.load() == 0) {
+            std::unique_lock<std::mutex> tl(g_tick_m);
+            g_tick_cv.wait_for(tl, std::chrono::milliseconds(100), [] { return g_ready_count.load() > 0; });
+        }
         std::this_thread::sleep_for(std::chrono::microseconds(500));
         if (timed_stats && std::chrono::steady_clock::now() >= next_report) {
             next_report += std::chrono::seconds(5);

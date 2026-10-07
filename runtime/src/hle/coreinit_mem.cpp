@@ -4,6 +4,7 @@
 #include <mutex>
 #include <unordered_map>
 
+#include "../mem_writes.h"
 #include "../runtime.h"
 
 namespace {
@@ -253,13 +254,16 @@ HLE(coreinit, memcpy) { memcpy(mem::ptr(arg(c, 0)), mem::ptr(arg(c, 1)), arg(c, 
 HLE(coreinit, memmove) { memmove(mem::ptr(arg(c, 0)), mem::ptr(arg(c, 1)), arg(c, 2)); ret(c, arg(c, 0)); }
 HLE(coreinit, memset) { memset(mem::ptr(arg(c, 0)), (int)arg(c, 1), arg(c, 2)); ret(c, arg(c, 0)); }
 
-// caches are coherent on the host
-HLE(coreinit, DCFlushRange) {}
-HLE(coreinit, DCFlushRangeNoSync) {}
+// caches are coherent on the host; flushes still tell the renderer what the CPU wrote (mem_writes.h)
+HLE(coreinit, DCFlushRange) { memw::mark(arg(c, 0), arg(c, 1)); }
+HLE(coreinit, DCFlushRangeNoSync) { memw::mark(arg(c, 0), arg(c, 1)); }
 HLE(coreinit, DCInvalidateRange) {}
-HLE(coreinit, DCStoreRange) {}
-HLE(coreinit, DCStoreRangeNoSync) {}
-HLE(coreinit, DCZeroRange) { memset(mem::ptr(arg(c, 0) & ~31u), 0, ((arg(c, 0) & 31) + arg(c, 1) + 31) & ~31u); }
+HLE(coreinit, DCStoreRange) { memw::mark(arg(c, 0), arg(c, 1)); }
+HLE(coreinit, DCStoreRangeNoSync) { memw::mark(arg(c, 0), arg(c, 1)); }
+HLE(coreinit, DCZeroRange) {
+    memset(mem::ptr(arg(c, 0) & ~31u), 0, ((arg(c, 0) & 31) + arg(c, 1) + 31) & ~31u);
+    memw::mark(arg(c, 0) & ~31u, ((arg(c, 0) & 31) + arg(c, 1) + 31) & ~31u);
+}
 HLE(coreinit, OSIsAddressRangeDCValid) { ret(c, 1); }
 
 // ---------------------------------------------------------------- save states: heap bookkeeping

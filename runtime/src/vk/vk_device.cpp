@@ -25,9 +25,11 @@
 #include "runtime.h"
 #include "vk.h"
 #include "vk_window.h"
+#include "../aspect.h"
 
 namespace gfx {
 Renderer R;
+namespace { void count_present(); }
 
 const char* backend_name() { return "Vulkan"; }
 uint64_t current_frame() { return R.frame; }
@@ -57,11 +59,22 @@ Chunk* new_chunk(VkDeviceSize size) {
                VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
     VmaAllocationCreateInfo ai{};
     ai.usage = VMA_MEMORY_USAGE_AUTO;
-    ai.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT;
+    // cached memory where the device has it coherent (mobile GPUs share memory with the CPU): draws
+    // compare guest data with what earlier draws already copied here (vk_draw.cpp, copy_deduped)
+    ai.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT;
     ai.requiredFlags = VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;  // written without explicit flushes
+    ai.preferredFlags = VK_MEMORY_PROPERTY_HOST_CACHED_BIT;
     VmaAllocationInfo info{};
     VK_CHECK(vmaCreateBuffer(R.vma, &bi, &ai, &c->buf, &c->alloc, &info));
     c->ptr = (uint8_t*)info.pMappedData;
+    VkMemoryPropertyFlags mf = 0;
+    vmaGetAllocationMemoryProperties(R.vma, c->alloc, &mf);
+    static bool logged = false;
+    if (!logged) {
+        logged = true;
+        R.uploadCached = (mf & VK_MEMORY_PROPERTY_HOST_CACHED_BIT) != 0;
+        LOG("[vk] transient upload memory: %s", R.uploadCached ? "cached (copies deduplicated)" : "uncached");
+    }
     return c;
 }
 
@@ -153,6 +166,237 @@ void retire(InFlight& f) {
     g_cmd_free.push_back(f.cmd);
 }
 
+// With deferred recording, the render thread owns transient allocations until it seals a stream.
+// The record thread then records/submits that stream and returns the allocations only after its GPU
+// fence signals. Completion callbacks remain on the render thread because they mutate renderer caches.
+struct RecordJob {
+    uint64_t id = 0;
+    uint64_t presentId = 0;
+    bool present = false, countPresent = false;
+    rec::Stream stream;
+    VkSemaphore wait = VK_NULL_HANDLE, signal = VK_NULL_HANDLE;
+    VkSwapchainKHR swapchain = VK_NULL_HANDLE;
+    uint32_t imageIndex = 0;
+    std::atomic<bool>* presentOutdated = nullptr;
+    std::vector<Chunk*> chunks;
+    std::vector<VkDescriptorPool> pools;
+    std::vector<std::function<void()>> done;
+};
+struct RecordDone {
+    uint64_t id = 0;
+    std::vector<Chunk*> chunks;
+    std::vector<VkDescriptorPool> pools;
+    std::vector<std::function<void()>> done;
+};
+struct RecordFlight {
+    RecordJob job;
+    VkFence fence = VK_NULL_HANDLE;
+    VkCommandBuffer cmd = VK_NULL_HANDLE;
+};
+std::mutex g_record_mutex;
+std::condition_variable g_record_cv;
+std::deque<RecordJob> g_record_jobs;
+std::deque<RecordDone> g_record_done;
+uint64_t g_record_next_id = 0, g_record_submitted_id = 0, g_record_complete_id = 0;
+uint64_t g_record_present_next = 0, g_record_present_done = 0;
+std::atomic<uint64_t> g_record_cpu_ns{0}, g_record_stream_bytes{0}, g_record_streams{0};
+
+uint64_t thread_cpu_ns() {
+    timespec ts{};
+    clock_gettime(CLOCK_THREAD_CPUTIME_ID, &ts);
+    return uint64_t(ts.tv_sec) * 1000000000ull + ts.tv_nsec;
+}
+
+void record_thread_main() {
+    platform::set_thread_name("GX2 record");
+    platform::set_thread_high_priority();  // also joins the performance hint session (Android)
+    std::deque<RecordFlight> flights;
+    std::vector<VkFence> fences;
+    std::vector<VkCommandBuffer> commands;
+    for (;;) {
+        RecordJob job;
+        {
+            std::unique_lock<std::mutex> lk(g_record_mutex);
+            if (g_record_jobs.empty()) {
+                if (flights.empty()) g_record_cv.wait(lk, [] { return !g_record_jobs.empty(); });
+                else g_record_cv.wait_for(lk, std::chrono::milliseconds(1));
+            }
+            if (!g_record_jobs.empty()) {
+                job = std::move(g_record_jobs.front());
+                g_record_jobs.pop_front();
+            }
+        }
+        if (job.present) {
+            VkPresentInfoKHR pi{VK_STRUCTURE_TYPE_PRESENT_INFO_KHR};
+            pi.waitSemaphoreCount = 1;
+            pi.pWaitSemaphores = &job.wait;
+            pi.swapchainCount = 1;
+            pi.pSwapchains = &job.swapchain;
+            pi.pImageIndices = &job.imageIndex;
+            VkResult r;
+            {
+                std::lock_guard<std::mutex> lk(R.queueMutex);
+                r = vkQueuePresentKHR(R.queue, &pi);
+            }
+            if (r == VK_ERROR_OUT_OF_DATE_KHR && job.presentOutdated)
+                job.presentOutdated->store(true, std::memory_order_release);
+            if (job.countPresent) count_present();
+            {
+                std::lock_guard<std::mutex> lk(g_record_mutex);
+                g_record_present_done = job.presentId;
+            }
+            g_record_cv.notify_all();
+        } else if (job.id) {
+            uint64_t cpu0 = thread_cpu_ns();
+            VkCommandBuffer cmd;
+            if (!commands.empty()) {
+                cmd = commands.back();
+                commands.pop_back();
+            } else {
+                VkCommandBufferAllocateInfo ai{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
+                ai.commandPool = R.cmdPool;
+                ai.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+                ai.commandBufferCount = 1;
+                VK_CHECK(vkAllocateCommandBuffers(R.device, &ai, &cmd));
+            }
+            VkCommandBufferBeginInfo bi{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
+            bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+            VK_CHECK(vkBeginCommandBuffer(cmd, &bi));
+            size_t streamBytes = job.stream.data.size();
+            rec::replay(job.stream, cmd);
+            rec::recycle(std::move(job.stream));
+            VK_CHECK(vkEndCommandBuffer(cmd));
+            VkFence fence;
+            if (!fences.empty()) {
+                fence = fences.back();
+                fences.pop_back();
+            } else {
+                VkFenceCreateInfo fi{VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
+                VK_CHECK(vkCreateFence(R.device, &fi, nullptr, &fence));
+            }
+            VkSubmitInfo si{VK_STRUCTURE_TYPE_SUBMIT_INFO};
+            VkPipelineStageFlags stage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+            si.commandBufferCount = 1;
+            si.pCommandBuffers = &cmd;
+            if (job.wait) {
+                si.waitSemaphoreCount = 1;
+                si.pWaitSemaphores = &job.wait;
+                si.pWaitDstStageMask = &stage;
+            }
+            if (job.signal) {
+                si.signalSemaphoreCount = 1;
+                si.pSignalSemaphores = &job.signal;
+            }
+            {
+                std::lock_guard<std::mutex> lk(R.queueMutex);
+                VK_CHECK(vkQueueSubmit(R.queue, 1, &si, fence));
+            }
+            g_record_cpu_ns.fetch_add(thread_cpu_ns() - cpu0, std::memory_order_relaxed);
+            g_record_stream_bytes.fetch_add(streamBytes, std::memory_order_relaxed);
+            g_record_streams.fetch_add(1, std::memory_order_relaxed);
+            uint64_t id = job.id;
+            flights.push_back(RecordFlight{std::move(job), fence, cmd});
+            {
+                std::lock_guard<std::mutex> lk(g_record_mutex);
+                g_record_submitted_id = id;
+            }
+            g_record_cv.notify_all();
+        }
+        while (!flights.empty()) {
+            RecordFlight& f = flights.front();
+            if (flights.size() > 16)
+                vkWaitForFences(R.device, 1, &f.fence, VK_TRUE, UINT64_MAX);
+            else if (vkGetFenceStatus(R.device, f.fence) != VK_SUCCESS)
+                break;
+            RecordDone done;
+            done.id = f.job.id;
+            done.chunks = std::move(f.job.chunks);
+            done.pools = std::move(f.job.pools);
+            done.done = std::move(f.job.done);
+            for (VkDescriptorPool p : done.pools) vkResetDescriptorPool(R.device, p, 0);
+            vkResetFences(R.device, 1, &f.fence);
+            vkResetCommandBuffer(f.cmd, 0);
+            fences.push_back(f.fence);
+            commands.push_back(f.cmd);
+            flights.pop_front();
+            {
+                std::lock_guard<std::mutex> lk(g_record_mutex);
+                g_record_complete_id = done.id;
+                g_record_done.push_back(std::move(done));
+            }
+            g_record_cv.notify_all();
+        }
+    }
+}
+
+void start_record_thread() {
+    static std::once_flag once;
+    std::call_once(once, [] { std::thread(record_thread_main).detach(); });
+}
+
+void drain_record_done() {
+    std::deque<RecordDone> done;
+    {
+        std::lock_guard<std::mutex> lk(g_record_mutex);
+        done.swap(g_record_done);
+    }
+    for (auto& f : done) {
+        for (auto& fn : f.done) fn();
+        for (Chunk* c : f.chunks) g_chunk_free.push_back(c);
+        for (VkDescriptorPool p : f.pools) g_pool_free.push_back(p);
+    }
+}
+
+uint64_t enqueue_record(RecordJob job) {
+    start_record_thread();
+    std::unique_lock<std::mutex> lk(g_record_mutex);
+    g_record_cv.wait(lk, [] { return g_record_next_id - g_record_complete_id < 16; });
+    job.id = ++g_record_next_id;
+    uint64_t id = job.id;
+    g_record_jobs.push_back(std::move(job));
+    lk.unlock();
+    g_record_cv.notify_all();
+    return id;
+}
+
+void enqueue_record_present(VkSemaphore wait, VkSwapchainKHR swapchain, uint32_t imageIndex,
+                            std::atomic<bool>* outdated, bool count) {
+    start_record_thread();
+    RecordJob job;
+    job.present = true;
+    job.countPresent = count;
+    job.wait = wait;
+    job.swapchain = swapchain;
+    job.imageIndex = imageIndex;
+    job.presentOutdated = outdated;
+    {
+        std::lock_guard<std::mutex> lk(g_record_mutex);
+        job.presentId = ++g_record_present_next;
+        g_record_jobs.push_back(std::move(job));
+    }
+    g_record_cv.notify_all();
+}
+
+void wait_record_submitted(uint64_t id) {
+    if (!id) return;
+    std::unique_lock<std::mutex> lk(g_record_mutex);
+    g_record_cv.wait(lk, [=] { return g_record_submitted_id >= id; });
+}
+
+void wait_record_idle(bool drain = true) {
+    uint64_t id, presentId;
+    {
+        std::lock_guard<std::mutex> lk(g_record_mutex);
+        id = g_record_next_id;
+        presentId = g_record_present_next;
+    }
+    if (id || presentId) {
+        std::unique_lock<std::mutex> lk(g_record_mutex);
+        g_record_cv.wait(lk, [=] { return g_record_complete_id >= id && g_record_present_done >= presentId; });
+    }
+    if (drain) drain_record_done();
+}
+
 // retire finished submissions; `wait` blocks for all of them
 void poll(bool wait = false) {
     while (!g_inflight.empty()) {
@@ -165,13 +409,34 @@ void poll(bool wait = false) {
     }
 }
 
-void submit(VkSemaphore wait = VK_NULL_HANDLE, VkSemaphore signal = VK_NULL_HANDLE) {
+uint64_t submit(VkSemaphore wait = VK_NULL_HANDLE, VkSemaphore signal = VK_NULL_HANDLE) {
     end_pass();
     if (!R.cmd) {
-        if (!wait && !signal) return;
+        if (!wait && !signal) return 0;
         command_buffer();
     }
     prof_cmd_end();
+    if (rec::enabled()) {
+        RecordJob job;
+        job.stream = rec::finish();
+        job.wait = wait;
+        job.signal = signal;
+        R.cmd = VK_NULL_HANDLE;
+        if (g_chunk_cur) {
+            g_chunk_used.push_back(g_chunk_cur);
+            g_chunk_cur = nullptr;
+        }
+        job.chunks.swap(g_chunk_used);
+        if (g_pool_cur) {
+            g_pool_used.push_back(g_pool_cur);
+            g_pool_cur = VK_NULL_HANDLE;
+        }
+        job.pools.swap(g_pool_used);
+        job.done.swap(g_pending_done);
+        g_draws_since_commit_ = 0;
+        drain_record_done();
+        return enqueue_record(std::move(job));
+    }
     VK_CHECK(vkEndCommandBuffer(R.cmd));
     InFlight f;
     f.cmd = R.cmd;
@@ -219,6 +484,7 @@ void submit(VkSemaphore wait = VK_NULL_HANDLE, VkSemaphore signal = VK_NULL_HAND
         poll();
     }
     poll();
+    return 0;
 }
 }  // namespace
 
@@ -226,6 +492,14 @@ uint32_t& draws_since_commit() { return g_draws_since_commit_; }
 
 VkCommandBuffer command_buffer() {
     if (R.cmd) return R.cmd;
+    if (rec::enabled()) {
+        drain_record_done();
+        rec::begin();
+        R.cmd = rec::virtual_command_buffer();
+        R.cmdSerial++;
+        prof_cmd_begin();
+        return R.cmd;
+    }
     if (!g_cmd_free.empty()) {
         R.cmd = g_cmd_free.back();
         g_cmd_free.pop_back();
@@ -264,7 +538,8 @@ void flush() { submit(); }
 
 void wait_idle() {
     submit();
-    poll(true);
+    if (rec::enabled()) wait_record_idle();
+    else poll(true);
 }
 
 // GX2DrawDone. The game waits here before reusing memory the GPU reads, or to read what it wrote.
@@ -683,6 +958,7 @@ static void create_device() {
     pi.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
     pi.queueFamilyIndex = R.queueFamily;
     VK_CHECK(vkCreateCommandPool(R.device, &pi, nullptr, &R.cmdPool));
+    LOG("[vk] command recording: %s", rec::enabled() ? "GX2 record thread" : "direct (WWHD_RECORD_THREAD=0)");
 
     formats_init(R.pd);
     load_pipeline_cache();
@@ -848,11 +1124,17 @@ void destroy_swapchain(Swapchain& sc, bool keepSurface) {
 }
 
 // g_window_mutex held; true if a swapchain is ready. `main`: the game window (frame generation
+static bool no_60hz_request() {
+    static const bool off = getenv("WWHD_NO_60HZ") != nullptr;
+    return off;
+}
+
 // presents there); else the GamePad's own display
 bool ensure_swapchain(Swapchain& sc, bool main = true) {
     if (!sc.window) return false;
     if (sc.sc && !sc.stale) return true;
     if (sc.sc) {
+        if (rec::enabled()) wait_record_idle(false);
         std::lock_guard<std::mutex> lk(R.queueMutex);
         vkQueueWaitIdle(R.queue);
         destroy_swapchain(sc, true);
@@ -869,6 +1151,9 @@ bool ensure_swapchain(Swapchain& sc, bool main = true) {
     // that is a multiple of it (a 144 Hz panel can't space 60 or 120 fps evenly; 120 Hz can)
     if (main && fg::loaded()) ANativeWindow_setFrameRate(sc.window, 30.0f * fg::config().multiplier,
                                                  ANATIVEWINDOW_FRAME_RATE_COMPATIBILITY_FIXED_SOURCE);
+    // without it the game flips at most 60 times a second: let a 90/120 Hz panel drop to 60 Hz
+    // (from pull request #8 by SSunnKing, 62a723b); WWHD_NO_60HZ=1 leaves the panel's rate alone
+    else if (main && !no_60hz_request()) ANativeWindow_setFrameRate(sc.window, 60.0f, ANATIVEWINDOW_FRAME_RATE_COMPATIBILITY_DEFAULT);
     VkSurfaceCapabilitiesKHR caps{};
     vkGetPhysicalDeviceSurfaceCapabilitiesKHR(R.pd, sc.surface, &caps);
     uint32_t n = 0;
@@ -1000,6 +1285,12 @@ void fit(const ScreenRect& r, float a, float out[4], VkExtent2D ext, int mode = 
     out[0] = x / W; out[1] = y / H; out[2] = w / W; out[3] = h / H;
 }
 
+// the shape of the TV picture's rect on screen: the aspect the game renders at in "screen" mode (aspect.cpp)
+void report_tv_shape(const ScreenRect& r, VkExtent2D ext) {
+    float w = r.w > 0 ? r.w : (float)ext.width, h = r.h > 0 ? r.h : (float)ext.height;
+    if (h > 0) aspect::set_window_aspect(w / h);
+}
+
 void draw_screen(VkCommandBuffer cmd, Screen& scr, const ScreenRect& r, VkExtent2D ext, int mode = 0) {
     if (!scr.img.image) return;
     float pc[8];
@@ -1036,10 +1327,12 @@ void draw_screen(VkCommandBuffer cmd, Screen& scr, const ScreenRect& r, VkExtent
 // performance overlay: frames presented (game frames, or with frame generation all presented frames)
 std::atomic<uint64_t> g_presents{0};
 void count_present() { g_presents.fetch_add(1, std::memory_order_relaxed); }
+std::atomic<bool> g_present_outdated{false}, g_drc_present_outdated{false};
 
 // record the window image and submit the frame; false if there is no window to present to
 bool present_frame() {
     std::lock_guard<std::mutex> wl(g_window_mutex);
+    if (g_present_outdated.exchange(false, std::memory_order_acquire)) g_sc.stale = true;
     if (!ensure_swapchain(g_sc)) return false;
     VkSemaphore acquire;
     if (!g_acquire_free.empty()) {
@@ -1080,23 +1373,28 @@ bool present_frame() {
     vkCmdSetViewport(cmd, 0, 1, &vp);
     vkCmdSetScissor(cmd, 0, 1, &sc);
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g_sc.pipeline);
+    report_tv_shape(g_tv_rect, g_sc.extent);
     draw_screen(cmd, R.tv, g_tv_rect, g_sc.extent, g_tv_aspect.load(std::memory_order_relaxed));
     if (g_drc_visible) draw_screen(cmd, R.drc, g_drc_rect, g_sc.extent);
     vkCmdEndRenderPass(cmd);
     on_complete([acquire] { g_acquire_free.push_back(acquire); });
-    submit(acquire, g_sc.renderDone[idx]);
-    VkPresentInfoKHR pi{VK_STRUCTURE_TYPE_PRESENT_INFO_KHR};
-    pi.waitSemaphoreCount = 1;
-    pi.pWaitSemaphores = &g_sc.renderDone[idx];
-    pi.swapchainCount = 1;
-    pi.pSwapchains = &g_sc.sc;
-    pi.pImageIndices = &idx;
-    {
-        std::lock_guard<std::mutex> lk(R.queueMutex);
-        r = vkQueuePresentKHR(R.queue, &pi);
+    uint64_t submitId = submit(acquire, g_sc.renderDone[idx]);
+    if (rec::enabled()) enqueue_record_present(g_sc.renderDone[idx], g_sc.sc, idx, &g_present_outdated, true);
+    else {
+        wait_record_submitted(submitId);
+        VkPresentInfoKHR pi{VK_STRUCTURE_TYPE_PRESENT_INFO_KHR};
+        pi.waitSemaphoreCount = 1;
+        pi.pWaitSemaphores = &g_sc.renderDone[idx];
+        pi.swapchainCount = 1;
+        pi.pSwapchains = &g_sc.sc;
+        pi.pImageIndices = &idx;
+        {
+            std::lock_guard<std::mutex> lk(R.queueMutex);
+            r = vkQueuePresentKHR(R.queue, &pi);
+        }
+        if (r == VK_ERROR_OUT_OF_DATE_KHR) g_sc.stale = true;
+        count_present();
     }
-    if (r == VK_ERROR_OUT_OF_DATE_KHR) g_sc.stale = true;
-    count_present();
     return true;
 }
 
@@ -1106,6 +1404,7 @@ bool present_frame() {
 std::vector<VkSemaphore> g_drc_acquire_free;
 void present_drc_window() {
     std::lock_guard<std::mutex> wl(g_window_mutex);
+    if (g_drc_present_outdated.exchange(false, std::memory_order_acquire)) g_sc_drc.stale = true;
     if (!g_sc_drc.window || !R.drc.img.image || !ensure_swapchain(g_sc_drc, false)) return;
     VkSemaphore acquire;
     if (!g_drc_acquire_free.empty()) {
@@ -1145,18 +1444,22 @@ void present_drc_window() {
     draw_screen(cmd, R.drc, ScreenRect{}, g_sc_drc.extent);  // the whole display, 16:9 with bars
     vkCmdEndRenderPass(cmd);
     on_complete([acquire] { g_drc_acquire_free.push_back(acquire); });
-    submit(acquire, g_sc_drc.renderDone[idx]);
-    VkPresentInfoKHR pi{VK_STRUCTURE_TYPE_PRESENT_INFO_KHR};
-    pi.waitSemaphoreCount = 1;
-    pi.pWaitSemaphores = &g_sc_drc.renderDone[idx];
-    pi.swapchainCount = 1;
-    pi.pSwapchains = &g_sc_drc.sc;
-    pi.pImageIndices = &idx;
-    {
-        std::lock_guard<std::mutex> lk(R.queueMutex);
-        r = vkQueuePresentKHR(R.queue, &pi);
+    uint64_t submitId = submit(acquire, g_sc_drc.renderDone[idx]);
+    if (rec::enabled()) enqueue_record_present(g_sc_drc.renderDone[idx], g_sc_drc.sc, idx, &g_drc_present_outdated, false);
+    else {
+        wait_record_submitted(submitId);
+        VkPresentInfoKHR pi{VK_STRUCTURE_TYPE_PRESENT_INFO_KHR};
+        pi.waitSemaphoreCount = 1;
+        pi.pWaitSemaphores = &g_sc_drc.renderDone[idx];
+        pi.swapchainCount = 1;
+        pi.pSwapchains = &g_sc_drc.sc;
+        pi.pImageIndices = &idx;
+        {
+            std::lock_guard<std::mutex> lk(R.queueMutex);
+            r = vkQueuePresentKHR(R.queue, &pi);
+        }
+        if (r == VK_ERROR_OUT_OF_DATE_KHR) g_sc_drc.stale = true;
     }
-    if (r == VK_ERROR_OUT_OF_DATE_KHR) g_sc_drc.stale = true;
 }
 
 // ---------------------------------------------------------------- frame generation
@@ -1441,13 +1744,13 @@ void apply_frame_generation() {
     }
     if (fg::loaded()) {
         // the present thread finishes what it has; then nothing uses the network's images
-        submit();
+        wait_idle();
         fg_wait_present(true);
         {
             std::lock_guard<std::mutex> lk(R.queueMutex);
             vkQueueWaitIdle(R.queue);
         }
-        poll();
+        if (!rec::enabled()) poll();
         {
             std::lock_guard<std::mutex> lk(g_fgq_mutex);
             g_fg_sets.clear();
@@ -1460,7 +1763,7 @@ void apply_frame_generation() {
     // present mode (FIFO with frame generation) and the display rate hint differ: new swapchain
     std::lock_guard<std::mutex> wl(g_window_mutex);
     if (g_sc.window && !fg::loaded())
-        ANativeWindow_setFrameRate(g_sc.window, 0, ANATIVEWINDOW_FRAME_RATE_COMPATIBILITY_DEFAULT);
+        ANativeWindow_setFrameRate(g_sc.window, no_60hz_request() ? 0.0f : 60.0f, ANATIVEWINDOW_FRAME_RATE_COMPATIBILITY_DEFAULT);
     g_sc.stale = true;
 }
 
@@ -1480,13 +1783,13 @@ bool present_frame_fg() {
     }
     if (!w || !h) return false;
     if (w != g_comp.img.width || h != g_comp.img.height) {
-        submit();
+        wait_idle();
         fg_wait_present(true);
         {
             std::lock_guard<std::mutex> lk(R.queueMutex);
             vkQueueWaitIdle(R.queue);
         }
-        poll();
+        if (!rec::enabled()) poll();
         std::lock_guard<std::mutex> lk(g_fgq_mutex);  // the present thread is idle
         g_fg_sets.clear();
         vkResetDescriptorPool(R.device, g_fg_dpool, 0);
@@ -1532,12 +1835,14 @@ bool present_frame_fg() {
         drcRect = g_drc_rect;
         drcVisible = g_drc_visible;
     }
+    report_tv_shape(tvRect, {w, h});
     draw_screen(cmd, R.tv, tvRect, {w, h}, g_tv_aspect.load(std::memory_order_relaxed));
     if (drcVisible) draw_screen(cmd, R.drc, drcRect, {w, h});
     vkCmdEndRenderPass(cmd);
     FgJob job;
     job.images = fg::record(cmd, generate);
-    submit();
+    uint64_t submitId = submit();
+    wait_record_submitted(submitId);  // the present thread also submits to R.queue
     job.arrival = Clock::now();
     fg_wait_present(false);  // at most one frame waiting: the images are reused two frames later
     {
@@ -1556,6 +1861,7 @@ void set_window(ANativeWindow* w) {
         return;
     }
     if (g_sc.sc || g_sc.surface) {
+        if (rec::enabled()) wait_record_idle(false);
         std::lock_guard<std::mutex> lk(R.queueMutex);
         vkQueueWaitIdle(R.queue);
         destroy_swapchain(g_sc, false);
@@ -1572,6 +1878,7 @@ void set_drc_window(ANativeWindow* w) {
         return;
     }
     if (g_sc_drc.sc || g_sc_drc.surface) {
+        if (rec::enabled()) wait_record_idle(false);
         std::lock_guard<std::mutex> lk(R.queueMutex);
         vkQueueWaitIdle(R.queue);
         destroy_swapchain(g_sc_drc, false);
@@ -2059,6 +2366,12 @@ void swap() {
     g_frames_submitted++;
     if (R.frame % 300 == 1) {
         LOG("[gfx] frame %llu, %llu draws so far", (unsigned long long)R.frame, (unsigned long long)R.drawCount);
+        if (rec::enabled()) {
+            uint64_t ns = g_record_cpu_ns.exchange(0), bytes = g_record_stream_bytes.exchange(0),
+                     streams = g_record_streams.exchange(0);
+            LOG("[gfx] last 300 frames: GX2 record %.1f ms/frame, stream %.1f KiB/frame, %.1f submits/frame",
+                ns / 300.0 / 1e6, bytes / 300.0 / 1024.0, streams / 300.0);
+        }
         report_skips();
     }
     // keep the driver's compiled pipelines across launches (the app can be killed at any time)
@@ -2125,6 +2438,7 @@ void invalidate(uint32_t flags, uint32_t addr, uint32_t size) {
             s->lastCheckedFrame = ~0ull;
             s->dirty = true;
             g_stat_invalidated_surfaces++;
+            next_write_seq();  // draws must check their textures again (draw's fast path)
         }
     }
 }

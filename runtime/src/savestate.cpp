@@ -51,6 +51,7 @@
 
 #include "runtime.h"
 #include "input.h"
+#include "mem_writes.h"
 #include "release.h"
 
 // module sections
@@ -665,6 +666,7 @@ bool do_load(const std::shared_ptr<Snapshot>& s) {
     } else {
         message("Loaded slot %d%s", s->slot, area.c_str());
     }
+    memw::mark_all();  // guest memory replaced: the renderer copies everything again
     LOG("[savestate] slot %d: restored in %.1f ms", s->slot, ms);
     return true;
 }

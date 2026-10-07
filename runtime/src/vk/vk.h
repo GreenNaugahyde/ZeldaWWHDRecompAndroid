@@ -14,6 +14,7 @@
 
 #include "vk_formats.h"
 #include "vk_mem_alloc.h"
+#include "vk_record.h"
 
 namespace gfx {
 
@@ -60,6 +61,7 @@ struct Surface {
     bool dirty = true;         // new, or invalidated by the game: do a full check
     FormatInfo fmt;
     float rscale = 1.0f;              // resolution scale: image size / guest size (render targets only)
+    float ax = 1.0f, ay = 1.0f;       // aspect ratio widening (taller) of TV-shaped targets, on top of rscale
     Surface* feedbackCopy = nullptr;  // copy sampled while this surface is a bound attachment
     uint64_t lastDrawFrame = ~0ull;   // render targets: the last frame drawn into,
     uint32_t drawStreak = 0;          // and in how many consecutive frames up to it
@@ -74,6 +76,7 @@ struct Screen {
 };
 
 uint64_t next_write_seq();
+uint64_t write_seq();  // the latest; changes whenever a surface is written, uploaded or invalidated
 inline void mark_gpu_written(Surface* s) { s->gpuWritten = true; s->writeSeq = next_write_seq(); }
 
 // Transient GPU-visible memory for one draw's data (vertices, indices, uniforms, uploads).
@@ -94,6 +97,7 @@ struct Renderer {
     std::string driverInfo;  // the running driver's name and version
     VkPhysicalDeviceFeatures features{};  // enabled features
     bool mirrorClampToEdge = false;
+    bool uploadCached = false;   // transient upload memory is CPU-cached (copy_deduped compares in it)
     bool shaderFloat16 = false;  // 16-bit float arithmetic in shaders (frame generation)
     VkPipelineCache pipelineCache = VK_NULL_HANDLE;
     std::mutex queueMutex;  // vkQueueSubmit/Present from the render thread, waits from the UI thread

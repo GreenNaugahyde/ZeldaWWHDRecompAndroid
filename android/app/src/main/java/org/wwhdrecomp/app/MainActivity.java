@@ -250,6 +250,10 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         if (!GpuDrivers.prepareHooks(this)) return null;
         setenv("WWHD_GPU_DRIVER_DIR", d.dir.getAbsolutePath() + "/");
         setenv("WWHD_GPU_DRIVER_LIB", d.library);
+        // Turnip: always render in tiles (GMEM). Its automatic choice falls back to direct rendering for
+        // many of the game's passes, which measured slower on an Adreno 740 (25 -> 28.5 fps in a heavy
+        // scene; from pull request #8 by SSunnKing); a TU_DEBUG in wwhd.env wins
+        if (d.library.contains("freedreno") && Os.getenv("TU_DEBUG") == null) setenv("TU_DEBUG", "gmem");
         setenv("WWHD_GPU_HOOK_DIR", GpuDrivers.hookDir(this).getAbsolutePath() + "/");
         try {
             //noinspection ResultOfMethodCallIgnored
@@ -431,6 +435,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         Native.setOption("aniso", prefs.getBoolean("aniso", Native.getOption("aniso") != 0) ? 1 : 0);
         Native.setOption("pro_controller", prefs.getBoolean("pro_controller", Native.getOption("pro_controller") != 0) ? 1 : 0);
         Native.setOption("tv_aspect", prefs.getInt("tv_aspect", 0));
+        Native.setOption("render_aspect", prefs.getInt("render_aspect", 0));
         for (String m : MODS) Native.setOption(m, prefs.getBoolean(m, false) ? 1 : 0);
         Native.setOption("mod_camera_speed", prefs.getInt("mod_camera_speed", 100));
         Native.setOption("mod_run_speed", prefs.getInt("mod_run_speed", 100));

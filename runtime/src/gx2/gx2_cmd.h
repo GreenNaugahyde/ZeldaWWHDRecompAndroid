@@ -30,6 +30,8 @@ enum Op : uint32_t {
     OP_INVALIDATE,      // flags, address, size
     OP_EXPAND_COLOR,    // GX2ColorBuffer*
     OP_EXPAND_DEPTH,    // GX2DepthBuffer*
+    OP_SET_PROJ_REGS,   // first register, 16 values: a layout projection matrix (narrowed when drawing to the TV)
+    OP_LAYOUT_ROOT,     // nw::lyt root pane: drawn into the target bound now (which screen it goes to)
     // host-only (render queue)
     OP_FLUSH,           // submit queued GPU work
     OP_DRAW_DONE,       // wait for the GPU to finish
