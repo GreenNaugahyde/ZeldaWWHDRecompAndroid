@@ -189,6 +189,9 @@
     <string name="opt_mod_quick_doors">Quick doors</string>
     <string name="opt_mod_fast_scenes">Fast scene changes</string>
     <string name="opt_mod_speed_hint">4× speed</string>
+    <string name="opt_mod_ff_cutscenes">Fast forward cutscenes</string>
+    <string name="opt_mod_ff_dialogues">Fast forward dialogues</string>
+    <string name="opt_mod_ff_hint">Faster (up to 4×, as fast as this device draws) while ZR (R2) is held; text boxes still wait for your button</string>
     <string name="opt_mod_run">Faster running</string>
     <string name="opt_mod_run_hint">Link covers more ground while running; jumps and rolls stay as they are</string>
     <string name="opt_mod_swim">Faster swimming</string>
@@ -202,6 +205,25 @@
     <string name="opt_mod_run_l3_hold">Hold</string>
     <string name="opt_onscreen">On-screen controls</string>
     <string name="opt_onscreen_size">On-screen controls size</string>
+    <string name="opt_controls_edit">Edit on-screen layout</string>
+    <string name="opt_controls_edit_hint">Move, resize and hide each button; opacity and style (outline or filled)</string>
+    <string name="opt_controls_style">Touch controls</string>
+    <string name="opt_controls_style_hint">Flexible: the sticks appear where your thumb touches (left half: movement, right half: camera)</string>
+    <string name="controls_classic">Classic</string>
+    <string name="controls_flexible">Flexible</string>
+    <string name="opt_context_buttons">Context buttons</string>
+    <string name="opt_context_buttons_hint">A, B, X, Y, R and ZR appear when there is something to do and say what; the game\'s own button display is hidden</string>
+    <string name="opt_hearts_combat">Hearts only in combat</string>
+    <string name="opt_hearts_combat_hint">The hearts fade out while the sword is put away and fade in when it is drawn or Link takes damage</string>
+    <string name="opt_rupees_change">Rupees only when they change</string>
+    <string name="opt_rupees_change_hint">The rupee count fades in when you collect or spend rupees, and out again after a few seconds</string>
+    <string name="opt_show_sticks">Show sticks</string>
+    <string name="opt_show_sticks_hint">Off: the sticks work from a blank screen</string>
+    <string name="opt_touch_camera">Camera (right half)</string>
+    <string name="opt_touch_camera_hint">Stick: like the right analog stick. Swipe: the camera turns with your finger</string>
+    <string name="touch_camera_stick">Stick</string>
+    <string name="opt_swipe_speed">Swipe speed</string>
+    <string name="touch_camera_swipe">Swipe</string>
     <string name="opt_controller">Controls act as</string>
     <string name="opt_states">Save states</string>
     <string name="opt_backup">Import / export saves</string>
@@ -289,6 +311,7 @@
         <item>TV and GamePad side by side</item>
         <item>TV only</item>
         <item>GamePad with TV inset</item>
+        <item>TV, GamePad on demand</item>
     </string-array>
     <string-array name="ao_modes">
         <item>Original (as on Wii U)</item>

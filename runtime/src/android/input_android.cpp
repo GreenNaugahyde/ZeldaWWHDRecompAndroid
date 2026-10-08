@@ -107,8 +107,10 @@ void prompt_finished(bool ok, const std::u16string& text) {
 
 }  // namespace input
 
-// gameplay mods: the mouse camera needs a captured pointer, which the Android app doesn't offer
+// gameplay mods: the mouse camera (mods/camera.cpp) also serves the touch controls' swipe camera:
+// while that is chosen, the "pointer" counts as captured and finger movement arrives as mouse movement
 namespace mods {
-bool mouse_captured() { return false; }
+std::atomic<bool> g_touch_swipe{false};
+bool mouse_captured() { return g_touch_swipe.load(std::memory_order_relaxed); }
 void mouse_release() {}
 }  // namespace mods

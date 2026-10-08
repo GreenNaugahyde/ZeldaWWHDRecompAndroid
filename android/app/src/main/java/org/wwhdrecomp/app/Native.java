@@ -15,6 +15,20 @@ final class Native {
     static native String checkGame(String gameDir);
     /** Extracts the game from a disc image (fd: the open image, closed here) into outDir: null, or why not. Blocks. */
     static native String extractGame(int fd, byte[] discKey, byte[] commonKey, String outDir);
+    /** Touch controls: the right side turns the camera by swiping (on) or is a stick (off). */
+    static native void setTouchSwipeCamera(boolean on);
+    /** A swipe on the right side, in dp (+y down). */
+    static native void cameraSwipe(float dx, float dy);
+    /** {valid, A action, sword, X item, Y item, R item, B action, ZR action, event mode, pause menu open, has the Wind Waker, shield} (0xFF: none; all 0 outside a game). */
+    static native int[] touchState();
+    /** HUD panes not to draw, "name,name,..." (runtime/src/hud.h). */
+    static native void setHudHidden(String names);
+    /** HUD elements that fade out when not needed: 0 hearts (sword in hand, damage), 1 rupees (count changed). */
+    static native void setHudFade(int which, boolean on);
+    /** Debug: every texture of the 2D pack as outDir/layout__texture.rgba; how many. */
+    static native int dumpUiTextures(String gameDir, String outDir);
+    /** Textures from the game's 2D pack, written as outDir/texture.rgba (uint32 w, h, RGBA8): how many. */
+    static native int extractUiTextures(String gameDir, String outDir, String[] layouts, String[] textures);
     /** One section of the crash log's context (runtime/src/crash_info.h). */
     static native void setCrashInfo(String section, String text);
     /** The same from a Cemu .wua archive (decrypted, no keys). */
@@ -67,7 +81,7 @@ final class Native {
 
     /**
      * ao_mode (0..2), ao_hires, aniso, pro_controller (0/1); capture (any value); gameplay mods:
-     * mod_direct_camera, mod_camera_speed (percent), mod_first_person, mod_climb, mod_quick_doors, mod_fast_scenes,
+     * mod_direct_camera, mod_camera_speed (percent), mod_first_person, mod_climb, mod_quick_doors, mod_fast_scenes, mod_ff_cutscenes, mod_ff_dialogues,
      * mod_run_speed (percent), mod_run_mode (0 always, 1 hold L3, 2 L3 switches), mod_swim_speed (percent), mod_swim_mode (as run).
      */
     static native void setOption(String name, int value);

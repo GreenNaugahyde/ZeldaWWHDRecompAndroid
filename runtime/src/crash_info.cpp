@@ -1,7 +1,12 @@
 // Prepared crash log context (see crash_info.h).
 #include "crash_info.h"
 
+#include <algorithm>
 #include <atomic>
+#include <utility>
+#include <vector>
+
+#include "recomp_table.h"
 #include <cstdlib>
 #include <cstring>
 #include <map>
@@ -77,6 +82,32 @@ void capture_env() {
     std::string text;
     for (auto& [k, v] : vars) text += k + "=" + v + "\n";
     set("env", text);
+}
+
+namespace {
+std::vector<std::pair<uintptr_t, uint32_t>> g_funcs;  // (host address, guest address), sorted
+std::atomic<bool> g_funcs_ready{false};
+}  // namespace
+
+void index_functions() {
+    std::vector<std::pair<uintptr_t, uint32_t>> v;
+    v.reserve(g_recomp_func_count);
+    for (unsigned i = 0; i < g_recomp_func_count; i++)
+        if (g_recomp_funcs[i].fn) v.push_back({(uintptr_t)g_recomp_funcs[i].fn, g_recomp_funcs[i].addr});
+    std::sort(v.begin(), v.end());
+    g_funcs = std::move(v);
+    g_funcs_ready = true;
+}
+
+bool guest_function(uintptr_t pc, uint32_t* addr, uint32_t* offset) {
+    if (!g_funcs_ready.load() || g_funcs.empty() || pc < g_funcs.front().first) return false;
+    auto it = std::upper_bound(g_funcs.begin(), g_funcs.end(), std::make_pair(pc, UINT32_MAX));
+    --it;
+    // past the last function or far from its start: not game code (functions are rarely > 256 KiB)
+    if (pc - it->first > 0x40000) return false;
+    *addr = it->second;
+    *offset = (uint32_t)(pc - it->first);
+    return true;
 }
 
 const char* text() {

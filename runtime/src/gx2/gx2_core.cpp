@@ -379,7 +379,34 @@ static uint64_t g_last_flip_vsync = 0;
 static uint64_t g_last_flip_time = 0;  // timebase
 static int64_t g_count_offset = 0;     // guest-visible swap/flip counts minus ours (set by a loaded save state)
 
-static uint64_t vsync_index() { return (std::chrono::steady_clock::now() - g_vsync_epoch) / kVsyncPeriod; }
+// The clock can run faster (fast forward, mods/turbo.cpp): the game then flips more often and plays
+// more frames per second, every one calculated and drawn as usual. vsync n is at
+// g_clock_base_time + (n - g_clock_base_index) * period / rate.
+static std::mutex g_clock_mutex;
+static std::chrono::steady_clock::time_point g_clock_base_time = g_vsync_epoch;
+static uint64_t g_clock_base_index = 0;
+static double g_clock_rate = 1.0;
+
+static uint64_t vsync_index() {
+    std::lock_guard<std::mutex> lk(g_clock_mutex);
+    auto dt = std::chrono::steady_clock::now() - g_clock_base_time;
+    return g_clock_base_index + (uint64_t)(std::chrono::duration<double>(dt).count() * g_clock_rate / std::chrono::duration<double>(kVsyncPeriod).count());
+}
+static std::chrono::steady_clock::time_point vsync_time(uint64_t n) {
+    std::lock_guard<std::mutex> lk(g_clock_mutex);
+    double s = (double)(n - g_clock_base_index) * std::chrono::duration<double>(kVsyncPeriod).count() / g_clock_rate;
+    return g_clock_base_time + std::chrono::duration_cast<std::chrono::steady_clock::duration>(std::chrono::duration<double>(s));
+}
+namespace gx2 {
+void set_clock_rate(double rate) {
+    uint64_t now = vsync_index();
+    std::lock_guard<std::mutex> lk(g_clock_mutex);
+    if (rate == g_clock_rate) return;
+    g_clock_base_index = now;
+    g_clock_base_time = std::chrono::steady_clock::now();
+    g_clock_rate = rate;
+}
+}  // namespace gx2
 
 static void update_flips() {  // g_flip_mutex held
     uint64_t now = vsync_index();
@@ -479,6 +506,11 @@ HLE(gx2, GX2CopySurface) {
     put_struct(p, arg(c, 3), kSurfaceWords);
     p.insert(p.end(), {arg(c, 4), arg(c, 5)});
     emit(OP_COPY_SURFACE, p.data(), (uint32)p.size());
+    // A linear destination is read by the CPU right after the call, without GX2DrawDone: the Picto
+    // Box JPEG-encodes its picture from such a copy (issue #22). The render thread writes the copy
+    // back to guest memory (vk_surfaces.cpp), so wait for it.
+    auto tm = (uint32)((GX2Surface*)mem::ptr(arg(c, 3)))->tileMode.value();
+    if (!t_rec.start && (tm == 1 || tm == 0x10)) render_sync();
 }
 HLE(gx2, GX2CopyColorBufferToScanBuffer) {
     std::vector<uint32> p;
@@ -607,7 +639,7 @@ HLE(gx2, GX2GetSwapStatus) {
 }
 HLE(gx2, GX2SetSwapInterval) { g_swap_interval = std::max<uint32>(arg(c, 0), 1); }
 HLE(gx2, GX2WaitForVsync) {
-    threads::park_sleep_until(g_vsync_epoch + kVsyncPeriod * (vsync_index() + 1));
+    threads::park_sleep_until(vsync_time(vsync_index() + 1));
     std::lock_guard<std::mutex> lk(g_flip_mutex);
     update_flips();
     static uint64_t calls = 0;

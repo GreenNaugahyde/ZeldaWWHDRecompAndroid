@@ -1,7 +1,9 @@
 // Loading the game code from the code cache (see loader.h).
 #include "loader.h"
 
+#include <llvm/ExecutionEngine/JITLink/EHFrameSupport.h>
 #include <llvm/ExecutionEngine/Orc/AbsoluteSymbols.h>
+#include <llvm/ExecutionEngine/Orc/EHFrameRegistrationPlugin.h>
 #include <llvm/ExecutionEngine/Orc/LLJIT.h>
 #include <llvm/ExecutionEngine/Orc/ObjectLinkingLayer.h>
 #include <llvm/Support/MemoryBuffer.h>
@@ -203,7 +205,11 @@ bool load_game_code(const std::string& rpxPath, const std::string& dir, std::str
                    .setPlatformSetUp(llvm::orc::setUpInactivePlatform)
                    .setObjectLinkingLayerCreator([](llvm::orc::ExecutionSession& es, const llvm::Triple&)
                                                      -> llvm::Expected<std::unique_ptr<llvm::orc::ObjectLayer>> {
-                       return std::make_unique<llvm::orc::ObjectLinkingLayer>(es);
+                       auto ol = std::make_unique<llvm::orc::ObjectLinkingLayer>(es);
+                       // the code's unwind tables (compile.cpp), for backtraces in crash logs
+                       ol->addPlugin(std::make_unique<llvm::orc::EHFrameRegistrationPlugin>(
+                           es, std::make_unique<llvm::jitlink::InProcessEHFrameRegistrar>()));
+                       return ol;
                    })
                    .create();
     if (!jit) {

@@ -3,6 +3,7 @@
 // crash handler runs in a signal handler and may not allocate. No personal data: paths are cut to
 // their last part.
 #pragma once
+#include <cstdint>
 #include <string>
 
 namespace crash_info {
@@ -17,5 +18,10 @@ void capture_env();
 
 // all sections, ready to write (signal safe; empty before the first set)
 const char* text();
+
+// the game function holding a host code address (the compiled game code has no symbols):
+// index_functions() once the code is loaded, then guest_function() (signal safe)
+void index_functions();
+bool guest_function(uintptr_t pc, uint32_t* addr, uint32_t* offset);
 
 }  // namespace crash_info

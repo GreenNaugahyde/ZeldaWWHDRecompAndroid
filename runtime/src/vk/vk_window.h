@@ -14,6 +14,7 @@ void set_window(ANativeWindow* w);
 struct ScreenRect {
     float x = 0, y = 0, w = 0, h = 0;
 };
+// tv.w < 0: the TV picture is not drawn (the app's "GamePad on demand" shows only the GamePad)
 void set_layout(ScreenRect tv, ScreenRect drc, bool drcVisible);
 
 // The GamePad picture on its own display (the second screen of dual-screen devices): its window
@@ -28,6 +29,8 @@ void save_caches();
 void perf_stats(float out[7]);
 // the running GPU driver's name and version ("" before the renderer started)
 const char* driver_info();
+// fast forward (mods/turbo.cpp) runs: present the game's frames only, without frame generation
+void set_fast_forward(bool on);
 const char* gpu_name();
 // an installed GPU driver was chosen but couldn't be loaded: the system's runs
 bool driver_fallback();

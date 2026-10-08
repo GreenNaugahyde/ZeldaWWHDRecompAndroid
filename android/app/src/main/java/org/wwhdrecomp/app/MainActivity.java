@@ -52,8 +52,15 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     static volatile MainActivity instance;
     private static boolean libraryLoaded, started;
 
+    // The redesigned touch controls (style "Flexible", context buttons, layout editor, HUD fades) and the
+    // screen layout "TV, GamePad on demand" are unfinished: hidden from the options, and saved settings
+    // of them are ignored, until this is true.
+    static final boolean NEW_TOUCH_CONTROLS = false;
+
     // screen layouts
-    static final int LAYOUT_INSET = 0, LAYOUT_SIDE = 1, LAYOUT_TV = 2, LAYOUT_DRC_LARGE = 3;
+    static final int LAYOUT_INSET = 0, LAYOUT_SIDE = 1, LAYOUT_TV = 2, LAYOUT_DRC_LARGE = 3, LAYOUT_ON_DEMAND = 4;
+    // "TV, GamePad on demand": the GamePad picture is shown instead of the TV picture (screen button)
+    private boolean drcShown;
     private static final float TV_ASPECT = 16f / 9f, DRC_ASPECT = 854f / 480f;
 
     SharedPreferences prefs;
@@ -84,6 +91,12 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
             if (Os.getenv("WWHD_DUMP_SHADERS") == null) Backup.deleteTree(new File(baseDir(), "shaders"));
             System.loadLibrary("wwhd");
             libraryLoaded = true;
+        }
+        // debug: WWHD_DUMP_UI=1 writes every 2D pack texture to captures/ui (to look at them on a PC)
+        if (Os.getenv("WWHD_DUMP_UI") != null) {
+            File out = new File(baseDir(), "captures/ui");
+            out.mkdirs();
+            new Thread(() -> Native.dumpUiTextures(gameDir(), out.getAbsolutePath())).start();
         }
         // the crash log's app section, kept current while settings change
         CrashLogs.updateInfo(this, prefs);
@@ -134,7 +147,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     // testing hooks (launch extras) only in debuggable builds: in a shared APK other apps could pass them
     boolean debuggable() { return (getApplicationInfo().flags & android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) != 0; }
 
-    private String gameDir() {
+    String gameDir() {
         String extra = debuggable() ? getIntent().getStringExtra("gameDir") : null;
         if (extra != null) return extra;
         return new File(baseDir(), "game").getAbsolutePath();
@@ -459,7 +472,20 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     void applyControlsAppearance() {
         if (controls == null) return;
         boolean visible = prefs.getBoolean("controls_visible", true) && !autoHidden;
-        controls.setAppearance(visible, prefs.getFloat("controls_scale", 1f), prefs.getFloat("controls_opacity", 0.45f));
+        final boolean nw = NEW_TOUCH_CONTROLS;
+        controls.setAppearance(visible, prefs.getFloat("controls_scale", 1f), nw ? prefs.getFloat("controls_opacity", 0.45f) : 0.45f);
+        boolean flexible = nw && prefs.getInt("controls_style", 0) == 1, swipe = prefs.getInt("touch_camera", 0) == 1;
+        controls.setStyle(flexible, prefs.getBoolean("controls_show_sticks", true), swipe);
+        controls.setSwipeSpeed(prefs.getFloat("swipe_speed", SWIPE_SPEED_DEFAULT));
+        controls.setFilled(nw && prefs.getBoolean("controls_filled", false));
+        // context buttons: the game's button cluster (X, Y, R, B, ZR, A's seat and floating label) is hidden
+        boolean context = flexible && prefs.getBoolean("context_buttons", false);
+        controls.setContext(context);
+        Native.setHudHidden(context ? "N_X_00,N_Y_00,N_R_00,P_B_00,P_ZR_00,P_SetSeatASpecial_00,W_SetSeatA_00,L_CommandA_00" : "");
+        Native.setHudFade(0, nw && prefs.getBoolean("hearts_combat", false));
+        Native.setHudFade(1, nw && prefs.getBoolean("rupees_on_change", false));
+        if (!controls.editing()) controls.setLayoutString(nw ? prefs.getString("controls_layout", "") : "");
+        Native.setTouchSwipeCamera(flexible && swipe);
         updateLayout();
     }
 
@@ -520,7 +546,10 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         RectF full = new RectF(0, 0, W, H);
         RectF tv, drc;
         int layout = prefs.getInt("layout", LAYOUT_INSET);
+        if (layout == LAYOUT_ON_DEMAND && !NEW_TOUCH_CONTROLS) layout = LAYOUT_INSET;
         if (drcDisplay != null && drcDisplay.active()) layout = LAYOUT_TV;  // the GamePad has its own display
+        if (layout != LAYOUT_ON_DEMAND) drcShown = false;
+        controls.setScreenButton(layout == LAYOUT_ON_DEMAND, drcShown);
         // the inset sits between the shoulder buttons, sized to leave them free
         float insetW = Math.min(W * 0.3f, W - 2 * (Math.min(W, H) / 7f * 3.6f));
         RectF inset = new RectF((W - insetW) / 2, 0, (W + insetW) / 2, insetW / DRC_ASPECT);
@@ -537,15 +566,19 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
                 drc = full;
                 tv = inset;
                 break;
+            case LAYOUT_ON_DEMAND:  // the TV picture, or only the GamePad picture (width -1: not drawn)
+                tv = drcShown ? new RectF(0, 0, -1, -1) : full;
+                drc = drcShown ? full : null;
+                break;
             default:
                 tv = full;
                 drc = inset;
                 break;
         }
-        Native.setLayout(new float[] {tv.left, tv.top, tv.width(), tv.height()},
+        Native.setLayout(new float[] {tv.left, tv.top, tv.right < 0 ? -1 : tv.width(), tv.right < 0 ? -1 : tv.height()},
                 drc == null ? null : new float[] {drc.left, drc.top, drc.width(), drc.height()}, drc != null);
         controls.setDrcRect(drc == null ? null : fit(drc, DRC_ASPECT));
-        controls.setTvRect(fit(tv, TV_ASPECT));
+        controls.setTvRect(tv.right < 0 ? null : fit(tv, TV_ASPECT));
         controls.setClimbHud(prefs.getBoolean("mod_climb", false));
         controls.setPerfHud(prefs.getBoolean("perf_hud", false));
         controls.setPerfItems(prefs.getInt("perf_items", ControlsView.PERF_ALL));
@@ -639,6 +672,23 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
 
     @Override
     public void onControlsChanged() { pushInput(); }
+
+    @Override
+    public void onScreenToggle() {
+        drcShown = !drcShown;
+        updateLayout();
+    }
+
+    /** the on-screen controls' layout editor (ControlsView); the menu closes for it */
+    void editControls() {
+        if (controls != null) controls.setEditing(true);
+    }
+
+    @Override
+    public void onLayoutEdited(String layout, float opacity, boolean filled) {
+        prefs.edit().putString("controls_layout", layout).putFloat("controls_opacity", opacity).putBoolean("controls_filled", filled).apply();
+        applyControlsAppearance();
+    }
 
     @Override
     public void onOverlayMoved(float fx, float fy) {
@@ -875,6 +925,10 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
 
     // ---- actions of the in-game menu (OptionsMenu)
     static final float[] CONTROL_SIZES = {0.75f, 0.9f, 1f, 1.15f, 1.3f};
+    // swipe speed factors 0.25 to 4 in steps of 0.25, shown relative to the default 2: -175 to +200
+    static final float[] SWIPE_SPEEDS = new float[16];
+    static { for (int i = 0; i < SWIPE_SPEEDS.length; i++) SWIPE_SPEEDS[i] = (i + 1) * 0.25f; }
+    static final float SWIPE_SPEED_DEFAULT = 2f;
 
     // render targets switch to the new size as the game next draws into them
     void setResolution(int i) {
@@ -954,12 +1008,20 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
 
     // ------------------------------------------------------------------ gameplay mods
     // optional changes to how the game plays (runtime/src/mods), all off by default
-    static final String[] MODS = {"mod_direct_camera", "mod_first_person", "mod_climb", "mod_quick_doors", "mod_fast_scenes"};
+    static final String[] MODS = {"mod_direct_camera", "mod_first_person", "mod_climb", "mod_quick_doors", "mod_fast_scenes",
+                                  "mod_ff_cutscenes", "mod_ff_dialogues"};
     static final int[] CAMERA_SPEEDS = {50, 100, 150, 200};
     static final int[] RUN_SPEEDS = {100, 125, 150, 200, 250, 300, 400};  // 100: off
 
     // faster running ("mod_run") and swimming ("mod_swim") each apply always, or with L3: held, or
     // one press switches it on and off
+    /** faster running or swimming is on and works with L3 (the context buttons then show L3) */
+    boolean l3InUse() {
+        for (String mod : new String[] {"mod_run", "mod_swim"})
+            if (prefs.getInt(mod + "_speed", 100) != 100 && prefs.getBoolean(mod + "_l3", false)) return true;
+        return false;
+    }
+
     int moveMode(String mod) {
         if (!prefs.getBoolean(mod + "_l3", false)) return 0;
         return prefs.getBoolean(mod + "_l3_hold", false) ? 1 : 2;

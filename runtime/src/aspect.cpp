@@ -33,6 +33,7 @@
 #include <vector>
 
 #include "gx2/gx2_cmd.h"
+#include "hud.h"
 #include "runtime.h"
 
 namespace aspect {
@@ -223,7 +224,7 @@ void f_02877100_orig(Cpu* c);
 }
 namespace aspect {
 namespace {
-constexpr uint32_t kPaneFlags = 0x44, kPaneMtxDirty = 0x10, kPaneGlobal = 0x48;
+constexpr uint32_t kPaneFlags = 0x44, kPaneAlpha = 0x45, kPaneMtxDirty = 0x10, kPaneGlobal = 0x48;
 constexpr uint32_t kPaneParent = 0x0C, kPaneChildren = 0x14, kPaneTrans = 0x1C, kPaneScale = 0x34, kPaneSize = 0x3C, kPaneName = 0x80;
 
 std::mutex g_root_mu;
@@ -294,6 +295,8 @@ thread_local bool t_anchor = false; // ... and it is a TV layout at another aspe
 }  // namespace
 }  // namespace aspect
 
+static void calc_pane(Cpu* c, uint32_t pane, uint32_t parent, float kx, float ky);
+
 // Pane::CalculateMtx(this, DrawInfo&, bool parentDirty)
 extern "C" void hook_028766CC(Cpu* c) {
     using namespace aspect;
@@ -302,6 +305,27 @@ extern "C" void hook_028766CC(Cpu* c) {
     float kx, ky;
     factors(g_game, kx, ky);
     if (!parent) {  // a layout's root: decide for the whole tree
+        // debug: WWHD_HUD_LOG=1 lists each layout root with its direct children once (HUD element names)
+        static const bool log_hud = getenv("WWHD_HUD_LOG") != nullptr;
+        if (log_hud) {
+            static std::mutex mu;
+            static std::unordered_map<std::string, int> seen;
+            auto nm = [](uint32_t p) { return std::string((const char*)mem::ptr(p + kPaneName), strnlen((const char*)mem::ptr(p + kPaneName), 24)); };
+            std::string line = nm(pane) + ":";
+            uint32_t sentinel = pane + kPaneChildren;
+            int k = 0;
+            for (uint32_t n = ld32(sentinel); n && n != sentinel && k < 40; n = ld32(n), k++) {
+                line += " " + nm(n);
+                // one level deeper: "child(grandchildren...)"
+                uint32_t s2 = n + kPaneChildren;
+                int k2 = 0;
+                std::string sub;
+                for (uint32_t m = ld32(s2); m && m != s2 && k2 < 24; m = ld32(m), k2++) sub += (k2 ? " " : "") + nm(m);
+                if (!sub.empty()) line += "(" + sub + ")";
+            }
+            std::lock_guard<std::mutex> lk(mu);
+            if (seen[line]++ == 0) LOG("[hud] root %08X %s", pane, line.c_str());
+        }
         uint32_t saveRoot = t_root;
         bool saveAnchor = t_anchor;
         t_root = pane;
@@ -329,6 +353,27 @@ extern "C" void hook_028766CC(Cpu* c) {
         t_anchor = saveAnchor;
         return;
     }
+    // hearts only in combat (hud.h): the hearts part fades by its own alpha (nw::lyt::Pane +0x45; +0x46
+    // is the global alpha computed in this call). Not its container N_Default_00: that one doesn't pass
+    // alpha on (flags +0x44 = 0x01, without the "influenced alpha" bit 0x02; L_HeartAll_00 has 0x03)
+    // the rupees (L_Rupy_00) the same way
+    int fade = name_is(pane, "L_HeartAll_00") ? kFadeHearts : name_is(pane, "L_Rupy_00") ? kFadeRupees : -1;
+    if (fade >= 0) {
+        float f = hud_fade_alpha(fade);
+        if (f < 1.0f) {
+            uint8_t a0 = ld8(pane + kPaneAlpha);
+            st8(pane + kPaneAlpha, (uint8_t)(a0 * f));
+            calc_pane(c, pane, parent, kx, ky);
+            st8(pane + kPaneAlpha, a0);
+            return;
+        }
+    }
+    calc_pane(c, pane, parent, kx, ky);
+}
+
+// the rest of Pane::CalculateMtx's hook for a non-root pane
+static void calc_pane(Cpu* c, uint32_t pane, uint32_t parent, float kx, float ky) {
+    using namespace aspect;
     if (!t_anchor) {
         if (parent == t_root) set_offset(pane, 0, 0);
         f_028766CC_orig(c);
@@ -393,6 +438,12 @@ extern "C" void hook_028766CC(Cpu* c) {
 extern "C" void hook_02877100(Cpu* c) {
     using namespace aspect;
     uint32_t pane = c->r[3];
+    if (hud_hidden(pane)) return;  // a HUD element the player hid (hud.h): neither it nor its children
+    if (hud_fade_gone(kFadeHearts) && name_is(pane, "N_Default_00")) return;  // hearts faded out completely
+    if (hud_fade_gone(kFadeRupees) && name_is(pane, "L_Rupy_00")) return;     // rupees too
+    // a layout root drawn to the TV: the pause menu's? (hud.h; the GamePad shows the same item layout
+    // all the time)
+    if (!ld32(pane + kPaneParent) && root_on_tv(pane)) hud_root_drawn(pane);
     if (original()) { f_02877100_orig(c); return; }
     uint32_t parent = ld32(pane + kPaneParent);
     if (!parent) {

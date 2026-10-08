@@ -455,7 +455,11 @@ final class OptionsMenu extends Dialog {
             choice(R.string.opt_drc_display, R.string.opt_drc_display_hint, where, a.drcOnSecondDisplay() ? 0 : 1,
                     i -> a.setDrcOnSecondDisplay(i == 0));
         }
-        choice(R.string.opt_layout, 0, a.getResources().getStringArray(R.array.layouts), a.prefs.getInt("layout", MainActivity.LAYOUT_INSET), i -> {
+        String[] layouts = a.getResources().getStringArray(R.array.layouts);
+        if (!MainActivity.NEW_TOUCH_CONTROLS) layouts = java.util.Arrays.copyOf(layouts, MainActivity.LAYOUT_ON_DEMAND);
+        int layout = a.prefs.getInt("layout", MainActivity.LAYOUT_INSET);
+        if (layout >= layouts.length) layout = MainActivity.LAYOUT_INSET;
+        choice(R.string.opt_layout, 0, layouts, layout, i -> {
             a.prefs.edit().putInt("layout", i).apply();
             a.updateLayout();
         });
@@ -485,9 +489,10 @@ final class OptionsMenu extends Dialog {
 
     private void mods() {
         int[] labels = {R.string.opt_mod_direct_camera, R.string.opt_mod_first_person, R.string.opt_mod_climb,
-                        R.string.opt_mod_quick_doors, R.string.opt_mod_fast_scenes};
+                        R.string.opt_mod_quick_doors, R.string.opt_mod_fast_scenes, R.string.opt_mod_ff_cutscenes,
+                        R.string.opt_mod_ff_dialogues};
         int[] hints = {R.string.opt_mod_direct_camera_hint, 0, R.string.opt_mod_climb_hint, R.string.opt_mod_speed_hint,
-                       R.string.opt_mod_speed_hint};
+                       R.string.opt_mod_speed_hint, R.string.opt_mod_ff_hint, R.string.opt_mod_ff_hint};
         for (int i = 0; i < MainActivity.MODS.length; i++) {
             String key = MainActivity.MODS[i];
             toggle(labels[i], hints[i], a.prefs.getBoolean(key, false), on -> a.setMod(key, on));
@@ -537,6 +542,7 @@ final class OptionsMenu extends Dialog {
 
     private void controls() {
         toggle(R.string.opt_onscreen, 0, a.prefs.getBoolean("controls_visible", true), a::setControlsVisible);
+        if (MainActivity.NEW_TOUCH_CONTROLS) newTouchControls();
         String[] sizes = new String[MainActivity.CONTROL_SIZES.length];
         int cur = 2;
         for (int i = 0; i < sizes.length; i++) {
@@ -554,6 +560,62 @@ final class OptionsMenu extends Dialog {
         submenu(R.string.opt_buttons, R.string.opt_buttons_hint,
                 a.getString(a.inputMapper().isDefaultMap() ? R.string.opt_buttons_default : R.string.opt_buttons_custom),
                 () -> openPage(this::buttonsPage));
+    }
+
+    // the redesigned touch controls (MainActivity.NEW_TOUCH_CONTROLS)
+    private void newTouchControls() {
+        submenu(R.string.opt_controls_edit, R.string.opt_controls_edit_hint, "", () -> {
+            a.editControls();
+            dismiss();  // the game, to arrange the controls on
+        });
+        String[] styles = {a.getString(R.string.controls_classic), a.getString(R.string.controls_flexible)};
+        int style = a.prefs.getInt("controls_style", 0);
+        choice(R.string.opt_controls_style, R.string.opt_controls_style_hint, styles, style, i -> {
+            a.prefs.edit().putInt("controls_style", i).apply();
+            a.applyControlsAppearance();
+        });
+        if (style == 1) {
+            indentNext = true;
+            toggle(R.string.opt_show_sticks, R.string.opt_show_sticks_hint, a.prefs.getBoolean("controls_show_sticks", true), on -> {
+                a.prefs.edit().putBoolean("controls_show_sticks", on).apply();
+                a.applyControlsAppearance();
+            });
+            indentNext = true;
+            toggle(R.string.opt_context_buttons, R.string.opt_context_buttons_hint, a.prefs.getBoolean("context_buttons", false), on -> {
+                a.prefs.edit().putBoolean("context_buttons", on).apply();
+                a.applyControlsAppearance();
+            });
+            indentNext = true;
+            toggle(R.string.opt_hearts_combat, R.string.opt_hearts_combat_hint, a.prefs.getBoolean("hearts_combat", false), on -> {
+                a.prefs.edit().putBoolean("hearts_combat", on).apply();
+                a.applyControlsAppearance();
+            });
+            indentNext = true;
+            toggle(R.string.opt_rupees_change, R.string.opt_rupees_change_hint, a.prefs.getBoolean("rupees_on_change", false), on -> {
+                a.prefs.edit().putBoolean("rupees_on_change", on).apply();
+                a.applyControlsAppearance();
+            });
+            String[] cams = {a.getString(R.string.touch_camera_stick), a.getString(R.string.touch_camera_swipe)};
+            indentNext = true;
+            choice(R.string.opt_touch_camera, R.string.opt_touch_camera_hint, cams, a.prefs.getInt("touch_camera", 0), i -> {
+                a.prefs.edit().putInt("touch_camera", i).apply();
+                a.applyControlsAppearance();
+            });
+            if (a.prefs.getInt("touch_camera", 0) == 1) {
+                String[] speeds = new String[MainActivity.SWIPE_SPEEDS.length];
+                int cur = 7;
+                for (int i = 0; i < speeds.length; i++) {
+                    int rel = Math.round((MainActivity.SWIPE_SPEEDS[i] - MainActivity.SWIPE_SPEED_DEFAULT) * 100);
+                    speeds[i] = rel > 0 ? "+" + rel : String.valueOf(rel);
+                    if (Math.abs(MainActivity.SWIPE_SPEEDS[i] - a.prefs.getFloat("swipe_speed", MainActivity.SWIPE_SPEED_DEFAULT)) < 0.01f) cur = i;
+                }
+                indentNext = true;
+                choice(R.string.opt_swipe_speed, 0, speeds, cur, i -> {
+                    a.prefs.edit().putFloat("swipe_speed", MainActivity.SWIPE_SPEEDS[i]).apply();
+                    a.applyControlsAppearance();
+                });
+            }
+        }
     }
 
     // controller buttons: each Wii U button and the controller button that presses it

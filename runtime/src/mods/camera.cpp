@@ -166,6 +166,8 @@ bool test_mouse() {
 }
 }  // namespace
 
+uint32_t link_actor() { return g_link.load(std::memory_order_relaxed); }
+
 void mouse_add(float dx, float dy) {
     std::lock_guard<std::mutex> lk(g_mu);
     g_dx += dx;

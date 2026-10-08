@@ -58,6 +58,10 @@ The original project (macOS, the 60 fps modes, decompilation tools) is described
   first person on R3, quick doors, fast scene changes.
 - **Faster running and swimming** (a new mod): Link runs and swims 1.25 up to 4 times as fast;
   everything else keeps its speed.
+- **Fast forward** (a new mod): hold ZR (R2) to run cutscenes and dialogues faster, switched
+  separately. The game plays its normal frames, only more of them per second (up to 4×, as fast as
+  the device can draw them: about 2× on a Snapdragon 7+ Gen 3), so nothing is skipped; text boxes
+  still wait for your button.
 - **Performance work for weaker devices**: BC textures unpacked on the GPU where it can't sample
   them (most Mali and PowerVR GPUs), precise Vulkan barriers (on a Mali-G52 the GPU time per frame
   drops from 52 to 40 ms), much less work on the render thread (on a Snapdragon 855 from 24 to 16 ms
@@ -68,10 +72,21 @@ The original project (macOS, the 60 fps modes, decompilation tools) is described
   settings; it contains no personal data. About › Share crash logs shares the logs kept; a shared
   log is deleted at the next start.
 - **Fixes**: correct lighting on the first visit to a scene with an empty shader cache; game files
-  found on devices whose storage tells upper and lower case apart.
+  found on devices whose storage tells upper and lower case apart; Picto Box pictures in colour
+  (the game reads them back from the GPU to save them).
 - **No internet access**: the app doesn't request it, and its manifest explicitly excludes it.
 
 ## Version history
+
+**0.7**
+
+- Fast forward: hold ZR (R2) to run cutscenes and dialogues faster (Mods; each switched on
+  separately).
+- The Picto Box takes real pictures again: they were black in the save prompt and the album
+  (issue #22). Pictures already saved black stay black; delete them in the album.
+- Crash logs also cover the game halting itself and name the game functions that led to the crash.
+- The performance overlay shows the app version as its last line.
+- The game code is prepared again once after the update.
 
 **0.6**
 
@@ -192,7 +207,7 @@ back.)
   to 4×: Link covers more ground while running or swimming; jumps, rolls, climbing and the boat
   stay as they are). Each applies always or with L3, set separately: one press switches it on and
   the next off (a press switches the one for what Link is doing, swimming or not), or only while L3
-  is held.
+  is held. Fast forward of cutscenes and of dialogues: faster while ZR is held.
 - **Controls**: on-screen controls on or off, their size, whether the controls act as a Wii U
   GamePad or a Pro Controller, motion controls (gyro aiming), rumble, and which controller button
   presses which Wii U button.

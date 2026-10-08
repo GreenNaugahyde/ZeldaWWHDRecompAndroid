@@ -115,9 +115,13 @@ bool compile_game(const CompileOptions& opt, CompileResult& res, std::string& er
                 triple, cpu, features, to, llvm::Reloc::PIC_, std::nullopt,
                 opt.optLevel >= 3 ? llvm::CodeGenOptLevel::Aggressive : llvm::CodeGenOptLevel::Default));
             m->setDataLayout(tm->createDataLayout());
-            if (!tune.empty() && tune != "generic")
-                for (llvm::Function& f : *m)
-                    if (!f.isDeclaration()) f.addFnAttr("tune-cpu", tune);
+            for (llvm::Function& f : *m) {
+                if (f.isDeclaration()) continue;
+                if (!tune.empty() && tune != "generic") f.addFnAttr("tune-cpu", tune);
+                // unwind tables (.eh_frame, registered by the loader): native backtraces go through the
+                // game code, so crash logs name the game functions of the call chain
+                f.setUWTableKind(llvm::UWTableKind::Async);
+            }
             std::string verr;
             llvm::raw_string_ostream vs(verr);
             if (llvm::verifyModule(*m, &vs)) return fail(std::string(name) + ": invalid IR: " + verr.substr(0, 500));

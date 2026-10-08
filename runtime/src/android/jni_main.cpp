@@ -16,6 +16,8 @@
 #include "../disc/wud.h"
 #include "../disc/wua.h"
 #include "../crash_info.h"
+#include "../hud.h"
+#include "ui_icons.h"
 #include "../gx2/gx2.h"
 #include "../input.h"
 #include "../mods/climb.h"
@@ -152,6 +154,43 @@ JNI_FN(jstring, gameRelease)(JNIEnv* env, jclass, jstring gameDir) {
 // the crash log's context from the app ("app": version, device, settings), see crash_info.h
 JNI_FN(void, setCrashInfo)(JNIEnv* env, jclass, jstring section, jstring text) {
     crash_info::set(jstr(env, section), jstr(env, text));
+}
+
+// touch controls: the right side turns the camera by swiping (mods/camera.cpp's mouse camera)
+namespace mods { extern std::atomic<bool> g_touch_swipe; }
+JNI_FN(void, setTouchSwipeCamera)(JNIEnv*, jclass, jboolean on) {
+    mods::g_touch_swipe = on;
+    mods::set_mouse_camera(on);
+}
+// a swipe on the right side: movement in density-independent pixels (+y down)
+JNI_FN(void, cameraSwipe)(JNIEnv*, jclass, jfloat dx, jfloat dy) { mods::mouse_add(dx, dy); }
+
+// context-aware touch controls: the game's state (mods/touch_state.cpp) and the hidden HUD parts (hud.h)
+JNI_FN(jintArray, touchState)(JNIEnv* env, jclass) {
+    int32_t v[12];
+    mods::touch_state(v);
+    jintArray a = env->NewIntArray(12);
+    env->SetIntArrayRegion(a, 0, 12, (const jint*)v);
+    return a;
+}
+JNI_FN(void, setHudHidden)(JNIEnv* env, jclass, jstring names) { hud_set_hidden(jstr(env, names)); }
+JNI_FN(void, setHudFade)(JNIEnv*, jclass, jint which, jboolean on) {
+    if (which >= 0 && which < kFadeCount) hud_set_fade_auto(which, on);
+}
+JNI_FN(jint, dumpUiTextures)(JNIEnv* env, jclass, jstring gameDir, jstring outDir) {
+    return ui_icons::dump_all(jstr(env, gameDir), jstr(env, outDir));
+}
+// textures from the game's 2D pack as outDir/<texture>.rgba (ui_icons.cpp): how many were written
+JNI_FN(jint, extractUiTextures)(JNIEnv* env, jclass, jstring gameDir, jstring outDir, jobjectArray layouts, jobjectArray textures) {
+    std::vector<ui_icons::Request> req;
+    jsize n = env->GetArrayLength(layouts);
+    for (jsize i = 0; i < n; i++) {
+        auto l = (jstring)env->GetObjectArrayElement(layouts, i), t = (jstring)env->GetObjectArrayElement(textures, i);
+        req.push_back({jstr(env, l), jstr(env, t)});
+        env->DeleteLocalRef(l);
+        env->DeleteLocalRef(t);
+    }
+    return ui_icons::extract(jstr(env, gameDir), jstr(env, outDir), req);
 }
 
 // the licenses of everything in the APK (assembled by CMakeLists.txt)
@@ -455,6 +494,8 @@ JNI_FN(void, setOption)(JNIEnv* env, jclass, jstring name, jint value) {
     else if (n == "mod_climb") mods::set_climb_enabled(value != 0);
     else if (n == "mod_quick_doors") mods::set_quick_doors(value != 0);
     else if (n == "mod_fast_scenes") mods::set_fast_scenes(value != 0);
+    else if (n == "mod_ff_cutscenes") mods::set_ff_cutscenes(value != 0);
+    else if (n == "mod_ff_dialogues") mods::set_ff_dialogues(value != 0);
     else if (n == "mod_run_speed") mods::set_run_speed(value / 100.0f);
     else if (n == "mod_run_mode") mods::set_run_mode(value);
     else if (n == "mod_swim_mode") mods::set_swim_mode(value);
@@ -475,6 +516,8 @@ JNI_FN(jint, getOption)(JNIEnv* env, jclass, jstring name) {
     if (n == "mod_climb") return mods::climb_enabled();
     if (n == "mod_quick_doors") return mods::quick_doors();
     if (n == "mod_fast_scenes") return mods::fast_scenes();
+    if (n == "mod_ff_cutscenes") return mods::ff_cutscenes();
+    if (n == "mod_ff_dialogues") return mods::ff_dialogues();
     if (n == "mod_run_speed") return (int)lroundf(mods::run_speed() * 100);
     if (n == "mod_run_mode") return mods::run_mode();
     if (n == "mod_swim_mode") return mods::swim_mode();

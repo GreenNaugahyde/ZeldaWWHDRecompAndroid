@@ -52,8 +52,11 @@ HLE(gx2, GX2SetColorBuffer) {
     set_reg(mmCB_COLOR0_SIZE + target, cb->reg_size);
     set_reg(mmCB_COLOR0_VIEW + target, cb->reg_view);
     set_reg(mmCB_COLOR0_INFO + target, cb->reg_info);
-    // our convention: the unused TILE/FRAG registers carry the view's real width (| array slices << 16) and height
-    uint32 slices = cb->surface.dim.value() == Latte::E_DIM::DIM_2D_ARRAY ? std::max<uint32>(cb->surface.depth, 1) : 1;
+    // our convention: the unused TILE/FRAG registers carry the view's real width (| array slices << 16) and height.
+    // 3D surfaces count their slices too: the game renders them slice by slice (the Picto Box's colour
+    // grading volumes), each slice a layer of the render target (vk_surfaces.cpp builds the 3D texture)
+    auto dim = cb->surface.dim.value();
+    uint32 slices = dim == Latte::E_DIM::DIM_2D_ARRAY || dim == Latte::E_DIM::DIM_3D ? std::max<uint32>(cb->surface.depth, 1) : 1;
     set_reg(mmCB_COLOR0_TILE + target, std::max<uint32>(cb->surface.width >> cb->viewMip, 1) | (slices << 16));
     set_reg(mmCB_COLOR0_FRAG + target, std::max<uint32>(cb->surface.height >> cb->viewMip, 1));
 }

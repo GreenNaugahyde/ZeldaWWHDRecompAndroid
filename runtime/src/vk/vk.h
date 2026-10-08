@@ -65,6 +65,10 @@ struct Surface {
     Surface* feedbackCopy = nullptr;  // copy sampled while this surface is a bound attachment
     Surface* mipChain = nullptr;      // a rendered picture with coarser levels, for sampling with mips
     uint64_t mipChainSeq = ~0ull;     // writeSeq of the source when mipChain was last built
+    Surface* volume = nullptr;        // a render target with slices, as the 3D texture the game samples
+    uint64_t volumeSeq = ~0ull;       // writeSeq of the source when volume was last copied
+    bool aliased = false;             // another colour surface of the same texel bits shares the address
+    uint64_t writtenBackSeq = 0;      // linear render targets: writeSeq when last written to guest memory
     uint64_t lastDrawFrame = ~0ull;   // render targets: the last frame drawn into,
     uint32_t drawStreak = 0;          // and in how many consecutive frames up to it
     bool firstDrawFrame = false;      // lastDrawFrame is the first frame it was drawn into
@@ -172,6 +176,7 @@ Surface* depth_target(const uint32_t* regs, uint32_t* slice = nullptr);         
 Surface* surface_from_color_buffer(uint32_t gx2ColorBuffer, uint32_t* firstSlice = nullptr, uint32_t* numSlices = nullptr);
 Surface* surface_from_depth_buffer(uint32_t gx2DepthBuffer, uint32_t* firstSlice = nullptr, uint32_t* numSlices = nullptr);
 Surface* sampled_texture(const uint32_t* texWords, bool isDepthSampler);  // from SQ_TEX_RESOURCE words
+void write_back_linear();  // GX2DrawDone: render results the CPU reads, to guest memory
 void upload_surface(Surface* s);
 // a private image like `like` (render targets the game doesn't know about)
 bool create_surface_image(Surface* s, bool forRendering);

@@ -19,13 +19,27 @@
 // timers) and fapGm_After (scene and overlap request phases). The scenes themselves (actors,
 // events, cutscenes) keep running at normal speed, so no story event is shortened.
 //
-// Both act on full logic passes only (not on the 60 fps in-between passes) and in all 60 fps modes.
+// Fast forward: while ZR is held during an event, the emulated display clock runs kFfRate times
+// as fast (gx2::set_clock_rate), so the game plays whole frames faster: every frame is calculated
+// and drawn as usual, so nothing differs from normal play but the speed, which the device's
+// rendering limits. (Extra logic steps between two drawn frames, as quick doors uses, halted the
+// game in cutscenes: J3DPacket "mEntryPtr == 0" when a model was created in such a step.) The event
+// controller's mode (dEvt_control_c::mMode) says what runs: 1 a dialogue (talk event), 2 or 3 a
+// cutscene (demo or compulsory event, also the messages inside it). Cutscenes and dialogues are
+// switched separately. Text boxes still wait for their button.
+//
+// All act on full logic passes only (not on the 60 fps in-between passes) and in all 60 fps modes.
+#include <algorithm>
+#include <chrono>
 #include <atomic>
 #include <cstdlib>
 
 #include "mods.h"
 #include "runtime.h"
 #include "../release.h"
+
+namespace gx2 { void set_clock_rate(double rate); }  // gx2_core.cpp
+namespace gfx { void set_fast_forward(bool on); }     // vk_device.cpp
 
 extern "C" {
 void f_025DE788_orig(Cpu* c);  // fpcEx_Handler
@@ -49,6 +63,11 @@ constexpr uint32_t kOvlpTask = 0x20;       // overlap_request_class::mpTask (fop
 const release::Data kPadPtr{0x101F5088};   // the game's pad state (pad accessors 0200763C...)
 constexpr uint32_t kCurProc = 0x65F0;      // daPy_lk_c::mCurProc
 constexpr int kDoorTalk = 16;              // dDoor_info_c action table: "TALK"
+// dComIfGp_getEvent(): the play info (1046F0B0, from the getter 025200D4) + 0x51D0, as
+// dEvent_manager_c::runProc (02544374) passes it to dEvt_control_c::check
+const release::Data kEvtCtrl{0x10474280};
+const release::Data kCounter{0x101FF558};  // g_Counter.mCounter0: +1 per logic step
+constexpr uint32_t kEvtMode = 0xC2;        // dEvt_control_c::mMode (as on GameCube)
 
 int env_i(const char* n, int d) {
     const char* e = getenv(n);
@@ -56,6 +75,19 @@ int env_i(const char* n, int d) {
 }
 const int kDoorExtra = env_i("WWHD_MOD_DOOR_EXTRA", 3);    // 4 logic steps per frame
 const int kSceneExtra = env_i("WWHD_MOD_SCENE_EXTRA", 3);  // 4 transition steps per frame
+const double kFfRate = env_i("WWHD_MOD_FF_RATE", 4);     // display clock rate while fast forwarding
+
+// 0 no event, 1 dialogue, 2 / 3 cutscene
+int event_mode() { return ld8(kEvtCtrl + kEvtMode); }
+}  // namespace
+int event_mode_now() { return event_mode(); }
+namespace {
+// fast forward applies to the event running now
+bool ff_now() {
+    if (!ff_button()) return false;
+    int m = event_mode();
+    return m == 1 ? ff_dialogues() : (m == 2 || m == 3) ? ff_cutscenes() : false;
+}
 
 bool g_door_cut = false;  // a door asked for its cut during the logic step just run
 int g_door_action = -1;
@@ -132,6 +164,36 @@ void after_execute(Cpu* c, uint32_t execute_fn) {
     if (overlap_active() != ovl) {
         ovl = !ovl;
         trace("overlap (fade) %s", ovl ? "starts" : "ends");
+    }
+    touch_state_step();
+    static int mode = 0;
+    if (event_mode() != mode) {
+        mode = event_mode();
+        LOG("[mods] event mode %d", mode);
+    }
+    // fast forward: the display clock runs faster (gx2_core.cpp), so whole frames come faster
+    bool ff = ff_now();
+    static bool ff_was = false;
+    if (ff != ff_was) {
+        ff_was = ff;
+        gx2::set_clock_rate(ff ? kFfRate : 1.0);
+#ifdef __ANDROID__
+        gfx::set_fast_forward(ff);  // frame generation would pace the game to its own rate
+#endif
+        // the speed reached: game frames per second of real time, against the normal 30
+        static uint32_t f0 = 0;
+        static std::chrono::steady_clock::time_point t0;
+        uint32_t frames = ld32(kCounter);
+        auto now = std::chrono::steady_clock::now();
+        if (ff) {
+            f0 = frames;
+            t0 = now;
+            LOG("[mods] fast forward on (event mode %d)", mode);
+        } else {
+            double s = std::chrono::duration<double>(now - t0).count();
+            LOG("[mods] fast forward off (event mode %d): %u frames in %.1f s, %.1fx", mode, frames - f0, s,
+                s > 0 ? (frames - f0) / s / 30.0 : 0.0);
+        }
     }
     uint32_t lr = c->lr, r3 = c->r[3];
     // quick doors: whole logic steps

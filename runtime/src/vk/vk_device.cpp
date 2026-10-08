@@ -30,6 +30,7 @@
 namespace gfx {
 Renderer R;
 namespace { void count_present(); }
+static std::atomic<bool> g_fast_forward{false};  // set_fast_forward: no generated frames
 
 const char* backend_name() { return "Vulkan"; }
 uint64_t current_frame() { return R.frame; }
@@ -544,7 +545,7 @@ void wait_idle() {
 
 // GX2DrawDone. The game waits here before reusing memory the GPU reads, or to read what it wrote.
 // This renderer copies all guest data (vertices, uniforms, textures) when commands are recorded and
-// never writes results back to guest memory, so once the render thread has processed the commands
+// writes results back to guest memory only for linear surfaces (write_back_linear), so once the render thread has processed the commands
 // (the caller syncs with it) there is nothing left to wait for. Waiting for the GPU as well would
 // serialize CPU and GPU: WWHD calls this twice a frame, which kept the GPU half idle and at its
 // lowest clock. Frame pacing still waits for finished frames (flips). WWHD_STRICT_DRAWDONE=1 waits.
@@ -552,6 +553,7 @@ void draw_done() {
     static const bool strict = getenv("WWHD_STRICT_DRAWDONE") != nullptr;
     if (strict) wait_idle();
     else submit();
+    write_back_linear();  // except what the CPU reads: linear targets (the Picto Box picture, issue #22)
 }
 
 // ---------------------------------------------------------------- image layouts
@@ -1288,6 +1290,7 @@ void fit(const ScreenRect& r, float a, float out[4], VkExtent2D ext, int mode = 
 
 // the shape of the TV picture's rect on screen: the aspect the game renders at in "screen" mode (aspect.cpp)
 void report_tv_shape(const ScreenRect& r, VkExtent2D ext) {
+    if (r.w < 0) return;  // the TV picture is hidden (GamePad on demand): its shape stays
     float w = r.w > 0 ? r.w : (float)ext.width, h = r.h > 0 ? r.h : (float)ext.height;
     if (h > 0) aspect::set_window_aspect(w / h);
 }
@@ -1375,7 +1378,7 @@ bool present_frame() {
     vkCmdSetScissor(cmd, 0, 1, &sc);
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g_sc.pipeline);
     report_tv_shape(g_tv_rect, g_sc.extent);
-    draw_screen(cmd, R.tv, g_tv_rect, g_sc.extent, g_tv_aspect.load(std::memory_order_relaxed));
+    if (g_tv_rect.w >= 0) draw_screen(cmd, R.tv, g_tv_rect, g_sc.extent, g_tv_aspect.load(std::memory_order_relaxed));
     if (g_drc_visible) draw_screen(cmd, R.drc, g_drc_rect, g_sc.extent);
     vkCmdEndRenderPass(cmd);
     on_complete([acquire] { g_acquire_free.push_back(acquire); });
@@ -1808,7 +1811,8 @@ bool present_frame_fg() {
         if (d > 0.004 && d < 0.2) interval += (d - interval) * 0.1;
     }
     last = now;
-    bool generate = fg::config().multiplier / interval <= hz * 1.1;
+    // fast forward (mods/turbo.cpp): game frames only, the game's own frame rate is the point
+    bool generate = fg::config().multiplier / interval <= hz * 1.1 && !g_fast_forward.load(std::memory_order_relaxed);
 
     if (R.tv.img.image) prepare(R.tv.img, Use::SAMPLED);
     if (R.drc.img.image) prepare(R.drc.img, Use::SAMPLED);
@@ -1837,7 +1841,7 @@ bool present_frame_fg() {
         drcVisible = g_drc_visible;
     }
     report_tv_shape(tvRect, {w, h});
-    draw_screen(cmd, R.tv, tvRect, {w, h}, g_tv_aspect.load(std::memory_order_relaxed));
+    if (tvRect.w >= 0) draw_screen(cmd, R.tv, tvRect, {w, h}, g_tv_aspect.load(std::memory_order_relaxed));
     if (drcVisible) draw_screen(cmd, R.drc, drcRect, {w, h});
     vkCmdEndRenderPass(cmd);
     FgJob job;
@@ -1854,6 +1858,8 @@ bool present_frame_fg() {
     return true;
 }
 }  // namespace
+
+void set_fast_forward(bool on) { g_fast_forward.store(on, std::memory_order_relaxed); }
 
 void set_window(ANativeWindow* w) {
     std::lock_guard<std::mutex> wl(g_window_mutex);
