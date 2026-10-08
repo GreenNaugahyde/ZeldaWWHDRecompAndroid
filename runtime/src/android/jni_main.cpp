@@ -14,6 +14,7 @@
 
 #include "../audio_out.h"
 #include "../disc/wud.h"
+#include "../disc/wua.h"
 #include "../gx2/gx2.h"
 #include "../input.h"
 #include "../mods/climb.h"
@@ -209,6 +210,26 @@ JNI_FN(jstring, extractGame)(JNIEnv* env, jclass, jint fd, jbyteArray discKey, j
     }
     close(fd);
     if (!ok) LOG("[disc] extraction failed: %s", err.c_str());
+    return ok ? nullptr : env->NewStringUTF(err.c_str());
+}
+// the same for a Cemu .wua archive (decrypted: no keys)
+JNI_FN(jstring, extractArchive)(JNIEnv* env, jclass, jint fd, jstring outDir) {
+    g_extract_done = 0;
+    g_extract_total = 0;
+    g_extract_cancel = false;
+    disc::Archive wua;
+    std::string err;
+    bool ok = wua.open(fd, err);
+    if (ok) {
+        LOG("[wua] title %s, %zu files", wua.title_id().c_str(), wua.files().size());
+        ok = wua.extract(jstr(env, outDir), [](uint64_t done, uint64_t total, const std::string&) {
+            g_extract_done = done;
+            g_extract_total = total;
+            return !g_extract_cancel.load();
+        }, err);
+    }
+    close(fd);
+    if (!ok) LOG("[wua] extraction failed: %s", err.c_str());
     return ok ? nullptr : env->NewStringUTF(err.c_str());
 }
 JNI_FN(jlongArray, extractProgress)(JNIEnv* env, jclass) {

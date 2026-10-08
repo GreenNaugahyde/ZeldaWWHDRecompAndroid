@@ -7,7 +7,7 @@ game uses are reimplemented, and its graphics run directly on Vulkan. There is n
 between.
 
 **The app contains no game files.** You bring your own copy of the game: a disc image (`.wud` or
-`.wux`) dumped from your own Wii U disc, with its keys. On the first start the app extracts the game
+`.wux`) dumped from your own Wii U disc, with its keys, or a Cemu archive (`.wua`) made from it. On the first start the app extracts the game
 from it and builds the game code on your device.
 
 The original project (macOS, the 60 fps modes, decompilation tools) is described in
@@ -18,7 +18,7 @@ The original project (macOS, the 60 fps modes, decompilation tools) is described
 
 - **Android port**: Vulkan renderer, AAudio sound, touch screen, game controllers and hardware
   keyboards.
-- **An APK without game code**: on the first start the app extracts the game from your disc image
+- **An APK without game code**: on the first start the app extracts the game from your disc image or `.wua` archive
   and recompiles its code on the device with LLVM (once; a few minutes on a fast phone, longer on
   slower ones). Later starts load the
   compiled code in about half a second. The work continues in the background with a progress
@@ -118,12 +118,14 @@ You need:
 - an Android 11 (or newer) device with a 64-bit ARM processor and Vulkan 1.1, about 2 GB of free
   storage and, for the one-time compile, about 2 GB of free memory;
 - your own dump of The Wind Waker HD (USA, Europe or Japan): the disc image (`.wux` or `.wud`), its disc key (a
-  `.key` file with the image's name) and the Wii U common key (`common.key`).
+  `.key` file with the image's name) and the Wii U common key (`common.key`); or a Cemu archive of
+  the game (`.wua`, already decrypted: no keys needed).
 
 None of these are included or provided here.
 
-1. Put the image and both keys in one folder on your device.
-2. Install the APK and start it. Choose **Extract from your disc image…** and select that folder.
+1. Put the image and both keys in one folder on your device (or the `.wua` file alone).
+2. Install the APK and start it. Choose **Extract from your disc image or .wua…** and select that
+   folder.
 3. The app extracts the game files (a few seconds to minutes), then prepares the game code for
    your device (once; how long depends on the processor: about 6 minutes on a Snapdragon 7+ Gen 3,
    7.5 minutes on a Snapdragon 855, 16 minutes on a Helio G85). You can leave the app meanwhile and read a Wind Waker walkthrough guide. A notification shows the progress and keeps the process alive.
@@ -285,7 +287,7 @@ created on your device from your own legal dump and must not be redistributed.
 ## License
 
 The code of this project is licensed under the Mozilla Public License 2.0 (see `LICENSE`).
-Third-party code keeps its own license: Cemu (MPL-2.0), {fmt} (MIT), glslang (BSD-3-Clause and
+Third-party code keeps its own license: Cemu (MPL-2.0), {fmt} (MIT), zstd (BSD-3-Clause), glslang (BSD-3-Clause and
 others), the Vulkan Memory Allocator (MIT), volk (MIT), libadrenotools (BSD-2-Clause), and in the
 APK without game code
 [LLVM](https://llvm.org) and the NDK's libc++ (Apache-2.0 with LLVM Exceptions). The app shows all
