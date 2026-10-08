@@ -299,6 +299,7 @@ static void execute_one(Op op, const uint32* p, uint32 n) {
         apply_regs(p[0], v, std::min<uint32>(n - 1, 16));
         break;
     }
+    case OP_PEEK_Z: gfx::peek_z(p, n); break;
     case OP_LAYOUT_ROOT: {
         float kx, ky;
         aspect::layout_root_target(p[0], gfx::target_aspect_factors(g_regs[mmCB_COLOR0_TILE] & 0xFFFF, g_regs[mmCB_COLOR0_FRAG], kx, ky));

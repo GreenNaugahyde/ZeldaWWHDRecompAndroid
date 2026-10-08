@@ -11,7 +11,10 @@ usage:
   port_addresses.py BASE.rpx OTHER.rpx code ADDR...        code addresses (any instruction)
   port_addresses.py BASE.rpx OTHER.rpx data ADDR...        data addresses
   port_addresses.py BASE.rpx OTHER.rpx stats               match quality
-  port_addresses.py BASE.rpx OTHER.rpx release OUT NAME    the runtime's address map (release_*.txt)
+  port_addresses.py BASE.rpx OTHER.rpx release OUT NAME [HOOKS...]
+                                                           the runtime's address map (release_*.txt); with the
+                                                           hook lists, a "site" line for each hook address
+                                                           inside a changed function (by instruction alignment)
 """
 import bisect
 import difflib
@@ -145,7 +148,7 @@ class Mapper:
         return (a + delta) & 0xFFFFFFFF
 
 
-def write_release(m, out, name):
+def write_release(m, out, name, hook_files=()):
     """Ranges of base addresses with a constant offset to the other release: code (identical
     functions), entries of changed functions, data (from relocated targets; a range ends where the
     next one's first known target starts)."""
@@ -153,7 +156,9 @@ def write_release(m, out, name):
              " executables;" % name,
              "# addresses only). code/data LO HI DELTA: base addresses in [LO, HI) are at +DELTA; func BASE OTHER:"
              " entry of a",
-             "# function that differs between the releases (instructions inside it have no mapping).",
+             "# function that differs between the releases (instructions inside it have no mapping, except:);",
+             "# site BASE OTHER: a hook address (tools/recomp/hooks*.txt) inside such a function, mapped by",
+             "# aligning the function's instructions.",
              "entry %08X %08X" % (m.b.p.entry, m.code(m.b.p.entry) or 0)]
     run = None
     for i in range(len(m.b.entries)):
@@ -184,6 +189,32 @@ def write_release(m, out, name):
     for k in range(len(runs)):
         runs[k][1] = runs[k + 1][0] if k + 1 < len(runs) else 0xFFFFFFFF
         lines.append("data %08X %08X %+X" % tuple(runs[k]))
+    # hook addresses the ranges and entries above don't cover
+    import re
+    covered = []
+    for l in lines:
+        p = l.split()
+        if p[0] == "code":
+            covered.append((int(p[1], 16), int(p[2], 16)))
+    entries = {int(l.split()[1], 16) for l in lines if l.startswith("func ")}
+    sites, missing = {}, []
+    for f in hook_files:
+        for l in open(f):
+            mm = re.match(r"\s*@?([0-9A-Fa-f]{8})\b", l)
+            if not mm:
+                continue
+            a = int(mm.group(1), 16)
+            if a in entries or any(lo <= a < hi for lo, hi in covered):
+                continue
+            o = m.code(a)
+            if o is None:
+                missing.append(a)
+            else:
+                sites[a] = o
+    for a in sorted(sites):
+        lines.append("site %08X %08X" % (a, sites[a]))
+    for a in missing:
+        print("warning: hook address %08X has no %s mapping" % (a, name), file=sys.stderr)
     with open(out, "w") as f:
         f.write("\n".join(lines) + "\n")
 
@@ -208,7 +239,7 @@ def main():
         for a, dl in deltas[:40]:
             print("  from %08X: %+X" % (a, dl))
     elif cmd == "release":
-        write_release(m, sys.argv[4], sys.argv[5])
+        write_release(m, sys.argv[4], sys.argv[5], sys.argv[6:])
     elif cmd == "functions":
         with open(sys.argv[4], "w") as f:
             for i, (j, same) in sorted(m.fmap.items()):

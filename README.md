@@ -1,7 +1,7 @@
 # TLoZ:TWW HD Recompiled — Android
 
 An Android port of the [ZeldaWWHDRecomp](https://github.com/ZeldaWWHDRecomp/ZeldaWWHDRecomp) project:
-The Legend of Zelda: The Wind Waker HD (Wii U, USA and European versions) as a native app for 64-bit ARM Android
+The Legend of Zelda: The Wind Waker HD (Wii U, USA, European and Japanese versions) as a native app for 64-bit ARM Android
 devices. The game's PowerPC code is recompiled to native ARM code, the Wii U system libraries the
 game uses are reimplemented, and its graphics run directly on Vulkan. There is no emulator in
 between.
@@ -32,13 +32,17 @@ The original project (macOS, the 60 fps modes, decompilation tools) is described
 - **Performance overlay**: frame rate with its average, frame time, CPU and GPU load, CPU, GPU and
   battery temperatures, the graphics settings in use, the SoC, GPU and GPU driver; you choose the
   values and drag it where you want it.
-- **The European version** as well as the USA one, with all features: the game code of both is
-  the same program at shifted addresses, and the app's hooks and mods find their places in either
-  (`tools/recomp/port_addresses.py` matches the two executables; the address map it writes is in
-  `tools/recomp/release_eur.txt`).
+- **The European and Japanese versions** as well as the USA one, with all features: the game code
+  of all three is the same program at shifted addresses, and the app's hooks and mods find their
+  places in each (`tools/recomp/port_addresses.py` matches the executables; the address maps it
+  writes are in `tools/recomp/release_eur.txt` and `release_jpn.txt`).
 - **Game language**: the languages of your copy (USA: English, French, Spanish; Europe: also German
-  and Italian), by default the device's language setting is used.
+  and Italian; Japan: Japanese), by default the device's language setting is used.
 - **Custom GPU drivers** on Adreno GPUs (see below): Mesa Turnip or newer Qualcomm drivers.
+- **Widescreen**: the game renders at the screen's shape and shows more to the sides; the HUD keeps
+  its proportions at the screen edges.
+- **The Wii U's sun and haze**: the sun's corona and lens flare (hidden behind walls and hills as on
+  the console), the haze in the distance and the bloom around bright light.
 - **Display options**: rendering resolution from 0.5× to 3×, aspect ratio (bars, stretched, or
   filling the screen), screen layouts for the TV and GamePad pictures (GamePad inset, side by side,
   TV only, GamePad with TV inset). All of them apply immediately, without a restart.
@@ -56,13 +60,30 @@ The original project (macOS, the 60 fps modes, decompilation tools) is described
   everything else keeps its speed.
 - **Performance work for weaker devices**: BC textures unpacked on the GPU where it can't sample
   them (most Mali and PowerVR GPUs), precise Vulkan barriers (on a Mali-G52 the GPU time per frame
-  drops from 52 to 40 ms), less work on the render thread, Android performance hints and game
-  modes, and SVE where the processor has it.
+  drops from 52 to 40 ms), much less work on the render thread (on a Snapdragon 855 from 24 to 16 ms
+  a frame), with the Qualcomm driver a second thread for the Vulkan commands, Android performance
+  hints and game modes, and SVE where the processor has it.
+- **Crash logs**: if the game crashes, a log for a bug report is written to `captures/` in the
+  app's files folder.
 - **Fixes**: correct lighting on the first visit to a scene with an empty shader cache; game files
   found on devices whose storage tells upper and lower case apart.
 - **No internet access**: the app doesn't request it, and its manifest explicitly excludes it.
 
 ## Version history
+
+**0.5**
+
+- The Japanese version of the game is now supported.
+- Widescreen: the game renders at the screen's shape (Graphics › Widescreen).
+- The sun's corona and lens flare, the haze in the distance and the bloom look as on the Wii U.
+- Faster rendering: much less CPU time on the render thread (from pull request #8 by SSunnKing);
+  with the Qualcomm driver the Vulkan commands are recorded on a second thread.
+- Graphics fixes: black lines in shadows, depth surfaces in copies and comparisons.
+- With a Turnip driver the GPU always renders in tiles (faster on an Adreno 740).
+- Without frame generation, 90 and 120 Hz screens are asked to run at 60 Hz (the game shows at most
+  60 frames a second).
+- A crash log for bug reports (`captures/` in the app's files folder).
+- The game code is prepared again once after the update (it is now built with more optimisation).
 
 **0.4**
 
@@ -96,7 +117,7 @@ You need:
 
 - an Android 11 (or newer) device with a 64-bit ARM processor and Vulkan 1.1, about 2 GB of free
   storage and, for the one-time compile, about 2 GB of free memory;
-- your own dump of The Wind Waker HD (USA or Europe): the disc image (`.wux` or `.wud`), its disc key (a
+- your own dump of The Wind Waker HD (USA, Europe or Japan): the disc image (`.wux` or `.wud`), its disc key (a
   `.key` file with the image's name) and the Wii U common key (`common.key`).
 
 None of these are included or provided here.
@@ -150,7 +171,7 @@ back.)
   back to that, since the game only listens to the controller it was saved with. Exporting and importing saves. An imported game
   save restarts the game.  
 - **Game**: the game language (the languages of your copy; applies after a restart).
-- **Graphics**: rendering resolution, frame generation, aspect ratio, the GamePad screen (with a
+- **Graphics**: rendering resolution, frame generation, widescreen, aspect ratio, the GamePad screen (with a
   second display), screen layout, ambient
   occlusion, full-size occlusion depth, 16× anisotropic filtering, the performance overlay, the GPU
   driver (Adreno only), and deleting the shader cache (restarts the game as on its first start).
@@ -278,3 +299,7 @@ address library, shader decompiler and a few reference structures are vendored f
 [Cemu](https://github.com/cemu-project/Cemu) (MPL-2.0); `tools/wudextract.py` and parts of the OS
 layer are ported from or follow Cemu as noted in those files. Frame generation uses the shaders of
 [Lossless Scaling](https://store.steampowered.com/app/993090/Lossless_Scaling/) from your own copy.
+
+[SSunnKing](https://github.com/SSunnKing) contributed pull request #8: the widescreen mode, graphics
+fixes, most of the render thread speedups, the record thread, Turnip tile rendering and the crash
+handler.

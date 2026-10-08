@@ -88,12 +88,16 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     // ------------------------------------------------------------------ game language
     // The console language the game sees (runtime: UCReadSysConfig), from the release's languages;
     // by default the device's, else English. Applies at the next start.
-    static final String[] LANGUAGES = {"en", "fr", "de", "it", "es"};
-    static final String[] LANGUAGE_NAMES = {"English", "Français", "Deutsch", "Italiano", "Español"};
+    static final String[] LANGUAGES = {"en", "fr", "de", "it", "es", "ja"};
+    static final String[] LANGUAGE_NAMES = {"English", "Français", "Deutsch", "Italiano", "Español", "日本語"};
 
-    /** the release's languages (indexes into LANGUAGES): USA English, French, Spanish; EUR all five */
+    /** the release's languages (indexes into LANGUAGES): USA English, French, Spanish; EUR the first
+     *  five; JPN Japanese */
     int[] gameLanguages() {
-        return "EUR".equals(Native.gameRelease(gameDir())) ? new int[] {0, 1, 2, 3, 4} : new int[] {0, 1, 4};
+        String r = Native.gameRelease(gameDir());
+        if ("EUR".equals(r)) return new int[] {0, 1, 2, 3, 4};
+        if ("JPN".equals(r)) return new int[] {5};
+        return new int[] {0, 1, 4};
     }
 
     String gameLanguage() {

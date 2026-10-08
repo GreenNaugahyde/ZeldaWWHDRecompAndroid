@@ -162,6 +162,11 @@ Surface* rescaled(Surface* s) {
         delete c;
         s->feedbackCopy = nullptr;
     }
+    if (Surface* c = s->mipChain) {
+        retire_image(c->img);
+        delete c;
+        s->mipChain = nullptr;
+    }
     static int logged = 0;
     if (getenv("WWHD_LOG_RESCALE") || logged++ < 3)
         LOG("[gfx] rescaled %08X %ux%u to %ux%u", s->addr, s->width, s->height, s->img.width, s->img.height);
@@ -341,12 +346,154 @@ Surface* surface_from_depth_buffer(uint32_t addr, uint32_t* firstSlice, uint32_t
 static uint64_t sparse_hash(Surface* s);
 uint64_t g_stat_full_checks, g_stat_uploads, g_stat_invalidates, g_stat_invalidated_surfaces;
 
+// A rendered picture sampled with mip levels. The game draws level 0, often draws the coarser
+// levels itself at their mip addresses (the bloom renders its blurred levels 1-3 there, the
+// distance blur its level 1), and samples them: the distance blur (PS 4502D100) reads the scene at
+// LOD = distance * k - 1 (the haze on far islands), the bloom passes read levels 1-3. Render targets
+// have a single level here, so such a view returned level 0 only. A companion image holds the whole
+// chain: each level is the picture the game rendered at that level's address if there is one (as
+// on the console, where the levels simply are that memory), else a downscale of the level above.
+// Rebuilt when the base or one of the game's levels was drawn to since. WWHD_NO_RT_MIPS=1: level 0
+// only, as before.
+static Surface* game_level(const SurfaceDesc& d, uint32_t level) {
+    uint32_t a;
+    if (level == 1) a = d.mipAddr;
+    else {
+        uint32_t sliceOffset = 0, sliceSize = 0;
+        sint32 sub = 0;
+        LatteAddrLib::CalculateMipAndSliceAddr(d.addr, d.mipAddr, (Latte::E_GX2SURFFMT)d.format, d.width, d.height, d.slices,
+                                               (Latte::E_DIM)d.dim, (Latte::E_HWTILEMODE)d.tileMode, d.swizzle, 0, level, 0,
+                                               &sliceOffset, &sliceSize, &sub);
+        a = sliceOffset;
+    }
+    if (!a) return nullptr;
+    if (Latte::TM_IsMacroTiled((Latte::E_HWTILEMODE)d.tileMode)) a &= ~0x700u;
+    const uint32_t w = std::max(d.width >> level, 1u), h = std::max(d.height >> level, 1u);
+    Surface* best = nullptr;
+    auto range = R.surfaces.equal_range(a);
+    for (auto it = range.first; it != range.second; ++it) {
+        Surface* l = it->second.get();
+        if (!l->gpuWritten || !l->img.image || l->fmt.depth || l->width != w || l->height != h || (l->format & 0x3F) != (d.format & 0x3F))
+            continue;
+        if (!best || l->writeSeq > best->writeSeq) best = l;
+    }
+    return best;
+}
+
+static Surface* with_mip_chain(Surface* s, const SurfaceDesc& d) {
+    static const bool off = getenv("WWHD_NO_RT_MIPS") != nullptr;
+    uint32_t mips = d.mips;
+    if (off || mips <= 1 || s->fmt.depth || s->fmt.compressed || s->img.type != VK_IMAGE_TYPE_2D || s->img.layers != 1 ||
+        s->img.mips != 1 || !s->img.image)
+        return s;
+    const uint32_t w = s->img.width, h = s->img.height;
+    uint32_t full = 1;
+    while ((std::max(w, h) >> full) > 0) full++;
+    mips = std::min(mips, full);
+    if (mips <= 1) return s;
+    static std::unordered_map<VkFormat, bool> blittable;
+    auto bl = blittable.find(s->img.format);
+    if (bl == blittable.end()) {
+        VkFormatProperties fp;
+        vkGetPhysicalDeviceFormatProperties(R.pd, s->img.format, &fp);
+        const VkFormatFeatureFlags need = VK_FORMAT_FEATURE_BLIT_SRC_BIT | VK_FORMAT_FEATURE_BLIT_DST_BIT |
+                                          VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT;
+        bl = blittable.emplace(s->img.format, (fp.optimalTilingFeatures & need) == need).first;
+    }
+    if (!bl->second) return s;
+    // the game's own levels, and a key of everything the chain is built from
+    Surface* levels[16] = {};
+    uint64_t key = s->writeSeq * 0x9E3779B97F4A7C15ull;
+    for (uint32_t l = 1; l < mips && l < 16; l++) {
+        levels[l] = game_level(d, l);
+        key = (key ^ (levels[l] ? levels[l]->writeSeq + l : l)) * 0xFF51AFD7ED558CCDull;
+    }
+    Surface* c = s->mipChain;
+    if (c && (c->img.mips != mips || c->img.width != w || c->img.height != h || c->img.format != s->img.format)) {
+        retire_image(c->img);
+        delete c;
+        c = s->mipChain = nullptr;
+    }
+    if (!c) {
+        c = new Surface();
+        c->width = s->width;
+        c->height = s->height;
+        c->slices = 1;
+        c->mips = mips;
+        c->format = s->format;
+        c->dim = s->dim;
+        c->fmt = s->fmt;
+        c->rscale = s->rscale;
+        c->ax = s->ax;
+        c->ay = s->ay;
+        c->gpuWritten = true;
+        if (!create_image(c->img, VK_IMAGE_TYPE_2D, VK_IMAGE_VIEW_TYPE_2D, s->img.format, w, h, 1, 1, mips,
+                          VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT, false,
+                          false, false)) {
+            delete c;
+            return s;
+        }
+        s->mipChain = c;
+        s->mipChainSeq = ~0ull;
+    }
+    if (s->mipChainSeq == key) return c;
+    s->mipChainSeq = key;
+    prepare(s->img, Use::COPY_SRC);
+    for (uint32_t l = 1; l < mips && l < 16; l++)
+        if (levels[l]) prepare(levels[l]->img, Use::COPY_SRC);
+    prepare(c->img, Use::COPY_DST);  // all levels in TRANSFER_DST
+    VkCommandBuffer cmd = command_buffer();
+    VkImageCopy cp{};
+    cp.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+    cp.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+    cp.extent = {w, h, 1};
+    vkCmdCopyImage(cmd, s->img.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, c->img.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &cp);
+    auto to_src = [&](uint32_t level) {  // a finished level becomes the next blit's source
+        VkImageMemoryBarrier b{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+        b.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        b.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+        b.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+        b.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+        b.srcQueueFamilyIndex = b.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        b.image = c->img.image;
+        b.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, level, 1, 0, 1};
+        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &b);
+    };
+    uint32_t fromGame = 0;
+    for (uint32_t l = 1; l < mips; l++) {
+        to_src(l - 1);
+        VkImageBlit b{};
+        b.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, l, 0, 1};
+        b.dstOffsets[1] = {(int32_t)std::max(w >> l, 1u), (int32_t)std::max(h >> l, 1u), 1};
+        Surface* g = l < 16 ? levels[l] : nullptr;
+        if (g) {  // the game's own level (blitted: its image size may differ by rounding)
+            b.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+            b.srcOffsets[1] = {(int32_t)g->img.width, (int32_t)g->img.height, 1};
+            vkCmdBlitImage(cmd, g->img.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, c->img.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1,
+                           &b, VK_FILTER_LINEAR);
+            fromGame++;
+        } else {
+            b.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, l - 1, 0, 1};
+            b.srcOffsets[1] = {(int32_t)std::max(w >> (l - 1), 1u), (int32_t)std::max(h >> (l - 1), 1u), 1};
+            vkCmdBlitImage(cmd, c->img.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, c->img.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1,
+                           &b, VK_FILTER_LINEAR);
+        }
+    }
+    to_src(mips - 1);
+    c->img.layout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;  // every level is now a transfer source
+    c->img.use = Use::COPY_SRC;
+    static int logged = 0;
+    if (logged++ < 8) LOG("[gfx] mip chain for %08X %ux%u: %u levels, %u of them the game's own", s->addr, w, h, mips, fromGame);
+    return c;
+}
+
 // The surface a set of texture words resolves to only changes when a surface is created or written
 // (the choice among surfaces aliasing one address depends on that): remember recent lookups.
 static Surface* check_texture(Surface* s);
 struct TexLookup {
     uint32_t w[7];
     bool depthSampler;
+    SurfaceDesc d;  // what the words describe (the mip chain is applied on every hit)
     uint64_t writeSeq;
     size_t surfaces;
     Surface* s;
@@ -360,7 +507,9 @@ Surface* sampled_texture(const uint32_t* w, bool isDepthSampler) {
     TexLookup& tl = g_tex_lookups[(key ^ (key >> 29)) & 511];
     if (tl.used && tl.writeSeq == g_write_seq && tl.surfaces == R.surfaces.size() && tl.depthSampler == isDepthSampler &&
         memcmp(tl.w, w, sizeof tl.w) == 0) {
-        return check_texture(tl.s);
+        Surface* s = check_texture(tl.s);
+        if (s && s->gpuWritten && tl.d.mips > 1 && !isDepthSampler) return with_mip_chain(s, tl.d);
+        return s;
     }
     Latte::LATTE_SQ_TEX_RESOURCE_WORD0_N w0;
     Latte::LATTE_SQ_TEX_RESOURCE_WORD1_N w1;
@@ -407,15 +556,18 @@ Surface* sampled_texture(const uint32_t* w, bool isDepthSampler) {
     // A depth-compare (shadow) sampler looks for the depth surfaces at this address, as the original
     // project's renderer does: a GPU-written colour image aliasing the shadow map's memory must not
     // win over the cascade (the shadows alternated between two states).
-    d.isDepth = isDepthSampler;
+    static const bool colorLookup = getenv("WWHD_SHADOW_COLOR_LOOKUP") != nullptr;  // debug: as before
+    d.isDepth = isDepthSampler && !colorLookup;
     Surface* s = find_or_create_surface(d, false);
     s = check_texture(s);
     memcpy(tl.w, w, sizeof tl.w);
     tl.depthSampler = isDepthSampler;
+    tl.d = d;
     tl.writeSeq = g_write_seq;  // after the check: an upload counts as a write
     tl.surfaces = R.surfaces.size();
     tl.s = s;
     tl.used = true;
+    if (s && s->gpuWritten && d.mips > 1 && !d.isDepth) return with_mip_chain(s, d);
     return s;
 }
 
@@ -865,11 +1017,16 @@ void copy_surface_impl(uint32_t srcAddr, uint32_t srcMip, uint32_t srcSlice, uin
         // goes into a depth surface, e.g. a shadow cascade, instead of a colour one whose format never
         // matched and dropped the copy) and its own array shape, and the copy honours the slices
         // (every cascade landed in slice 0 before).
-        dd.swizzle = (uint32_t)d->swizzle;
-        dd.isDepth = src->isDepth;
-        dd.dim = (uint32_t)d->dim.value();
-        dd.slices = (dd.dim == (uint32_t)Latte::E_DIM::DIM_2D || dd.dim == (uint32_t)Latte::E_DIM::DIM_1D)
-                        ? 1 : std::max<uint32_t>((uint32_t)d->depth, 1);
+        static const bool oldCopy = getenv("WWHD_OLD_SURFACE_COPY") != nullptr;  // debug: as before
+        if (!oldCopy) {
+            dd.swizzle = (uint32_t)d->swizzle;
+            dd.isDepth = src->isDepth;
+            dd.dim = (uint32_t)d->dim.value();
+            dd.slices = (dd.dim == (uint32_t)Latte::E_DIM::DIM_2D || dd.dim == (uint32_t)Latte::E_DIM::DIM_1D)
+                            ? 1 : std::max<uint32_t>((uint32_t)d->depth, 1);
+        } else {
+            srcSlice = dstSlice = 0;
+        }
         Surface* dst = find_or_create_surface(dd, true);
         if (!dst || dst->img.format != src->img.format) return;
         if (srcSlice >= src->img.layers || dstSlice >= dst->img.layers) return;

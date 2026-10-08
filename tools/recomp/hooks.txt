@@ -9,6 +9,7 @@
 025D42C4  # fapGm_After: scene / transition / camera management
 0200E6EC  # cCt_Counter: frame counters
 024FFC40  # camera_draw: blended camera on logic passes
+0252E388  # dDlst_peekZ_c::peekData: depth peeks answered from the GPU (peekz.cpp; the sun's corona and lens flare)
 # children of the per-frame function; on hold passes each runs or is skipped (interp.cpp kHoldRun)
 02032FE8  # per-frame child 0
 020357CC  # per-frame child 1

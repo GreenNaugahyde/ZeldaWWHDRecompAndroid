@@ -395,7 +395,8 @@ static void compile_shader(Shader* sh) {
     // later passes depth-test EQUAL/LEQUAL against the first, and without invariance the driver
     // may compute gl_Position differently per shader (camera-dependent z-fighting: shadow flicker,
     // moire on the ground). As the original project's Vulkan renderer (and Metal's [[invariant]]).
-    if (sh->vertex) {
+    static const bool noInvariant = getenv("WWHD_NO_INVARIANT") != nullptr;  // debug: as before
+    if (sh->vertex && !noInvariant) {
         if (size_t main = src.find("void main("); main != std::string::npos) src.insert(main, "invariant gl_Position;\n");
     }
     uint64_t hash = hash_bytes(src.data(), src.size(), sh->vertex ? 0x5653ull : 0x5053ull) ^ src.size();
@@ -1675,6 +1676,7 @@ static bool ensure_pass(Surface* const* colors, const uint32_t* colorSlices, Sur
     }
     R.passDepth = depth;
     R.passDepthSlice = depthSlice;
+    if (depth && depth->width == 1280 && depth->height == 720) R.mainDepthAddr = depth->addr;
     R.passWidth = w;
     R.passHeight = h;
     return true;

@@ -255,8 +255,13 @@ HLE(coreinit, UCOpen) { ret(c, 1); }
 HLE(coreinit, UCClose) { ret(c, 0); }
 // The console language and country the game sees: WWHD_LANGUAGE (en, fr, de, it, es; the app's
 // Language option), limited to the release's languages (USA: English, French, Spanish; EUR: also
-// German and Italian), with a country of that language in the release's region.
+// German and Italian), with a country of that language in the release's region. JPN: Japanese, Japan.
 static void system_language(uint32_t& language, uint32_t& country) {
+    if (release::id() == release::Id::JPN) {
+        language = 0;  // cafe.language 0: Japanese
+        country = 1;   // Japan
+        return;
+    }
     const char* l = getenv("WWHD_LANGUAGE");
     std::string want = l ? l : "en";
     const bool eur = release::id() == release::Id::EUR;

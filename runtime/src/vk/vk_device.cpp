@@ -870,6 +870,7 @@ static void create_device() {
             p2.pNext = &dp;
             vkGetPhysicalDeviceProperties2(R.pd, &p2);
             R.driverInfo = describe_driver(dp);
+            R.driverID = dp.driverID;
         }
         if (!g_driver_file.empty() && !g_driver_fallback && !driver_file_mapped()) g_driver_fallback = true;
         if (g_driver_fallback) LOG("[vk] the installed GPU driver could not be loaded; the system driver runs");
@@ -2054,6 +2055,77 @@ static float half_to_float(uint16_t h) {
     uint32_t s = (h >> 15) & 1, e = (h >> 10) & 0x1F, m = h & 0x3FF;
     float v = e ? ldexpf(1.0f + m / 1024.0f, (int)e - 15) : ldexpf(m / 1024.0f, -14);
     return s ? -v : v;
+}
+
+// Depth peeks (peekz.cpp): the depth of the main TV depth buffer at a few points of the 640x480
+// game screen, as the 24-bit value the game compares (0xFFFFFF = nothing drawn there). One pixel
+// per point is copied to a host buffer here, in command order (after the scene the game peeks
+// at); the answers are written to guest memory when the GPU has finished.
+void peek_z(const uint32_t* cells, uint32_t n) {
+    Surface* d = nullptr;
+    if (R.mainDepthAddr) {
+        auto range = R.surfaces.equal_range(R.mainDepthAddr);
+        for (auto it = range.first; it != range.second && !d; ++it)
+            if (it->second->isDepth && it->second->width == 1280 && it->second->height == 720 && it->second->img.image)
+                d = it->second.get();
+    }
+    const uint32_t points = n / 3;
+    if (!d || !points) return;
+    Image& img = d->img;
+    const VkFormat f = img.format;
+    if (f != VK_FORMAT_D32_SFLOAT && f != VK_FORMAT_D32_SFLOAT_S8_UINT && f != VK_FORMAT_D24_UNORM_S8_UINT &&
+        f != VK_FORMAT_X8_D24_UNORM_PACK32 && f != VK_FORMAT_D16_UNORM)
+        return;
+    VkBufferCreateInfo bi{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
+    bi.size = (VkDeviceSize)points * 4;  // 4 bytes per point keeps every depth copy's offset aligned
+    bi.usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+    VmaAllocationCreateInfo ai{};
+    ai.usage = VMA_MEMORY_USAGE_AUTO;
+    ai.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT;
+    VkBuffer buf;
+    VmaAllocation alloc;
+    VmaAllocationInfo info{};
+    if (vmaCreateBuffer(R.vma, &bi, &ai, &buf, &alloc, &info) != VK_SUCCESS) return;
+    std::vector<VkBufferImageCopy> regions(points);
+    std::vector<uint32_t> dst(points), px(points * 2);
+    for (uint32_t i = 0; i < points; i++) {
+        // 640x480 game screen -> image pixels (the image includes the resolution scale and the
+        // widescreen factor; the game projects into the whole picture)
+        float x = (float)(int32_t)cells[i * 3] * img.width / 640.0f, y = (float)(int32_t)cells[i * 3 + 1] * img.height / 480.0f;
+        VkBufferImageCopy& c = regions[i];
+        c.bufferOffset = (VkDeviceSize)i * 4;
+        c.imageSubresource = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 0, 1};
+        c.imageOffset = {std::clamp((int32_t)x, 0, (int32_t)img.width - 1), std::clamp((int32_t)y, 0, (int32_t)img.height - 1), 0};
+        c.imageExtent = {1, 1, 1};
+        dst[i] = cells[i * 3 + 2];
+        px[i * 2] = cells[i * 3];
+        px[i * 2 + 1] = cells[i * 3 + 1];
+    }
+    prepare(img, Use::COPY_SRC);
+    vkCmdCopyImageToBuffer(command_buffer(), img.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, buf, points, regions.data());
+    static const bool log = getenv("WWHD_PEEKZ_LOG") != nullptr;
+    on_complete([=]() {
+        vmaInvalidateAllocation(R.vma, alloc, 0, VK_WHOLE_SIZE);
+        const uint8_t* raw = (const uint8_t*)info.pMappedData;
+        for (uint32_t i = 0; i < points; i++) {
+            uint32_t v;
+            if (f == VK_FORMAT_D16_UNORM) {
+                uint16_t h;
+                memcpy(&h, raw + i * 4, 2);
+                v = h == 0xFFFF ? 0xFFFFFF : (uint32_t)h << 8;
+            } else if (f == VK_FORMAT_D24_UNORM_S8_UINT || f == VK_FORMAT_X8_D24_UNORM_PACK32) {
+                memcpy(&v, raw + i * 4, 4);
+                v &= 0xFFFFFF;
+            } else {
+                float z;
+                memcpy(&z, raw + i * 4, 4);
+                v = z >= 1.0f ? 0xFFFFFF : (uint32_t)(std::clamp(z, 0.0f, 1.0f) * 16777215.0f);
+            }
+            st32(dst[i], v);
+            if (log) LOG("[peekz] point %u (%d, %d): %06X", i, (int32_t)px[i * 2], (int32_t)px[i * 2 + 1], v);
+        }
+        vmaDestroyBuffer(R.vma, buf, alloc);
+    });
 }
 
 void dump_texture(Image& src, const char* name, bool async, bool srgbEncode) {

@@ -138,7 +138,7 @@ std::string code_cache_key(const std::string& rpxPath) {
     // another release: its address map decides the function names
     uint32_t entry = rpx.size() >= 0x1C ? (uint8_t)rpx[0x18] << 24 | (uint8_t)rpx[0x19] << 16 | (uint8_t)rpx[0x1A] << 8 | (uint8_t)rpx[0x1B] : 0;
     if (release::known_entry(entry) && entry != kSupportedEntryPoint) {
-        std::string map = release::map_text();
+        std::string map = release::map_text(entry);
         uint8_t hm[20];
         disc::sha1((const uint8_t*)map.data(), map.size(), hm);
         key += "map " + hex(hm, 20) + "\n";

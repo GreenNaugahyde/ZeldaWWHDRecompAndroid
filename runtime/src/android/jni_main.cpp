@@ -134,7 +134,7 @@ JNI_FN(jstring, checkGame)(JNIEnv* env, jclass, jstring gameDir) {
     return nullptr;
 }
 
-// the game release in `gameDir`: "USA", "EUR", or "" (none or unknown)
+// the game release in `gameDir`: "USA", "EUR", "JPN", or "" (none or unknown)
 JNI_FN(jstring, gameRelease)(JNIEnv* env, jclass, jstring gameDir) {
     FILE* f = fopen((jstr(env, gameDir) + "/code/cking.rpx").c_str(), "rb");
     uint8_t h[0x1C] = {};
@@ -143,7 +143,7 @@ JNI_FN(jstring, gameRelease)(JNIEnv* env, jclass, jstring gameDir) {
         fclose(f);
     }
     uint32_t entry = (uint32_t)h[0x18] << 24 | h[0x19] << 16 | h[0x1A] << 8 | h[0x1B];
-    const char* r = entry == 0x028EA120u /* USA */ ? "USA" : release::known_entry(entry) ? "EUR" : "";
+    const char* r = release::name_of_entry(entry);
     return env->NewStringUTF(r);
 }
 

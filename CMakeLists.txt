@@ -177,7 +177,7 @@ elseif(ANDROID)
                                 runtime/src/recomp/compile.cpp ${CMAKE_BINARY_DIR}/recomp_data.S)
     set_source_files_properties(runtime/src/recomp/emit.cpp runtime/src/recomp/compile.cpp PROPERTIES
                                 INCLUDE_DIRECTORIES "${LLVM_INCLUDE_DIRS}")
-    target_compile_definitions(wwhd PRIVATE WWHD_RECOMP=1 WWHD_RELEASE_MAPS=1)  # release.cpp: the EUR address map
+    target_compile_definitions(wwhd PRIVATE WWHD_RECOMP=1 WWHD_RELEASE_MAPS=1)  # release.cpp: the EUR and JPN address maps
     target_link_libraries(wwhd PRIVATE ${WWHD_LLVM_LIBS})
     list(APPEND LIC_PARTS "LLVM (the on-device recompiler) and libc++|Apache-2.0 with LLVM Exceptions|${WWHD_LLVM_DIR}/LICENSE.TXT")
     # ops.c as LLVM bitcode (the instruction semantics the recompiler inlines), embedded with the hook lists
@@ -193,8 +193,11 @@ elseif(ANDROID)
 "    .section .rodata
     .balign 16
     .global wwhd_ops_bc, wwhd_ops_bc_end, wwhd_hooks, wwhd_hooks_end, wwhd_release_eur, wwhd_release_eur_end
+    .global wwhd_release_jpn, wwhd_release_jpn_end
 wwhd_release_eur: .incbin \"${HOOKS_DIR}/release_eur.txt\"
 wwhd_release_eur_end:
+wwhd_release_jpn: .incbin \"${HOOKS_DIR}/release_jpn.txt\"
+wwhd_release_jpn_end:
 wwhd_ops_bc: .incbin \"${OPS_BC}\"
 wwhd_ops_bc_end:
 wwhd_hooks:
@@ -208,7 +211,7 @@ wwhd_hooks:
 wwhd_hooks_end:
 ")
     set_source_files_properties(${CMAKE_BINARY_DIR}/recomp_data.S PROPERTIES OBJECT_DEPENDS
-      "${OPS_BC};${HOOKS_DIR}/hooks.txt;${HOOKS_DIR}/hooks_climb.txt;${HOOKS_DIR}/hooks_mods.txt;${HOOKS_DIR}/hooks_aspect.txt;${HOOKS_DIR}/release_eur.txt")
+      "${OPS_BC};${HOOKS_DIR}/hooks.txt;${HOOKS_DIR}/hooks_climb.txt;${HOOKS_DIR}/hooks_mods.txt;${HOOKS_DIR}/hooks_aspect.txt;${HOOKS_DIR}/release_eur.txt;${HOOKS_DIR}/release_jpn.txt")
 
     if(WWHD_DEVICE_RECOMP)
       # The game code is linked at startup (loader.cpp). The game functions the runtime calls

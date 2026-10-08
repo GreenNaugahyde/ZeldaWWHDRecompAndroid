@@ -29,7 +29,7 @@ final class Native {
     /** {modules done, modules in total (0 until known)} of the running compile. */
     static native long[] compileProgress();
     static native void compileCancel();
-    /** The game release in gameDir: "USA", "EUR", or "" (none or unknown). */
+    /** The game release in gameDir: "USA", "EUR", "JPN", or "" (none or unknown). */
     static native String gameRelease(String gameDir);
     /** The licenses of everything in the app, as text. */
     static native String licenses();

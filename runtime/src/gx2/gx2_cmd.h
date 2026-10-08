@@ -32,6 +32,7 @@ enum Op : uint32_t {
     OP_EXPAND_DEPTH,    // GX2DepthBuffer*
     OP_SET_PROJ_REGS,   // first register, 16 values: a layout projection matrix (narrowed when drawing to the TV)
     OP_LAYOUT_ROOT,     // nw::lyt root pane: drawn into the target bound now (which screen it goes to)
+    OP_PEEK_Z,          // x, y, result address per point: depth peeks of dDlst_peekZ_c (peekz.cpp)
     // host-only (render queue)
     OP_FLUSH,           // submit queued GPU work
     OP_DRAW_DONE,       // wait for the GPU to finish

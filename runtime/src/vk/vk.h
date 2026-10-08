@@ -63,6 +63,8 @@ struct Surface {
     float rscale = 1.0f;              // resolution scale: image size / guest size (render targets only)
     float ax = 1.0f, ay = 1.0f;       // aspect ratio widening (taller) of TV-shaped targets, on top of rscale
     Surface* feedbackCopy = nullptr;  // copy sampled while this surface is a bound attachment
+    Surface* mipChain = nullptr;      // a rendered picture with coarser levels, for sampling with mips
+    uint64_t mipChainSeq = ~0ull;     // writeSeq of the source when mipChain was last built
     uint64_t lastDrawFrame = ~0ull;   // render targets: the last frame drawn into,
     uint32_t drawStreak = 0;          // and in how many consecutive frames up to it
     bool firstDrawFrame = false;      // lastDrawFrame is the first frame it was drawn into
@@ -95,6 +97,7 @@ struct Renderer {
     VmaAllocator vma = nullptr;
     VkPhysicalDeviceProperties props{};
     std::string driverInfo;  // the running driver's name and version
+    VkDriverId driverID = (VkDriverId)0;  // VkPhysicalDeviceDriverProperties::driverID (0: unknown)
     VkPhysicalDeviceFeatures features{};  // enabled features
     bool mirrorClampToEdge = false;
     bool uploadCached = false;   // transient upload memory is CPU-cached (copy_deduped compares in it)
@@ -109,6 +112,7 @@ struct Renderer {
     VkRenderPass pass = VK_NULL_HANDLE;
     Surface* passColor[8] = {};
     Surface* passDepth = nullptr;
+    uint32_t mainDepthAddr = 0;  // guest address of the last TV-sized (1280x720) depth buffer drawn with (peek_z)
     uint32_t passColorSlice[8] = {}, passDepthSlice = 0;
     uint32_t passWidth = 0, passHeight = 0;
 

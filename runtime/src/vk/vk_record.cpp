@@ -1,5 +1,7 @@
 #define WWHD_VK_RECORD_IMPLEMENTATION
 #include "vk_record.h"
+#include "runtime.h"
+#include "vk.h"
 
 #include <algorithm>
 #include <cstdlib>
@@ -119,12 +121,19 @@ template <class T> void clear_pnext(T* v, uint32_t n) {
 
 }  // namespace
 
+// On with Qualcomm's own driver: on a tablet (Adreno 732, driver v762) the render thread went from
+// 21.5 to 14.6 ms a frame (the record thread taking 6.4 ms beside it), no picture errors. Off with
+// other drivers: on a Mi 9 (Adreno 640, Turnip) it made the render thread slower (17.5 -> 24 ms a
+// frame, plus 9 ms on the record thread) and the picture flickered black now and then.
+// WWHD_RECORD_THREAD=0 / 1 decides instead. Decided once the device exists (its driver is known).
 bool enabled() {
-    static const bool on = [] {
-        const char* e = getenv("WWHD_RECORD_THREAD");
-        return !e || strcmp(e, "0") != 0;
-    }();
-    return on;
+    static int on = -1;
+    if (on >= 0) return on != 0;
+    if (const char* e = getenv("WWHD_RECORD_THREAD")) return (on = strcmp(e, "0") != 0);
+    if (!R.device) return false;
+    on = R.driverID == VK_DRIVER_ID_QUALCOMM_PROPRIETARY;
+    LOG("[vk] record thread %s (%s)", on ? "on" : "off", R.driverInfo.c_str());
+    return on != 0;
 }
 
 VkCommandBuffer virtual_command_buffer() { return reinterpret_cast<VkCommandBuffer>(uintptr_t{1}); }
