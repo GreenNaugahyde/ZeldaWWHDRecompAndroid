@@ -15,6 +15,8 @@ final class Native {
     static native String checkGame(String gameDir);
     /** Extracts the game from a disc image (fd: the open image, closed here) into outDir: null, or why not. Blocks. */
     static native String extractGame(int fd, byte[] discKey, byte[] commonKey, String outDir);
+    /** One section of the crash log's context (runtime/src/crash_info.h). */
+    static native void setCrashInfo(String section, String text);
     /** The same from a Cemu .wua archive (decrypted, no keys). */
     static native String extractArchive(int fd, String outDir);
     /** {bytes written, total} of the running extraction. */

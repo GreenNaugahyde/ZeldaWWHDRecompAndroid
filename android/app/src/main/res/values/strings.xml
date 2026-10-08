@@ -265,6 +265,12 @@
     <string name="opt_shaders">Delete shader cache</string>
     <string name="opt_shaders_hint">Restarts the game as on its first start</string>
     <string name="opt_about">About</string>
+    <string name="crash_title">The game closed unexpectedly</string>
+    <string name="crash_text">A crash log was saved. If you report the problem (for example as an issue on GitHub), please attach it. It shows where the game crashed, the app version, the game version, your device model and the settings in use. It contains no personal data.</string>
+    <string name="crash_share">Share crash log</string>
+    <string name="crash_share_all">Share crash logs</string>
+    <string name="crash_not_now">Not now</string>
+    <string name="crash_subject">Wind Waker HD crash log</string>
     <string name="opt_quit">Quit</string>
     <string name="menu_capture">Capture frame (debugging)</string>
     <string name="menu_clear_shaders">Delete shader cache…</string>

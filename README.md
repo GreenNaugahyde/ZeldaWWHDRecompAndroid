@@ -63,13 +63,24 @@ The original project (macOS, the 60 fps modes, decompilation tools) is described
   drops from 52 to 40 ms), much less work on the render thread (on a Snapdragon 855 from 24 to 16 ms
   a frame), with the Qualcomm driver a second thread for the Vulkan commands, Android performance
   hints and game modes, and SVE where the processor has it.
-- **Crash logs**: if the game crashes, a log for a bug report is written to `captures/` in the
-  app's files folder.
+- **Crash logs**: if the game crashes, the next start offers its log in Android's share menu, for a
+  bug report. It shows where the game crashed and with which app and game version, device and
+  settings; it contains no personal data. About › Share crash logs shares the logs kept; a shared
+  log is deleted at the next start.
 - **Fixes**: correct lighting on the first visit to a scene with an empty shader cache; game files
   found on devices whose storage tells upper and lower case apart.
 - **No internet access**: the app doesn't request it, and its manifest explicitly excludes it.
 
 ## Version history
+
+**0.6**
+
+- Cemu archives (`.wua`) as a game source: choose a folder with the `.wua` instead of a disc image
+  and keys.
+- Crash logs can be shared from the app: after a crash the next start offers the log in Android's
+  share menu (also under About). The log now also shows the app and game version, the device, the
+  settings and the place in the game. A shared log is deleted at the next start.
+- Updating from 0.5 keeps the prepared game code: no new compile.
 
 **0.5**
 

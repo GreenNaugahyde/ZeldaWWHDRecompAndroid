@@ -50,6 +50,12 @@
             android:name=".WorkService"
             android:exported="false"
             android:foregroundServiceType="dataSync" />
+        <!-- crash logs, read only, for the app the user shares them with (CrashLogs) -->
+        <provider
+            android:name=".CrashLogProvider"
+            android:authorities="org.wwhdrecomp.app.crashlogs"
+            android:exported="false"
+            android:grantUriPermissions="true" />
         <activity
             android:name=".RestartActivity"
             android:exported="false"

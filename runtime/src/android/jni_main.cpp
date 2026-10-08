@@ -15,6 +15,7 @@
 #include "../audio_out.h"
 #include "../disc/wud.h"
 #include "../disc/wua.h"
+#include "../crash_info.h"
 #include "../gx2/gx2.h"
 #include "../input.h"
 #include "../mods/climb.h"
@@ -146,6 +147,11 @@ JNI_FN(jstring, gameRelease)(JNIEnv* env, jclass, jstring gameDir) {
     uint32_t entry = (uint32_t)h[0x18] << 24 | h[0x19] << 16 | h[0x1A] << 8 | h[0x1B];
     const char* r = release::name_of_entry(entry);
     return env->NewStringUTF(r);
+}
+
+// the crash log's context from the app ("app": version, device, settings), see crash_info.h
+JNI_FN(void, setCrashInfo)(JNIEnv* env, jclass, jstring section, jstring text) {
+    crash_info::set(jstr(env, section), jstr(env, text));
 }
 
 // the licenses of everything in the APK (assembled by CMakeLists.txt)
@@ -432,6 +438,7 @@ JNI_FN(void, setPaused)(JNIEnv*, jclass, jboolean paused) {
 // settings shown in the app's menu
 JNI_FN(void, setOption)(JNIEnv* env, jclass, jstring name, jint value) {
     std::string n = jstr(env, name);
+    if (n != "capture") crash_info::option(n, value);
     if (n == "ao_mode") gfx::set_ao_mode(value);
     else if (n == "ao_hires") gfx::set_ao_hires(value != 0);
     else if (n == "aniso") gfx::set_aniso(value != 0);

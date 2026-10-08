@@ -52,8 +52,11 @@ final class GameDialog extends Dialog {
     }
 
     /** A button (they appear in the order added, the last one on the right); `run` may be null. */
-    GameDialog button(int label, Runnable run) {
-        buttons.add(new Object[] {getContext().getString(label), run});
+    GameDialog button(int label, Runnable run) { return button(label, run, true); }
+
+    /** The same, greyed out and without effect when `enabled` is false. */
+    GameDialog button(int label, Runnable run, boolean enabled) {
+        buttons.add(new Object[] {getContext().getString(label), run, enabled});
         return this;
     }
 
@@ -189,6 +192,11 @@ final class GameDialog extends Dialog {
                     if (run != null) run.run();
                 }, i == buttons.size() - 1);
                 v.setMinWidth(px(130));
+                if (!(Boolean) b[2]) {
+                    v.setEnabled(false);
+                    v.setFocusable(false);
+                    v.setAlpha(0.4f);
+                }
                 buttonViews.add(v);
                 LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-2, px(52));
                 lp.leftMargin = px(12);

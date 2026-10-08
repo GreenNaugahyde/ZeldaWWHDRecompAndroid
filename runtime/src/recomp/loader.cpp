@@ -22,6 +22,7 @@
 #include <utility>
 #include <vector>
 
+#include "../crash_info.h"
 #include "../disc/crypto.h"
 #include "../release.h"
 #include "compile.h"
@@ -181,6 +182,8 @@ bool load_game_code(const std::string& rpxPath, const std::string& dir, std::str
         return false;
     }
     log_msg("[recomp] game release: %s", release::name());
+    crash_info::set("code", std::string("compiled on the device: recompiler ") + WWHD_RECOMP_VERSION + ", -O" +
+                                std::to_string(kDefaultOptLevel) + ", CPU features " + host_features());
     long tAnalyze = ms();
 
     static Resolver res;

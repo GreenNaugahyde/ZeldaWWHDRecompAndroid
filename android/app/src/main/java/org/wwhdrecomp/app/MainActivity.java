@@ -57,6 +57,8 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     private static final float TV_ASPECT = 16f / 9f, DRC_ASPECT = 854f / 480f;
 
     SharedPreferences prefs;
+    // held here: SharedPreferences keeps its listeners only weakly
+    private final SharedPreferences.OnSharedPreferenceChangeListener crashInfoUpdater = (p, key) -> CrashLogs.updateInfo(this, p);
     private SurfaceView surface;
     private ControlsView controls;
     private final InputMapper mapper = new InputMapper();
@@ -75,12 +77,17 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
             setenv("WWHD_RES_SCALE", prefs.getString("res_scale", "1"));  // wwhd.env / intent extras below override
             setenv("WWHD_LANGUAGE", gameLanguage());
             applyFrameGenSettings();
+            setenv("WWHD_APP_VERSION", CrashLogs.appVersion(this));  // the crash log's name
             applyEnvironment();
+            CrashLogs.deleteShared(this, prefs);  // shared in an earlier run
             // a shader dump (WWHD_DUMP_SHADERS=<files>/shaders, debugging) left from an earlier start
             if (Os.getenv("WWHD_DUMP_SHADERS") == null) Backup.deleteTree(new File(baseDir(), "shaders"));
             System.loadLibrary("wwhd");
             libraryLoaded = true;
         }
+        // the crash log's app section, kept current while settings change
+        CrashLogs.updateInfo(this, prefs);
+        prefs.registerOnSharedPreferenceChangeListener(crashInfoUpdater);
         if (started) showGame();
         else checkAndStart();
     }
@@ -232,6 +239,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         if (failedDriver != null)
             new GameDialog(this).title(R.string.opt_gpu_driver).message(getString(R.string.gpu_driver_failed, failedDriver))
                     .button(R.string.opt_ok, null).show();
+        else CrashLogs.offerNew(this, prefs);  // the last run crashed
     }
 
     // ------------------------------------------------------------------ GPU driver (Adreno)
@@ -1166,7 +1174,10 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         t.setTextIsSelectable(true);
         t.setText(Native.licenses());
         android.text.util.Linkify.addLinks(t, android.text.util.Linkify.WEB_URLS);
-        new GameDialog(this).title(R.string.menu_about).content(t).button(R.string.opt_ok, null).show();
+        GameDialog d = new GameDialog(this).title(R.string.menu_about).content(t);
+        java.util.List<File> logs = CrashLogs.list(this, prefs);
+        d.button(R.string.crash_share_all, () -> CrashLogs.share(this, prefs, logs), !logs.isEmpty());
+        d.button(R.string.opt_ok, null).show();
     }
 
     private void showCompileStopped(String message) {
