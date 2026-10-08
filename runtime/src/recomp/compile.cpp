@@ -31,9 +31,10 @@ namespace recomp {
 
 // Code for the CPU we run on: generic AArch64 plus only the extensions the kernel reports (a CPU
 // model would imply some the firmware disables, e.g. SVE on Snapdragons); the model itself is used
-// for scheduling only ("tune-cpu"). SVE/SVE2 only where the kernel enables them (MediaTek
-// Dimensity, Google Tensor); the code stays vector-length agnostic. SME stays off: streaming
-// mode isn't something compiled game code can use.
+// for scheduling only ("tune-cpu"). SVE/SVE2 are off: code compiled with them never ran on a
+// tested device, and a crash on a Dimensity 8350 points at it (issue #24); WWHD_SVE=1 uses them where
+// the kernel enables them (MediaTek Dimensity, Google Tensor; the code stays vector-length
+// agnostic). SME stays off: streaming mode isn't something compiled game code can use.
 std::string host_features() {
     std::string f;
 #if defined(__aarch64__) && defined(__linux__)
@@ -44,7 +45,8 @@ std::string host_features() {
     if (hw & (1UL << 15)) f += "+rcpc,";      // HWCAP_LRCPC
     if (hw & (1UL << 7)) f += "+rdm,";        // HWCAP_ASIMDRDM
     unsigned long hw2 = getauxval(AT_HWCAP2);
-    const bool sve = hw & (1UL << 22);        // HWCAP_SVE
+    static const bool sveOn = getenv("WWHD_SVE") && atoi(getenv("WWHD_SVE")) != 0;
+    const bool sve = sveOn && (hw & (1UL << 22));  // HWCAP_SVE
     const bool sve2 = sve && (hw2 & (1UL << 1));  // HWCAP2_SVE2
     f += sve ? "+sve," : "-sve,";
     f += sve2 ? "+sve2," : "-sve2,";
