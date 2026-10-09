@@ -1,3 +1,4 @@
+#include <bitset>
 #include <chrono>
 extern "C" uint64_t g_shader_state_gen;  // gx2_core.cpp: bumped by shader-relevant register changes
 extern "C" uint64_t g_draw_state_gen;    // gx2_core.cpp: bumped by any non-data register change (draw fast path)
@@ -150,7 +151,9 @@ static Upload copy_tracked(SubmissionCopies& c, uint32_t addr, uint32_t size, Vk
     uint64_t key = (uint64_t)addr << 32 | size;
     auto it = c.map.find(key);
     if (it != c.map.end() && memw::unchanged_since(addr, size, it->second.gen)) {
-        bool verify = ((addr >> 6) + R.frame) % 16 == 0;
+        // the check reads the copy back: only from cached upload memory (uncached reads are ~100x
+        // slower; original project 3563e7f)
+        bool verify = R.uploadCached && ((addr >> 6) + R.frame) % 16 == 0;
         if (!verify || memcmp(it->second.u.ptr, src, size) == 0) {
             reused += size;
             return it->second.u;
@@ -555,16 +558,52 @@ static bool shader_reg_relevant(uint32_t reg, uint32_t oldv, uint32_t newv) {
 }
 static bool g_reg_filter_set = (g_shader_reg_filter = &shader_reg_relevant, true);
 
-static Shader* get_shader_uncached(const uint32_t* regs, bool vertex, LatteFetchShader* fs, uint64_t fsKey);
+// A pixel shader translated for the draw's vertex shader: the semantic ids that vertex shader
+// exports (its output parameters through SPI_VS_OUT_ID) and the PS inputs none of them feeds. Those
+// inputs are constants in the translation, the GPU's default value for them (SPI_PS_INPUT_CNTL
+// DEFAULT_VAL; LatteDecompilerOptions::linkPSInputsToVS) instead of inputs no output writes, whose
+// values are undefined and which some drivers refuse (original project 73c5a3d).
+struct PsLink {
+    bool linked = false;
+    std::bitset<256> exports;
+    uint32_t unfed = 0;  // bit f: PS input f has no vertex shader output
+    uint64_t key = 0;    // unfed inputs and their DEFAULT_VAL, for the shader key
+};
+static PsLink ps_link(const uint32_t* regs, const Shader* vs) {
+    PsLink link;
+    if (!vs || !vs->dec) return link;
+    link.linked = true;
+    const uint32_t mask = vs->dec->outputParameterMask;
+    for (uint32_t i = 0; i < 32; ++i)
+        if (mask & (1u << i)) link.exports.set((regs[mmSPI_VS_OUT_ID_0 + i / 4] >> (8 * (i % 4))) & 0xFF);
+    const uint32_t control0 = regs[mmSPI_PS_IN_CONTROL_0];
+    const uint32_t inputs = std::min<uint32_t>(control0 & 0x3F, GPU7_PS_MAX_INPUTS);
+    const uint32_t position = (control0 >> 8) & 1 ? (control0 >> 10) & 0x1F : 0xFFFFFFFFu;
+    uint32_t words[1 + GPU7_PS_MAX_INPUTS];
+    uint32_t n = 1;
+    for (uint32_t f = 0; f < inputs; ++f)
+        if (f != position && !link.exports.test(regs[mmSPI_PS_INPUT_CNTL_0 + f] & 0xFF)) {
+            link.unfed |= 1u << f;
+            words[n++] = (regs[mmSPI_PS_INPUT_CNTL_0 + f] >> 8) & 3;
+        }
+    words[0] = link.unfed;
+    link.key = link.unfed ? hash_bytes(words, n * 4, 0x5053'4C49'4E4Bull) : 0;
+    return link;
+}
 
-static Shader* get_shader(const uint32_t* regs, bool vertex, LatteFetchShader* fs, uint64_t fsKey) {
+static Shader* get_shader_uncached(const uint32_t* regs, bool vertex, LatteFetchShader* fs, uint64_t fsKey,
+                                   const PsLink& link = PsLink{});
+
+// vs: for a pixel shader, the draw's vertex shader (its inputs are linked to that one's outputs)
+static Shader* get_shader(const uint32_t* regs, bool vertex, LatteFetchShader* fs, uint64_t fsKey, const Shader* vs = nullptr) {
     const uint32_t start = vertex ? mmSQ_PGM_START_VS : mmSQ_PGM_START_PS;
     const uint32_t addr = regs[start], size = regs[start + 1];
     // nothing shader-relevant changed since the previous draw: same shader
-    struct Last { uint64_t gen = 0, frame = ~0ull, fsKey = 0; uint32_t addr = 0, size = 0; Shader* s = nullptr; };
+    struct Last { uint64_t gen = 0, frame = ~0ull, fsKey = 0; uint32_t addr = 0, size = 0; const Shader* vs = nullptr; Shader* s = nullptr; };
     static Last last[2];
     Last& L = last[vertex ? 0 : 1];
-    if (L.gen == g_shader_state_gen && L.frame == R.frame && L.addr == addr && L.size == size && (!vertex || L.fsKey == fsKey))
+    if (L.gen == g_shader_state_gen && L.frame == R.frame && L.addr == addr && L.size == size && (!vertex || L.fsKey == fsKey) &&
+        (vertex || L.vs == vs))
         return L.s;
     // the same state with another program (the game switches between a few): remembered per program
     struct Memo { uint64_t gen = 0, frame = ~0ull; std::unordered_map<uint64_t, Shader*> m; };
@@ -575,10 +614,11 @@ static Shader* get_shader(const uint32_t* regs, bool vertex, LatteFetchShader* f
         M.gen = g_shader_state_gen;
         M.frame = R.frame;
     }
-    uint64_t mk = ((uint64_t)addr << 32 | size) ^ (vertex ? fsKey * 0x9E3779B97F4A7C15ull : 0);
+    uint64_t mk = ((uint64_t)addr << 32 | size) ^ (vertex ? fsKey * 0x9E3779B97F4A7C15ull : (uint64_t)(uintptr_t)vs * 0xC2B2AE3D27D4EB4Full);
     auto it = M.m.find(mk);
-    Shader* s = it != M.m.end() ? it->second : (M.m[mk] = get_shader_uncached(regs, vertex, fs, fsKey));
-    L = Last{g_shader_state_gen, R.frame, fsKey, addr, size, s};
+    Shader* s = it != M.m.end() ? it->second
+                                : (M.m[mk] = get_shader_uncached(regs, vertex, fs, fsKey, vertex ? PsLink{} : ps_link(regs, vs)));
+    L = Last{g_shader_state_gen, R.frame, fsKey, addr, size, vs, s};
     return s;
 }
 
@@ -592,7 +632,7 @@ static void compile_deferred(Shader* s) {
     compile_shader(s);
 }
 
-static Shader* get_shader_uncached(const uint32_t* regs, bool vertex, LatteFetchShader* fs, uint64_t fsKey) {
+static Shader* get_shader_uncached(const uint32_t* regs, bool vertex, LatteFetchShader* fs, uint64_t fsKey, const PsLink& link) {
     uint32_t addr = regs[vertex ? mmSQ_PGM_START_VS : mmSQ_PGM_START_PS] << 8;
     uint32_t size = regs[(vertex ? mmSQ_PGM_START_VS : mmSQ_PGM_START_PS) + 1] << 3;
     if (!addr || !size) return nullptr;
@@ -600,6 +640,7 @@ static Shader* get_shader_uncached(const uint32_t* regs, bool vertex, LatteFetch
     uint64_t base = key;
     key = stage_state_hash(regs, key, vertex ? REGADDR::SQ_TEX_RESOURCE_WORD0_N_VS : REGADDR::SQ_TEX_RESOURCE_WORD0_N_PS);
     if (vertex) key ^= fsKey * 31;
+    else key ^= link.key * 37;  // 0 when every input is fed: the same translation as unlinked
     auto it = g_shaders.find(key);
     if (it != g_shaders.end()) return it->second;
 
@@ -610,6 +651,10 @@ static Shader* get_shader_uncached(const uint32_t* regs, bool vertex, LatteFetch
     double t0 = now_ms();
     LatteShader_UpdatePSInputs((uint32*)regs);
     LatteDecompilerOptions opt;
+    if (!vertex && link.linked) {
+        opt.linkPSInputsToVS = true;
+        opt.vsOutputSemantics = link.exports;
+    }
     LatteDecompilerOutput_t out{};
     if (vertex)
         LatteDecompiler_DecompileVertexShader(base, (uint32*)regs, mem::ptr(addr), size, fs, opt, &out);
@@ -2330,7 +2375,7 @@ void draw(const uint32_t* regs, uint32_t prim, uint32_t count, uint32_t indexTyp
         return;
     }
     Shader* vs = get_shader(regs, true, fs, fsKey);
-    Shader* ps = get_shader(regs, false, fs, fsKey);
+    Shader* ps = get_shader(regs, false, fs, fsKey, vs && shader_state(vs) != CS_FAILED ? vs : nullptr);
     if (!vs || !ps || shader_state(vs) == CS_FAILED || shader_state(ps) == CS_FAILED) { g_skip[SK_NO_SHADER]++; return; }
     compile_deferred(vs);
     compile_deferred(ps);

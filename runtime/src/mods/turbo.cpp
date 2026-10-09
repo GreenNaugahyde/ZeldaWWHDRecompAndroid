@@ -7,10 +7,10 @@
 // dDoor_info_c::getDemoAction (0252A684; knob doors, shutter doors 10/12, kddoor) or
 // daMbdoor_c::getDemoAction (021C0078) while their door event runs. While a door was in such a cut
 // during the step just run (not a TALK cut: locked-door messages run at normal speed), the frame gets
-// kDoorExtra more full logic steps: the steps of fpcM_Management between two executes (process
-// deletion, priority, creation, cCt_Counter) and fpcEx_Handler (every process: Link, door, camera,
-// event manager in the play scene). Drawing, scene management (fapGm_After) and the pad read stay
-// once per frame. Button presses ("trigger" bits) are cleared for the extra steps, so a press is
+// kDoorExtra more logic steps: the steps of fpcM_Management between two executes (priority,
+// creation, cCt_Counter) and fpcEx_Handler (every process: Link, door, camera, event manager in the
+// play scene). Drawing, process deletion (fpcDt_Handler: its timers count drawn frames), scene
+// management (fapGm_After) and the pad read stay once per frame. Button presses ("trigger" bits) are cleared for the extra steps, so a press is
 // seen once.
 //
 // Fast scene changes: while an overlap (fade/wipe) process exists (l_fopOvlpM_overlap[0],
@@ -210,7 +210,12 @@ void after_execute(Cpu* c, uint32_t execute_fn) {
                 cleared = true;
             }
             call(c, f_0200E6EC_orig, 0);  // cCt_Counter(0) (end of the previous step)
-            call(c, f_025DE024_orig, 0);  // fpcDt_Handler
+            // No fpcDt_Handler: process deletion stays once per frame (original project 9fa6698, its
+            // issue #61). fopAcM_delete queues a process with a timer of 1 and each fpcDt_Handler
+            // counts it down, so the game deletes it two frames later, after its J3D packets left the
+            // draw buffers. Run in every extra step, a process queued during a door event was deleted
+            // in the same frame with packets still listed: "J3DPacket.cpp:157 mEntryPtr == (0)"
+            // (Tingle's jail on Windfall).
             call(c, f_025E0EE4_orig, 0);  // fpcPi_Handler
             call(c, f_025DDCEC_orig, 0);  // fpcCt_Handler
             g_door_cut = false;

@@ -223,6 +223,10 @@ Surface* find_or_create_surface(const SurfaceDesc& d, bool forRendering) {
         if (!forRendering && s->isDepth && !d.isDepth && s->gpuWritten && s->width == d.width && s->height == d.height)
             consider(s);
         if (s->isDepth != d.isDepth) continue;
+        // a render target is one level: don't adopt a texture made first by sampling the address with
+        // a mip chain (rendering would define level 0 only and mip-filtered reads would see the
+        // never-rendered levels: black shadows for the session; original project efc9f66)
+        if (forRendering && s->mips > 1) continue;
         if (s->width == d.width && s->height == d.height && s->format == d.format && s->slices == d.slices &&
             (forRendering || s->mips >= d.mips || s->gpuWritten)) {
             if (forRendering) return s;
@@ -1274,6 +1278,19 @@ void copy_surface_impl(uint32_t srcAddr, uint32_t srcMip, uint32_t srcSlice, uin
             vkCmdCopyImage(command_buffer(), src->img.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, dst->img.image,
                            VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &c);
         } else {  // different resolution scales: scale while copying
+            // Adreno reports no BLIT_SRC/DST for D32_SFLOAT and D16_UNORM: a blit there is invalid
+            // (original project ac81cff/81e57e0 draws such copies instead). The copy is left out; the
+            // game clears depth before it renders into it again.
+            static std::unordered_map<VkFormat, bool> blittable;
+            auto bl = blittable.find(src->img.format);
+            if (bl == blittable.end()) {
+                VkFormatProperties fp;
+                vkGetPhysicalDeviceFormatProperties(R.pd, src->img.format, &fp);
+                const VkFormatFeatureFlags need = VK_FORMAT_FEATURE_BLIT_SRC_BIT | VK_FORMAT_FEATURE_BLIT_DST_BIT;
+                bl = blittable.emplace(src->img.format, (fp.optimalTilingFeatures & need) == need).first;
+                if (!bl->second) LOG("[vk] format %d cannot be blitted: scaled surface copies of it are skipped", (int)src->img.format);
+            }
+            if (!bl->second) return;
             VkImageBlit b{};
             b.srcSubresource = {src->img.aspect, 0, srcSlice, 1};
             b.dstSubresource = {dst->img.aspect, 0, dstSlice, 1};

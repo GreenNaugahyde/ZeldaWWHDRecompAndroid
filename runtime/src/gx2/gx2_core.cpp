@@ -506,11 +506,17 @@ HLE(gx2, GX2CopySurface) {
     put_struct(p, arg(c, 3), kSurfaceWords);
     p.insert(p.end(), {arg(c, 4), arg(c, 5)});
     emit(OP_COPY_SURFACE, p.data(), (uint32)p.size());
-    // A linear destination is read by the CPU right after the call, without GX2DrawDone: the Picto
-    // Box JPEG-encodes its picture from such a copy (issue #22). The render thread writes the copy
-    // back to guest memory (vk_surfaces.cpp), so wait for it.
-    auto tm = (uint32)((GX2Surface*)mem::ptr(arg(c, 3)))->tileMode.value();
-    if (!t_rec.start && (tm == 1 || tm == 0x10)) render_sync();
+    // The copy is complete when GX2CopySurface returns: the game uses the result (and frees the
+    // surfaces) right away. agl's tile-mode conversion (027B5EEC) copies into a temporary surface,
+    // OSBlockMoves it back and frees it at once; executed later on the render thread, the copy wrote
+    // into the freed memory after the heap had reused it (intermittent boot crash; original project
+    // 5070881). A linear destination is also read by the CPU right away: the Picto Box JPEG-encodes
+    // its picture from one (issue #22; the render thread writes it back, vk_surfaces.cpp). Not for
+    // display lists: they run when called.
+    if (!t_rec.start) {
+        BlockingScope b;
+        render_sync();
+    }
 }
 HLE(gx2, GX2CopyColorBufferToScanBuffer) {
     std::vector<uint32> p;

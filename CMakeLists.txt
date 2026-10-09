@@ -9,6 +9,11 @@ endif()
 # no paths of the build machine in the binaries (__FILE__ in checks, debug info, the ops.c bitcode):
 # file names are relative to the repository
 add_compile_options("-ffile-prefix-map=${CMAKE_SOURCE_DIR}/=" "-ffile-prefix-map=${CMAKE_BINARY_DIR}/=build/")
+# Linux and Android on arm64: plain char is unsigned in that ABI, but signed on x86-64 and Apple
+# arm64, where the runtime was written and tested (original project 2a54901)
+if(CMAKE_SYSTEM_NAME MATCHES "^(Linux|Android)$" AND CMAKE_SYSTEM_PROCESSOR MATCHES "^(aarch64|arm64|ARM64)$")
+  add_compile_options(-fsigned-char)
+endif()
 
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_CXX_STANDARD 20)
