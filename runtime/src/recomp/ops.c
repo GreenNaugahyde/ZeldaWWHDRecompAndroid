@@ -63,7 +63,9 @@ OP(addi) { UNUSED; c->r[D] = RA0 + SIMM; }
 OP(addis) { UNUSED; c->r[D] = RA0 + (UIMM << 16); }
 OP(addic) { UNUSED; uint64_t t = (uint64_t)c->r[A] + SIMM; c->r[D] = (uint32_t)t; c->xer_ca = (uint8_t)(t >> 32); if ((w >> 26) == 13) cr0_rc(c, c->r[D]); }
 OP(subfic) { UNUSED; uint64_t t = (uint64_t)(uint32_t)~c->r[A] + SIMM + 1; c->r[D] = (uint32_t)t; c->xer_ca = (uint8_t)(t >> 32); }
-OP(mulli) { UNUSED; c->r[D] = (uint32_t)((int32_t)c->r[A] * (int32_t)SIMM); }
+/* unsigned: the same low 32 bits without signed overflow, which is undefined in C and lets the
+   compiler assume it never happens; the game overflows on purpose (original project defb89f) */
+OP(mulli) { UNUSED; c->r[D] = c->r[A] * SIMM; }
 OP(cmpli) { UNUSED; cr_set_u(c, D >> 2, c->r[A], UIMM); }
 OP(cmpi) { UNUSED; cr_set_s(c, D >> 2, (int32_t)c->r[A], (int32_t)SIMM); }
 OP(ori) { UNUSED; c->r[A] = c->r[D] | UIMM; }

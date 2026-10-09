@@ -110,6 +110,7 @@ Upload upload(const void* data, VkDeviceSize size, VkDeviceSize align) {
     return u;
 }
 
+
 VkDescriptorSet alloc_descriptor_set(VkDescriptorSetLayout layout) {
     for (int attempt = 0; attempt < 2; attempt++) {
         if (!g_pool_cur) {
@@ -701,7 +702,8 @@ static bool has_ext(const std::vector<VkExtensionProperties>& exts, const char* 
 }
 
 // one pipeline cache per driver (a user-installed GPU driver and the system's keep their own);
-// pipelines.vkcache is the name builds before that used
+// pipelines.vkcache and pipelines-*.vkcache are the names of builds before (the latter holds pipelines
+// of shaders translated before strictMul: not loaded, so they don't stay in the cache for good)
 static std::string pipeline_cache_path(bool legacy = false) {
     std::string dir = config::cache_dir.empty() ? "." : config::cache_dir;
     if (legacy) return dir + "/pipelines.vkcache";
@@ -713,15 +715,18 @@ static std::string pipeline_cache_path(bool legacy = false) {
     mix(&R.props.deviceID, 4);
     mix(R.props.pipelineCacheUUID, VK_UUID_SIZE);
     char name[40];
-    snprintf(name, sizeof name, "/pipelines-%08x.vkcache", h);
+    snprintf(name, sizeof name, "/pipelines2-%08x.vkcache", h);
     return dir + name;
+}
+static std::string pipeline_cache_path_v1() {
+    std::string p = pipeline_cache_path();
+    return p.replace(p.rfind("/pipelines2-"), 12, "/pipelines-");
 }
 
 static void load_pipeline_cache() {
     std::vector<uint8_t> data;
     if (const char* e = getenv("WWHD_SHADER_CACHE"); !(e && !strcmp(e, "0"))) {
         FILE* f = fopen(pipeline_cache_path().c_str(), "rb");
-        if (!f) f = fopen(pipeline_cache_path(true).c_str(), "rb");  // the header check below decides if it fits
         if (f) {
             fseek(f, 0, SEEK_END);
             long n = ftell(f);
@@ -769,7 +774,10 @@ void save_caches() {
     if (FILE* f = fopen(tmp.c_str(), "wb")) {
         bool ok = fwrite(data.data(), 1, n, f) == n;
         ok &= fclose(f) == 0;
-        if (ok && rename(tmp.c_str(), path.c_str()) == 0) remove(pipeline_cache_path(true).c_str());
+        if (ok && rename(tmp.c_str(), path.c_str()) == 0) {
+            remove(pipeline_cache_path(true).c_str());
+            remove(pipeline_cache_path_v1().c_str());
+        }
     }
 }
 

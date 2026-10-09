@@ -326,15 +326,17 @@ static void report_compile_error(const std::string& src, uint64_t key, const std
     }
 }
 
-// ---- SPIR-V cache on disk (spirv.bin next to shaders.bin): translations seen in earlier sessions
-// skip glslang. Records: uint64 source hash, uint32 word count, words.
+// ---- SPIR-V cache on disk (spirv2.bin next to shaders.bin): translations seen in earlier sessions
+// skip glslang. Records: uint64 source hash, uint32 word count, words. The file only grows: when
+// every translation changes (strictMul), a new name starts it over and the old file is deleted.
 static std::mutex g_spv_mutex;
 static std::unordered_map<uint64_t, std::vector<uint32_t>> g_spv_disk;
 static FILE* g_spv_out = nullptr;
 static size_t g_spv_disk_hits;
 
 static void spirv_cache_open(const std::string& dir) {
-    std::string path = dir + "/spirv.bin";
+    remove((dir + "/spirv.bin").c_str());  // translations before strictMul
+    std::string path = dir + "/spirv2.bin";
     if (FILE* f = fopen(path.c_str(), "rb")) {
         uint64_t h;
         uint32_t n;
@@ -651,6 +653,10 @@ static Shader* get_shader_uncached(const uint32_t* regs, bool vertex, LatteFetch
     double t0 = now_ms();
     LatteShader_UpdatePSInputs((uint32*)regs);
     LatteDecompilerOptions opt;
+    // the GPU's MUL/MULADD give 0*anything=0 (rsqrt(0)*0 is NaN otherwise: the black letter in the
+    // Rito mail sorting game); Cemu's default too (original project 0dfd3c3). WWHD_STRICT_MUL=0: off
+    static const bool strictMul = !getenv("WWHD_STRICT_MUL") || strcmp(getenv("WWHD_STRICT_MUL"), "0");
+    opt.strictMul = strictMul;
     if (!vertex && link.linked) {
         opt.linkPSInputsToVS = true;
         opt.vsOutputSemantics = link.exports;
