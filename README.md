@@ -66,7 +66,7 @@ The original project (macOS, the 60 fps modes, decompilation tools) is described
   them (most Mali and PowerVR GPUs), precise Vulkan barriers (on a Mali-G52 the GPU time per frame
   drops from 52 to 40 ms), much less work on the render thread (on a Snapdragon 855 from 24 to 16 ms
   a frame), with the Qualcomm driver a second thread for the Vulkan commands, Android performance
-  hints and game modes, and SVE where the processor has it.
+  hints and game modes.
 - **Crash logs**: if the game crashes, the next start offers its log in Android's share menu, for a
   bug report. It shows where the game crashed and with which app and game version, device and
   settings; it contains no personal data. About › Share crash logs shares the logs kept; a shared
@@ -77,6 +77,18 @@ The original project (macOS, the 60 fps modes, decompilation tools) is described
 - **No internet access**: the app doesn't request it, and its manifest explicitly excludes it.
 
 ## Version history
+
+**0.8**
+
+- Fixes from the original project: an occasional crash while the game starts (a surface copy
+  wrote into memory the game had already reused), a game halt with quick doors (seen at Tingle's
+  jail on Windfall), shadows that could stay black for a whole session, shader inputs some GPU
+  drivers handle badly, invalid depth copies on Adreno GPUs, the black letter card in the Rito
+  mail-sorting game, and a multiplication in the game code the compiler could get wrong.
+- The game code is prepared without SVE (MediaTek Dimensity, Google Tensor G3 and later), which a
+  crash on such a phone pointed at (issue #24).
+- The game code is prepared again once after the update, and the shaders are built anew once
+  (short stutters the first time a place is visited, as on the very first start).
 
 **0.7**
 
