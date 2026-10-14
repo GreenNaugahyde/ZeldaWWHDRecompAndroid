@@ -11,7 +11,9 @@
 // creation, cCt_Counter) and fpcEx_Handler (every process: Link, door, camera, event manager in the
 // play scene). Drawing, process deletion (fpcDt_Handler: its timers count drawn frames), scene
 // management (fapGm_After) and the pad read stay once per frame. Button presses ("trigger" bits) are cleared for the extra steps, so a press is
-// seen once.
+// seen once. While a weather effect (spores, rain, fog, ...) drains or deletes its packet, the frame
+// gets no more extra steps: that countdown also counts drawn frames (weather_teardown, original
+// project 9adbe94, its issue #145).
 //
 // Fast scene changes: while an overlap (fade/wipe) process exists (l_fopOvlpM_overlap[0],
 // 101F36CC), the frame gets kSceneExtra more runs of the transition machinery only: the overlap
@@ -78,6 +80,32 @@ int env_i(const char* n, int d) {
 const int kDoorExtra = env_i("WWHD_MOD_DOOR_EXTRA", 3);    // 4 logic steps per frame
 const int kSceneExtra = env_i("WWHD_MOD_SCENE_EXTRA", 3);  // 4 transition steps per frame
 const double kFfRate = env_i("WWHD_MOD_FF_RATE", 4);     // display clock rate while fast forwarding
+
+// The weather effects keep the rule of process deletion (see the quick doors' loop) with a countdown
+// of their own: rain, stars, spores (housi), fog (moya) and waves each have a phase byte in
+// g_env_light (dKyw_wether_move_draw 0257ACAC, enum WeatherPhase): 0 create, 1 move (the only phase
+// whose packet is drawn), 2 drain, 3 delete (the packet is destroyed at once, not through the delete
+// queue). In the game a draw falls between the packet's last entry and its destruction. Leaving a
+// Forbidden Woods spore room through a door ran that countdown within one frame of extra steps:
+// "PROGRAM HALT J3DPacket.cpp:157 mEntryPtr == (0)". While any effect drains or deletes, the frame
+// gets no more extra steps. Same offsets in USA, EUR and JPN. WWHD_MOD_DOOR_WEATHER=0: the old
+// behaviour, for A/B runs.
+const release::Data kEnvLight{0x10475A68};  // g_env_light
+struct WeatherEffect {
+    const char* name;
+    uint32_t phase_off;
+};
+constexpr WeatherEffect kWeatherEffects[] = {
+    {"rain", 0xA3C}, {"star", 0xA54}, {"housi", 0xA70}, {"moya", 0xA7C}, {"wave", 0xA98},
+};
+const bool kDoorWeatherWait = env_i("WWHD_MOD_DOOR_WEATHER", 1) != 0;
+const WeatherEffect* weather_teardown() {
+    for (const WeatherEffect& w : kWeatherEffects) {
+        const uint8_t phase = ld8(kEnvLight + w.phase_off);
+        if (phase == 2 || phase == 3) return &w;  // drain, delete
+    }
+    return nullptr;
+}
 
 // 0 no event, 1 dialogue, 2 / 3 cutscene
 int event_mode() { return ld8(kEvtCtrl + kEvtMode); }
@@ -204,6 +232,10 @@ void after_execute(Cpu* c, uint32_t execute_fn) {
         uint32_t saved[sizeof kTrigWords / sizeof *kTrigWords];
         bool cleared = false;
         for (int i = 0; i < kDoorExtra && door; i++) {
+            if (const WeatherEffect* w = kDoorWeatherWait ? weather_teardown() : nullptr) {
+                trace("extra steps wait: %s packet tearing down (phase %u)", w->name, ld8(kEnvLight + w->phase_off));
+                break;
+            }
             if (pad && !cleared) {
                 for (size_t k = 0; k < sizeof kTrigWords / sizeof *kTrigWords; k++) {
                     saved[k] = ld32(pad + kTrigWords[k]);
