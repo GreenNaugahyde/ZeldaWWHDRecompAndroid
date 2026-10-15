@@ -51,6 +51,11 @@ int event_mode_now();  // turbo.cpp: 0 no event, 1 dialogue, 2 / 3 cutscene
 // this step (run_speed() while he runs, else 1); link = the daPy_lk_c
 float link_move_factor(uint32_t link);
 
+// inverted camera up/down (camera.cpp): 0 off, 1 only while the game looks around with the right
+// stick (first person, aiming an item), 2 always (also the third-person camera's height)
+int invert_y();
+void set_invert_y(int mode);
+
 // ---- input (input.mm) ----
 // called at the end of input::read(): synthetic stick and buttons (mouse camera, R3 pulses)
 void filter_pad(input::PadState& s);

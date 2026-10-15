@@ -493,6 +493,7 @@ JNI_FN(void, setOption)(JNIEnv* env, jclass, jstring name, jint value) {
     else if (n == "ao_hires") gfx::set_ao_hires(value != 0);
     else if (n == "aniso") gfx::set_aniso(value != 0);
     else if (n == "pro_controller") input::set_pro_controller(value != 0);
+    else if (n == "invert_camera_y") mods::set_invert_y(value);
     else if (n == "capture") gfx::request_capture();
     else if (n == "res_scale") gfx::set_resolution_scale(value / 100.0f);
     else if (n == "tv_aspect") gfx::set_tv_aspect(value);
@@ -534,6 +535,7 @@ JNI_FN(jint, getOption)(JNIEnv* env, jclass, jstring name) {
     if (n == "ao_hires") return gfx::ao_hires_enabled();
     if (n == "aniso") return gfx::aniso_enabled();
     if (n == "pro_controller") return input::pro_controller();
+    if (n == "invert_camera_y") return mods::invert_y();
     if (n == "tv_aspect") return gfx::tv_aspect();
     if (n == "render_aspect") return aspect::mode() == aspect::kWindow ? 1 : 0;
     if (n == "interp_fps") return interp::mode() == 1 ? interp::fps() : 0;

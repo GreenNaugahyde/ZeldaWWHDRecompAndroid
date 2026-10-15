@@ -590,6 +590,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         Native.setOption("ao_hires", prefs.getBoolean("ao_hires", Native.getOption("ao_hires") != 0) ? 1 : 0);
         Native.setOption("aniso", prefs.getBoolean("aniso", Native.getOption("aniso") != 0) ? 1 : 0);
         Native.setOption("pro_controller", prefs.getBoolean("pro_controller", Native.getOption("pro_controller") != 0) ? 1 : 0);
+        Native.setOption("invert_camera_y", prefs.getInt("invert_camera_y_mode", 0));
         Native.setOption("tv_aspect", prefs.getInt("tv_aspect", 0));
         Native.setOption("render_aspect", prefs.getInt("render_aspect", 0));
         for (String m : MODS) Native.setOption(m, prefs.getBoolean(m, false) ? 1 : 0);
@@ -1045,6 +1046,12 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     void resetButtons() {
         mapper.loadMap("");
         prefs.edit().remove("pad_map").apply();
+    }
+
+    /** inverted camera up/down: 0 off, 1 first person and aiming, 2 always */
+    void setInvertCameraY(int mode) {
+        prefs.edit().putInt("invert_camera_y_mode", mode).apply();
+        Native.setOption("invert_camera_y", mode);
     }
 
     void setBool(String key, boolean v) {

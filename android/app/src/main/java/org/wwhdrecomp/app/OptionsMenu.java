@@ -622,6 +622,8 @@ final class OptionsMenu extends Dialog {
         });
         String[] kinds = {a.getString(R.string.controller_gamepad), a.getString(R.string.controller_pro)};
         choice(R.string.opt_controller, 0, kinds, Native.getOption("pro_controller") != 0 ? 1 : 0, i -> a.setBool("pro_controller", i == 1));
+        choice(R.string.opt_invert_camera_y, R.string.opt_invert_camera_y_hint, a.getResources().getStringArray(R.array.invert_camera_y_modes),
+               a.prefs.getInt("invert_camera_y_mode", 0), a::setInvertCameraY);
         toggle(R.string.opt_motion, R.string.opt_motion_hint, a.prefs.getBoolean("motion", true), a::setMotion);
         toggle(R.string.opt_rumble, R.string.opt_rumble_hint, a.prefs.getBoolean("rumble", true), a::setRumble);
         submenu(R.string.opt_buttons, R.string.opt_buttons_hint,

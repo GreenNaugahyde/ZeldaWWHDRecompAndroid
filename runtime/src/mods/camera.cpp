@@ -35,6 +35,7 @@
 // Logic only runs on logic passes: the sites run inside the camera's execute, and the camera's
 // manual and subject modes run at 30 Hz in both 60 fps modes (true60 converts the follow camera only),
 // so the per-step amounts above hold in all modes; interpolation blends the drawn camera.
+#include <algorithm>
 #include <atomic>
 #include <cmath>
 #include <cstdlib>
@@ -168,6 +169,19 @@ bool test_mouse() {
 
 uint32_t link_actor() { return g_link.load(std::memory_order_relaxed); }
 
+// Inverted camera up/down. Done here, where the pad is read, rather than where the stick values
+// come in, because only here it is known whether the game looks around with the right stick: in
+// first person and while aiming the stick's y tilts the view (rate control), elsewhere it moves the
+// third-person camera, whose mode switch (dCamera_c::nextMode) treats "pushed up" apart from the
+// other directions; mode 1 leaves that camera (and anything else using the stick) as it is.
+std::atomic<int> g_invert_y{0};
+int invert_y() { return g_invert_y.load(std::memory_order_relaxed); }
+void set_invert_y(int mode) {
+    g_invert_y = std::clamp(mode, 0, 2);
+    static const char* const kName[3] = {"off", "first person and aiming", "always"};
+    LOG("[mods] inverted camera up/down: %s", kName[g_invert_y.load()]);
+}
+
 void mouse_add(float dx, float dy) {
     std::lock_guard<std::mutex> lk(g_mu);
     g_dx += dx;
@@ -190,6 +204,10 @@ void filter_pad(input::PadState& s) {
     inject_test_mouse();
     test_goto(s);
     uint64_t now = step();
+    // inverted up/down for the stick (the mouse / swipe camera below flips its own movement)
+    const bool look = in_first_person() || aiming_item(link_proc());
+    const bool flip = invert_y() == 2 || (invert_y() == 1 && look);
+    if (flip) s.ry = -s.ry;
     std::lock_guard<std::mutex> lk(g_mu);
     // stale movement (the camera never took it, e.g. during an event) is dropped
     if (g_move_step != ~0ull && now > g_move_step + 8) g_dx = g_dy = 0;
@@ -197,7 +215,7 @@ void filter_pad(input::PadState& s) {
     bool active = mouse_camera() && (mouse_captured() || test_mouse());
     bool stick_free = std::fabs(s.rx) < 0.2f && std::fabs(s.ry) < 0.2f;
     if (active && stick_free && recent(g_move_step, 8)) {
-        if (in_first_person() || aiming_item(link_proc())) {
+        if (look) {
             // first person / aiming: the game looks around with the right stick (rate control); the
             // movement since the last step sets the deflection
             static uint64_t taken = ~0ull;
@@ -206,7 +224,7 @@ void filter_pad(input::PadState& s) {
                 taken = now;
                 const float k = 0.08f;  // stick per point per step
                 rx = std::fmax(-1.0f, std::fmin(1.0f, g_dx * k));
-                ry = std::fmax(-1.0f, std::fmin(1.0f, -g_dy * k));
+                ry = std::fmax(-1.0f, std::fmin(1.0f, (flip ? g_dy : -g_dy) * k));
                 g_dx = g_dy = 0;
             }
             s.rx = rx;
@@ -298,6 +316,7 @@ extern "C" void site_0251053C(Cpu* c) {
     double per = ldf32(c->r[1] + 0x14);
     if (!(std::fabs(per) > 0.01)) return;
     // mouse down (dy > 0) looks down: V grows, so f28 < 0
+    if (invert_y() == 2) dy = -dy;  // inverted: mouse down looks up
     c->f[28].ps0 = -dy * mouse_sensitivity() / per;
 }
 // V smoothing (cSAngle * f1, f1 = [sp+0x18]) and U smoothing (f1 = [sp+0x1C])

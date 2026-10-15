@@ -281,6 +281,13 @@
         <item>Off</item>
     </string-array>
     <string name="record_thread_restart">The setting applies after a restart.</string>
+    <string name="opt_invert_camera_y">Invert camera up/down</string>
+    <string name="opt_invert_camera_y_hint">Push the right stick (or swipe) up to look down. First person and aiming leaves the normal camera and menus as they are</string>
+    <string-array name="invert_camera_y_modes">
+        <item>Off</item>
+        <item>First person and aiming</item>
+        <item>Always</item>
+    </string-array>
     <string name="opt_motion">Motion controls</string>
     <string name="opt_motion_hint">Aim by tilting the device, or a controller with motion sensors</string>
     <string name="opt_rumble">Rumble</string>
