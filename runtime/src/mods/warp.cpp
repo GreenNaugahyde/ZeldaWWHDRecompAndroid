@@ -1,0 +1,235 @@
+// Warp (developer menu): a scene change to any stage, room and spawn point, as the game's own exits
+// make it. dComIfGp_setNextStage (zeldaret/tww d_com_inf_game.cpp) fills dComIfG_play_c::mNextStage
+// (dStage_nextStage_c: name[8], s16 point, s8 room, s8 layer, s8 enable, s8 wipe; WWHD play +0x5140,
+// right behind the start stage at +0x5134) and the restart's last scene speed and mode; the play
+// scene's draw (dScnPly_Draw, d_s_play.cpp) sees mEnable and requests the change. Applied by the
+// game's main thread at the top of a frame (hook_0203593C in interp.cpp), like the cheats.
+//
+// The spawn point must exist in the room's player list (PLYR): the game takes the entry with that
+// number without a bounds check (dStage_playerInit). The menu's list (android/warp_catalog.cpp,
+// <game>/warps.json) only has spawns read from the game files. Layer -1: the stage picks it from the
+// story flags, as on any door.
+//
+// The last scene mode (dSv_restart_c::mLastMode, dSv_info_c +0x1128 + 0x2C on the GameCube) decides how
+// Link arrives (crawling on, getting up after a void out, thrown off the boat...; daPy_lk_c::playerInit);
+// cleared with the last speed so he arrives as the spawn says. Only when the fields look like the
+// GameCube layout (a log line shows them).
+//
+// Story presets: a save's story part (dSv_save_c, the first 0x778 bytes of dSv_info_c and of each
+// slot in cking.sav: inventory, each stage's memory, sea chart, event flags) written into the live save
+// before the warp, so the place loads as at that point of the story (OptionsMenu / StoryPresets.java).
+// The stage being left writes its working memory (dSv_info_c::mMemory, +0x778) back into its table
+// when it goes (dStage_Delete -> putSave), so that copy gets the preset's table of the current stage
+// too (save tables per stage: <game>/warp_tables.txt, android/warp_catalog.cpp). The live save file
+// on disk only changes when the player saves. Not touched: the temporary event flags (mTmp) and the
+// room zones, which a save load would reset.
+//
+// Test switch: WWHD_WARP=stage,room,spawn[,layer] warps once a save file is loaded.
+#include <atomic>
+#include <chrono>
+#include <cmath>
+#include <cstdlib>
+#include <cstring>
+#include <mutex>
+#include <map>
+#include <string>
+#include <vector>
+
+#include "mods.h"
+#include "release.h"
+#include "runtime.h"
+
+namespace mods {
+namespace {
+const release::Data kPlay{0x1046F0B0};
+const release::Data kOverlap{0x101F36CC};  // l_fopOvlpM_overlap[0]: a fade / wipe is under way (turbo.cpp)
+constexpr uint32_t kStartStage = 0x5134, kNextStage = 0x5140;  // dStage_startStage_c / dStage_nextStage_c
+constexpr uint32_t kNextPoint = kNextStage + 8, kNextRoom = kNextStage + 0xA, kNextLayer = kNextStage + 0xB;
+constexpr uint32_t kNextEnable = kNextStage + 0xC, kNextWipe = kNextStage + 0xD;
+constexpr uint32_t kRestart = 0x1128;  // dSv_info_c::mRestart
+constexpr uint32_t kRestartRoom = kRestart + 0, kLastSpeed = kRestart + 0x28, kLastMode = kRestart + 0x2C;
+
+constexpr uint32_t kStoryLen = 0x778;  // dSv_save_c
+constexpr uint32_t kMemories = 0x380, kMemoryLen = 0x24;  // dSv_save_c::mMemory[16] (dSv_memory_c)
+constexpr uint32_t kWorkMemory = 0x778;  // dSv_info_c::mMemory: the current stage's copy
+
+struct Request {
+    char stage[8];
+    int room, spawn, layer;
+    std::vector<uint8_t> story;  // a story preset to write first (empty: none)
+};
+std::mutex g_mutex;
+Request g_req;
+std::atomic<bool> g_pending{false};
+std::string name_at(uint32_t a) {
+    const char* p = (const char*)mem::ptr(a);
+    return std::string(p, strnlen(p, 8));
+}
+
+int g_watch = 0;  // frames until a warp that hasn't loaded gets its log line
+
+// the latest warp's progress for the test overlay (warp_status): requested -> fading (a fade / scene
+// change seen) -> loaded (the fade is over in the target stage); refused: another change was under way
+enum Phase { kIdle, kRequested, kFading, kLoaded, kRefused };
+std::atomic<int> g_phase{kIdle};
+std::atomic<int64_t> g_t0{0}, g_load_ms{0};
+std::atomic<bool> g_applied{false};  // the request is in the game's next-stage fields
+std::string g_target;  // game thread only
+
+int64_t now_ms() {
+    return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+}
+
+void track() {
+    int ph = g_phase.load(std::memory_order_relaxed);
+    if (ph != kFading && !(ph == kRequested && g_applied.load())) return;
+    if (ld32(kOverlap)) {
+        g_phase = kFading;
+    } else if (ph == kFading && name_at(kPlay + kStartStage) == g_target) {
+        g_load_ms = now_ms() - g_t0.load();
+        g_phase = kLoaded;
+        LOG("[warp] loaded %s in %.1f s", g_target.c_str(), g_load_ms.load() / 1000.0);
+    }
+}
+
+// a warp that hasn't loaded after 15 s: one line with where the scene change stands (a stuck change
+// keeps the fade on and never gets to the new scene: the first-visit Forsaken Fortress tower)
+void watch() {
+    if (g_watch <= 0 || --g_watch) return;
+    if (g_phase.load() == kLoaded) return;
+    uint32_t p = kPlay, ovl = ld32(kOverlap);
+    LOG("[warp] not loaded after 15 s: stage %s room %d point %d, next enable %d, overlap %08X task %08X, event mode %d",
+        name_at(p + kStartStage).c_str(), (int8_t)ld8(p + kStartStage + 0xA), (int16_t)ld16(p + kStartStage + 8),
+        ld8(p + kNextEnable), ovl, ovl ? ld32(ovl + 0x20) : 0, event_mode_now());
+}
+
+// the stages' save tables (<game>/warp_tables.txt: "stage table" lines)
+int save_table(const std::string& stage) {
+    static std::map<std::string, int> tables;  // read again while empty (the file is made in the background)
+    if (tables.empty()) {
+        if (FILE* f = fopen((config::game_dir + "/warp_tables.txt").c_str(), "r")) {
+            char name[16];
+            int t;
+            while (fscanf(f, "%15s %d", name, &t) == 2) tables[name] = t;
+            fclose(f);
+        }
+    }
+    auto it = tables.find(stage);
+    return it == tables.end() ? -1 : it->second;
+}
+
+void request(const char* stage, int room, int spawn, int layer, std::vector<uint8_t> story = {}) {
+    std::lock_guard<std::mutex> l(g_mutex);
+    g_req.story = std::move(story);
+    memset(g_req.stage, 0, sizeof g_req.stage);
+    strncpy(g_req.stage, stage, sizeof g_req.stage);
+    g_req.room = room;
+    g_req.spawn = spawn;
+    g_req.layer = layer;
+    g_pending = true;
+}
+
+// WWHD_WARP=stage,room,spawn[,layer]
+[[maybe_unused]] bool g_env_read = [] {
+    const char* e = getenv("WWHD_WARP");
+    if (!e) return false;
+    char st[9] = {};
+    int room = 0, spawn = 0, layer = -1;
+    if (sscanf(e, "%8[^,],%d,%d,%d", st, &room, &spawn, &layer) >= 3) request(st, room, spawn, layer);
+    return true;
+}();
+}  // namespace
+
+bool request_warp(const char* stage, int room, int spawn, int layer, const uint8_t* story, size_t story_len) {
+    if (!loaded_save()) return false;
+    if (story && story_len != kStoryLen) return false;
+    request(stage, room, spawn, layer, story ? std::vector<uint8_t>(story, story + story_len) : std::vector<uint8_t>());
+    g_t0 = now_ms();
+    g_applied = false;
+    g_phase = kRequested;
+    LOG("[warp] requested %.8s room %d spawn %d layer %d%s", stage, room, spawn, layer, story ? " with a story preset" : "");
+    return true;
+}
+
+std::vector<uint8_t> story_block() {
+    uint32_t s = loaded_save();
+    if (!s) return {};
+    std::vector<uint8_t> b(kStoryLen);
+    memcpy(b.data(), mem::ptr(s), kStoryLen);
+    return b;
+}
+
+std::string warp_where() {
+    if (!loaded_save()) return "";
+    uint32_t p = kPlay;
+    char b[64];
+    snprintf(b, sizeof b, "%s,%d,%d,%d", name_at(p + kStartStage).c_str(), (int8_t)ld8(p + kStartStage + 0xA),
+             (int16_t)ld16(p + kStartStage + 8), (int8_t)ld8(p + kStartStage + 0xB));
+    return b;
+}
+
+void warp_status(int64_t out[3]) {
+    int ph = g_phase.load();
+    out[0] = ph;
+    out[1] = ph == kLoaded ? g_load_ms.load() : ph == kIdle ? 0 : now_ms() - g_t0.load();
+    out[2] = event_mode_now();  // turbo.cpp: 0 none, 1 dialogue, 2 / 3 cutscene
+}
+
+void warp_service() {
+    watch();
+    track();
+    if (!g_pending.load(std::memory_order_relaxed)) return;
+    uint32_t s = loaded_save();
+    if (!s) return;  // stays pending (test switch: until a file is loaded)
+    Request r;
+    {
+        std::lock_guard<std::mutex> l(g_mutex);
+        r = g_req;
+        g_pending = false;
+    }
+    uint32_t p = kPlay;
+    // the previous change, as the game left it (its enable is cleared once the new scene runs)
+    LOG("[warp] next stage before: %s room %d point %d layer %d enable %d wipe %d", name_at(p + kNextStage).c_str(),
+        (int8_t)ld8(p + kNextRoom), (int16_t)ld16(p + kNextPoint), (int8_t)ld8(p + kNextLayer), ld8(p + kNextEnable),
+        ld8(p + kNextWipe));
+    if (ld8(p + kNextEnable)) {
+        LOG("[warp] a scene change is already under way; skipped");
+        g_phase = kRefused;
+        return;
+    }
+    int8_t restart_room = (int8_t)ld8(s + kRestartRoom);
+    uint32_t speed_bits = ld32(s + kLastSpeed), mode = ld32(s + kLastMode);
+    float speed;
+    memcpy(&speed, &speed_bits, 4);
+    // mode: scene mode in the low byte plus the dragon shield (0x8000), soup (0x4000) and Tingle shield
+    // (bit 16) flags
+    bool restart_ok = restart_room >= 0 && restart_room < 64 && std::isfinite(speed) && fabsf(speed) < 200.0f &&
+                      (mode & ~0x1C0FFu) == 0 && (mode & 0xFF) < 16;
+    LOG("[warp] restart: room %d, last speed %.2f, last mode %08X (%s)", restart_room, speed, mode,
+        restart_ok ? "cleared" : "unexpected layout, left alone");
+    if (restart_ok) {
+        st32(s + kLastSpeed, 0);
+        st32(s + kLastMode, mode & ~0xFFu);  // the shield / soup flags stay (as dComIfGp_setNextStage sets them)
+    }
+    if (!r.story.empty()) {
+        std::string here = name_at(p + kStartStage);
+        int tbl = save_table(here);
+        memcpy(mem::ptr(s), r.story.data(), kStoryLen);
+        if (tbl >= 0 && tbl < 16) memcpy(mem::ptr(s + kWorkMemory), r.story.data() + kMemories + kMemoryLen * tbl, kMemoryLen);
+        LOG("[warp] story preset written (life %u/%u, rupees %u); %s keeps table %d", ld16(s + 2), ld16(s), ld16(s + 4),
+            here.c_str(), tbl);
+    }
+    for (int i = 0; i < 8; i++) st8(p + kNextStage + i, (uint8_t)r.stage[i]);
+    st16(p + kNextPoint, (uint16_t)(int16_t)r.spawn);
+    st8(p + kNextRoom, (uint8_t)(int8_t)r.room);
+    st8(p + kNextLayer, (uint8_t)(int8_t)r.layer);
+    st8(p + kNextWipe, 0);
+    st8(p + kNextEnable, 1);
+    g_target.assign(r.stage, strnlen(r.stage, 8));
+    g_applied = true;
+    g_watch = 450;
+    LOG("[warp] %s -> %.8s room %d spawn %d layer %d", name_at(p + kStartStage).c_str(), r.stage, r.room, r.spawn,
+        r.layer);
+}
+
+}  // namespace mods

@@ -12,6 +12,7 @@
 #include <llvm/Linker/Linker.h>
 #include <llvm/Support/MemoryBuffer.h>
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdio>
 #include <map>
@@ -87,6 +88,7 @@ public:
             B.CreateRetVoid();
         }
         F = guest(hooked ? "f_" + sym(start) + "_orig" : "f_" + sym(start));
+        if (start >= P.caveLo && start < P.caveHi) F->addFnAttr("wwhd-noeabi");  // mod pack code (locals.cpp)
         c = F->getArg(0);
         auto* entry = llvm::BasicBlock::Create(C, "entry", F);  // first: the function's entry block
         collect_labels();
@@ -95,13 +97,24 @@ public:
         auto* copy = B.CreateAlloca(llvm::ArrayType::get(i8, sizeof(Cpu)), nullptr, kLocalCpuName);
         copy->setAlignment(llvm::Align(16));
         regs = copy;
-        call_op("enter", 0, start);
+        // the entry check (trace, preemption); its slow path may also say where to continue: at once
+        // back to the caller, or after one of the function's calls (a save state's call chain is
+        // rebuilt: the thread enters each function of the chain at its call, see threads.cpp)
+        resumes.clear();
+        llvm::Value* where = B.CreateCall(M.getFunction("ppcop_enter"), {regs, B.getInt32(end - start), B.getInt32(start)});
+        auto* resume = llvm::BasicBlock::Create(C, "resume", F);
+        auto* body = llvm::BasicBlock::Create(C, "body", F);
+        B.CreateCondBr(B.CreateICmpNE(where, B.getInt32(0)), resume, body);
+        B.SetInsertPoint(body);
         for (uint32_t a = start; a < end; a += 4) {
             auto it = blocks.find(a);
             if (it != blocks.end()) {
                 if (!B.GetInsertBlock()->getTerminator()) B.CreateBr(it->second);
                 B.SetInsertPoint(it->second);
                 if (loopHeads.count(a)) loop_barrier();
+                trace(a);
+            } else if (a == start) {
+                trace(a);
             } else if (B.GetInsertBlock()->getTerminator()) {
                 B.SetInsertPoint(llvm::BasicBlock::Create(C, "", F));  // unreachable code after a jump
             }
@@ -110,7 +123,7 @@ public:
             S.instructions++;
         }
         if (!B.GetInsertBlock()->getTerminator()) {  // falls through into the next function
-            if (end < P.textHi) {
+            if (std::binary_search(P.entries.begin(), P.entries.end(), end)) {  // (a code cave's data: no)
                 std::string next = "f_" + sym(end) + (H.functions.count(end) ? "_orig" : "");
                 tail(guest(next));
             } else {
@@ -118,6 +131,19 @@ public:
                 B.CreateRetVoid();
             }
         }
+        // where: 1 returns, a call's return address goes to that call (its callee continues the
+        // chain); anything else is a chain that doesn't fit this function
+        B.SetInsertPoint(resume);
+        auto* ret = llvm::BasicBlock::Create(C, "", F);
+        auto* bad = llvm::BasicBlock::Create(C, "", F);
+        llvm::SwitchInst* sw = B.CreateSwitch(where, bad, (unsigned)resumes.size() + 1);
+        sw->addCase(B.getInt32(1), ret);
+        for (auto& [ra, bb] : resumes) sw->addCase(B.getInt32(ra), bb);
+        B.SetInsertPoint(ret);
+        B.CreateRetVoid();
+        B.SetInsertPoint(bad);
+        B.CreateCall(external("ppc_resume_failed"), {c});
+        B.CreateRetVoid();
         S.functions++;
     }
 
@@ -137,6 +163,7 @@ private:
     uint32_t cur = 0, end = 0;
     std::map<uint32_t, llvm::BasicBlock*> blocks;
     std::set<uint32_t> loopHeads;
+    std::map<uint32_t, llvm::BasicBlock*> resumes;  // a call's return address -> the call (see emit)
 
     // ---- symbols
     llvm::Function* guest(const std::string& name) {
@@ -146,6 +173,14 @@ private:
             f->addParamAttr(0, llvm::Attribute::NoAlias);  // guest memory never aliases the register file
         }
         return f;
+    }
+    // WWHD_PACK_TRACE=1 (code cave modules, compile.cpp): each block of a mod pack's code logs its first
+    // run (packs.cpp, wwhd_pack_trace)
+    void trace(uint32_t a) {
+        static const bool on = getenv("WWHD_PACK_TRACE") && atoi(getenv("WWHD_PACK_TRACE")) != 0;
+        if (!on || a < P.caveLo || a >= P.caveHi) return;
+        llvm::FunctionCallee f = M.getOrInsertFunction("wwhd_pack_trace", llvm::FunctionType::get(llvm::Type::getVoidTy(C), {ptrTy, i32}, false));
+        B.CreateCall(f, {c, B.getInt32(a)});
     }
     llvm::Function* external(const std::string& name) {
         llvm::Function* f = M.getFunction(name);
@@ -210,6 +245,14 @@ private:
     }
     void label(uint32_t a) {
         if (!blocks.count(a)) blocks[a] = llvm::BasicBlock::Create(C, "L_" + hex8(a), F);
+    }
+
+    // a call at `a` starts a block of its own: resuming at its return address enters the call again
+    void resume_point(uint32_t a) {
+        auto* bb = llvm::BasicBlock::Create(C, "R_" + hex8(a), F);
+        B.CreateBr(bb);
+        B.SetInsertPoint(bb);
+        resumes[a + 4] = bb;
     }
 
     // ---- control flow (recomp.py's Ctx callbacks)
@@ -331,6 +374,7 @@ private:
         case Kind::Branch: {
             uint32_t tgt = (uint32_t)(sext(w & 0x03FFFFFC, 26) + (w & 2 ? 0 : (int32_t)a));
             if (w & 1) {
+                resume_point(a);
                 store32(offsetof(Cpu, lr), a + 4);
                 call(a, tgt);
             } else {
@@ -343,6 +387,7 @@ private:
             ctr_decrement(bo);
             guarded(condition(bo, bi), [&] {
                 if (w & 1) {
+                    resume_point(a);
                     store32(offsetof(Cpu, lr), a + 4);
                     call(a, tgt);
                 } else {
@@ -356,7 +401,8 @@ private:
             bool lr = d.kind == Kind::BranchLr;
             ctr_decrement(bo);
             guarded(condition(bo, bi), [&] {
-                if (w & 1) {  // blrl / bctrl: call through the register
+                if (w & 1) {  // blrl / bctrl: call through the register (resuming: set to the callee)
+                    resume_point(a);
                     llvm::Value* t = load32(lr ? offsetof(Cpu, lr) : offsetof(Cpu, ctr));
                     store32(offsetof(Cpu, lr), a + 4);
                     store32(offsetof(Cpu, pc), t);

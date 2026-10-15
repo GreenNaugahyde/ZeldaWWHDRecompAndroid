@@ -5,6 +5,7 @@
 // "<name>.rgba" (uint32 width, uint32 height, pixels); the app makes the button icons from them
 // (GameIcons.java).
 #include "ui_icons.h"
+#include "game_archive.h"
 
 #include <dirent.h>
 
@@ -20,75 +21,12 @@
 
 namespace ui_icons {
 namespace {
-using Bytes = std::vector<uint8_t>;
-
-bool read_file(const std::string& path, Bytes& out) {
-    FILE* f = fopen(path.c_str(), "rb");
-    if (!f) return false;
-    fseek(f, 0, SEEK_END);
-    out.resize((size_t)ftell(f));
-    fseek(f, 0, SEEK_SET);
-    bool ok = fread(out.data(), 1, out.size(), f) == out.size();
-    fclose(f);
-    return ok;
-}
-
-uint32_t be32(const uint8_t* p) { return (uint32_t)p[0] << 24 | p[1] << 16 | p[2] << 8 | p[3]; }
-uint16_t be16(const uint8_t* p) { return (uint16_t)(p[0] << 8 | p[1]); }
-
-bool yaz0(const Bytes& in, Bytes& out) {
-    if (in.size() < 16 || memcmp(in.data(), "Yaz0", 4) != 0) {
-        out = in;
-        return true;
-    }
-    out.assign(be32(&in[4]), 0);
-    size_t s = 16, d = 0;
-    while (d < out.size() && s < in.size()) {
-        uint8_t code = in[s++];
-        for (int bit = 0; bit < 8 && d < out.size(); bit++, code <<= 1) {
-            if (code & 0x80) {
-                if (s >= in.size()) return false;
-                out[d++] = in[s++];
-                continue;
-            }
-            if (s + 1 >= in.size()) return false;
-            uint32_t b1 = in[s], b2 = in[s + 1];
-            s += 2;
-            size_t dist = ((b1 & 0x0F) << 8 | b2) + 1, len = b1 >> 4;
-            if (len == 0) {
-                if (s >= in.size()) return false;
-                len = in[s++] + 0x12;
-            } else {
-                len += 2;
-            }
-            if (dist > d) return false;
-            for (size_t i = 0; i < len && d < out.size(); i++, d++) out[d] = out[d - dist];
-        }
-    }
-    return d == out.size();
-}
-
-// a file of a SARC archive by name (the archives here are big-endian)
-bool sarc_file(const Bytes& b, const char* name, Bytes& out) {
-    if (b.size() < 0x14 || memcmp(b.data(), "SARC", 4) != 0) return false;
-    uint32_t hdr = be16(&b[4]), data = be32(&b[0xC]);
-    size_t p = hdr;
-    if (p + 12 > b.size() || memcmp(&b[p], "SFAT", 4) != 0) return false;
-    uint32_t n = be16(&b[p + 6]);
-    size_t nodes = p + 12, names = nodes + 16 * n + 8;
-    if (names > b.size() || memcmp(&b[nodes + 16 * n], "SFNT", 4) != 0) return false;
-    for (uint32_t i = 0; i < n; i++) {
-        const uint8_t* e = &b[nodes + 16 * i];
-        uint32_t attr = be32(e + 4), start = be32(e + 8), end = be32(e + 12);
-        if (!(attr >> 24)) continue;
-        size_t o = names + (attr & 0xFFFFFF) * 4;
-        if (o >= b.size() || strcmp((const char*)&b[o], name) != 0) continue;
-        if (data + end > b.size() || start > end) return false;
-        out.assign(b.begin() + data + start, b.begin() + data + end);
-        return true;
-    }
-    return false;
-}
+using game_archive::be16;
+using game_archive::be32;
+using game_archive::Bytes;
+using game_archive::read_file;
+using game_archive::sarc_file;
+using game_archive::yaz0;
 
 // BFLIM (Wii U): image data, then the FLIM header and the "imag" block (last 0x28 bytes)
 bool decode_bflim(const Bytes& b, uint32_t& w, uint32_t& h, Bytes& rgba) {

@@ -57,6 +57,9 @@ struct Reader {
 
 // ---- UI / test API (any thread) ----
 constexpr int kSlots = 5;
+constexpr int kAutoSlots = 2;  // slots kSlots+1.. : written by the auto save only, taking turns
+constexpr int kLastSlot = kSlots + kAutoSlots + 1;  // written when the app goes to the background
+constexpr int kAllSlots = kLastSlot;
 struct SlotInfo {
     bool used = false;
     bool compatible = true;
@@ -64,13 +67,31 @@ struct SlotInfo {
     std::string area;  // stage name, if known
     int controller = 0;  // controls when saved: 0 unknown (older states), 1 GamePad, 2 Pro Controller
 };
-SlotInfo slot_info(int slot);           // 1..5
-void request_save(int slot);
-void request_load(int slot);
+SlotInfo slot_info(int slot);           // 1..kAllSlots
+void request_save(int slot);            // 1..kSlots
+void request_load(int slot);            // 1..kAllSlots
+// the app goes to the background (UI thread): saves into kLastSlot; returns once the game has been
+// stopped and its state taken (the rest is written in the background), at most ~1 s
+void save_on_leave();
+int writes_pending();                   // saves taken but not yet on disk (quitting waits for them)
+void set_auto_interval(int minutes);    // 0: no auto saves
+int auto_interval();
 std::string last_message();             // short status for the title bar ("" when stale)
+// the app's save state picker at start: armed before the game starts, the game thread then waits at
+// the first frame boundary after the shader cache replay (before the intro) until a state loaded
+// (or failed to) or the hold is released; start_hold_state: 0 off, 1 armed, 2 the game is waiting
+void set_start_hold(bool on);
+int start_hold_state();
 
 // ---- game thread: call at the frame boundary (top of the per-frame function) ----
 void service(Cpu* c);
+
+// host code about to write guest memory from the kernel (read() into it): a save's memory capture
+// that is still running keeps the old content first (a protected page would make read() fail)
+void prepare_host_write(uint32_t addr, uint32_t size);
+
+// crash log: what the copy-on-write fault handler saw (async-signal-safe enough: snprintf)
+int fault_note(char* buf, size_t n);
 
 // guest memory reader used while validating a snapshot (reads the snapshot's memory, not the live one)
 uint32_t snap_ld32(uint32_t ea);

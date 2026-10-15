@@ -3,6 +3,8 @@
 //   /vol/code/...     -> <game>/code/...
 //   /vol/meta/...     -> <game>/meta/...
 //   /vol/save/...     -> <save dir>/...
+// Mod packs (packs.h) replace and add files below /vol/content: their files come first, and folder
+// listings include what the packs add.
 #include <dirent.h>
 #include <sys/stat.h>
 
@@ -14,7 +16,9 @@
 #include <unordered_map>
 
 #include "../mem_writes.h"
+#include "../packs.h"
 #include "../runtime.h"
+#include "../savestate.h"
 
 namespace {
 
@@ -34,10 +38,13 @@ struct OpenFile {
     std::string mode;
 };
 struct OpenDir {
-    DIR* d;
+    DIR* d;  // null: a folder only mod packs have
     std::string path;  // host path
     std::string gpath;
     uint32_t read = 0;  // entries returned so far
+    std::vector<packs::DirEntry> extra;  // the mod packs' entries, after the folder's own
+    size_t extraPos = 0;
+    std::vector<std::string> seen;  // lower-case names returned (pack files replacing game files)
 };
 
 std::mutex g_fs_mutex;
@@ -82,10 +89,27 @@ std::string case_insensitive(const std::string& root, const std::string& path) {
     return out;
 }
 
+// the path below /vol/content ("" for other volumes)
+std::string content_rel(const std::string& guest) {
+    if (guest.compare(0, 13, "/vol/content/") == 0) return guest.substr(13);
+    if (!guest.empty() && guest[0] != '/') return guest;  // relative to the cwd (/vol/content)
+    return "";
+}
+
 std::string host_path(const std::string& guest) {
+    std::string rel = content_rel(guest);
+    if (!rel.empty()) {
+        std::string f = packs::content_file(rel);
+        if (!f.empty()) return f;
+    }
     std::string r = host_path_exact(guest);
     const std::string& g = config::game_dir;
-    if (r.compare(0, g.size(), g) == 0 && guest.compare(0, 9, "/vol/save") != 0) return case_insensitive(g, r);
+    if (r.compare(0, g.size(), g) == 0 && guest.compare(0, 9, "/vol/save") != 0) r = case_insensitive(g, r);
+    struct stat st;
+    if (!rel.empty() && stat(r.c_str(), &st) != 0) {  // a folder only mod packs have
+        std::string d = packs::content_dir(rel);
+        if (!d.empty()) return d;
+    }
     return r;
 }
 
@@ -150,12 +174,16 @@ int32_t stat_path(const std::string& gpath, uint32_t out) {
 }
 
 int32_t open_dir(const std::string& gpath, uint32_t out_handle) {
-    DIR* d = opendir(host_path(gpath).c_str());
-    TRACE("[fs] opendir %s -> %s", gpath.c_str(), d ? "ok" : "not found");
-    if (!d) return FS_NOT_FOUND;
+    std::string hp = host_path(gpath), rel = content_rel(gpath);
+    while (!rel.empty() && rel.back() == '/') rel.pop_back();
+    std::vector<packs::DirEntry> extra = gpath == "/vol/content" || gpath == "/vol/content/" ? packs::content_entries("")
+                                       : rel.empty() ? std::vector<packs::DirEntry>{} : packs::content_entries(rel);
+    DIR* d = opendir(hp.c_str());
+    TRACE("[fs] opendir %s -> %s", gpath.c_str(), d ? "ok" : extra.empty() ? "not found" : "mod packs only");
+    if (!d && extra.empty()) return FS_NOT_FOUND;
     std::lock_guard<std::mutex> lk(g_fs_mutex);
     uint32_t h = g_next_handle++;
-    g_dirs[h] = {d, host_path(gpath), gpath};
+    g_dirs[h] = {d, hp, gpath, 0, std::move(extra)};
     st32(out_handle, h);
     return FS_OK;
 }
@@ -196,6 +224,7 @@ HLE(coreinit, FSReadFile) {
     size_t n;
     {
         BlockingScope b;  // the calling thread waits for the disc; others on its core run
+        ss::prepare_host_write(dst, size * count);
         n = fread(mem::ptr(dst), 1, (size_t)size * count, f);
         memw::mark(dst, (uint32_t)n);  // DMA on the console: no flush follows
     }
@@ -237,14 +266,35 @@ HLE(coreinit, FSReadDir) {
     std::lock_guard<std::mutex> lk(g_fs_mutex);
     auto it = g_dirs.find(arg(c, 2));
     if (it == g_dirs.end()) { ret(c, FS_NOT_DIR); return; }
+    OpenDir& od = it->second;
+    auto lower = [](std::string s) {
+        for (char& ch : s) ch = (char)tolower((unsigned char)ch);
+        return s;
+    };
     struct dirent* de;
-    while ((de = readdir(it->second.d))) {
+    while (od.d && (de = readdir(od.d))) {
         if (!strcmp(de->d_name, ".") || !strcmp(de->d_name, "..")) continue;
         struct stat st;
-        if (stat((it->second.path + "/" + de->d_name).c_str(), &st) != 0) continue;
+        if (stat((od.path + "/" + de->d_name).c_str(), &st) != 0) continue;
+        if (!od.extra.empty()) {  // a pack's file of the same name stands in for it
+            od.seen.push_back(lower(de->d_name));
+            for (auto& e : od.extra)
+                if (lower(e.name) == od.seen.back()) stat(e.host.c_str(), &st);
+        }
         fill_stat(out, st);
         mem::write_cstr(out + 0x64, de->d_name, 256);
-        it->second.read++;
+        od.read++;
+        ret(c, FS_OK);
+        return;
+    }
+    while (od.extraPos < od.extra.size()) {  // then what only the mod packs have
+        const packs::DirEntry& e = od.extra[od.extraPos++];
+        if (std::find(od.seen.begin(), od.seen.end(), lower(e.name)) != od.seen.end()) continue;
+        struct stat st;
+        if (stat(e.host.c_str(), &st) != 0) continue;
+        fill_stat(out, st);
+        mem::write_cstr(out + 0x64, e.name.c_str(), 256);
+        od.read++;
         ret(c, FS_OK);
         return;
     }
@@ -255,7 +305,7 @@ HLE(coreinit, FSCloseDir) {
     std::lock_guard<std::mutex> lk(g_fs_mutex);
     auto it = g_dirs.find(arg(c, 2));
     if (it != g_dirs.end()) {
-        closedir(it->second.d);
+        if (it->second.d) closedir(it->second.d);
         g_dirs.erase(it);
     }
     ret(c, FS_OK);
@@ -289,7 +339,6 @@ HLE(nn_save, SAVEOpenDir) {
 #include <algorithm>
 #include <vector>
 
-#include "../savestate.h"
 void fs_ss_save(ss::Writer& w) {
     std::lock_guard<std::mutex> lk(g_fs_mutex);
     w.u32(g_next_handle);
@@ -320,7 +369,8 @@ void fs_ss_load(ss::Reader& r) {
     uint32_t next = r.u32();
     for (auto& [h, f] : g_files) fclose(f.f);
     g_files.clear();
-    for (auto& [h, d] : g_dirs) closedir(d.d);
+    for (auto& [h, d] : g_dirs)
+        if (d.d) closedir(d.d);
     g_dirs.clear();
     uint32_t n = r.u32();
     for (uint32_t i = 0; i < n && r.ok; i++) {

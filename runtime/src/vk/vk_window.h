@@ -20,6 +20,7 @@ void set_layout(ScreenRect tv, ScreenRect drc, bool drcVisible);
 // The GamePad picture on its own display (the second screen of dual-screen devices): its window
 // surface, or null. The main window's layout then usually leaves the GamePad picture out.
 void set_drc_window(ANativeWindow* w);
+float drc_picture_aspect();  // width / height of the GamePad picture the game sent last
 
 // write the Vulkan pipeline cache to disk (the app is going to the background)
 void save_caches();

@@ -4,10 +4,30 @@
 
     <string name="setup_text">The game files were not found or don\'t match this build.\n\nThis app contains only the recompiled code built from your own copy of the game; it needs the extracted game files from the same dump. Extract them on a computer (see README.md: tools/wudextract.py), then copy the resulting folder (with code/, content/ and meta/ inside) to:\n\n%1$s\n\nFor example: adb push game /sdcard/Android/data/org.wwhdrecomp.app/files/\n\nProblem: %2$s</string>
     <string name="setup_retry">Check again</string>
-    <string name="setup_welcome">Welcome!\n\nThis app contains no game files. It plays your own copy of The Legend of Zelda: The Wind Waker HD for Wii U (USA, European or Japanese version).\n\nPut these three files in one folder on this device, then choose that folder:\n•  your disc image (.wux or .wud)\n•  its disc key (the image\'s name with .key)\n•  the console\'s common key (common.key)\n\nOr put a Cemu archive of your game (.wua) in a folder; it needs no keys.\n\nThe app then extracts the game files (about 1.7 GB) and prepares the game code for this device. That happens once and takes a while, depending on the device\'s processor.</string>
+    <string name="setup_welcome">Welcome!
+
+This app contains no game files. It plays your own copy of The Legend of Zelda: The Wind Waker HD for Wii U (USA, European or Japanese version).
+
+Put these three files on this device, then choose them together:
+•  your disc image (.wux or .wud)
+•  its disc key (the image\'s name with .key)
+•  the console\'s common key (common.key)
+
+Or choose a Cemu archive of your game (.wua); it needs no keys.
+
+The app then extracts the game files (about 1.7 GB) and prepares the game code for this device. That happens once and takes a while, depending on the device\'s processor.</string>
     <string name="setup_problem">The game files found don\'t work: %1$s</string>
     <string name="setup_extract">Extract from your disc image or .wua…</string>
-    <string name="extract_missing">Choose the folder that holds your disc image, its disc key and the console\'s common key:\n\n%1$s the image (.wux or .wud)\n%2$s its disc key (the image\'s name with .key)\n%3$s common.key\n\nOr a folder that holds a Cemu archive of your game (.wua).</string>
+    <string name="setup_extract_files">Choose your game files…</string>
+    <string name="extract_missing">Choose your disc image, its disc key and the console\'s common key together (long-press the first, then tap the others):
+
+%1$s the image (.wux or .wud)
+%2$s its disc key (the image\'s name with .key)
+%3$s common.key
+
+Or a Cemu archive of your game (.wua).
+
+If the picker doesn\'t show your files, put them directly into Download and open Downloads there.</string>
     <string name="extract_bad_key">A key file must hold 16 bytes or 32 hex digits.</string>
     <string name="extract_running">Extracting the game from your disc image…</string>
     <string name="extract_detail">%1$d of %2$d MB (%3$.0f MB/s)</string>
@@ -53,16 +73,18 @@
     </string-array>
     <string name="menu_backup">Import / export saves…</string>
     <string name="backup_title">Import / export saves</string>
-    <string name="backup_export">Export to a folder…</string>
-    <string name="backup_import">Import from a folder…</string>
     <string name="backup_export_title">Export</string>
     <string name="backup_game_save">Game save</string>
     <string name="backup_states">Save states (%1$d MB)</string>
-    <string name="backup_choose_folder">Choose folder…</string>
-    <string name="backup_exporting">Exporting…</string>
-    <string name="backup_exported">Exported to the folder \"%1$s\".</string>
+    <string name="backup_save_file">Save as file…</string>
     <string name="backup_scanning">Looking for saves…</string>
-    <string name="backup_nothing">No game save (cking.sav) or save states (slot1–5.bin) found in this folder.</string>
+    <string name="backup_exporting">Exporting…</string>
+    <string name="backup_exported">Exported to \"%1$s\".</string>
+    <string name="backup_import_how">Choose a backup made with Export (WindWakerHD backup ….zip), a GameCube Wind Waker save (.gci, USA, Europe or Japan: it becomes your game save, all three quest logs), or the files themselves together (long-press the first, then tap the others): cking.sav with the other cking….sav files of a game save, slot1–5.bin and .png of save states. If the picker doesn\'t show them, put the files directly into Download and open Downloads there.</string>
+    <string name="backup_choose_files">Choose files…</string>
+    <string name="backup_picked_files">the files picked</string>
+    <string name="backup_from_gc">GameCube save %1$s, converted: all three quest logs</string>
+    <string name="backup_nothing_files">No game save (cking.sav) or save states (slot1–5.bin) among the files picked.</string>
     <string name="backup_import_title">Import (replaces what is there)</string>
     <string name="backup_import_save">Game save (from %1$s)</string>
     <string name="backup_import_states">Save states: slot %1$s</string>
@@ -137,10 +159,24 @@
     <string name="opt_slot_incompatible">%1$s · from another build, can\'t be loaded</string>
     <string name="opt_slot_save">Save</string>
     <string name="opt_slot_load">Load</string>
+    <string name="opt_auto_state">Auto save state</string>
+    <string name="opt_auto_state_hint">Saves a state as you play, without stopping the game, into two auto slots that take turns</string>
+    <string name="opt_auto_slot">Auto save %1$d</string>
+    <string name="opt_leave_state">Save state when leaving the app</string>
+    <string name="opt_leave_state_hint">Keeps where you were if Android closes the game while it\'s in the background</string>
+    <string name="opt_last_slot">Last session</string>
+    <string name="opt_start_mode">At start</string>
+    <string name="opt_start_mode_hint">Before the intro: pick a save state, or go straight back to where you left the game</string>
+    <string name="start_last_loading">Loading the last session…</string>
+    <string name="start_states_title">Continue</string>
+    <string name="start_states_title_hint">Start the game as usual</string>
+    <string name="start_states_pad_hint">Controller: D-pad moves · right button selects · bottom button starts the game</string>
+    <string name="quit_saving">Saving the last session…</string>
+    <string name="start_states_loading">Loading the save state…</string>
     <string name="opt_export">Export saves</string>
-    <string name="opt_export_hint">Copy your game save and save states to a folder</string>
+    <string name="opt_export_hint">Save your game save and save states into one backup file</string>
     <string name="opt_import">Import saves</string>
-    <string name="opt_import_hint">Restore them from a folder; an imported game save restarts the game</string>
+    <string name="opt_import_hint">Restore them from their files; an imported game save restarts the game</string>
     <string name="opt_graphics">Graphics</string>
     <string name="opt_mods">Mods</string>
     <string name="opt_controls">Controls</string>
@@ -193,11 +229,65 @@
     <string name="opt_mod_ff_cutscenes">Fast forward cutscenes</string>
     <string name="opt_mod_ff_dialogues">Fast forward dialogues</string>
     <string name="opt_mod_ff_hint">Faster (up to 4×, as fast as this device draws) while ZR (R2) is held; text boxes still wait for your button</string>
+    <string name="opt_mod_jump">Jump anywhere (L)</string>
+    <string name="opt_mod_jump_hint">L jumps from standing or running, as off a ledge. Switches the moon jump off (it uses L too)</string>
+    <string name="opt_mod_jump_double">Double jump</string>
+    <string name="opt_mod_jump_double_hint">L once more in the air</string>
+    <string name="opt_mod_jump_noauto">No automatic ledge jumps</string>
+    <string name="opt_mod_jump_noauto_hint">Running off an edge, Link drops instead of leaping: you jump with L</string>
+    <string name="opt_mod_jump_off">Jump anywhere switched off (the moon jump uses L)</string>
+    <string name="cheat_moon_jump_off">Moon jump switched off (Jump anywhere uses L)</string>
     <string name="opt_mod_run">Faster running</string>
     <string name="opt_mod_run_hint">Link covers more ground while running; jumps and rolls stay as they are</string>
     <string name="opt_mod_swim">Faster swimming</string>
     <string name="opt_mod_swim_hint">The same while Link swims</string>
+    <string name="opt_mod_climb_fast">Faster climbing</string>
+    <string name="opt_mod_climb_fast_hint">Ladders, vines and moving along a ledge while hanging</string>
+    <string name="opt_mod_sidle">Faster sidling</string>
+    <string name="opt_mod_sidle_hint">While Link moves with his back to a wall</string>
     <string name="opt_mod_run_off">Off</string>
+    <string name="opt_packs">Mod packs</string>
+    <string name="opt_packs_hint">Cemu graphic packs and game file mods, imported from .zip and .rar files</string>
+    <string name="packs_on_count">%d on</string>
+    <string name="packs_about">Imports mods from .zip and .rar files: Cemu graphic packs (for example from GameBanana or GitHub) and plain game file mods (a content folder). Code patches (patch_*.asm), game file replacements, pixel shader replacements and texture filtering rules work; vertex shaders and texture resolution rules don\'t yet. A code patch only applies to the game version it was made for. Turning packs on or off, or changing their settings, takes effect after a restart.</string>
+    <string name="packs_import">Import packs</string>
+    <string name="packs_import_hint">Pick one or more .zip or .rar files</string>
+    <string name="packs_none">No packs imported yet.</string>
+    <string name="packs_importing">Importing…</string>
+    <string name="packs_imported">Imported:</string>
+    <string name="packs_import_failed">Not imported:</string>
+    <string name="packs_applies">Patches the game code of this game version</string>
+    <string name="packs_other_version">Made for another game version: does nothing here</string>
+    <string name="packs_error">Doesn\'t work: %s</string>
+    <string name="packs_unsupported">Not supported yet: %s</string>
+    <plurals name="packs_texture_rules">
+        <item quantity="one">Changes texture filtering (%d rule)</item>
+        <item quantity="other">Changes texture filtering (%d rules)</item>
+    </plurals>
+    <plurals name="packs_shaders">
+        <item quantity="one">Replaces %d shader</item>
+        <item quantity="other">Replaces %d shaders</item>
+    </plurals>
+    <plurals name="packs_content">
+        <item quantity="one">Replaces or adds %d game file</item>
+        <item quantity="other">Replaces or adds %d game files</item>
+    </plurals>
+    <string name="packs_versions">Made for: %s (not this game version)</string>
+    <plurals name="packs_added">
+        <item quantity="one">%d file is new to your game; a file of another game version does nothing here:</item>
+        <item quantity="other">%d files are new to your game; files of another game version do nothing here:</item>
+    </plurals>
+    <string name="packs_nothing">Nothing this port can use</string>
+    <string name="packs_preset">Setting</string>
+    <string name="packs_details">Details</string>
+    <string name="packs_groups">Patch groups: %1$d for this game version, %2$d for others</string>
+    <string name="packs_folder">Folder: packs/%s</string>
+    <string name="packs_delete">Delete pack</string>
+    <string name="packs_delete_confirm">Delete this pack from the device?</string>
+    <string name="packs_restart_note">Changes apply after a restart; changed code is then recompiled (a short compile, or none for a combination used before).</string>
+    <string name="packs_title_hint">After turning on a pack that patches code, start from the title screen once and load your quest log there: the pack sets itself up while the game loads. Save states made without the pack don\'t have it set up.</string>
+    <string name="packs_restart">Restart now</string>
+    <string name="packs_restart_ask">Your mod pack changes only take effect after a restart. Restart the game now? Progress since your last save is lost.</string>
     <string name="opt_mod_run_when">Applies</string>
     <string name="opt_mod_run_always">Always</string>
     <string name="opt_mod_run_with_l3">With L3</string>
@@ -238,6 +328,48 @@
     <string name="interp_fps">%d fps (interpolated)</string>
     <string name="cache_loading">Loading the shader cache…</string>
     <string name="cache_loading_detail">%1$,d shader variants prepared</string>
+    <string name="headstart_building">Finding the game\'s shaders in your game files… (only this once)</string>
+    <string name="headstart_building_detail">%1$,d shaders found</string>
+    <string name="dev_on">Developer options on (Mods tab: Warp)</string>
+    <string name="dev_off">Developer options off</string>
+    <string name="opt_warp">Warp (developer)</string>
+    <string name="opt_warp_hint">Go to any place, room and spawn point of the game</string>
+    <string name="warp_about">Takes Link to the place at once, as a door would. The story stays as in your save file: who and what is there depends on it (or pick a layer). Save in the game only if you want to keep the new place.</string>
+    <string name="warp_where">Now: %1$s · room %2$s · spawn %3$s · layer %4$s</string>
+    <string name="warp_layer">Layer</string>
+    <string name="warp_layer_hint">Which version of the place loads; Story picks it from your progress</string>
+    <string name="warp_layer_auto">Story</string>
+    <string name="warp_spawn">Room %1$d · spawn %2$d</string>
+    <string name="warp_reading">Reading the places from your game files… (a few seconds, only this once)</string>
+    <string name="preset_title">Story presets</string>
+    <string name="preset_hint">Load the story of a save file or a saved moment and warp to its place</string>
+    <string name="preset_about">A preset is the story part of a save (items, hearts, songs, chart, each place\'s switches and chests, story flags) plus a place. Warping to it loads that story into the game you are playing; your save file only changes if you save in the game. Presets stay on this device.</string>
+    <string name="preset_import">Import a save file…</string>
+    <string name="preset_import_hint">Pick a WWHD cking.sav, GameCube .gci saves (USA, Europe, Japan) or presets (.wwp); several at once: each used slot becomes a preset</string>
+    <string name="preset_save">Save the current story as a preset</string>
+    <string name="preset_save_hint">Here and now: the story so far and the place you entered</string>
+    <string name="preset_name">Name</string>
+    <string name="preset_ask">%1$s\n\nWarp there with this story? It replaces the story of the game you are playing until you load your save again.</string>
+    <string name="preset_warp">Warp</string>
+    <string name="preset_delete">Delete</string>
+    <string name="preset_imported">%1$d preset(s) imported</string>
+    <string name="preset_import_none">No used Wind Waker save slots found in this file</string>
+    <string name="preset_import_skipped">%1$d file(s) skipped</string>
+    <string name="warp_test">Test overlay</string>
+    <string name="warp_test_hint">A panel over the game: ✓ / ✗ rate the spot and warp to the next; results in warp_tests.tsv</string>
+    <string name="warp_test_title">Warp test</string>
+    <string name="warp_test_auto_off">Auto: off</string>
+    <string name="warp_test_auto_on">Auto: on</string>
+    <string name="warp_test_auto_secs">%1$d s</string>
+    <string name="warp_test_auto_event">Loaded; Auto waits for the cutscene / dialogue to end (at most 20 s)</string>
+    <string name="warp_test_last">Last result: %1$s</string>
+    <string name="warp_test_ready">Warp, or rate and go on with ✓ / ✗</string>
+    <string name="warp_test_loading">Loading… %1$.0f s</string>
+    <string name="warp_test_loaded">Loaded in %1$.1f s</string>
+    <string name="warp_test_stuck">No end after %1$.0f s: stuck. Restart the app (it is written down and skipped).</string>
+    <string name="warp_test_refused">Not taken: a scene change was under way. Tap Warp again.</string>
+    <string name="warp_no_save">Load a save file first.</string>
+    <string name="warp_going">Warping to %1$s</string>
     <string name="opt_cheats">Cheats</string>
     <string name="opt_cheats_hint">Items, hearts, infinite health… for the save file you play</string>
     <string name="cheats_about">These change the save file you are playing (from the original project). They apply once a save file is loaded; save in the game to keep them.</string>
@@ -253,13 +385,21 @@
     <string name="cheat_inf_health">Infinite health</string>
     <string name="cheat_inf_magic">Infinite magic</string>
     <string name="cheat_inf_ammo">Infinite arrows and bombs</string>
-    <string name="cheat_moon_jump">Moon jump</string>
-    <string name="cheat_moon_jump_hint">Hold L (left shoulder button) to rise, steer with the left stick</string>
-    <string name="cheat_moon_rise">Moon jump: rise speed</string>
-    <string name="cheat_moon_fly">Moon jump: flight speed</string>
-    <string name="cheat_moon_nofall">Moon jump: no fall damage</string>
+    <string name="cheat_inf_rupees">Infinite rupees</string>
+    <string name="cheat_inf_bags">Infinite bait and spoils</string>
+    <string name="cheat_inf_bags_hint">Used bait and Hyoi Pears come back, spoils stay at 99</string>
+    <string name="cheat_inf_breath">Infinite swimming</string>
+    <string name="cheat_inf_breath_hint">The swim meter stays full: Link never tires or sinks in deep water</string>
+    <string name="cheat_bags">Fill the bags</string>
+    <string name="cheat_bags_hint">The Spoils Bag and Bait Bag (if missing), every kind of spoils ×99, bait and Hyoi Pears</string>
+    <string name="cheat_bags_done">Spoils Bag and Bait Bag filled.</string>
+    <string name="cheat_moon_jump">Moon jump (L)</string>
+    <string name="cheat_moon_jump_hint">Hold L (left shoulder button) to rise, steer with the left stick. Switches Jump anywhere off (it uses L too)</string>
+    <string name="cheat_moon_rise">Rise speed</string>
+    <string name="cheat_moon_fly">Flight speed</string>
+    <string name="cheat_moon_nofall">No fall damage</string>
     <string name="cheat_moon_nofall_hint">Landing after a flight never hurts</string>
-    <string name="cheat_moon_anims">Moon jump: random lift-off animations</string>
+    <string name="cheat_moon_anims">Random lift-off animations</string>
     <string name="cheat_moon_anims_hint">Each lift-off picks one of 14 poses instead of the two jump poses</string>
     <string name="cheats_story_about">⚠️ Story cheats can change or break story events: the game may skip or repeat scenes that teach or check them. Save to a spare file first.</string>
     <string name="cheats_story_confirm">This can change or break story events. Save to a spare file first. Apply it?</string>
@@ -275,6 +415,17 @@
     <string name="cheat_keep">Applied once a save file is loaded; save in the game to keep it.</string>
     <string name="opt_record_thread">Command recording thread</string>
     <string name="opt_record_thread_hint">A second CPU thread prepares the GPU work: faster on most devices, slower on some (e.g. Snapdragon 855)</string>
+    <string-array name="start_modes">
+        <item>Intro</item>
+        <item>Offer save states</item>
+        <item>Load the last session</item>
+    </string-array>
+    <string-array name="auto_state_modes">
+        <item>Off</item>
+        <item>Every 2 min</item>
+        <item>Every 5 min</item>
+        <item>Every 10 min</item>
+    </string-array>
     <string-array name="record_thread_modes">
         <item>Automatic</item>
         <item>On</item>
@@ -321,6 +472,10 @@
     <string name="opt_drc_display_hint">A second display was found (e.g. the lower screen of a dual-screen device)</string>
     <string name="drc_second_display">Second display</string>
     <string name="drc_in_layout">In the screen layout</string>
+    <string name="opt_drc_shape">GamePad picture</string>
+    <string name="opt_drc_shape_hint">Fill: the GamePad screen takes the display\'s shape, its background reaches the edges</string>
+    <string name="drc_shape_fill">Fill the screen</string>
+    <string name="drc_shape_original">Original 16:9</string>
     <string name="opt_gpu_driver">GPU driver</string>
     <string name="opt_gpu_driver_hint">The system\'s, or an installed driver package</string>
     <string name="gpu_driver_about">On Adreno GPUs the game can run on another Vulkan driver than the system\'s, for example a Mesa Turnip build or a newer Qualcomm driver. Use driver packages in the AdrenoTools format (a .zip with meta.json and the driver), as other emulators use them. A new driver applies after a restart. If the game doesn\'t start with it, the next start goes back to the system driver.</string>
@@ -358,6 +513,7 @@
     <string name="crash_share_all">Share crash logs</string>
     <string name="crash_not_now">Not now</string>
     <string name="crash_start_game">Start game</string>
+    <string name="crash_without_packs">Start without mod packs</string>
     <string name="crash_subject">Wind Waker HD crash log</string>
     <string name="opt_quit">Quit</string>
     <string name="menu_capture">Capture frame (debugging)</string>

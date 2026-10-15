@@ -5,6 +5,7 @@ extern "C" uint64_t g_draw_state_gen;    // gx2_core.cpp: bumped by any non-data
 // Draw calls on Vulkan: shader translation (Cemu decompiler, GLSL -> SPIR-V), pipelines, resource
 // binding and primitive submission. Follows gfx/metal_draw.mm; binding conventions are those of
 // the Vulkan GLSL the decompiler emits (one descriptor set per stage, as in Cemu's Vulkan renderer).
+#include "../packs.h"
 #include "Cafe/HW/Latte/Core/FetchShader.h"
 #include "Cafe/HW/Latte/Core/LatteCachedFBO.h"
 #include "Cafe/HW/Latte/Core/LatteShader.h"
@@ -26,15 +27,18 @@ extern "C" uint64_t g_draw_state_gen;    // gx2_core.cpp: bumped by any non-data
 #include <cstdarg>
 #include <ctime>
 #include <deque>
+#include <map>
 #include <set>
 #include <sys/stat.h>
 #include <thread>
+#include <unordered_set>
 #include <unistd.h>
 #include <zlib.h>
 
 LatteDecompilerShader* FinishDecompiledShader(LatteDecompilerOutput_t& decompilerOutput);
 LatteFetchShader* LatteShaderRecompiler_createFetchShader(LatteFetchShader::CacheHash fsHash, uint32* contextRegister,
                                                            uint32* fsProgramCode, uint32 fsProgramSize);
+void LatteShader_calculateFSKey(LatteFetchShader* fetchShader);
 
 using namespace Latte;
 
@@ -287,6 +291,85 @@ Workers g_workers;
 // ---------------------------------------------------------------- fetch shaders
 static std::unordered_map<uint64_t, LatteFetchShader*> g_fetch;
 
+// Fetch "programs" besides the game's microcode: ours from GX2InitFetchShaderEx ("WWFS", see
+// gx2_resources.cpp) and the code-free form of a parsed microcode fetch shader ("WWFP", for shader
+// head-start templates): the attributes as parsed, plus the microcode's hash, so it gets the key of
+// the program it stands for. Big-endian words like guest memory: magic, size in bytes, hash (high,
+// low), valid groups, invalid groups, attributeBufferMask, 0; per group (valid ones first): buffer |
+// attribute count << 8 | vertex access << 16 | instance access << 17, minOffset,
+// totalAttribRangeSize; per attribute: semantic | format << 8 | fetchType << 16 | nfa << 24,
+// isSigned | endianSwap << 8 | buffer << 16, ds[0..3] (a byte each), aluDivisor, offset.
+constexpr uint32_t kFetchOurs = 0x57574653, kFetchCodeFree = 0x57574650;
+
+static std::vector<uint8_t> fetch_code_free(const LatteFetchShader* fs, uint64_t programHash) {
+    std::vector<uint32_t> w = {kFetchCodeFree, 0, (uint32_t)(programHash >> 32), (uint32_t)programHash,
+                               (uint32_t)fs->bufferGroups.size(), (uint32_t)fs->bufferGroupsInvalid.size(),
+                               fs->attributeBufferMask, 0};
+    for (auto* groups : {&fs->bufferGroups, &fs->bufferGroupsInvalid})
+        for (auto& g : *groups) {
+            w.push_back(g.attributeBufferIndex | (uint32_t)(uint8_t)g.attribCount << 8 | (uint32_t)g.hasVtxIndexAccess << 16 |
+                        (uint32_t)g.hasInstanceIndexAccess << 17);
+            w.push_back(g.minOffset);
+            w.push_back(g.totalAttribRangeSize);
+            for (int i = 0; i < g.attribCount; i++) {
+                const LatteParsedFetchShaderAttribute& a = g.attrib[i];
+                w.push_back(a.semanticId | ((uint32_t)a.format & 0xFF) << 8 | ((uint32_t)a.fetchType & 0xFF) << 16 | (uint32_t)a.nfa << 24);
+                w.push_back(a.isSigned | ((uint32_t)a.endianSwap & 0xFF) << 8 | (uint32_t)a.attributeBufferIndex << 16);
+                w.push_back(a.ds[0] | a.ds[1] << 8 | a.ds[2] << 16 | (uint32_t)a.ds[3] << 24);
+                w.push_back((uint32_t)a.aluDivisor);
+                w.push_back(a.offset);
+            }
+        }
+    w[1] = (uint32_t)w.size() * 4;
+    std::vector<uint8_t> out(w.size() * 4);
+    for (size_t i = 0; i < w.size(); i++)
+        for (int b = 0; b < 4; b++) out[i * 4 + b] = (uint8_t)(w[i] >> (24 - 8 * b));
+    return out;
+}
+
+// cacheHash: the key get_fetch_shader gives it (as LatteShaderRecompiler_createFetchShader gets it)
+static LatteFetchShader* fetch_from_code_free(uint32_t prog, uint64_t cacheHash) {
+    const uint32_t size = ld32(prog + 4), valid = ld32(prog + 16), invalid = ld32(prog + 20);
+    if (size < 32 || size > 0x1000 || valid > 16 || invalid > 256) return nullptr;
+    auto* fs = new LatteFetchShader();
+    fs->m_cacheHash = cacheHash;
+    fs->attributeBufferMask = ld32(prog + 24);
+    uint32_t at = prog + 32;
+    const uint32_t end = prog + size;
+    for (uint32_t gi = 0; gi < valid + invalid; gi++) {
+        if (at + 12 > end) { delete fs; return nullptr; }
+        const uint32_t w0 = ld32(at);
+        LatteParsedFetchShaderBufferGroup g{};
+        g.attributeBufferIndex = (uint8)(w0 & 0xFF);
+        g.attribCount = (sint8)((w0 >> 8) & 0x7F);
+        g.hasVtxIndexAccess = (w0 >> 16) & 1;
+        g.hasInstanceIndexAccess = (w0 >> 17) & 1;
+        g.minOffset = ld32(at + 4);
+        g.totalAttribRangeSize = ld32(at + 8);
+        at += 12;
+        if (at + g.attribCount * 20u > end) { delete fs; return nullptr; }
+        g.attrib = (LatteParsedFetchShaderAttribute*)calloc(std::max<int>(g.attribCount, 1), sizeof(LatteParsedFetchShaderAttribute));
+        for (int i = 0; i < g.attribCount; i++, at += 20) {
+            LatteParsedFetchShaderAttribute& a = g.attrib[i];
+            const uint32_t a0 = ld32(at), a1 = ld32(at + 4), a2 = ld32(at + 8);
+            a.semanticId = (uint8)(a0 & 0xFF);
+            a.format = (Latte::E_HWFMT)((a0 >> 8) & 0xFF);
+            a.fetchType = (LatteConst::VertexFetchType2)((a0 >> 16) & 0xFF);
+            a.nfa = (uint8)(a0 >> 24);
+            a.isSigned = (uint8)(a1 & 0xFF);
+            a.endianSwap = (LatteConst::VertexFetchEndianMode)((a1 >> 8) & 0xFF);
+            a.attributeBufferIndex = (uint8)((a1 >> 16) & 0xFF);
+            for (int k = 0; k < 4; k++) a.ds[k] = (uint8)(a2 >> (8 * k));
+            a.aluDivisor = (sint32)ld32(at + 12);
+            a.offset = ld32(at + 16);
+        }
+        (gi < valid ? fs->bufferGroups : fs->bufferGroupsInvalid).push_back(g);
+    }
+    LatteShader_calculateFSKey(fs);
+    fs->CalculateFetchShaderVkHash();
+    return fs;
+}
+
 // the previous draw's fetch shader (draws in a row mostly share it): within a frame, for the same
 // program address, size word and strides (the cache replay's scratch programs reset it)
 struct FetchLast {
@@ -306,11 +389,12 @@ static LatteFetchShader* get_fetch_shader(const uint32_t* regs, uint64_t* keyOut
         *keyOut = L.key;
         return L.fs;
     }
-    // either our compact encoding (from GX2InitFetchShaderEx) or real fetch shader microcode shipped with the game
-    bool ours = ld32(prog) == 0x57574653;
-    uint32_t size = ours ? 16 + ld32(prog + 4) * 16 : regs[mmSQ_PGM_START_FS + 1] << 3;
+    // our compact encoding (from GX2InitFetchShaderEx), a code-free stand-in, or real fetch shader microcode
+    const uint32_t magic = ld32(prog);
+    const bool ours = magic == kFetchOurs, codeFree = magic == kFetchCodeFree;
+    uint32_t size = ours ? 16 + ld32(prog + 4) * 16 : codeFree ? ld32(prog + 4) : regs[mmSQ_PGM_START_FS + 1] << 3;
     if (size > 0x1000) return nullptr;
-    uint64_t h = program_hash(prog, size);
+    uint64_t h = codeFree ? (uint64_t)ld32(prog + 8) << 32 | ld32(prog + 12) : program_hash(prog, size);
     // strides are part of the pipeline's vertex input state
     for (uint32_t b = 0; b < 16; b++) h = (h ^ strides[b]) * 1099511628211ull;
     *keyOut = h;
@@ -319,7 +403,9 @@ static LatteFetchShader* get_fetch_shader(const uint32_t* regs, uint64_t* keyOut
     if (it != g_fetch.end()) {
         fs = it->second;
     } else {
-        fs = ours ? gx2::build_fetch_shader(prog) : LatteShaderRecompiler_createFetchShader(h, (uint32*)regs, (uint32*)mem::ptr(prog), size);
+        fs = ours       ? gx2::build_fetch_shader(prog)
+             : codeFree ? fetch_from_code_free(prog, h)
+                        : LatteShaderRecompiler_createFetchShader(h, (uint32*)regs, (uint32*)mem::ptr(prog), size);
         g_fetch[h] = fs;
     }
     L.frame = R.frame;
@@ -356,6 +442,7 @@ struct Shader {
     // uniform buffers are dynamic (offset given at bind time), so descriptor sets can be cached;
     // false when the shader has more of them than the device allows
     bool dynamicUbos = false;
+    bool used = false;                            // a draw asked for it this session (mark_used)
     uint32_t varsRange = 0;                       // size of the uniform-variable block
     uint32_t blockRange[LATTE_NUM_MAX_UNIFORM_BUFFERS] = {};  // size bound for each uniform block
     std::atomic<int> state{CS_PENDING};       // translation: CS_FAILED, CS_DEFERRED, else see mod
@@ -690,12 +777,13 @@ struct PsLink {
     std::bitset<256> exports;
     uint32_t unfed = 0;  // bit f: PS input f has no vertex shader output
     uint64_t key = 0;    // unfed inputs and their DEFAULT_VAL, for the shader key
+    uint32_t vsMask = 0; // the vertex shader's output parameters (recorded with the shader)
 };
-static PsLink ps_link(const uint32_t* regs, const Shader* vs) {
+// mask: the vertex shader's outputParameterMask
+static PsLink ps_link_mask(const uint32_t* regs, uint32_t mask) {
     PsLink link;
-    if (!vs || !vs->dec) return link;
     link.linked = true;
-    const uint32_t mask = vs->dec->outputParameterMask;
+    link.vsMask = mask;
     for (uint32_t i = 0; i < 32; ++i)
         if (mask & (1u << i)) link.exports.set((regs[mmSPI_VS_OUT_ID_0 + i / 4] >> (8 * (i % 4))) & 0xFF);
     const uint32_t control0 = regs[mmSPI_PS_IN_CONTROL_0];
@@ -711,6 +799,10 @@ static PsLink ps_link(const uint32_t* regs, const Shader* vs) {
     words[0] = link.unfed;
     link.key = link.unfed ? hash_bytes(words, n * 4, 0x5053'4C49'4E4Bull) : 0;
     return link;
+}
+static PsLink ps_link(const uint32_t* regs, const Shader* vs) {
+    if (!vs || !vs->dec) return PsLink{};
+    return ps_link_mask(regs, vs->dec->outputParameterMask);
 }
 
 static Shader* get_shader_uncached(const uint32_t* regs, bool vertex, LatteFetchShader* fs, uint64_t fsKey,
@@ -744,29 +836,132 @@ static Shader* get_shader(const uint32_t* regs, bool vertex, LatteFetchShader* f
     return s;
 }
 
-static void cache_record_shader(const uint32_t* regs, bool vertex);
+static void cache_record_shader(const uint32_t* regs, bool vertex, const PsLink& link);
 static bool g_defer_compiles = false;
 
 static void compile_deferred(Shader* s) {
     if (s && s->mod) start_module(s->mod);
 }
 
-static Shader* get_shader_uncached(const uint32_t* regs, bool vertex, LatteFetchShader* fs, uint64_t fsKey, const PsLink& link) {
+// the shader key of a state; base gets the program's part (the decompiler's shader id). 0: no program
+static uint64_t shader_key(const uint32_t* regs, bool vertex, uint64_t fsKey, const PsLink& link, uint64_t* base = nullptr) {
     uint32_t addr = regs[vertex ? mmSQ_PGM_START_VS : mmSQ_PGM_START_PS] << 8;
     uint32_t size = regs[(vertex ? mmSQ_PGM_START_VS : mmSQ_PGM_START_PS) + 1] << 3;
-    if (!addr || !size) return nullptr;
+    if (!addr || !size) return 0;
     uint64_t key = program_hash(addr, size) ^ (vertex ? 0x1111 : 0x2222);
-    uint64_t base = key;
+    if (base) *base = key;
     key = stage_state_hash(regs, key, vertex ? REGADDR::SQ_TEX_RESOURCE_WORD0_N_VS : REGADDR::SQ_TEX_RESOURCE_WORD0_N_PS);
     if (vertex) key ^= fsKey * 31;
     else key ^= link.key * 37;  // 0 when every input is fed: the same translation as unlinked
+    return key;
+}
+
+// Shader variants the game used this session (not the cache's or the head start's replays): the
+// cache keeps the records of those used in its last few sessions (shader_use_save, cache_load)
+static std::vector<uint64_t> g_used_keys;
+static bool g_cache_replaying = false;  // translating cache or head-start records, not the game's draws
+static inline void mark_used(Shader* s) {
+    if (s->used || g_cache_replaying) return;
+    s->used = true;
+    g_used_keys.push_back(s->key);
+}
+
+// Mod packs' shader replacements (packs.h): Cemu names a pixel shader by a hash of its program plus
+// the PS input table's key (LatteShader.cpp, LatteSHRC_UpdatePSBaseHash) and an aux hash of the state
+// it was translated for (LatteSHRC_CalcPSAuxHash: CB_SHADER_MASK, alpha test, texture dimensions). A
+// pack's GLSL for those hashes stands in for the translation.
+static void use_pack_shader(Shader* s, uint64_t base, uint64_t aux, char type, uint32_t addr) {
+    static const bool log = getenv("WWHD_SHADER_HASH_LOG") != nullptr;  // debug: Cemu's names of the translated shaders
+    if (log) LOG("[gfx] %s shader %08X: %016llx_%016llx_%cs", type == 'v' ? "vertex" : "pixel", addr, (unsigned long long)base,
+                 (unsigned long long)aux, type);
+    const std::string* src = packs::custom_shader(base, aux, type);
+    if (!src) return;
+    delete s->dec->strBuf_shaderSource;
+    s->dec->strBuf_shaderSource = new StringBuf((uint32)src->size() + 16);
+    s->dec->strBuf_shaderSource->add(*src);
+}
+
+// Cemu's program hash (_calcShaderHashGeneric): the words as Cemu reads them (host order)
+static uint64_t cemu_program_hash(uint32_t addr, uint32_t size) {
+    uint64_t h1 = 0, h2 = 0;
+    const uint32_t* code = (const uint32_t*)mem::ptr(addr);
+    for (uint32_t i = 0; i < size / 4; i++) {
+        uint32_t t = code[i];
+        h1 += t;
+        h2 ^= t;
+        h1 = (h1 << 3) | (h1 >> 61);
+        h2 = (h2 >> 7) | (h2 << 57);
+    }
+    return h1 + h2;
+}
+
+// a vertex shader (LatteSHRC_UpdateVSBaseHash, LatteSHRC_CalcVSAuxHash): the program, the fetch shader,
+// the PS input table, PA_CL_VTE_CNTL, rects / points, stream out, the clip space; aux: stream-out
+// strides and integer-format textures
+static void pack_vertex_shader(Shader* s, const uint32_t* regs, uint32_t addr, uint32_t size, LatteFetchShader* fs) {
+    if (!fs) return;
+    uint64_t base = cemu_program_hash(addr, size) + fs->key + LatteSHRC_GetPSInputTable()->key;  // (no geometry shaders)
+    base += regs[REGADDR::PA_CL_VTE_CNTL] ^ 0x43F;
+    const uint32_t prim = regs[REGADDR::VGT_PRIMITIVE_TYPE];
+    if (prim == 0x11) base += 13;       // rects
+    else if (prim == 0x01) base += 71;  // points
+    base += regs[mmVGT_STRMOUT_EN] ? 21 : 0;
+    if ((regs[REGADDR::PA_CL_CLIP_CNTL] >> 19) & 1) base += 0x1537;  // DX_CLIP_SPACE_DEF (halfZ)
+    uint64_t aux = 0, auxTex = 0;
+    if (s->dec->hasStreamoutBufferWrite)
+        for (uint32_t i = 0; i < LATTE_NUM_STREAMOUT_BUFFER; i++) {
+            if (!s->dec->streamoutBufferWriteMask[i]) continue;
+            aux = (aux << 7) | (aux >> 57);
+            aux += regs[mmVGT_STRMOUT_VTX_STRIDE_0 + i * 4];
+        }
+    for (uint8_t i = 0; i < s->dec->textureUnitListCount; i++) {
+        const uint32_t word4 = regs[REGADDR::SQ_TEX_RESOURCE_WORD0_N_VS + s->dec->textureUnitList[i] * 7 + 4];
+        if ((word4 & 0x300) == 0x100) {  // integer format
+            auxTex = (auxTex << 7) | (auxTex >> 57);
+            auxTex += 0x333;
+        }
+    }
+    static const bool log = getenv("WWHD_SHADER_HASH_LOG") != nullptr;  // debug: the hash's parts
+    if (log)
+        LOG("[gfx] vertex shader %08X parts: prog %016llx fs %016llx psin %016llx vte %08X prim %X strmout %X clip %08X",
+            addr, (unsigned long long)cemu_program_hash(addr, size), (unsigned long long)fs->key,
+            (unsigned long long)LatteSHRC_GetPSInputTable()->key, regs[REGADDR::PA_CL_VTE_CNTL], prim, regs[mmVGT_STRMOUT_EN],
+            regs[REGADDR::PA_CL_CLIP_CNTL]);
+    use_pack_shader(s, base, aux + auxTex, 'v', addr);
+}
+
+static void pack_pixel_shader(Shader* s, const uint32_t* regs, uint32_t addr, uint32_t size) {
+    const uint64_t base = cemu_program_hash(addr, size) + LatteSHRC_GetPSInputTable()->key;  // (no geometry shaders in this game)
+    uint64_t aux = 0;
+    aux += regs[mmCB_SHADER_MASK];
+    const uint32_t alpha = regs[REGADDR::SX_ALPHA_TEST_CONTROL];
+    if ((alpha >> 3) & 1) {
+        aux += alpha & 7;
+        aux = (aux >> 3) | (aux << 61);
+        aux += 1;
+    }
+    for (uint8_t i = 0; i < s->dec->textureUnitListCount; i++) {
+        const uint32_t word0 = regs[REGADDR::SQ_TEX_RESOURCE_WORD0_N_PS + s->dec->textureUnitList[i] * 7];
+        aux = (aux << 3) | (aux >> 61);
+        aux += word0 & 7;
+    }
+    use_pack_shader(s, base, aux, 'p', addr);
+}
+
+static Shader* get_shader_uncached(const uint32_t* regs, bool vertex, LatteFetchShader* fs, uint64_t fsKey, const PsLink& link) {
+    uint32_t addr = regs[vertex ? mmSQ_PGM_START_VS : mmSQ_PGM_START_PS] << 8;
+    uint32_t size = regs[(vertex ? mmSQ_PGM_START_VS : mmSQ_PGM_START_PS) + 1] << 3;
+    uint64_t base = 0;
+    uint64_t key = shader_key(regs, vertex, fsKey, link, &base);
+    if (!key) return nullptr;
     ShaderHot& hot = shader_hot(key);
     g_shader_lookups++;
-    if (hot.s && hot.key == key) return hot.s;
+    if (hot.s && hot.key == key) { mark_used(hot.s); return hot.s; }
     g_shader_map_lookups++;
     auto it = g_shaders.find(key);
     if (it != g_shaders.end()) {
         hot = {key, it->second};
+        mark_used(it->second);
         return it->second;
     }
 
@@ -775,6 +970,7 @@ static Shader* get_shader_uncached(const uint32_t* regs, bool vertex, LatteFetch
     s->vertex = vertex;
     g_shaders[key] = s;
     hot = {key, s};
+    mark_used(s);
     double t0 = now_ms();
     LatteShader_UpdatePSInputs((uint32*)regs);
     LatteDecompilerOptions opt;
@@ -797,8 +993,10 @@ static Shader* get_shader_uncached(const uint32_t* regs, bool vertex, LatteFetch
         return s;
     }
     s->dec = FinishDecompiledShader(out);
+    if (vertex) pack_vertex_shader(s, regs, addr, size, fs);
+    else pack_pixel_shader(s, regs, addr, size);
     create_set_layout(s);
-    cache_record_shader(regs, vertex);
+    cache_record_shader(regs, vertex, link);
     g_t_decompile += now_ms() - t0;
     // debug: WWHD_DUMP_SHADERS=1 writes the translated GLSL to ./shaders, =/some/dir there
     if (const char* dump = getenv("WWHD_DUMP_SHADERS")) {
@@ -1269,9 +1467,15 @@ void set_aniso(bool v) { g_aniso = v; LOG("[gfx] anisotropic filtering %s", v ? 
 // allowAniso: the bound texture is a real mipmapped asset (not a buffer the GPU rendered); the game also
 // reads its screen-sized lighting/occlusion buffers through mip-filtering samplers, and anisotropy there
 // blurs the screen-space effects
-static VkSampler get_sampler(const uint32_t* w, bool allowAniso = false, bool nearestOnly = false) {
-    const bool anisoForce = allowAniso && aniso_enabled() && !nearestOnly;
+// pack: the mod packs' texture rules for the bound texture (packs.h; anisotropy, LOD bias), or null
+static VkSampler get_sampler(const uint32_t* w, bool allowAniso = false, bool nearestOnly = false,
+                             const packs::TextureOverride* pack = nullptr) {
+    const bool anisoForce = allowAniso && aniso_enabled() && !nearestOnly && !(pack && pack->anisotropy >= 0);
     uint64_t h = hash_bytes(w, 12) ^ (anisoForce ? 0x5A5A5A5A5A5A5A5Aull : 0) ^ (nearestOnly ? 0x4E4E4E4E00000000ull : 0);
+    if (pack) {
+        const int32_t f[5] = {pack->anisotropy, pack->hasLodBias, pack->hasRelativeLodBias, pack->lodBias, pack->relativeLodBias};
+        h = hash_bytes(f, sizeof f, h);
+    }
     auto it = g_samplers.find(h);
     if (it != g_samplers.end()) return it->second;
     LATTE_SQ_TEX_SAMPLER_WORD0_0 w0;
@@ -1293,7 +1497,9 @@ static VkSampler get_sampler(const uint32_t* w, bool allowAniso = false, bool ne
         d.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
     }
     float maxAniso = 1.0f;
-    if (uint32_t aniso = w0.get_MAX_ANISO_RATIO()) maxAniso = (float)std::min(1u << aniso, 16u);
+    uint32_t anisoRatio = (uint32_t)w0.get_MAX_ANISO_RATIO();
+    if (pack && pack->anisotropy >= 0) anisoRatio = (uint32_t)pack->anisotropy;  // a pack's level instead of the game's
+    if (anisoRatio) maxAniso = (float)std::min(1u << anisoRatio, 16u);
     if (anisoForce && mip != 0 && d.minFilter == VK_FILTER_LINEAR && (uint32_t)w0.get_DEPTH_COMPARE_FUNCTION() == 0) maxAniso = 16;
     if (maxAniso > 1.0f && R.features.samplerAnisotropy) {
         d.anisotropyEnable = VK_TRUE;
@@ -1311,6 +1517,22 @@ static VkSampler get_sampler(const uint32_t* w, bool allowAniso = false, bool ne
     } else {
         d.minLod = w1.get_MIN_LOD() / 64.0f;
         d.maxLod = std::max(d.minLod, w1.get_MAX_LOD() / 64.0f);
+    }
+    // a pack's LOD bias (as Cemu: the game's own bias plus the relative one, or the absolute one; without a
+    // pack rule the game's bias stays unused, as before)
+    if (pack && (pack->hasLodBias || pack->hasRelativeLodBias)) {
+        int bias = (int)w1.get_LOD_BIAS();
+        if (pack->hasRelativeLodBias) bias += pack->relativeLodBias;
+        if (pack->hasLodBias) bias = pack->lodBias;
+        const float lim = R.props.limits.maxSamplerLodBias;
+        d.mipLodBias = std::clamp(bias / 64.0f, -lim, lim);
+    }
+    if (pack) {  // shows the rules reach the GPU (the first few samplers they change)
+        static std::atomic<int> changed{0};
+        int n = ++changed;
+        if (n <= 3 || n == 100)
+            LOG("[gfx] mod pack texture rule: sampler %d at %gx anisotropy, LOD bias %+.2f", n, d.anisotropyEnable ? d.maxAnisotropy : 1.0f,
+                d.mipLodBias);
     }
     uint32_t border = (uint32_t)w0.get_BORDER_COLOR_TYPE();
     d.borderColor = border == 1 ? VK_BORDER_COLOR_FLOAT_OPAQUE_BLACK
@@ -1493,6 +1715,7 @@ struct StageTextures {
     float unitScaleY[LATTE_NUM_MAX_TEX_UNITS]; // ... (y; differs from x for aspect-widened targets)
     Image* sampled[LATTE_NUM_MAX_TEX_UNITS];   // by binding: the image to prepare for sampling (prepare_sampled)
     int count = 0;
+    bool tvPicture = false;  // samples a rendered buffer of the TV picture's shape (and size)
 };
 
 // Every sampled image goes to its shader-read layout once all textures of the draw are resolved:
@@ -1524,6 +1747,7 @@ static void resolve_textures(const uint32_t* regs, Shader* sh, bool vertex, Surf
     uint32_t samplerBase = vertex ? SAMPLER_BASE_INDEX_VERTEX : SAMPLER_BASE_INDEX_PIXEL;
     for (int u = 0; u < LATTE_NUM_MAX_TEX_UNITS; u++) out.unitScale[u] = out.unitScaleY[u] = 1.0f;
     out.count = rm.getTextureCount();
+    out.tvPicture = false;
     for (sint32 i = 0; i < rm.getTextureCount(); i++) {
         out.view[i] = VK_NULL_HANDLE;
         out.sampler[i] = VK_NULL_HANDLE;
@@ -1553,6 +1777,8 @@ static void resolve_textures(const uint32_t* regs, Shader* sh, bool vertex, Surf
             out.sampled[i] = &s->img;  // prepared once the draw's textures are all resolved (prepare_sampled)
             out.unitScale[unit] = s->rscale * s->ax;
             out.unitScaleY[unit] = s->rscale * s->ay;
+            // a rendered picture (layouts also draw with 16:9 textures from the game files, 800x450)
+            if (s->gpuWritten && s->width >= 640 && target_is_tv(s->width, s->height)) out.tvPicture = true;
         }
         else v = null_texture(type == VK_IMAGE_VIEW_TYPE_CUBE_ARRAY && !R.features.imageCubeArray ? VK_IMAGE_VIEW_TYPE_CUBE : type);
         out.view[i] = v;
@@ -1572,7 +1798,8 @@ static void resolve_textures(const uint32_t* regs, Shader* sh, bool vertex, Surf
         LATTE_SQ_TEX_SAMPLER_WORD0_0 sw0;
         memcpy(&sw0, &sw[0], 4);
         const bool nearestOnly = v && s && (uint32_t)sw0.get_DEPTH_COMPARE_FUNCTION() == 0 && !filters_linear(s->img.format);
-        out.sampler[i] = get_sampler(sw, s && !s->gpuWritten && s->mips > 1, nearestOnly);
+        const packs::TextureOverride* pack = s ? packs::texture_override(s->format, s->tileMode, s->width, s->height, s->slices, s->addr) : nullptr;
+        out.sampler[i] = get_sampler(sw, s && !s->gpuWritten && s->mips > 1, nearestOnly, pack);
     }
 }
 
@@ -2023,9 +2250,10 @@ static bool draw_indices(uint32_t prim, uint32_t count, uint32_t indexType, uint
 // as the macOS build; pipeline records have their own type since Vulkan pipelines carry more state.
 // WWHD_SHADER_CACHE=<file> overrides the location, WWHD_SHADER_CACHE=0 disables it.
 namespace {
-constexpr uint32_t kRecShader = 1, kRecPipelineVk = 4;
+// kRecShaderLinked: a pixel shader translated for a vertex shader that leaves some of its inputs
+// unfed (PsLink.unfed); the record ends with that vertex shader's output mask
+constexpr uint32_t kRecShader = 1, kRecPipelineVk = 4, kRecShaderLinked = 5;
 FILE* g_cache_out = nullptr;
-bool g_cache_replaying = false;
 bool g_cache_disabled = false;
 
 struct PipelineRecipe {
@@ -2072,11 +2300,13 @@ template <class T> bool get(const uint8_t*& p, const uint8_t* end, T& x) {
 uint32_t fetch_shader_size(const uint32_t* regs) {
     uint32_t prog = regs[mmSQ_PGM_START_FS] << 8;
     if (!prog) return 0;
-    return ld32(prog) == 0x57574653 ? 16 + ld32(prog + 4) * 16 : regs[mmSQ_PGM_START_FS + 1] << 3;
+    if (ld32(prog) == kFetchOurs) return 16 + ld32(prog + 4) * 16;
+    if (ld32(prog) == kFetchCodeFree) return ld32(prog + 4);
+    return regs[mmSQ_PGM_START_FS + 1] << 3;
 }
 }  // namespace
 
-static void cache_record_shader(const uint32_t* regs, bool vertex) {
+static void cache_record_shader(const uint32_t* regs, bool vertex, const PsLink& link) {
     if (g_cache_replaying || !g_cache_out) return;
     uint32_t pgm = vertex ? mmSQ_PGM_START_VS : mmSQ_PGM_START_PS;
     uint32_t addr = regs[pgm] << 8, size = regs[pgm + 1] << 3;
@@ -2093,7 +2323,9 @@ static void cache_record_shader(const uint32_t* regs, bool vertex) {
     if (fsSize) v.insert(v.end(), mem::ptr(fsAddr), mem::ptr(fsAddr) + fsSize);
     for (uint32_t r = 0; r < 0x10000; r++)
         if (regs[r] && cache_saves_reg(r)) { put(v, r); put(v, regs[r]); }
-    cache_write(kRecShader, v);
+    bool linked = !vertex && link.unfed;
+    if (linked) put(v, link.vsMask);
+    cache_write(linked ? kRecShaderLinked : kRecShader, v);
 }
 
 static void cache_record_pipeline(const uint32_t* regs, Shader* vs, Shader* ps, uint64_t fsKey, const PipelineState& st) {
@@ -2121,6 +2353,373 @@ void cache_progress(uint64_t out[4]) {
 }
 
 // load and replay the recipes; runs once on the render thread before the first draw
+// Translate one recorded state (cache or head start): regs hold its registers; the program and the
+// fetch shader go to guest memory so the normal translation path can read them. One host-only
+// scratch buffer is reused: translation keeps no pointer into it, and a buffer per record would run
+// out of guest memory for a large cache (100k+ variants). Null for a vertex shader without a usable
+// fetch shader.
+struct ReplaySetup {
+    bool ok = false;  // false: a vertex shader without a usable fetch shader
+    LatteFetchShader* fs = nullptr;
+    uint64_t fsKey = 0, key = 0;
+    PsLink link;
+};
+static ReplaySetup replay_setup(uint32_t* regs, bool vertex, const uint8_t* code, uint32_t size, const uint8_t* fsBytes,
+                                uint32_t fsSize, bool linked, uint32_t vsMask) {
+    static uint32_t scratch = 0, scratchSize = 0;
+    uint32_t need = ((size + 0xFF) & ~0xFFu) + fsSize;
+    if (need > scratchSize) {
+        scratchSize = std::max<uint32_t>(need * 2, 0x10000);
+        scratch = mem::host_alloc(scratchSize, 0x100);
+    }
+    uint32_t prog = scratch;
+    memcpy(mem::ptr(prog), code, size);
+    uint32_t fsProg = 0;
+    if (fsSize) {
+        fsProg = scratch + ((size + 0xFF) & ~0xFFu);
+        memcpy(mem::ptr(fsProg), fsBytes, fsSize);
+    }
+    // program_hash remembers hashes by address within a frame: forget the scratch buffer's, or a
+    // record whose program has the size of the previous one would get its hash (and the previous
+    // program's key: a wrong shader for a live draw, e.g. a black sky)
+    g_program_hashes.erase(prog);
+    program_hot(prog).addr = 0;
+    g_fetch_last.frame = ~0ull;
+    if (fsSize) {
+        g_program_hashes.erase(fsProg);
+        program_hot(fsProg).addr = 0;
+    }
+    regs[vertex ? mmSQ_PGM_START_VS : mmSQ_PGM_START_PS] = prog >> 8;
+    if (fsSize) regs[mmSQ_PGM_START_FS] = fsProg >> 8;
+    ReplaySetup r;
+    r.fs = vertex ? get_fetch_shader(regs, &r.fsKey) : nullptr;
+    if (vertex && !r.fs) return r;
+    r.link = linked ? ps_link_mask(regs, vsMask) : PsLink{};
+    r.key = shader_key(regs, vertex, r.fsKey, r.link);
+    r.ok = true;
+    return r;
+}
+static Shader* replay_state(uint32_t* regs, bool vertex, const uint8_t* code, uint32_t size, const uint8_t* fsBytes,
+                            uint32_t fsSize, bool linked, uint32_t vsMask) {
+    ReplaySetup r = replay_setup(regs, vertex, code, size, fsBytes, fsSize, linked, vsMask);
+    return r.ok ? get_shader_uncached(regs, vertex, r.fs, r.fsKey, r.link) : nullptr;
+}
+
+// ---- template export (WWHD_TEMPLATE_EXPORT=1): the replayed cache as a code-free head-start
+// template, template.bin next to the cache. It holds no shader code: per shader state the program's
+// hash and size, the registers, the fetch shader in our own or the code-free encoding and the key
+// the state gave here; then the pipeline recipes whose shaders all resolved. A device rebuilds the
+// records from the programs in its own game files.
+//   "WWHV", u32 version 1, u32 raw size, zlib( u32 nfetch, {u32 size, bytes}*, u32 nstates,
+//   {u64 key, u64 program hash, u32 program size, u32 kind (0 PS, 1 VS, 2 PS linked), i32 fetch,
+//    u32 vertex shader output mask, u32 nregs, (u32 reg, u32 value)*}*, u32 npipelines, PipelineRecipe* )
+namespace {
+struct ExportRec { long at; uint32_t type; };
+struct ExportPs { uint64_t key; long at; uint32_t regs[43]; };  // unlinked pixel shader records
+constexpr uint32_t kExportPsRegs[43] = {
+    mmSPI_PS_IN_CONTROL_0, mmSPI_VS_OUT_ID_0, mmSPI_VS_OUT_ID_0 + 1, mmSPI_VS_OUT_ID_0 + 2, mmSPI_VS_OUT_ID_0 + 3,
+    mmSPI_VS_OUT_ID_0 + 4, mmSPI_VS_OUT_ID_0 + 5, mmSPI_VS_OUT_ID_0 + 6, mmSPI_VS_OUT_ID_0 + 7, mmSPI_VS_OUT_ID_0 + 8,
+    mmSPI_VS_OUT_ID_0 + 9, mmSPI_PS_INPUT_CNTL_0, mmSPI_PS_INPUT_CNTL_0 + 1, mmSPI_PS_INPUT_CNTL_0 + 2,
+    mmSPI_PS_INPUT_CNTL_0 + 3, mmSPI_PS_INPUT_CNTL_0 + 4, mmSPI_PS_INPUT_CNTL_0 + 5, mmSPI_PS_INPUT_CNTL_0 + 6,
+    mmSPI_PS_INPUT_CNTL_0 + 7, mmSPI_PS_INPUT_CNTL_0 + 8, mmSPI_PS_INPUT_CNTL_0 + 9, mmSPI_PS_INPUT_CNTL_0 + 10,
+    mmSPI_PS_INPUT_CNTL_0 + 11, mmSPI_PS_INPUT_CNTL_0 + 12, mmSPI_PS_INPUT_CNTL_0 + 13, mmSPI_PS_INPUT_CNTL_0 + 14,
+    mmSPI_PS_INPUT_CNTL_0 + 15, mmSPI_PS_INPUT_CNTL_0 + 16, mmSPI_PS_INPUT_CNTL_0 + 17, mmSPI_PS_INPUT_CNTL_0 + 18,
+    mmSPI_PS_INPUT_CNTL_0 + 19, mmSPI_PS_INPUT_CNTL_0 + 20, mmSPI_PS_INPUT_CNTL_0 + 21, mmSPI_PS_INPUT_CNTL_0 + 22,
+    mmSPI_PS_INPUT_CNTL_0 + 23, mmSPI_PS_INPUT_CNTL_0 + 24, mmSPI_PS_INPUT_CNTL_0 + 25, mmSPI_PS_INPUT_CNTL_0 + 26,
+    mmSPI_PS_INPUT_CNTL_0 + 27, mmSPI_PS_INPUT_CNTL_0 + 28, mmSPI_PS_INPUT_CNTL_0 + 29, mmSPI_PS_INPUT_CNTL_0 + 30,
+    mmSPI_PS_INPUT_CNTL_0 + 31};
+struct Exporter {
+    std::unordered_map<uint64_t, ExportRec> byKey;  // first record that gave a key
+    std::unordered_map<uint64_t, uint32_t> linkMask;  // pixel shader keys found linked (old records)
+    std::vector<ExportPs> ps;
+};
+Exporter* g_export = nullptr;
+
+bool read_record(FILE* f, long at, uint32_t& type, std::vector<uint8_t>& raw) {
+    uint32_t hdr[3];
+    if (fseek(f, at, SEEK_SET) != 0 || fread(hdr, sizeof hdr, 1, f) != 1) return false;
+    std::vector<uint8_t> comp(hdr[2]);
+    raw.resize(hdr[1]);
+    if (fread(comp.data(), 1, hdr[2], f) != hdr[2]) return false;
+    uLongf rsize = hdr[1];
+    type = hdr[0];
+    return uncompress(raw.data(), &rsize, comp.data(), hdr[2]) == Z_OK && rsize == hdr[1];
+}
+
+template <class T> void put_le(std::vector<uint8_t>& v, T x) {
+    const uint8_t* p = (const uint8_t*)&x;
+    v.insert(v.end(), p, p + sizeof x);
+}
+}  // namespace
+
+// the parse results the translation uses (not vkPipelineHashFragment: unused, and it hashes padding)
+static bool same_fetch(const LatteFetchShader& a, const LatteFetchShader& b) {
+    if (a.key != b.key || a.attributeBufferMask != b.attributeBufferMask) return false;
+    auto same_groups = [](const std::vector<LatteParsedFetchShaderBufferGroup>& x, const std::vector<LatteParsedFetchShaderBufferGroup>& y) {
+        if (x.size() != y.size()) return false;
+        for (size_t g = 0; g < x.size(); g++) {
+            const auto &p = x[g], &q = y[g];
+            if (p.attributeBufferIndex != q.attributeBufferIndex || p.attribCount != q.attribCount ||
+                p.hasVtxIndexAccess != q.hasVtxIndexAccess || p.hasInstanceIndexAccess != q.hasInstanceIndexAccess ||
+                p.minOffset != q.minOffset || p.totalAttribRangeSize != q.totalAttribRangeSize)
+                return false;
+            for (int i = 0; i < p.attribCount; i++) {
+                const auto &s = p.attrib[i], &t = q.attrib[i];
+                if (s.attributeBufferIndex != t.attributeBufferIndex || s.semanticId != t.semanticId || s.format != t.format ||
+                    s.fetchType != t.fetchType || s.nfa != t.nfa || s.isSigned != t.isSigned || s.endianSwap != t.endianSwap ||
+                    memcmp(s.ds, t.ds, 4) || s.aluDivisor != t.aluDivisor || s.offset != t.offset)
+                    return false;
+            }
+        }
+        return true;
+    };
+    return same_groups(a.bufferGroups, b.bufferGroups) && same_groups(a.bufferGroupsInvalid, b.bufferGroupsInvalid);
+}
+
+static void template_export(const std::string& cachePath) {
+    Exporter& E = *g_export;
+    double t0 = now_ms();
+    // the distinct pipeline recipes, and which of their shaders resolve
+    std::vector<PipelineRecipe> pipes;
+    {
+        std::unordered_set<std::string> seen;
+        for (auto& r : g_pending_pipelines)
+            if (seen.insert(std::string((const char*)&r, sizeof r)).second) pipes.push_back(r);
+    }
+    auto shader_ok = [&](uint64_t key) {
+        auto it = g_shaders.find(key);
+        return it != g_shaders.end() && shader_state(it->second) != CS_FAILED && E.byKey.count(key);
+    };
+    // pixel shaders recorded before kRecShaderLinked: their key here lacks the link. Find the record
+    // whose key with the pipeline's vertex shader's link is the wanted one.
+    std::unordered_map<uint32_t, std::unordered_set<uint64_t>> wanted;  // vertex output mask -> pixel shader keys
+    for (auto& r : pipes)
+        if (shader_ok(r.vsKey) && !shader_ok(r.psKey) && !E.byKey.count(r.psKey) && g_shaders[r.vsKey]->dec)
+            wanted[g_shaders[r.vsKey]->dec->outputParameterMask].insert(r.psKey);
+    size_t linkedFound = 0;
+    {
+        static std::vector<uint32_t> regs(0x10000);
+        for (auto& [mask, keys] : wanted)
+            for (auto& p : E.ps) {
+                for (int i = 0; i < 43; i++) regs[kExportPsRegs[i]] = p.regs[i];
+                PsLink link = ps_link_mask(regs.data(), mask);
+                if (!link.unfed) continue;
+                uint64_t key = p.key ^ link.key * 37;
+                if (!keys.count(key) || E.byKey.count(key)) continue;
+                E.byKey[key] = {p.at, kRecShader};
+                E.linkMask[key] = mask;
+                linkedFound++;
+            }
+    }
+    size_t noVs = 0, noPs = 0, noFs = 0;
+    std::vector<const PipelineRecipe*> good;
+    std::vector<uint64_t> keys;
+    std::unordered_set<uint64_t> keySet;
+    for (auto& r : pipes) {
+        bool vs = shader_ok(r.vsKey);
+        bool ps = E.linkMask.count(r.psKey) || shader_ok(r.psKey);
+        bool fs = g_fetch.count(r.fsKey) && g_fetch[r.fsKey];
+        noVs += !vs;
+        noPs += vs && !ps;
+        noFs += vs && ps && !fs;
+        if (!vs || !ps || !fs) continue;
+        good.push_back(&r);
+        for (uint64_t k : {r.vsKey, r.psKey})
+            if (keySet.insert(k).second) keys.push_back(k);
+    }
+    // the states
+    FILE* f = fopen(cachePath.c_str(), "rb");
+    if (!f) return;
+    std::vector<uint8_t> out;
+    std::vector<std::vector<uint8_t>> fetches;
+    std::map<std::vector<uint8_t>, int32_t> fetchIndex;
+    std::vector<uint8_t> states;
+    size_t nStates = 0, codeFree = 0, fetchMismatch = 0, bad = 0;
+    static std::vector<uint32_t> regs(0x10000);
+    uint32_t scratch = mem::host_alloc(0x2000, 0x100);
+    std::vector<uint8_t> raw;
+    for (uint64_t key : keys) {
+        const ExportRec& rec = E.byKey[key];
+        uint32_t type;
+        if (!read_record(f, rec.at, type, raw) || raw.size() < 16) { bad++; continue; }
+        uint32_t vertex, size, fsSize, n;
+        memcpy(&vertex, &raw[0], 4);
+        memcpy(&size, &raw[4], 4);
+        memcpy(&fsSize, &raw[8], 4);
+        memcpy(&n, &raw[12], 4);
+        if (16 + (size_t)size + fsSize + n * 8ull > raw.size() || fsSize > 0x1000) { bad++; continue; }
+        const uint8_t* code = &raw[16];
+        const uint8_t* fsBytes = code + size;
+        const uint8_t* rp = fsBytes + fsSize;
+        std::fill(regs.begin(), regs.end(), 0);
+        for (uint32_t i = 0; i < n; i++) {
+            uint32_t r, v;
+            memcpy(&r, rp + i * 8, 4);
+            memcpy(&v, rp + i * 8 + 4, 4);
+            regs[r & 0xFFFF] = v;
+        }
+        uint32_t mask = 0, kind = vertex ? 1 : 0;
+        if (type == kRecShaderLinked) {
+            memcpy(&mask, rp + n * 8, 4);
+            kind = 2;
+        } else if (E.linkMask.count(key)) {
+            mask = E.linkMask[key];
+            kind = 2;
+        }
+        int32_t fi = -1;
+        if (vertex && fsSize) {
+            std::vector<uint8_t> payload(fsBytes, fsBytes + fsSize);
+            if (((uint32_t)fsBytes[0] << 24 | fsBytes[1] << 16 | fsBytes[2] << 8 | fsBytes[3]) != kFetchOurs) {
+                // real microcode: parse it as get_fetch_shader would and keep only the result
+                memcpy(mem::ptr(scratch), fsBytes, fsSize);
+                regs[mmSQ_PGM_START_FS] = scratch >> 8;
+                const uint64_t ph = hash_bytes(fsBytes, fsSize);
+                LatteFetchShader* a = LatteShaderRecompiler_createFetchShader(ph, regs.data(), (uint32*)mem::ptr(scratch), fsSize);
+                payload = fetch_code_free(a, ph);
+                memcpy(mem::ptr(scratch), payload.data(), payload.size());
+                LatteFetchShader* b = fetch_from_code_free(scratch, ph);
+                if (!b || !same_fetch(*a, *b)) fetchMismatch++;
+                codeFree++;
+            }
+            auto it = fetchIndex.find(payload);
+            if (it == fetchIndex.end()) {
+                it = fetchIndex.emplace(payload, (int32_t)fetches.size()).first;
+                fetches.push_back(payload);
+            }
+            fi = it->second;
+        }
+        put_le(states, key);
+        put_le(states, hash_bytes(code, size));
+        put_le(states, size);
+        put_le(states, kind);
+        put_le(states, fi);
+        put_le(states, mask);
+        const size_t countAt = states.size();
+        put_le(states, (uint32_t)0);
+        uint32_t kept = 0;
+        for (uint32_t i = 0; i < n; i++) {
+            uint32_t r, v;
+            memcpy(&r, rp + i * 8, 4);
+            memcpy(&v, rp + i * 8 + 4, 4);
+            if (r == mmSQ_PGM_START_VS || r == mmSQ_PGM_START_PS || r == mmSQ_PGM_START_FS) continue;  // addresses
+            put_le(states, r);
+            put_le(states, v);
+            kept++;
+        }
+        memcpy(&states[countAt], &kept, 4);
+        nStates++;
+    }
+    fclose(f);
+    put_le(out, (uint32_t)fetches.size());
+    for (auto& p : fetches) {
+        put_le(out, (uint32_t)p.size());
+        out.insert(out.end(), p.begin(), p.end());
+    }
+    put_le(out, (uint32_t)nStates);
+    out.insert(out.end(), states.begin(), states.end());
+    put_le(out, (uint32_t)good.size());
+    for (auto* r : good) put_le(out, *r);
+    uLongf csize = compressBound(out.size());
+    std::vector<uint8_t> comp(csize);
+    if (compress2(comp.data(), &csize, out.data(), out.size(), 9) != Z_OK) return;
+    std::string dir = cachePath.substr(0, cachePath.find_last_of('/') + 1);
+    std::string path = dir + "template.bin";
+    if (FILE* o = fopen(path.c_str(), "wb")) {
+        fwrite("WWHV", 4, 1, o);
+        uint32_t hdr[2] = {1, (uint32_t)out.size()};
+        fwrite(hdr, sizeof hdr, 1, o);
+        fwrite(comp.data(), 1, csize, o);
+        fclose(o);
+    }
+    LOG("[gfx] template export: %zu pipelines (%zu distinct): %zu kept, unresolved %zu vertex / %zu pixel / %zu fetch; "
+        "%zu linked pixel shaders found in old records; %zu states (%zu unreadable), %zu fetch shaders (%zu states with code-free "
+        "ones, %zu mismatches); %zu bytes raw, %lu written to %s (%.0f ms)",
+        g_pending_pipelines.size(), pipes.size(), good.size(), noVs, noPs, noFs, linkedFound, nStates, bad, fetches.size(),
+        codeFree, fetchMismatch, out.size(), (unsigned long)csize + 12, path.c_str(), now_ms() - t0);
+}
+
+// ---- usage and compaction: shaders.bin keeps every variant ever translated (the key holds state of
+// both stages, so ~200k-550k variants of ~7.6k programs over many sessions; replaying them took 10-30 s
+// at every start). shaders.bin.use holds the keys the game used and the session they were last used in:
+//   "WWHU", u32 version 1, u32 sessions counted, u32 n, {u64 key, u32 session}*
+// A session counts once it played 5 minutes (the first save). After WWHD_CACHE_KEEP_SESSIONS (default 6;
+// 0 keeps everything) counted sessions, the replay skips the variants none of the last ones used and
+// rewrites the file without them. The head start brings back what its template covers; any other
+// dropped variant is translated again (~0.3 ms) and recorded when the game uses it.
+namespace {
+std::unordered_map<uint64_t, uint32_t> g_use;  // key -> the counted session it was last used in
+uint32_t g_use_session = 0;                   // this session's number once it counts
+std::string g_use_path;
+size_t g_used_merged = 0;                     // g_used_keys entries in g_use
+std::atomic<bool> g_use_writing{false};
+double g_use_saved_at = 0;
+
+uint32_t cache_keep_sessions() {
+    static const uint32_t n = getenv("WWHD_CACHE_KEEP_SESSIONS") ? (uint32_t)atoi(getenv("WWHD_CACHE_KEEP_SESSIONS")) : 6;
+    return n;
+}
+
+// returns the sessions counted so far; g_use gets the keys used in the last cache_keep_sessions() of them
+uint32_t shader_use_load(const std::string& path) {
+    FILE* f = fopen(path.c_str(), "rb");
+    if (!f) return 0;
+    uint32_t hdr[4] = {};
+    uint32_t sessions = 0;
+    if (fread(hdr, sizeof hdr, 1, f) == 1 && !memcmp(hdr, "WWHU", 4) && hdr[1] == 1) {
+        sessions = hdr[2];
+        const uint32_t keep = cache_keep_sessions();
+        std::vector<uint8_t> raw((size_t)hdr[3] * 12);
+        if (fread(raw.data(), 1, raw.size(), f) == raw.size()) {
+            g_use.reserve(hdr[3]);
+            for (size_t i = 0; i < hdr[3]; i++) {
+                uint64_t key;
+                uint32_t last;
+                memcpy(&key, &raw[i * 12], 8);
+                memcpy(&last, &raw[i * 12 + 8], 4);
+                if (!keep || last + keep > sessions) g_use[key] = last;
+            }
+        }
+    }
+    fclose(f);
+    return sessions;
+}
+
+void shader_use_write(std::vector<uint8_t> data, std::string path) {
+    std::string tmp = path + ".tmp";
+    if (FILE* f = fopen(tmp.c_str(), "wb")) {
+        bool ok = fwrite(data.data(), 1, data.size(), f) == data.size();
+        ok = fclose(f) == 0 && ok;
+        if (ok) rename(tmp.c_str(), path.c_str());
+        else remove(tmp.c_str());
+    }
+    g_use_writing = false;
+}
+}  // namespace
+
+// every 5 minutes of play (WWHD_CACHE_USE_SAVE_S) with new variants used: merge them and write the file (on its own thread)
+static void shader_use_save() {
+    if (g_use_path.empty() || g_use_writing || g_used_merged == g_used_keys.size()) return;
+    const double now = now_ms();
+    static const double every = (getenv("WWHD_CACHE_USE_SAVE_S") ? atof(getenv("WWHD_CACHE_USE_SAVE_S")) : 300) * 1000;
+    if (now - g_use_saved_at < every) return;
+    g_use_saved_at = now;
+    for (; g_used_merged < g_used_keys.size(); g_used_merged++) g_use[g_used_keys[g_used_merged]] = g_use_session;
+    std::vector<uint8_t> data(16 + g_use.size() * 12);
+    uint32_t hdr[4] = {0, 1, g_use_session, (uint32_t)g_use.size()};
+    memcpy(hdr, "WWHU", 4);
+    memcpy(data.data(), hdr, 16);
+    size_t at = 16;
+    for (auto& [key, last] : g_use) {
+        memcpy(&data[at], &key, 8);
+        memcpy(&data[at + 8], &last, 4);
+        at += 12;
+    }
+    g_use_writing = true;
+    std::thread(shader_use_write, std::move(data), g_use_path).detach();
+    LOG("[gfx] shader cache: %zu variants used this session, %zu in the last %u sessions", g_used_keys.size(), g_use.size(),
+        cache_keep_sessions());
+}
+
 static void cache_load() {
     struct Done { ~Done() { g_cache_state = 2; } } done;  // on every way out
     g_cache_state = 1;
@@ -2129,7 +2728,19 @@ static void cache_load() {
     size_t slash = path.find_last_of('/');
     spirv_cache_open(slash == std::string::npos ? std::string(".") : path.substr(0, slash));
     double t0 = now_ms();
+    g_use_saved_at = t0;
+    g_use_path = path + ".use";
+    const uint32_t sessions = shader_use_load(g_use_path);
+    g_use_session = sessions + 1;
     size_t shaders = 0, pipelines = 0;
+    // compaction: the records to keep (offset, bytes), the variants they give, what was dropped
+    const bool compact = cache_keep_sessions() && sessions >= cache_keep_sessions() && !getenv("WWHD_TEMPLATE_EXPORT");
+    struct Kept { long at; uint32_t bytes; };
+    std::vector<Kept> kept;
+    std::vector<std::pair<PipelineRecipe, Kept>> pipeRecs;
+    std::unordered_set<uint64_t> keptKeys;
+    size_t dropped = 0;
+    uint64_t droppedBytes = 0, fileBytes = 0;
     if (FILE* f = fopen(path.c_str(), "rb")) {
         if (fseek(f, 0, SEEK_END) == 0) {
             long size = ftell(f);
@@ -2139,51 +2750,34 @@ static void cache_load() {
         static std::vector<uint32_t> regs(0x10000);
         g_cache_replaying = true;
         g_defer_compiles = true;
+        static Exporter exporter;
+        if (getenv("WWHD_TEMPLATE_EXPORT")) g_export = &exporter;
         uint32_t hdr[3];
-        while (fread(hdr, sizeof hdr, 1, f) == 1) {
+        for (long recAt = 0; fread(hdr, sizeof hdr, 1, f) == 1; recAt = ftell(f)) {
             std::vector<uint8_t> comp(hdr[2]), raw(hdr[1]);
             if (fread(comp.data(), 1, hdr[2], f) != hdr[2]) break;
             uLongf rsize = hdr[1];
             if (uncompress(raw.data(), &rsize, comp.data(), hdr[2]) != Z_OK || rsize != hdr[1]) break;
             const uint8_t* p = raw.data();
             const uint8_t* end = p + raw.size();
+            const uint32_t recBytes = (uint32_t)sizeof hdr + hdr[2];
+            fileBytes = (uint64_t)recAt + recBytes;
             if (hdr[0] == kRecPipelineVk) {
                 PipelineRecipe r;
-                if (raw.size() == sizeof r && get(p, end, r)) { g_pending_pipelines.push_back(r); pipelines++; }
+                if (raw.size() == sizeof r && get(p, end, r)) {
+                    if (compact) pipeRecs.push_back({r, Kept{recAt, recBytes}});
+                    else g_pending_pipelines.push_back(r);
+                    pipelines++;
+                }
                 continue;
             }
-            if (hdr[0] != kRecShader) continue;
+            if (hdr[0] != kRecShader && hdr[0] != kRecShaderLinked) continue;
             uint32_t vertex, size, fsSize, n;
             if (!get(p, end, vertex) || !get(p, end, size) || !get(p, end, fsSize) || !get(p, end, n)) break;
-            if (p + size + fsSize + n * 8 > end) break;
-            // the microcode goes to guest memory so the normal translation path can read it. One
-            // host-only scratch buffer is reused: translation keeps no pointer into it, and a buffer
-            // per record would run out of guest memory for a large cache (100k+ variants)
-            static uint32_t scratch = 0, scratchSize = 0;
-            uint32_t need = ((size + 0xFF) & ~0xFFu) + fsSize;
-            if (need > scratchSize) {
-                scratchSize = std::max<uint32_t>(need * 2, 0x10000);
-                scratch = mem::host_alloc(scratchSize, 0x100);
-            }
-            uint32_t prog = scratch;
-            memcpy(mem::ptr(prog), p, size);
-            p += size;
-            uint32_t fsProg = 0;
-            if (fsSize) {
-                fsProg = scratch + ((size + 0xFF) & ~0xFFu);
-                memcpy(mem::ptr(fsProg), p, fsSize);
-                p += fsSize;
-            }
-            // program_hash remembers hashes by address within a frame: forget the scratch buffer's,
-            // or a record whose program has the size of the previous one would get its hash (and
-            // the previous program's key: a wrong shader for a live draw, e.g. a black sky)
-            g_program_hashes.erase(prog);
-            program_hot(prog).addr = 0;
-            g_fetch_last.frame = ~0ull;
-            if (fsSize) {
-                g_program_hashes.erase(fsProg);
-                program_hot(fsProg).addr = 0;
-            }
+            if (p + size + fsSize + n * 8 + (hdr[0] == kRecShaderLinked ? 4 : 0) > end) break;
+            const uint8_t* code = p;
+            const uint8_t* fsBytes = p + size;
+            p += size + fsSize;
             std::fill(regs.begin(), regs.end(), 0);
             for (uint32_t i = 0; i < n; i++) {
                 uint32_t r, val;
@@ -2191,26 +2785,91 @@ static void cache_load() {
                 get(p, end, val);
                 regs[r] = val;
             }
-            uint32_t pgm = vertex ? mmSQ_PGM_START_VS : mmSQ_PGM_START_PS;
-            regs[pgm] = prog >> 8;
-            if (fsSize) regs[mmSQ_PGM_START_FS] = fsProg >> 8;
-            uint64_t fsKey = 0;
-            LatteFetchShader* fs = vertex ? get_fetch_shader(regs.data(), &fsKey) : nullptr;
-            if (vertex && !fs) continue;
-            get_shader_uncached(regs.data(), vertex, fs, fsKey);
+            uint32_t mask = 0;
+            if (hdr[0] == kRecShaderLinked) get(p, end, mask);
+            ReplaySetup rs = replay_setup(regs.data(), vertex != 0, code, size, fsBytes, fsSize, hdr[0] == kRecShaderLinked, mask);
+            if (!rs.ok) continue;
+            if (compact) {
+                // not used lately, or a second record of a variant
+                if (!rs.key || !g_use.count(rs.key) || !keptKeys.insert(rs.key).second) {
+                    dropped++;
+                    droppedBytes += recBytes;
+                    continue;
+                }
+                kept.push_back({recAt, recBytes});
+            }
+            Shader* s = get_shader_uncached(regs.data(), vertex != 0, rs.fs, rs.fsKey, rs.link);
             shaders++;
+            if (g_export && s) {
+                g_export->byKey.emplace(s->key, ExportRec{recAt, hdr[0]});
+                if (!vertex && hdr[0] == kRecShader) {
+                    ExportPs e{s->key, recAt, {}};
+                    for (int i = 0; i < 43; i++) e.regs[i] = regs[kExportPsRegs[i]];
+                    g_export->ps.push_back(e);
+                }
+            }
             if ((shaders & 255) == 0) {
                 g_cache_shaders = shaders;
                 long at = ftell(f);
                 if (at > 0) g_cache_done = (uint64_t)at;
             }
         }
+        if (compact) {
+            // pipelines: once each, and only with both shaders kept (or used lately: head-start states)
+            std::unordered_set<std::string> seen;
+            size_t pipesKept = 0;
+            for (auto& [r, rec] : pipeRecs) {
+                auto usable = [&](uint64_t k) { return keptKeys.count(k) || g_use.count(k); };
+                if (!usable(r.vsKey) || !usable(r.psKey) || !seen.insert(std::string((const char*)&r, sizeof r)).second) {
+                    droppedBytes += rec.bytes;
+                    continue;
+                }
+                g_pending_pipelines.push_back(r);
+                kept.push_back(rec);
+                pipesKept++;
+            }
+            LOG("[gfx] shader cache: %zu variants kept (used in the last %u sessions), %zu dropped; %zu of %zu pipeline records "
+                "kept", keptKeys.size(), cache_keep_sessions(), dropped, pipesKept, pipeRecs.size());
+            pipeRecs = {};
+            // rewrite the file without the dropped records once they're worth it
+            if (droppedBytes >= (16u << 20) || droppedBytes * 5 >= fileBytes) {
+                double tc = now_ms();
+                std::string tmp = path + ".tmp";
+                bool ok = false;
+                uint64_t newBytes = 0;
+                if (FILE* o = fopen(tmp.c_str(), "wb")) {
+                    std::sort(kept.begin(), kept.end(), [](const Kept& a, const Kept& b) { return a.at < b.at; });
+                    std::vector<uint8_t> buf;
+                    ok = true;
+                    for (auto& k : kept) {
+                        buf.resize(k.bytes);
+                        if (fseek(f, k.at, SEEK_SET) != 0 || fread(buf.data(), 1, k.bytes, f) != k.bytes ||
+                            fwrite(buf.data(), 1, k.bytes, o) != k.bytes) { ok = false; break; }
+                        newBytes += k.bytes;
+                    }
+                    ok = fclose(o) == 0 && ok;
+                }
+                if (ok && rename(tmp.c_str(), path.c_str()) == 0)
+                    LOG("[gfx] shader cache compacted: %.1f -> %.1f MB (%.0f ms)", fileBytes / 1048576.0, newBytes / 1048576.0,
+                        now_ms() - tc);
+                else {
+                    remove(tmp.c_str());
+                    LOG("[gfx] shader cache: compacting failed, the file stays as it was");
+                }
+            }
+        }
         fclose(f);
+        if (g_export) {
+            template_export(path);
+            g_export = nullptr;
+            exporter = Exporter{};
+        }
         g_cache_replaying = false;
         g_defer_compiles = false;
     }
-    void headstart_load();  // gfx/shader_headstart.cpp
-    headstart_load();
+    void headstart_vk_load(const std::string& dir);  // vk_headstart.cpp
+    headstart_vk_load(slash == std::string::npos ? std::string(".") : path.substr(0, slash));
+    g_cache_state = 1;
     g_cache_out = fopen(path.c_str(), "ab");
     if (shaders || pipelines)
         LOG("[gfx] shader cache: replayed %zu shaders, %zu pipelines queued (%.0f ms) from %s", shaders, pipelines,
@@ -2260,6 +2919,25 @@ static void build_pending_pipelines(int budget, int maxInFlight) {
     g_cache_replaying = false;
 }
 
+// the game holds without frames (gx2::warm_while_held, every ~20 ms): the startup warming with
+// every compile thread busy, nothing of the game's to keep smooth
+void cache_warm_held() {
+    static const int maxInFlight = 16;
+    for (int n = 0; n < 16 && !g_deferred_modules.empty() && g_compiles_in_flight < maxInFlight;) {
+        Module* m = g_deferred_modules.back();
+        g_deferred_modules.pop_back();
+        if (m->state == CS_DEFERRED) { start_module(m); n++; }
+    }
+    build_pending_pipelines(16, maxInFlight);
+    static double t0 = now_ms();
+    static bool logged = false;
+    if (!logged && g_pending_pipelines.empty() && g_deferred_modules.empty() && g_compiles_in_flight == 0) {
+        logged = true;
+        LOG("[gfx] shader cache warmed while the game waited: %zu pipelines built, %zu unresolved, %.1f s", g_recipes_built,
+            g_recipes_dropped, (now_ms() - t0) / 1000.0);
+    }
+}
+
 // build cached pipelines whose shaders have finished compiling; a few per frame
 void cache_warm_step() {
     // a few background compiles per frame keep the startup burst from starving the game, and none
@@ -2273,6 +2951,7 @@ void cache_warm_step() {
     static bool queued = false;
     if (!g_pending_pipelines.empty()) queued = true;
     build_pending_pipelines(8, maxInFlight);
+    if ((R.frame & 255) == 0) shader_use_save();
     if (queued && g_pending_pipelines.empty()) {
         queued = false;
         LOG("[gfx] background pipelines done by frame %llu: %zu built, %zu unresolved", (unsigned long long)R.frame,
@@ -2369,6 +3048,8 @@ struct Prepared {
     uint32_t depthSlice = 0, w = 0, h = 0, sx = 0, sy = 0, ex = 0, ey = 0, depthControl = 0;
     float targetScale = 1.0f, k = 1.0f;     // x: image pixels per guest pixel
     float targetScaleY = 1.0f, ky = 1.0f;   // y (differs from x for aspect-widened targets)
+    float ox = 0, oy = 0;                   // the viewport's offset (a 16:9 band in a reshaped GamePad target)
+    bool bars = false;                      // ... black outside it
     StageTextures vtex, ptex;
     Pipeline* pipe = nullptr;
 };
@@ -2392,7 +3073,7 @@ static void record_draw(const uint32_t* regs, const Prepared& P, uint32_t prim, 
     Surface* const* colors = P.colors;
     Surface* depth = P.depth;
     const uint32_t depthSlice = P.depthSlice;
-    const float targetScale = P.targetScale, k = P.k, targetScaleY = P.targetScaleY, ky = P.ky;
+    const float targetScale = P.targetScale, k = P.k, targetScaleY = P.targetScaleY, ky = P.ky, ox = P.ox, oy = P.oy;
     const uint32_t sx = P.sx, sy = P.sy, ex = P.ex, ey = P.ey, w = P.w, h = P.h;
     const uint32_t stDepthControl = P.depthControl;
     Pipeline* pipe = P.pipe;
@@ -2448,7 +3129,7 @@ static void record_draw(const uint32_t* regs, const Prepared& P, uint32_t prim, 
     float ys = gx2::bitsf(regs[REGADDR::PA_CL_VPORT_YSCALE]), yo = gx2::bitsf(regs[REGADDR::PA_CL_VPORT_YOFFSET]);
     float zs = gx2::bitsf(regs[REGADDR::PA_CL_VPORT_ZSCALE]), zo = gx2::bitsf(regs[REGADDR::PA_CL_VPORT_ZOFFSET]);
     bool halfZ = clipCntl.get_DX_CLIP_SPACE_DEF();
-    VkViewport vp{(xo - xs) * k, (yo - ys) * ky, xs * 2.0f * k, ys * 2.0f * ky, halfZ ? zo : zo - zs, zs + zo};
+    VkViewport vp{ox + (xo - xs) * k, oy + (yo - ys) * ky, xs * 2.0f * k, ys * 2.0f * ky, halfZ ? zo : zo - zs, zs + zo};
     if (vp.height == 0) vp.height = 1;  // Vulkan forbids an empty viewport
     if (vp.width <= 0) { vp.x += vp.width; vp.width = std::max(-vp.width, 1.0f); }
     vp.minDepth = std::clamp(vp.minDepth, 0.0f, 1.0f);
@@ -2463,6 +3144,22 @@ static void record_draw(const uint32_t* regs, const Prepared& P, uint32_t prim, 
         g_ds.scissor = scissor;
     }
     g_ds.valid = true;  // all dynamic state above is now set in this pass
+    if (P.bars) {  // around the 16:9 band: black
+        VkClearAttachment ca{VK_IMAGE_ASPECT_COLOR_BIT, 0, {}};
+        ca.clearValue.color.float32[3] = 1.0f;
+        uint32_t bx = (uint32_t)std::max(0.0f, ox), by = (uint32_t)std::max(0.0f, oy);
+        VkClearRect rr[4];
+        uint32_t n = 0;
+        if (by > 0) {
+            rr[n++] = {{{0, 0}, {w, by}}, 0, 1};
+            rr[n++] = {{{0, (int32_t)(h - by)}, {w, by}}, 0, 1};
+        }
+        if (bx > 0) {
+            rr[n++] = {{{0, (int32_t)by}, {bx, h - 2 * by}}, 0, 1};
+            rr[n++] = {{{(int32_t)(w - bx), (int32_t)by}, {bx, h - 2 * by}}, 0, 1};
+        }
+        if (n) vkCmdClearAttachments(cmd, 1, &ca, n, rr);
+    }
 
     // vertex buffers
     for (auto& g : fs->bufferGroups) {
@@ -2675,7 +3372,7 @@ void draw(const uint32_t* regs, uint32_t prim, uint32_t count, uint32_t indexTyp
 
     // viewport and scissor (Vulkan's viewport transform is the hardware's: y = YOFFSET + YSCALE * ndc)
     // guest units -> image pixels: the resolution scale, times 1.5 for the private AO depth copy
-    const float k = (g_hires_redraw ? 1.5f : 1.0f) * targetScale, ky = (g_hires_redraw ? 1.5f : 1.0f) * targetScaleY;
+    float k = (g_hires_redraw ? 1.5f : 1.0f) * targetScale, ky = (g_hires_redraw ? 1.5f : 1.0f) * targetScaleY;
     uint32_t tl = regs[REGADDR::PA_SC_GENERIC_SCISSOR_TL], br = regs[REGADDR::PA_SC_GENERIC_SCISSOR_BR];
     uint32_t sx = std::min<uint32_t>((uint32_t)((tl & 0x7FFF) * k), w), sy = std::min<uint32_t>((uint32_t)(((tl >> 16) & 0x7FFF) * ky), h);
     uint32_t ex = std::min<uint32_t>((uint32_t)((br & 0x7FFF) * k), w), ey = std::min<uint32_t>((uint32_t)(((br >> 16) & 0x7FFF) * ky), h);
@@ -2687,6 +3384,21 @@ void draw(const uint32_t* regs, uint32_t prim, uint32_t count, uint32_t indexTyp
     resolve_textures(regs, ps, false, colors, depth, ptex);
     prepare_sampled(vtex);
     prepare_sampled(ptex);
+    // the TV picture drawn into a GamePad target of another shape (the game mirrors the TV on the
+    // GamePad: title, cutscenes): 16:9 in the middle, black around it (aspect.cpp "GamePad picture")
+    float ox = 0, oy = 0;
+    bool bars = false;
+    if (!g_hires_redraw && colors[0] && (colors[0]->ax != 1.0f || colors[0]->ay != 1.0f) &&
+        target_is_drc(colors[0]->width, colors[0]->height) && ptex.tvPicture) {
+        bars = true;
+        k = ky = colors[0]->rscale;
+        ox = std::floor((w - colors[0]->width * k) / 2);
+        oy = std::floor((h - colors[0]->height * ky) / 2);
+        sx = std::min<uint32_t>((uint32_t)(ox + (tl & 0x7FFF) * k), w);
+        sy = std::min<uint32_t>((uint32_t)(oy + ((tl >> 16) & 0x7FFF) * ky), h);
+        ex = std::min<uint32_t>((uint32_t)(ox + (br & 0x7FFF) * k), w);
+        ey = std::min<uint32_t>((uint32_t)(oy + ((br >> 16) & 0x7FFF) * ky), h);
+    }
 
     PipelineState st;
     for (int i = 0; i < 8; i++)
@@ -2729,6 +3441,9 @@ void draw(const uint32_t* regs, uint32_t prim, uint32_t count, uint32_t indexTyp
     P.targetScaleY = targetScaleY;
     P.k = k;
     P.ky = ky;
+    P.ox = ox;
+    P.oy = oy;
+    P.bars = bars;
     P.sx = sx; P.sy = sy; P.ex = ex; P.ey = ey;
     P.vtex = vtex;
     P.ptex = ptex;
@@ -2763,9 +3478,39 @@ bool headstart_translate(const uint32_t* regs, bool vertex, bool compileNow) {
 // compiles (shaders and pipelines) that haven't finished yet
 size_t headstart_compiling() { return std::max(0, g_compiles_in_flight.load()); }
 
-// Head-start pipeline records are in the macOS recipe format, which lacks the state Vulkan pipelines
-// need; their shaders are still pre-translated, and the pipelines get built on first use.
-bool headstart_queue_pipeline(const uint8_t*, size_t) { return false; }
+// a pipeline recipe of this renderer (template head start); records of another size (the macOS
+// recipe format of gfx/shader_headstart.cpp) are refused
+bool headstart_queue_pipeline(const uint8_t* raw, size_t size) {
+    if (size != sizeof(PipelineRecipe)) return false;
+    PipelineRecipe r;
+    memcpy(&r, raw, sizeof r);
+    g_pending_pipelines.push_back(r);
+    return true;
+}
+size_t headstart_pipeline_size() { return sizeof(PipelineRecipe); }
+
+// ---- template head start (vk_headstart.cpp)
+uint64_t headstart_hash(const void* data, size_t n) { return hash_bytes(data, n); }  // as program_hash
+bool headstart_known(uint64_t key) { return g_shaders.count(key) != 0; }
+// translate a template state like a cache record (compiled on first use or in the background);
+// returns the key it got, 0 if it failed
+uint64_t headstart_replay(uint32_t* regs, bool vertex, const uint8_t* code, uint32_t size, const uint8_t* fsBytes,
+                          uint32_t fsSize, bool linked, uint32_t vsMask) {
+    bool replaying = g_cache_replaying, defer = g_defer_compiles;
+    g_cache_replaying = true;
+    g_defer_compiles = true;
+    Shader* s = replay_state(regs, vertex, code, size, fsBytes, fsSize, linked, vsMask);
+    g_cache_replaying = replaying;
+    g_defer_compiles = defer;
+    return s && shader_state(s) != CS_FAILED ? s->key : 0;
+}
+// the loading screen (cache_progress): state 3 while the head start is built from the game files
+void headstart_progress(int state, uint64_t done, uint64_t total, uint64_t shaders) {
+    g_cache_state = state;
+    g_cache_done = done;
+    g_cache_total = total;
+    g_cache_shaders = shaders;
+}
 
 size_t headstart_build_pipelines(int maxInFlight, size_t& built, size_t& dropped) {
     build_pending_pipelines(INT_MAX, maxInFlight);

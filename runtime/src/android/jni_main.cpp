@@ -18,12 +18,14 @@
 #include "../crash_info.h"
 #include "../hud.h"
 #include "ui_icons.h"
+#include "warp_catalog.h"
 #include "../gx2/gx2.h"
 #include "../input.h"
 #include "../interp.h"
 #include "../mods/climb.h"
 #include "../mods/mods.h"
 #include "../motion.h"
+#include "../packs.h"
 #include "../platform.h"
 #include "../release.h"
 #include "../runtime.h"
@@ -321,13 +323,13 @@ static std::atomic<size_t> g_compile_done{0}, g_compile_total{0};
 static std::atomic<bool> g_compile_cancel{false};
 
 // recompiles the game with LLVM on the device into `outDir`, logging time and memory; "" or why not
-static std::string compile_code(const std::string& gameDir, const std::string& outDir, bool resume) {
+static std::string compile_code(const std::string& gameDir, const std::string& outDir, std::vector<std::string>& objects) {
     recomp::CompileOptions opt;
     opt.rpxPath = gameDir + "/code/cking.rpx";
     opt.opsBitcode.assign(wwhd_ops_bc, wwhd_ops_bc_end);
     opt.hooksText.assign(wwhd_hooks, wwhd_hooks_end);
     opt.outDir = outDir;
-    opt.keepExisting = resume;
+    opt.baseKey = recomp::code_base_key(opt.rpxPath);
     // about 500 MB per job; more than 4 barely help on big.LITTLE CPUs
     struct sysinfo si;
     unsigned long long ram = sysinfo(&si) == 0 ? (unsigned long long)si.totalram * si.mem_unit : 0;
@@ -350,7 +352,7 @@ static std::string compile_code(const std::string& gameDir, const std::string& o
             LOG("[recomp] %zu of %zu modules done, peak memory %ld MB", g_compile_done.load(), g_compile_total.load(), ru.ru_maxrss / 1024);
         }
     });
-    LOG("[recomp] compiling with %u jobs at -O%d%s", opt.jobs, opt.optLevel, resume ? ", resuming" : "");
+    LOG("[recomp] compiling with %u jobs at -O%d", opt.jobs, opt.optLevel);
     recomp::CompileResult res;
     std::string err;
     bool ok = recomp::compile_game(opt, res, err);
@@ -358,8 +360,9 @@ static std::string compile_code(const std::string& gameDir, const std::string& o
     progress.join();
     struct rusage ru;
     getrusage(RUSAGE_SELF, &ru);
-    LOG("[recomp] %s: %zu functions, %zu modules, %zu instructions in %.1f s, peak memory %ld MB; registers in locals: %zu "
-        "functions, %zu kept in the struct (%s)%s%s", ok ? "done" : "FAILED", res.functions, res.modules, res.instructions, res.seconds,
+    objects = res.objects;
+    LOG("[recomp] %s: %zu functions, %zu modules (%zu compiled now), %zu instructions in %.1f s, peak memory %ld MB; registers in locals: %zu "
+        "functions, %zu kept in the struct (%s)%s%s", ok ? "done" : "FAILED", res.functions, res.modules, res.compiled, res.instructions, res.seconds,
         ru.ru_maxrss / 1024, res.localized, res.localFallback, recomp::code_switches().c_str(), ok ? "" : ": ", ok ? "" : err.c_str());
     return ok ? "" : err.empty() ? "failed" : err;
 }
@@ -371,6 +374,7 @@ static std::string compile_code(const std::string& gameDir, const std::string& o
 
 // true if the game code has to be compiled (first start, new APK or game files)
 JNI_FN(jboolean, needsCompile)(JNIEnv* env, jclass, jstring gameDir, jstring codeDir) {
+    packs::init(jstr(env, gameDir));  // mod packs change the code (packs.h)
     std::string key = recomp::code_cache_key(jstr(env, gameDir) + "/code/cking.rpx");
     return !recomp::code_cache_ready(jstr(env, codeDir), key);
 }
@@ -378,11 +382,13 @@ JNI_FN(jboolean, needsCompile)(JNIEnv* env, jclass, jstring gameDir, jstring cod
 // null when done, else why not ("cancelled" after compileCancel); resumes an interrupted compile
 JNI_FN(jstring, compileGame)(JNIEnv* env, jclass, jstring gameDir, jstring codeDir) {
     std::string game = jstr(env, gameDir), dir = jstr(env, codeDir);
+    packs::init(game);
     std::string key = recomp::code_cache_key(game + "/code/cking.rpx");
     if (key.empty()) return env->NewStringUTF("cannot read the game executable");
-    bool resume = recomp::begin_code_cache(dir, key);
-    std::string err = compile_code(game, dir, resume);
-    if (err.empty()) recomp::finish_code_cache(dir, key, err);
+    recomp::begin_code_cache(dir);
+    std::vector<std::string> objects;
+    std::string err = compile_code(game, dir, objects);
+    if (err.empty()) recomp::finish_code_cache(dir, key, objects, err);
     return err.empty() ? nullptr : env->NewStringUTF(err.c_str());
 }
 
@@ -408,7 +414,12 @@ JNI_FN(void, start)(JNIEnv* env, jclass, jstring gameDir, jstring saveDir, jstri
     if (getenv("WWHD_RECOMPILE_TEST")) {
         // measuring the first-start compile instead of starting the game
         std::string cache = jstr(env, cacheDir);
-        std::thread(compile_code, jstr(env, gameDir), cache.substr(0, cache.find_last_of('/')) + "/codecache", false).detach();
+        // (into a directory of its own: the code cache would already hold every module)
+        std::string game = jstr(env, gameDir), dir = cache.substr(0, cache.find_last_of('/')) + "/codecache_test";
+        std::thread([game, dir] {
+            std::vector<std::string> objects;
+            compile_code(game, dir, objects);
+        }).detach();
         return;
     }
 #endif
@@ -470,6 +481,16 @@ JNI_FN(void, setPad)(JNIEnv*, jclass, jint buttons, jfloat lx, jfloat ly, jfloat
 
 JNI_FN(void, setTouch)(JNIEnv*, jclass, jboolean down, jfloat x, jfloat y) { input::set_touch(down, x, y); }
 
+// the GamePad picture on a second display: its shape (0 = 16:9), and touches on it (u, v in 0..1 of
+// the picture; aspect.cpp maps them to the game's 16:9 touch screen)
+JNI_FN(void, setDrcAspect)(JNIEnv*, jclass, jfloat a) { aspect::set_drc_aspect(a); }
+JNI_FN(float, drcPictureAspect)(JNIEnv*, jclass) { return gfx::drc_picture_aspect(); }
+JNI_FN(void, setDrcTouch)(JNIEnv*, jclass, jboolean down, jfloat u, jfloat v) {
+    float x = u, y = v;
+    if (!aspect::drc_touch(u, v, gfx::drc_picture_aspect(), x, y)) down = false;  // empty space
+    input::set_touch(down, x, y);
+}
+
 JNI_FN(void, textInputDone)(JNIEnv* env, jclass, jboolean ok, jstring text) {
     std::u16string t;
     if (text) {
@@ -509,6 +530,9 @@ JNI_FN(void, setOption)(JNIEnv* env, jclass, jstring name, jint value) {
     else if (n == "mod_camera_speed") mods::set_camera_speed(value / 100.0f);
     else if (n == "mod_first_person") mods::set_first_person_wheel(value != 0);
     else if (n == "mod_climb") mods::set_climb_enabled(value != 0);
+    else if (n == "mod_jump") mods::set_jump_anywhere(value != 0);
+    else if (n == "mod_jump_double") mods::set_double_jump(value != 0);
+    else if (n == "mod_jump_noauto") mods::set_no_auto_jump(value != 0);
     else if (n == "mod_quick_doors") mods::set_quick_doors(value != 0);
     else if (n == "mod_fast_scenes") mods::set_fast_scenes(value != 0);
     else if (n == "mod_ff_cutscenes") mods::set_ff_cutscenes(value != 0);
@@ -517,21 +541,36 @@ JNI_FN(void, setOption)(JNIEnv* env, jclass, jstring name, jint value) {
     else if (n == "mod_run_mode") mods::set_run_mode(value);
     else if (n == "mod_swim_mode") mods::set_swim_mode(value);
     else if (n == "mod_swim_speed") mods::set_swim_speed(value / 100.0f);
+    else if (n == "mod_climb_speed") mods::set_climb_speed(value / 100.0f);
+    else if (n == "mod_climb_mode") mods::set_climb_mode(value);
+    else if (n == "mod_sidle_speed") mods::set_sidle_speed(value / 100.0f);
+    else if (n == "mod_sidle_mode") mods::set_sidle_mode(value);
     // cheats (mods/cheats.cpp): a one-shot cheat's bit, applied once a save file is loaded
     else if (n == "cheat") mods::request_cheat(value);
     else if (n == "cheat_inf_health") mods::set_infinite(mods::kInfHealth, value != 0);
     else if (n == "cheat_inf_magic") mods::set_infinite(mods::kInfMagic, value != 0);
     else if (n == "cheat_inf_ammo") mods::set_infinite(mods::kInfAmmo, value != 0);
+    else if (n == "cheat_inf_rupees") mods::set_infinite(mods::kInfRupees, value != 0);
+    else if (n == "cheat_inf_bags") mods::set_infinite(mods::kInfBags, value != 0);
+    else if (n == "cheat_inf_breath") mods::set_infinite(mods::kInfBreath, value != 0);
     else if (n == "cheat_moon_jump") mods::set_infinite(mods::kMoonJump, value != 0);
     else if (n == "cheat_moon_nofall") mods::set_infinite(mods::kMoonNoFall, value != 0);
     else if (n == "cheat_moon_anims") mods::set_infinite(mods::kMoonAllAnims, value != 0);
     else if (n == "cheat_moon_rise") mods::set_moon_jump_speeds(value, mods::moon_jump_fly());
     else if (n == "cheat_moon_fly") mods::set_moon_jump_speeds(mods::moon_jump_rise(), value);
+    // auto save states (savestate.cpp): the interval in minutes, 0 off
+    else if (n == "auto_state") ss::set_auto_interval(value);
+}
+
+// a mod pack for the menu (packs.h)
+JNI_FN(jstring, packDescribe)(JNIEnv* env, jclass, jstring packDir, jstring selection, jstring gameDir) {
+    return env->NewStringUTF(packs::describe(jstr(env, packDir), jstr(env, selection), jstr(env, gameDir)).c_str());
 }
 
 JNI_FN(jint, getOption)(JNIEnv* env, jclass, jstring name) {
     std::string n = jstr(env, name);
     if (n == "ao_mode") return gfx::ao_mode();
+    if (n == "auto_state") return ss::auto_interval();
     if (n == "ao_hires") return gfx::ao_hires_enabled();
     if (n == "aniso") return gfx::aniso_enabled();
     if (n == "pro_controller") return input::pro_controller();
@@ -543,6 +582,9 @@ JNI_FN(jint, getOption)(JNIEnv* env, jclass, jstring name) {
     if (n == "mod_camera_speed") return (int)lroundf(mods::camera_speed() * 100);
     if (n == "mod_first_person") return mods::first_person_wheel();
     if (n == "mod_climb") return mods::climb_enabled();
+    if (n == "mod_jump") return mods::jump_anywhere();
+    if (n == "mod_jump_double") return mods::double_jump();
+    if (n == "mod_jump_noauto") return mods::no_auto_jump();
     if (n == "mod_quick_doors") return mods::quick_doors();
     if (n == "mod_fast_scenes") return mods::fast_scenes();
     if (n == "mod_ff_cutscenes") return mods::ff_cutscenes();
@@ -551,9 +593,16 @@ JNI_FN(jint, getOption)(JNIEnv* env, jclass, jstring name) {
     if (n == "mod_run_mode") return mods::run_mode();
     if (n == "mod_swim_mode") return mods::swim_mode();
     if (n == "mod_swim_speed") return (int)lroundf(mods::swim_speed() * 100);
+    if (n == "mod_climb_mode") return mods::climb_mode();
+    if (n == "mod_climb_speed") return (int)lroundf(mods::climb_speed() * 100);
+    if (n == "mod_sidle_mode") return mods::sidle_mode();
+    if (n == "mod_sidle_speed") return (int)lroundf(mods::sidle_speed() * 100);
     if (n == "cheat_inf_health") return mods::infinite(mods::kInfHealth);
     if (n == "cheat_inf_magic") return mods::infinite(mods::kInfMagic);
     if (n == "cheat_inf_ammo") return mods::infinite(mods::kInfAmmo);
+    if (n == "cheat_inf_rupees") return mods::infinite(mods::kInfRupees);
+    if (n == "cheat_inf_bags") return mods::infinite(mods::kInfBags);
+    if (n == "cheat_inf_breath") return mods::infinite(mods::kInfBreath);
     if (n == "cheat_moon_jump") return mods::infinite(mods::kMoonJump);
     if (n == "cheat_moon_nofall") return mods::infinite(mods::kMoonNoFall);
     if (n == "cheat_moon_anims") return mods::infinite(mods::kMoonAllAnims);
@@ -562,8 +611,51 @@ JNI_FN(jint, getOption)(JNIEnv* env, jclass, jstring name) {
     return 0;
 }
 
-// ---- save states (runtime/src/savestate.cpp): 5 slots, saved and loaded at the next frame boundary
-// {used, compatible, time, area, controller ("", "gamepad" or "pro")} of slot 1..5
+// ---- warp (mods/warp.cpp, developer menu): false when no save file is loaded
+JNI_FN(jboolean, warp)(JNIEnv* env, jclass, jstring stage, jint room, jint spawn, jint layer) {
+    return mods::request_warp(jstr(env, stage).c_str(), room, spawn, layer);
+}
+// the warp menu's places from the game files (warp_catalog.cpp): <gameDir>/warps.json; null when done,
+// else why not. A few seconds (unpacks the stage archives); on a Java thread.
+JNI_FN(jstring, buildWarps)(JNIEnv* env, jclass, jstring gameDir) {
+    std::string dir = jstr(env, gameDir);
+    auto t0 = std::chrono::steady_clock::now();
+    int stages = 0, spawns = 0;
+    std::string err = warp_catalog::build(dir, dir + "/warps.json", &stages, &spawns);
+    double s = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+    if (err.empty()) LOG("[warp] catalog: %d stages, %d spawns in %.1f s", stages, spawns, s);
+    else LOG("[warp] catalog failed after %.1f s: %s", s, err.c_str());
+    return err.empty() ? nullptr : env->NewStringUTF(err.c_str());
+}
+// the same with a story preset (dSv_save_c bytes) written into the live save first
+JNI_FN(jboolean, warpPreset)(JNIEnv* env, jclass, jbyteArray story, jstring stage, jint room, jint spawn, jint layer) {
+    std::vector<uint8_t> b(env->GetArrayLength(story));
+    env->GetByteArrayRegion(story, 0, (jsize)b.size(), (jbyte*)b.data());
+    return mods::request_warp(jstr(env, stage).c_str(), room, spawn, layer, b.data(), b.size());
+}
+// the live save's story part (for a preset), null outside the game
+JNI_FN(jbyteArray, storyBlock)(JNIEnv* env, jclass) {
+    std::vector<uint8_t> b = mods::story_block();
+    if (b.empty()) return nullptr;
+    jbyteArray a = env->NewByteArray((jsize)b.size());
+    env->SetByteArrayRegion(a, 0, (jsize)b.size(), (const jbyte*)b.data());
+    return a;
+}
+// the latest warp's progress (mods::warp_status): {phase, ms, event mode}
+JNI_FN(jlongArray, warpStatus)(JNIEnv* env, jclass) {
+    int64_t v[3];
+    mods::warp_status(v);
+    jlong j[3] = {(jlong)v[0], (jlong)v[1], (jlong)v[2]};
+    jlongArray a = env->NewLongArray(3);
+    env->SetLongArrayRegion(a, 0, 3, j);
+    return a;
+}
+// "stage,room,spawn,layer" of the current scene, "" outside the game
+JNI_FN(jstring, warpWhere)(JNIEnv* env, jclass) { return env->NewStringUTF(mods::warp_where().c_str()); }
+
+// ---- save states (runtime/src/savestate.cpp): 5 slots, 2 auto slots (6, 7) and the last session (8),
+// the last 3 loaded only; saved and loaded at the next frame boundary
+// {used, compatible, time, area, controller ("", "gamepad" or "pro")} of slot 1..8
 JNI_FN(jobjectArray, saveSlotInfo)(JNIEnv* env, jclass, jint slot) {
     ss::SlotInfo i = ss::slot_info(slot);
     jobjectArray a = env->NewObjectArray(5, env->FindClass("java/lang/String"), nullptr);
@@ -576,6 +668,12 @@ JNI_FN(jobjectArray, saveSlotInfo)(JNIEnv* env, jclass, jint slot) {
 }
 JNI_FN(void, saveState)(JNIEnv*, jclass, jint slot) { ss::request_save(slot); }
 JNI_FN(void, loadState)(JNIEnv*, jclass, jint slot) { ss::request_load(slot); }
+// the picker at start: armed before start(), released by "Start game" (or by the load)
+JNI_FN(void, setStartHold)(JNIEnv*, jclass, jboolean on) { ss::set_start_hold(on); }
+JNI_FN(jint, startHoldState)(JNIEnv*, jclass) { return ss::start_hold_state(); }
+// the app goes to the background: the last session's state (returns once it is taken)
+JNI_FN(void, saveStateOnLeave)(JNIEnv*, jclass) { if (g_started) ss::save_on_leave(); }
+JNI_FN(jint, stateWritesPending)(JNIEnv*, jclass) { return ss::writes_pending(); }
 // the latest save state result ("" when stale)
 JNI_FN(jstring, saveStateMessage)(JNIEnv* env, jclass) { return env->NewStringUTF(ss::last_message().c_str()); }
 

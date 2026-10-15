@@ -140,6 +140,18 @@ elseif(ANDROID)
     set(CMAKE_ANDROID_ARCH_ABI ${ANDROID_ABI})  # libadrenotools checks it
   endif()
   FetchContent_MakeAvailable(glslang vma volk adrenotools)
+  # mod pack import (runtime/src/android/archive.cpp): zip and RAR 4/5 archives, read only, no crypto
+  FetchContent_Declare(libarchive GIT_REPOSITORY https://github.com/libarchive/libarchive.git GIT_TAG v3.7.7 GIT_SHALLOW TRUE)
+  foreach(opt ENABLE_MBEDTLS ENABLE_NETTLE ENABLE_OPENSSL ENABLE_LIBB2 ENABLE_LZ4 ENABLE_LZO ENABLE_LZMA ENABLE_ZSTD ENABLE_BZip2
+              ENABLE_LIBXML2 ENABLE_EXPAT ENABLE_PCREPOSIX ENABLE_PCRE2POSIX ENABLE_LIBGCC ENABLE_CNG ENABLE_TAR ENABLE_CPIO ENABLE_CAT
+              ENABLE_UNZIP ENABLE_XATTR ENABLE_ACL ENABLE_ICONV ENABLE_TEST ENABLE_INSTALL ENABLE_COVERAGE ENABLE_WERROR)
+    set(${opt} OFF CACHE BOOL "" FORCE)
+  endforeach()
+  set(ENABLE_ZLIB ON CACHE BOOL "" FORCE)
+  set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+  set(CMAKE_POLICY_VERSION_MINIMUM 3.5)  # libarchive 3.7 declares an older minimum, which CMake 4 refuses
+  FetchContent_MakeAvailable(libarchive)
+  unset(CMAKE_POLICY_VERSION_MINIMUM)
 
   file(GLOB VK_SOURCES CONFIGURE_DEPENDS runtime/src/vk/*.cpp)
   file(GLOB ANDROID_SOURCES CONFIGURE_DEPENDS runtime/src/android/*.cpp)
@@ -158,7 +170,8 @@ elseif(ANDROID)
   # directly instead of through the PLT (their names stay exported for backtraces)
   target_link_options(wwhd PRIVATE "-Wl,-z,max-page-size=16384" "-Wl,-Bsymbolic")
   target_link_libraries(wwhd PRIVATE cemu_latte glslang glslang-default-resource-limits SPIRV
-                                     adrenotools android nativewindow log aaudio z dl)
+                                     adrenotools archive_static android nativewindow log aaudio z dl)
+  target_include_directories(wwhd PRIVATE ${libarchive_SOURCE_DIR}/libarchive)
   # libadrenotools' hooks, loaded into the driver's linker namespace (packaged next to libwwhd.so)
   add_dependencies(wwhd main_hook hook_impl)
   foreach(t main_hook hook_impl)
@@ -171,13 +184,15 @@ elseif(ANDROID)
   # ---- the licenses of everything in the APK, shown in the app (About and licenses)
   set(LIC_PARTS
     "This project|MPL-2.0|${CMAKE_SOURCE_DIR}/LICENSE"
-    "Cemu (GPU address library and shader decompiler, in runtime/third_party/cemu)|MPL-2.0 (same license text as this project)|"
+    "Cemu (GPU address library, shader decompiler, PPC assembler and graphic pack patches, in runtime/third_party/cemu)|MPL-2.0 (same license text as this project)|"
+    "fast_float (number parsing in Cemu's expression parser)|MIT or Apache-2.0 (notice in runtime/third_party/cemu/Common/unix/fast_float.h)|"
     "{fmt}|MIT|${CMAKE_SOURCE_DIR}/runtime/third_party/fmt/LICENSE"
     "Zstandard (zstd: .wua archives, save states)|BSD-3-Clause|${CMAKE_SOURCE_DIR}/runtime/third_party/zstd/LICENSE"
     "glslang|BSD-3-Clause and others|${glslang_SOURCE_DIR}/LICENSE.txt"
     "Vulkan Memory Allocator|MIT|${vma_SOURCE_DIR}/LICENSE.txt"
     "volk|MIT|${volk_SOURCE_DIR}/LICENSE.md"
     "libadrenotools|BSD-2-Clause|${adrenotools_SOURCE_DIR}/LICENSE"
+    "libarchive (mod pack archives: zip, RAR)|BSD-2-Clause|${libarchive_SOURCE_DIR}/COPYING"
     "linkernsbypass (part of libadrenotools)|BSD-2-Clause|${adrenotools_SOURCE_DIR}/lib/linkernsbypass/LICENSE")
   set(WWHD_LLVM_DIR ${CMAKE_SOURCE_DIR}/build/llvm/install CACHE PATH "LLVM built for Android (tools/android/build-llvm.sh)")
   if(EXISTS ${WWHD_LLVM_DIR}/lib/cmake/llvm/LLVMConfig.cmake)

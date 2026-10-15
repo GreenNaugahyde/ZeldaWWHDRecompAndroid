@@ -21,8 +21,10 @@ namespace {
 const release::Data kInfoPointer{0x10114B90}, kPlay{0x1046F0B0};
 constexpr uint32_t kSaveOffset = 0xC92C, kSelectItems = 0x09, kSelectEquip = 0x0E, kInventory = 0x3C;
 constexpr uint32_t kActWindow = 0x5BB0, kActWindowLen = 0x30;  // around GameCube 0x492F + 0x1298
-// confirmed on the tablet (2026-10-08): R/ZR action, B action, A action (mRStatus, mAStatus, mDoStatus)
-constexpr uint32_t kRStatus = 0x5BB1, kBStatus = 0x5BB2, kAStatus = 0x5BB3;
+// R/ZR action, B action, A action (mRStatus, mAStatus, mDoStatus) at +0x5BB5..7 in EUR and USA (logs
+// 2026-10-12 / 2026-10-14 on land: 36 / 35 / 0C, 0F / 35 / 08); JPN keeps them 4 bytes earlier (its log
+// 2026-10-14: 36 / 35 / 08 at +0x5BB1..3). +0x5BB1 in USA / EUR put B's byte on A and R's on B.
+uint32_t act_base() { return release::id() == release::Id::JPN ? 0x5BB1 : 0x5BB5; }
 
 uint32_t save_address() {
     uint32_t base = ld32(kInfoPointer);
@@ -42,14 +44,14 @@ void touch_state(int32_t out[12]) {
     size_t n = strnlen(stage, 8);
     if (!s || n == 0 || (n == 5 && !memcmp(stage, "sea_T", 5)) || (n == 4 && !memcmp(stage, "Name", 4))) return;
     out[0] = 1;
-    out[1] = ld8(kPlay + kAStatus);
+    out[1] = ld8(kPlay + act_base() + 2);
     out[2] = ld8(s + kSelectEquip);  // sword (0xFF: none)
     for (int i = 0; i < 3; i++) {
         uint8_t v = ld8(s + kSelectItems + i);
         out[3 + i] = v == 0xFF ? 0xFF : v < 21 ? ld8(s + kInventory + v) : v;
     }
-    out[6] = ld8(kPlay + kBStatus);
-    out[7] = ld8(kPlay + kRStatus);
+    out[6] = ld8(kPlay + act_base() + 1);
+    out[7] = ld8(kPlay + act_base());
     out[8] = event_mode_now();
     out[9] = hud_menu_open();
     for (int i = 0; i < 21; i++)  // the Wind Waker (d-pad up conducts)
@@ -62,7 +64,7 @@ void touch_state(int32_t out[12]) {
 void hearts_step() {
     constexpr uint32_t kEquipItem = 0x69B0;
     constexpr uint16_t kSword = 0x103;
-    static uint16_t last_life = 0, last_equip = 0xFFFF, last_rupees = 0xFFFF;
+    static uint16_t last_life = 0, last_max_life = 0, last_equip = 0xFFFF, last_rupees = 0xFFFF;
     static uint64_t rupees_until = 0;
     static uint64_t shown_until = 0;
     uint64_t now = step();
@@ -78,15 +80,18 @@ void hearts_step() {
     if (rupees != last_rupees && last_rupees != 0xFFFF) rupees_until = now + 126;
     last_rupees = rupees;
     hud_set_fade_wanted(kFadeRupees, now < rupees_until);
-    uint16_t life = ld16(s + 2), equip = ld16(link + kEquipItem);
+    uint16_t max_life = ld16(s), life = ld16(s + 2), equip = ld16(link + kEquipItem);
     if (equip != last_equip) {
         LOG("[hud] item in Link's hand %04X", equip);
         last_equip = equip;
     }
-    // they stay 2.2 s after the sword is put away and 4.2 s after damage (logic steps at 30 per second)
+    // they stay 2.2 s after the sword is put away and 4.2 s after damage or healing (a heart picked
+    // up, a potion, a fairy, a new heart container; logic steps at 30 per second); not at the first look
     if (equip == kSword) shown_until = std::max(shown_until, now + 66);
     if (life < last_life) shown_until = std::max(shown_until, now + 126);
+    if (last_max_life && (life > last_life || max_life > last_max_life)) shown_until = std::max(shown_until, now + 126);
     last_life = life;
+    last_max_life = max_life;
     hud_set_fade_wanted(kFadeHearts, now < shown_until);
 }
 

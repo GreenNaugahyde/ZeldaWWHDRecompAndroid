@@ -34,6 +34,7 @@ final class DrcDisplay implements DisplayManager.DisplayListener {
     private final DisplayManager displays;
     private Screen screen;
     private boolean wanted;  // the game runs, the activity is visible and the option is on
+    private boolean fill;    // the GamePad picture takes the display's shape (else 16:9 with bars)
 
     DrcDisplay(MainActivity a, Listener l) {
         activity = a;
@@ -59,6 +60,17 @@ final class DrcDisplay implements DisplayManager.DisplayListener {
         update();
     }
 
+    /** the GamePad picture in the display's shape (the game draws it so), or 16:9 with bars */
+    void setFill(boolean f) {
+        fill = f;
+        applyAspect();
+    }
+
+    private void applyAspect() {
+        Screen s = screen;
+        Native.setDrcAspect(fill && s != null && s.w > 0 && s.h > 0 ? s.w / (float) s.h : 0);
+    }
+
     void release() {
         wanted = false;
         update();
@@ -71,15 +83,17 @@ final class DrcDisplay implements DisplayManager.DisplayListener {
             Screen s = screen;
             screen = null;
             s.dismiss();  // its surface goes: the renderer lets go of the window
+            applyAspect();
             listener.onDrcDisplayChanged(false);
         }
         if (screen == null && d != null) {
             try {
-                Screen s = new Screen(activity, d);
+                Screen s = new Screen(activity, d, this::applyAspect);
                 // closed by someone else (the system): the GamePad picture goes back to the main window
                 s.setOnDismissListener(x -> {
                     if (screen == s) {
                         screen = null;
+                        applyAspect();
                         listener.onDrcDisplayChanged(false);
                     }
                 });
@@ -104,8 +118,12 @@ final class DrcDisplay implements DisplayManager.DisplayListener {
     /** the presentation: a black window with the picture surface over the whole display */
     private static final class Screen extends Presentation implements SurfaceHolder.Callback {
         private int w, h;
+        private final Runnable sizeChanged;
 
-        Screen(Context outer, Display d) { super(outer, d); }
+        Screen(Context outer, Display d, Runnable sizeChanged) {
+            super(outer, d);
+            this.sizeChanged = sizeChanged;
+        }
 
         @Override
         protected void onCreate(Bundle state) {
@@ -135,6 +153,7 @@ final class DrcDisplay implements DisplayManager.DisplayListener {
             w = width;
             h = height;
             Native.drcSurfaceChanged(holder.getSurface());
+            sizeChanged.run();
         }
 
         @Override
@@ -142,21 +161,24 @@ final class DrcDisplay implements DisplayManager.DisplayListener {
             Native.drcSurfaceChanged(null);
         }
 
-        // the GamePad picture fills the display at 16:9 (bars where the display has another shape)
+        // the GamePad picture fills the display in its own shape (16:9, or the display's when the
+        // game draws it so), bars where the shapes differ
         private boolean touch(MotionEvent e) {
             if (w == 0 || h == 0) return false;
+            float pa = Native.drcPictureAspect();
+            if (!(pa > 0.1f)) pa = 16f / 9f;
             float pw = w, ph = h, px = 0, py = 0;
-            if (pw / ph > 16f / 9f) {
-                pw = ph * 16f / 9f;
+            if (pw / ph > pa) {
+                pw = ph * pa;
                 px = (w - pw) / 2;
             } else {
-                ph = pw * 9f / 16f;
+                ph = pw / pa;
                 py = (h - ph) / 2;
             }
             int a = e.getActionMasked();
             boolean down = a != MotionEvent.ACTION_UP && a != MotionEvent.ACTION_CANCEL;
             float tx = Math.max(0, Math.min(1, (e.getX() - px) / pw)), ty = Math.max(0, Math.min(1, (e.getY() - py) / ph));
-            Native.setTouch(down, tx, ty);
+            Native.setDrcTouch(down, tx, ty);  // a taller (wider) picture: its 16:9 middle is the touch screen
             if (DEBUG) android.util.Log.d("wwhd", "GamePad display touch " + (down ? "down" : "up") + " " + tx + "," + ty);
             return true;
         }

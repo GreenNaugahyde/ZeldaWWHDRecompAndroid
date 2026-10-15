@@ -77,13 +77,22 @@ final class CrashLogs {
         File newest = logs.get(0);
         if (newest.lastModified() <= prefs.getLong("crash_seen_ms", 0)) return false;
         prefs.edit().putLong("crash_seen_ms", newest.lastModified()).remove("crash_seen").apply();
-        new GameDialog(a).title(R.string.crash_title).message(R.string.crash_text).cancelable(false)
+        GameDialog d = new GameDialog(a).title(R.string.crash_title).message(R.string.crash_text).cancelable(false)
                 .button(R.string.crash_start_game, then)
                 .button(R.string.crash_share, () -> {
                     share(a, prefs, logs.subList(0, 1));
                     then.run();
-                })
-                .show();
+                });
+        // a mod pack may be why the game doesn't start: start without them (their files stay)
+        File base = a.getExternalFilesDir(null);
+        if (base == null) base = a.getFilesDir();
+        final File packsBase = base;
+        if (ModPacks.countOn(packsBase, prefs) > 0)
+            d.button(R.string.crash_without_packs, () -> {
+                ModPacks.turnAllOff(packsBase, prefs);
+                then.run();
+            });
+        d.show();
         return true;
     }
 

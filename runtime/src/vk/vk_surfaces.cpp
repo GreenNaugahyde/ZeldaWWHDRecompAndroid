@@ -100,27 +100,48 @@ static bool screen_shaped(const Surface* s) {
 // resolution scale. Draws keep their guest viewports, which then cover the wider image, and the
 // game's projections are widened to match (Hor+), so every full-screen pass lines up. The factor
 // travels with the swap command and changes between frames only (render thread).
-static float g_aspect_kx = 1.0f, g_aspect_ky = 1.0f;
-void set_frame_aspect(float a) {
+// The GamePad's 854x480 family gets its own factors: the GamePad picture on a second display of
+// another shape (aspect.cpp "GamePad picture"; only the layouts adapt to it).
+static float g_aspect_kx = 1.0f, g_aspect_ky = 1.0f, g_drc_kx = 1.0f, g_drc_ky = 1.0f;
+static void aspect_factors(float a, float& kx, float& ky) {
     const float base = 16.0f / 9.0f;
-    if (!(a > 0.5f && a < 8.0f)) a = base;
-    float kx = a >= base ? a / base : 1.0f, ky = a >= base ? 1.0f : base / a;
+    if (!(a > 0.49f && a < 8.0f)) a = base;
+    kx = a >= base ? a / base : 1.0f;
+    ky = a >= base ? 1.0f : base / a;
+}
+void set_frame_aspect(float a, float drc) {
+    float kx, ky;
+    aspect_factors(a, kx, ky);
     if (kx != g_aspect_kx || ky != g_aspect_ky) LOG("[gfx] aspect %.4f: TV targets x%.4f wide, x%.4f tall", a, kx, ky);
     g_aspect_kx = kx;
     g_aspect_ky = ky;
+    aspect_factors(drc, kx, ky);
+    if (kx != g_drc_kx || ky != g_drc_ky) LOG("[gfx] GamePad aspect %.4f: GamePad targets x%.4f wide, x%.4f tall", drc, kx, ky);
+    g_drc_kx = kx;
+    g_drc_ky = ky;
+}
+static bool drc_shaped(uint32_t width, uint32_t height) {
+    for (uint32_t w = 854, h = 480; w >= 32; w >>= 1, h >>= 1)
+        if ((width == w || width == w + 1) && height == h) return true;
+    return false;
 }
 static bool tv_shaped(uint32_t width, uint32_t height) {
-    if (width < 32 || height < 18) return false;
-    for (uint32_t w = 854, h = 480; w >= 32; w >>= 1, h >>= 1)
-        if ((width == w || width == w + 1) && height == h) return false;
+    if (width < 32 || height < 18 || drc_shaped(width, height)) return false;
     float r = (float)width * 9.0f / ((float)height * 16.0f);
     return r > 0.97f && r < 1.03f;
 }
+bool target_is_tv(uint32_t w, uint32_t h) { return tv_shaped(w, h); }
+bool target_is_drc(uint32_t w, uint32_t h) { return drc_shaped(w, h); }
 bool target_aspect_factors(uint32_t w, uint32_t h, float& kx, float& ky) {
-    bool on = tv_shaped(w, h) && (g_aspect_kx != 1.0f || g_aspect_ky != 1.0f);
-    kx = on ? g_aspect_kx : 1.0f;
-    ky = on ? g_aspect_ky : 1.0f;
-    return on;
+    kx = ky = 1.0f;
+    if (tv_shaped(w, h)) {
+        kx = g_aspect_kx;
+        ky = g_aspect_ky;
+    } else if (drc_shaped(w, h)) {
+        kx = g_drc_kx;
+        ky = g_drc_ky;
+    }
+    return kx != 1.0f || ky != 1.0f;
 }
 static void target_aspect(const Surface* s, float& ax, float& ay) {
     if (s->slices != 1 || s->mips > 1 || s->fmt.compressed) { ax = ay = 1.0f; return; }

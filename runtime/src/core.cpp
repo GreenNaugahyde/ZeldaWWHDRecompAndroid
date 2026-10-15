@@ -219,6 +219,16 @@ PpcFunc lookup(uint32_t addr) {
     return it == g_other.end() ? nullptr : it->second;
 }
 
+uint32_t containing(uint32_t addr) {
+    if (addr - kTextBase >= kTextSize) return 0;
+    uint32_t i = (addr - kTextBase) >> 2;
+    for (uint32_t n = 0; n < 0x10000; n++, i--) {  // functions are far shorter than 256 KiB
+        if (g_text_table[i]) return kTextBase + (i << 2);
+        if (!i) break;
+    }
+    return 0;
+}
+
 std::vector<std::pair<uint32_t, std::string>> host_functions() {
     std::shared_lock lk(g_other_mutex);
     std::vector<std::pair<uint32_t, std::string>> v(g_host_names.begin(), g_host_names.end());
@@ -226,12 +236,32 @@ std::vector<std::pair<uint32_t, std::string>> host_functions() {
     return v;
 }
 
+static std::unordered_map<std::string, PpcFunc> g_host_by_name;
+
 uint32_t register_host(PpcFunc fn, const char* name) {
     uint32_t a = g_next_host.fetch_add(8);
     set(a, fn);
     std::unique_lock lk(g_other_mutex);
     g_host_names[a] = name;
+    g_host_by_name[name] = fn;
     return a;
+}
+
+PpcFunc host_by_name(const std::string& name) {
+    std::shared_lock lk(g_other_mutex);
+    auto it = g_host_by_name.find(name);
+    return it == g_host_by_name.end() ? nullptr : it->second;
+}
+
+void place_host(uint32_t addr, PpcFunc fn, const std::string& name) {
+    set(addr, fn);
+    {
+        std::unique_lock lk(g_other_mutex);
+        g_host_names[addr] = name;
+        g_host_by_name[name] = fn;
+    }
+    uint32_t next = g_next_host.load();
+    while (next < addr + 8 && !g_next_host.compare_exchange_weak(next, addr + 8)) {}
 }
 }  // namespace dispatch
 

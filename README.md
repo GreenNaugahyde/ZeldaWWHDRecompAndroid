@@ -30,10 +30,25 @@ The original project (macOS, the 60 fps modes, decompilation tools) is described
   fit in time it is left out, so the game always keeps its speed. Works together with frame
   generation ×2.
 - **An in-game options menu** in the style of the game's own menus, with tabs for saves, the game,
-  graphics, mods and controls, usable by touch and with a controller (see below).
+  graphics, mods and controls, usable by touch and with a controller (see below); it fits phone
+  screens too.
 - **Save states**: five slots with a picture, time and place of each state, and the controls it was
-  saved with (GamePad or Pro Controller), which loading it switches back to.
-- **Import and export** of the game save and the save states to a folder of your choice.
+  saved with (GamePad or Pro Controller), which loading it switches back to. Saving stops the game
+  for only a few hundredths of a second (the memory is copied in the background), and a state loads
+  anywhere: in the game, at the title screen or the file select. An auto save every 2, 5 or 10 minutes
+  into two slots of its own, a "Last session" state when you leave the app or quit, and at start the
+  choice of the intro, the save states, or straight back into the last session.
+- **Import and export** of the game save and the save states as one backup file, and **GameCube
+  saves** (`.gci`, USA, Europe and Japan) imported as the HD game save (after the original project's
+  converter).
+- **Mod packs**: Cemu graphic packs (for example from GameBanana or GitHub) and plain game file mods,
+  imported from `.zip` and `.rar` files: code patches (`patch_*.asm`, Cemuhook `patches.txt`), game
+  file replacements, shader replacements and texture filtering rules. A code patch only applies to
+  the game version it was made for; turning packs on or off recompiles the changed code once.
+- **Shader head start**: a template of the shaders and GPU pipelines the game uses (only their
+  settings, no shader code) is shipped with the app. On the first start the app finds the programs in
+  your own game files and prepares them in the background, so first visits to a place stutter much
+  less (on a Helio G85: compiles during play from about 500 to about 20).
 - **Performance overlay**: frame rate with its average, frame time, CPU and GPU load, CPU, GPU and
   battery temperatures, the graphics settings in use, the SoC, GPU and GPU driver; you choose the
   values and drag it where you want it.
@@ -53,7 +68,8 @@ The original project (macOS, the 60 fps modes, decompilation tools) is described
   TV only, GamePad with TV inset). All of them apply immediately, without a restart.
 - **Dual-screen devices** (AYN Thor and the like): the GamePad picture goes to the second screen by
   itself, with touch, and the main screen shows the TV picture; Graphics › GamePad screen switches
-  back to the screen layouts.
+  back to the screen layouts. The GamePad screens (items, map, bottles) fill a second screen of
+  another shape, such as the Thor's lower screen; Graphics › GamePad picture keeps the original 16:9.
 - **On-screen controls** for the whole GamePad, which hide while a controller is in use.
 - **Gyro aiming** with the device's motion sensors or a controller's (DualSense, DualShock 4, Switch
   Pro and others that Android reports with sensors), also with "Wii U Pro Controller" selected,
@@ -61,8 +77,11 @@ The original project (macOS, the 60 fps modes, decompilation tools) is described
 - **Rumble** on the controller in use, or on the device while playing by touch.
 - **The original project's gameplay mods** on Android: climb any wall, direct right-stick camera,
   first person on R3, quick doors, fast scene changes.
-- **Faster running and swimming** (a new mod): Link runs and swims 1.25 up to 4 times as fast;
+- **Faster running, swimming, climbing and sidling** (new mods): 1.25 up to 4 times as fast;
   everything else keeps its speed.
+- **Jump anywhere** (a new mod): L jumps from standing or running, as off a ledge, with an optional
+  double jump and without the automatic ledge jumps. **Moon jump**: hold L to rise and fly.
+- **Inverted camera up/down** for first person and aiming, or always (contributed by Abssenta).
 - **Fast forward** (a new mod): hold ZR (R2) to run cutscenes and dialogues faster, switched
   separately. The game plays its normal frames, only more of them per second (up to 4×, as fast as
   the device can draw them: about 2× on a Snapdragon 7+ Gen 3), so nothing is skipped; text boxes
@@ -82,6 +101,33 @@ The original project (macOS, the 60 fps modes, decompilation tools) is described
 - **No internet access**: the app doesn't request it, and its manifest explicitly excludes it.
 
 ## Version history
+
+**0.9.4**
+
+- Save states without stopping the game, loading from anywhere (title screen, file select, any
+  place), an auto save every 2, 5 or 10 minutes, a "Last session" state when you leave the app or
+  quit, and Saves › At start: the intro, the save states, or straight back into the last session.
+- Mod packs (Mods › Mod packs): Cemu graphic packs and game file mods from `.zip` and `.rar` files,
+  with code patches, game file and shader replacements and texture filtering rules. Changes ask for
+  a restart; if the game doesn't start any more, the crash dialog can start it without mod packs.
+- Shader head start: the shaders and pipelines the game uses are prepared from a template on the
+  first start, so first visits stutter much less.
+- Shader cache: shaders not used for a while are dropped, so the cache stays small and starts fast.
+- New mods: Jump anywhere (L, with double jump), faster climbing and sidling. The moon jump moved
+  from the cheats to the mods.
+- New cheats: fill the bags, infinite rupees, infinite bait and spoils, infinite swimming.
+- Controls › Invert camera up/down (pull request #42 by Abssenta).
+- Import of GameCube saves (`.gci`, USA, Europe and Japan) as the game save, and export of all saves
+  as one backup file. Setup and Import saves also take files picked directly, for devices whose
+  folder picker shows no folders.
+- Dual-screen devices: the GamePad screens fill a second screen of another shape (AYN Thor).
+- The options menu fits phone screens.
+- Quick doors no longer halt the game when leaving a Forbidden Woods spore room (from the original
+  project, ZeldaWWHDRecomp/ZeldaWWHDRecomp#145).
+- New defaults (only where you haven't chosen yourself): the controls act as a Wii U Pro Controller,
+  the screen layout is TV only (GamePad inset on dual-screen devices), and the game starts with the
+  intro.
+- The game code is prepared once more after the update.
 
 **0.9.3**
 
@@ -231,9 +277,9 @@ None of these are included or provided here.
    folder.
 3. The app extracts the game files (a few seconds to minutes), then prepares the game code for
    your device (once; how long depends on the processor: about 6 minutes on a Snapdragon 7+ Gen 3,
-   9 minutes on a Snapdragon 855, 18 minutes on a Helio G85). You can leave the app meanwhile and read a Wind Waker walkthrough guide. A notification shows the progress and keeps the process alive.
-4. The game starts. The first visit to each place may stutter briefly while its shaders compile as usual.
-   After that they are cached.
+   9 minutes on a Snapdragon 855, 16 minutes on a Helio G99, 21 minutes on a Helio G85). You can leave the app meanwhile and read a Wind Waker walkthrough guide. A notification shows the progress and keeps the process alive.
+4. The game starts. In the background the app prepares the shaders it knows the game uses, so the
+   first visits to places stutter much less; the rest compile on their first use and are cached.
 
 ## Controls
 
@@ -273,26 +319,31 @@ back.)
 - **Saves**: five save state slots with Save and Load (a state can only be loaded during
   gameplay, for example the save select screen or anywhere in the game, and only with the build that saved it).
   A state also keeps whether the controls acted as GamePad or Pro Controller; loading it switches
-  back to that, since the game only listens to the controller it was saved with. Exporting and importing saves. An imported game
-  save restarts the game.  
+  back to that, since the game only listens to the controller it was saved with. The auto save (every
+  2, 5 or 10 minutes, two slots), the "Last session" state, and what happens at start (the intro, the
+  save states to choose from, or the last session at once). Exporting saves as one backup file and
+  importing it, or a GameCube save (`.gci`). An imported game save restarts the game.
 - **Game**: the game language (the languages of your copy; applies after a restart).
-- **Graphics**: rendering resolution, frame rate (30 fps, or 60/120 fps by frame interpolation), frame generation, widescreen, aspect ratio, the GamePad screen (with a
-  second display), screen layout, ambient
+- **Graphics**: rendering resolution, frame rate (30 fps, or 60/120 fps by frame interpolation), frame generation, widescreen, aspect ratio, the GamePad screen and its
+  picture (with a second display), screen layout, ambient
   occlusion, full-size occlusion depth, 16× anisotropic filtering, the performance overlay, the GPU
   driver (Adreno only), the command recording thread (a second CPU thread for the GPU work; on by
   default, "Off" can be faster on some devices such as the Snapdragon 855; applies after a restart),
   and deleting the shader cache (restarts the game as on its first start).
-- **Mods**: the gameplay mods, all off by default, and faster running and swimming (each 1.25× up
-  to 4×: Link covers more ground while running or swimming; jumps, rolls, climbing and the boat
-  stay as they are). Each applies always or with L3, set separately: one press switches it on and
-  the next off (a press switches the one for what Link is doing, swimming or not), or only while L3
-  is held. Fast forward of cutscenes and of dialogues: faster while ZR is held. **Cheats** (from the
-  original project) change the save file you play: items, hearts, magic, rupees, infinite health,
-  magic and ammunition, a moon jump (hold L to rise, steer with the left stick) and story cheats
-  (save to a spare file first; they can change story events).
+- **Mods**: the gameplay mods, all off by default, and faster running, swimming, climbing and
+  sidling (each 1.25× up to 4×; jumps, rolls and the boat stay as they are). Each applies always or
+  with L3, set separately: one press switches it on and the next off (a press switches the one for
+  what Link is doing), or only while L3 is held. Jump anywhere (L, with double jump and without the
+  automatic ledge jumps) and the moon jump (hold L to rise, steer with the left stick; rise and
+  flight speed, no fall damage, random lift-off poses); both use L, so one switches the other off.
+  Fast forward of cutscenes and of dialogues: faster while ZR is held. **Cheats** (from the original
+  project) change the save file you play: items, hearts, magic, rupees, filled bags, infinite health,
+  magic, ammunition, rupees, bait and spoils, and swimming, and story cheats (save to a spare file
+  first; they can change story events). **Mod packs**: import, turn on and off, choose a pack's
+  presets; changes apply after a restart, which the menu offers when you leave it.
 - **Controls**: on-screen controls on or off, their size, whether the controls act as a Wii U
-  GamePad or a Pro Controller, motion controls (gyro aiming), rumble (on the phone when the
-  controller has none), and which controller button
+  Pro Controller (the default) or a GamePad, inverted camera up/down, motion controls (gyro aiming),
+  rumble (on the phone when the controller has none), and which controller button
   presses which Wii U button.
 
 About (with the licenses) and Quit are always on the left.
@@ -396,8 +447,8 @@ created on your device from your own legal dump and must not be redistributed.
 ## License
 
 The code of this project is licensed under the Mozilla Public License 2.0 (see `LICENSE`).
-Third-party code keeps its own license: Cemu (MPL-2.0), {fmt} (MIT), zstd (BSD-3-Clause), glslang (BSD-3-Clause and
-others), the Vulkan Memory Allocator (MIT), volk (MIT), libadrenotools (BSD-2-Clause), and in the
+Third-party code keeps its own license: Cemu (MPL-2.0), {fmt} (MIT), fast_float (MIT), zstd (BSD-3-Clause), glslang (BSD-3-Clause and
+others), the Vulkan Memory Allocator (MIT), volk (MIT), libadrenotools (BSD-2-Clause), libarchive (BSD-2-Clause), and in the
 APK without game code
 [LLVM](https://llvm.org) and the NDK's libc++ (Apache-2.0 with LLVM Exceptions). The app shows all
 of these licenses under About.
@@ -406,7 +457,7 @@ of these licenses under About.
 
 This fork is built on [ZeldaWWHDRecomp](https://github.com/ZeldaWWHDRecomp/ZeldaWWHDRecomp), which
 did the recompilation, the Wii U system libraries and the original Metal renderer for macOS. The GPU
-address library, shader decompiler and a few reference structures are vendored from
+address library, shader decompiler, PPC assembler (graphic pack patches) and a few reference structures are vendored from
 [Cemu](https://github.com/cemu-project/Cemu) (MPL-2.0); `tools/wudextract.py` and parts of the OS
 layer are ported from or follow Cemu as noted in those files. Frame generation uses the shaders of
 [Lossless Scaling](https://store.steampowered.com/app/993090/Lossless_Scaling/) from your own copy.
@@ -414,3 +465,5 @@ layer are ported from or follow Cemu as noted in those files. Frame generation u
 [SSunnKing](https://github.com/SSunnKing) contributed pull request #8: the widescreen mode, graphics
 fixes, most of the render thread speedups, the record thread, Turnip tile rendering and the crash
 handler.
+
+[Abssenta](https://github.com/Abssenta) contributed pull request #42: the inverted camera up/down.

@@ -18,6 +18,7 @@
 //   view_setup     024F8068: mDoLib_clipper::setup(mFovy, mAspect, mNear, far) (2 calls)  @024F811C @024F8168
 //   dScnName_c::setView 025ADB04: C_MTXPerspective for the file-select scene             @025ADB38
 //   nw::lyt::DrawInfo::LoadProjectionMtx 02874038, Pane::CalculateMtx 028766CC, Pane::Draw 02877100
+// The GamePad picture can take another shape too (a second display, see "GamePad picture" below).
 // The aspect is latched once per frame on the main thread at GX2SwapScanBuffers; the render thread
 // switches its render-target factors at the matching swap (the value travels with the swap
 // command), so a change never lands in the middle of a frame.
@@ -29,6 +30,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <mutex>
+#include <set>
 #include <unordered_map>
 #include <vector>
 
@@ -61,6 +63,8 @@ std::atomic<float> g_window{kBase};
 // aspect of the frame being built: written by the main thread at the swap, read by the threads
 // that compute and record the frame
 std::atomic<float> g_game{kBase};
+// the GamePad picture's: requested (Java, the second display's shape) and latched for the frame
+std::atomic<float> g_drc_requested{kBase}, g_drc_game{kBase};
 
 float clamp_aspect(float a) { return std::fmin(std::fmax(a, 1.0f), 4.0f); }
 
@@ -140,7 +144,7 @@ float game() { return g_game; }
 static uint64_t g_swaps = 0, g_changed_swap = 0;
 uint64_t game_frame() { return g_swaps; }
 
-float on_swap() {
+float on_swap(float& drc) {
     // test aid: WWHD_ASPECT_AT=frame:aspect,... switches the aspect at those swaps (aspect 0 = window)
     static uint64_t swaps = 0;
     static std::vector<std::pair<uint64_t, float>> at = [] {
@@ -162,6 +166,10 @@ float on_swap() {
             else if (same(v, kBase)) set_mode(kOriginal);
             else { g_custom = v; set_mode(kCustom); }
         }
+    float d = g_drc_requested.load(std::memory_order_relaxed);
+    drc = g_drc_game.load();  // render targets one swap later, as for the TV
+    if (!same(d, drc)) LOG("[aspect] GamePad picture aspect %.4f from swap %llu", d, (unsigned long long)swaps);
+    g_drc_game = d;
     float a = requested();
     bool changed = !same(a, g_game);
     // the GPU work of the frame being submitted now was built with the camera of the previous
@@ -228,19 +236,21 @@ constexpr uint32_t kPaneFlags = 0x44, kPaneAlpha = 0x45, kPaneMtxDirty = 0x10, k
 constexpr uint32_t kPaneParent = 0x0C, kPaneChildren = 0x14, kPaneTrans = 0x1C, kPaneScale = 0x34, kPaneSize = 0x3C, kPaneName = 0x80;
 
 std::mutex g_root_mu;
-std::vector<std::pair<uint32_t, bool>> g_root_tv;  // layout root pane -> last drawn to the TV
-bool root_on_tv(uint32_t root) {
+std::vector<std::pair<uint32_t, int>> g_root_tv;  // layout root pane -> the target it was last drawn to (Screen)
+int root_screen(uint32_t root) {
     std::lock_guard<std::mutex> lk(g_root_mu);
-    for (auto& [r, tv] : g_root_tv)
-        if (r == root) return tv;
-    return true;  // not reported (yet): layouts are TV layouts unless seen on the GamePad
+    for (auto& [r, s] : g_root_tv)
+        if (r == root) return s;
+    return -1;
 }
-void set_root_tv(uint32_t root, bool tv) {
+// not reported (yet): layouts are TV layouts unless seen elsewhere
+bool root_on_tv(uint32_t root) { int s = root_screen(root); return s < 0 || s == kTvTarget; }
+void set_root_tv(uint32_t root, int screen) {
     std::lock_guard<std::mutex> lk(g_root_mu);
     for (auto& e : g_root_tv)
-        if (e.first == root) { e.second = tv; return; }
+        if (e.first == root) { e.second = screen; return; }
     if (g_root_tv.size() > 256) g_root_tv.erase(g_root_tv.begin());
-    g_root_tv.push_back({root, tv});
+    g_root_tv.push_back({root, screen});
 }
 
 // the anchoring state each root's matrices were last computed with: a root whose state changes
@@ -432,22 +442,126 @@ static void calc_pane(Cpu* c, uint32_t pane, uint32_t parent, float kx, float ky
     if (scaled) { stf32(pane + kPaneScale, sx); stf32(pane + kPaneScale + 4, sy); }
 }
 
+// ---- GamePad picture of another shape than 16:9: a second display (the AYN Thor's lower screen is
+// 1240x1080). The renderer makes the GamePad's 854x480-family targets ky times taller (kx wider,
+// vk_surfaces.cpp) and narrows the layout projections drawn into them, so the 16:9 layout space sits
+// centred and undistorted. The screen stays together as the game laid it out (moving parts out to
+// the new edges tore it apart: the item pages scroll in a container placed a screen to the side, the
+// tabs belong to the panel); nothing the game reads changes (the GamePad is a touch screen and the
+// game hit-tests its own pane positions). Only the drawing differs (Pane::Draw):
+//  - a leaf covering the whole 1280x720 screen (a background) is drawn stretched to the new shape;
+//  - panes the game parks entirely off the 16:9 screen stay hidden (the neighbouring item pages
+//    would show in the extra width).
+namespace aspect {
+namespace {
+bool drc_original() { return same(g_drc_game.load(std::memory_order_relaxed), kBase); }
+}  // namespace
+
+void set_drc_aspect(float a) {
+    if (!(a > 0.1f && a < 20.0f)) a = kBase;
+    float q = std::round(a * 200.0f) / 200.0f;  // as set_window_aspect
+    if (std::fabs(q - kBase) < 0.006f) q = kBase;
+    // portrait displays too (the screen stays centred; the TV's limit is 1:1)
+    g_drc_requested.store(std::fmin(std::fmax(q, 0.5f), 4.0f), std::memory_order_relaxed);
+}
+
+bool drc_touch(float u, float v, float pictureAspect, float& x, float& y) {
+    if (!(pictureAspect > 0.1f) || std::fabs(pictureAspect / kBase - 1.0f) < 0.01f) {
+        x = u;
+        y = v;
+        return true;
+    }
+    float kx, ky;
+    factors(pictureAspect, kx, ky);
+    x = (u - 0.5f) * kx + 0.5f;  // the 16:9 screen in the middle of the picture
+    y = (v - 0.5f) * ky + 0.5f;
+    return x >= 0.0f && x <= 1.0f && y >= 0.0f && y <= 1.0f;  // outside: only background there
+}
+}  // namespace aspect
+
+// Pane::Draw of a pane in a layout drawn to a GamePad picture of another shape: false if it isn't one
+static bool drc_draw(Cpu* c, uint32_t pane) {
+    using namespace aspect;
+    uint32_t root = pane;
+    for (int i = 0; i < 16 && ld32(root + kPaneParent); i++) root = ld32(root + kPaneParent);
+    if (ld32(root + kPaneParent) || root_screen(root) != kDrcTarget) return false;
+    if (root == pane) { f_02877100_orig(c); return true; }
+    const uint32_t m = pane + kPaneGlobal;  // 3x4 matrix, layout space (y up)
+    float gx = (float)ldf32(m + 0xC), gy = (float)ldf32(m + 0x1C);
+    float w = (float)ldf32(pane + kPaneSize) * std::hypot((float)ldf32(m), (float)ldf32(m + 0x10));
+    float h = (float)ldf32(pane + kPaneSize + 4) * std::hypot((float)ldf32(m + 4), (float)ldf32(m + 0x14));
+    bool leaf = ld32(pane + kPaneChildren) == pane + kPaneChildren;
+    if (w > 0.0f && h > 0.0f && (std::fabs(gx) - w / 2 > 640.0f + 8.0f || std::fabs(gy) - h / 2 > 360.0f + 8.0f)) {
+        if (leaf) return true;  // parked
+        // a parked pane with children (an item icon with its count): its own image transparent (global
+        // alpha, +0x46), the children decide for themselves (a container placed a screen to the side
+        // holds the page in view)
+        uint8_t a = ld8(pane + kPaneAlpha + 1);
+        st8(pane + kPaneAlpha + 1, 0);
+        f_02877100_orig(c);
+        st8(pane + kPaneAlpha + 1, a);
+        return true;
+    }
+    if (!leaf) { f_02877100_orig(c); return true; }
+    if (!(std::fabs(gx) < 8.0f && std::fabs(gy) < 8.0f && w >= 1270.0f && h >= 710.0f)) { f_02877100_orig(c); return true; }
+    float kx, ky;
+    factors(g_drc_game, kx, ky);
+    static const bool log_st = getenv("WWHD_ASPECT_LOG") != nullptr;
+    if (log_st) {
+        static std::mutex mu;
+        static std::unordered_map<std::string, int> seen;
+        auto nm = [](uint32_t p) { return std::string((const char*)mem::ptr(p + kPaneName), strnlen((const char*)mem::ptr(p + kPaneName), 24)); };
+        std::lock_guard<std::mutex> lk(mu);
+        if (seen[nm(pane)]++ == 0) LOG("[aspect] GamePad: stretched %s", nm(pane).c_str());
+    }
+    float save[8];
+    for (int i = 0; i < 4; i++) {
+        save[i] = (float)ldf32(m + 4 * i);
+        save[4 + i] = (float)ldf32(m + 0x10 + 4 * i);
+        stf32(m + 4 * i, save[i] * kx);
+        stf32(m + 0x10 + 4 * i, save[4 + i] * ky);
+    }
+    f_02877100_orig(c);
+    for (int i = 0; i < 4; i++) {
+        stf32(m + 4 * i, save[i]);
+        stf32(m + 0x10 + 4 * i, save[4 + i]);
+    }
+    return true;
+}
+
 // Pane::Draw(this, DrawInfo&): the render thread reports where each layout root is drawn. The
 // game thread can't tell: TV and GamePad layouts share DrawInfos and are recorded on threads that
 // don't bind the targets.
 extern "C" void hook_02877100(Cpu* c) {
     using namespace aspect;
     uint32_t pane = c->r[3];
-    if (hud_hidden(pane)) return;  // a HUD element the player hid (hud.h): neither it nor its children
-    if (hud_fade_gone(kFadeHearts) && name_is(pane, "N_Default_00")) return;  // hearts faded out completely
-    if (hud_fade_gone(kFadeRupees) && name_is(pane, "L_Rupy_00")) return;     // rupees too
+    // WWHD_HUD_SKIP_LOG=1: each pane name skipped below, once, with its parents (debugging)
+    auto skipped = [&](const char* why) {
+        static const bool log = getenv("WWHD_HUD_SKIP_LOG") != nullptr;
+        if (!log) return;
+        static std::mutex mu;
+        static std::set<std::string> seen;
+        std::string path;
+        for (uint32_t p = pane; p && path.size() < 200; p = ld32(p + kPaneParent))
+            path += std::string((const char*)mem::ptr(p + kPaneName), strnlen((const char*)mem::ptr(p + kPaneName), 24)) + "<";
+        std::lock_guard<std::mutex> lk(mu);
+        if (seen.insert(path).second) LOG("[hud] skipped (%s): %s", why, path.c_str());
+    };
+    if (hud_hidden(pane)) return skipped("hidden");  // a HUD element the player hid (hud.h): neither it nor its children
+    if (hud_fade_gone(kFadeHearts) && name_is(pane, "N_Default_00")) return skipped("hearts");  // hearts faded out completely
+    if (hud_fade_gone(kFadeRupees) && name_is(pane, "L_Rupy_00")) return skipped("rupees");     // rupees too
     // a layout root drawn to the TV: the pause menu's? (hud.h; the GamePad shows the same item layout
     // all the time)
     if (!ld32(pane + kPaneParent) && root_on_tv(pane)) hud_root_drawn(pane);
-    if (original()) { f_02877100_orig(c); return; }
     uint32_t parent = ld32(pane + kPaneParent);
+    // a GamePad picture of another shape: where each root is drawn decides how (also with a 16:9 TV)
+    if (!aspect::drc_original()) {
+        if (!parent) gx2::emit(gx2::OP_LAYOUT_ROOT, {pane});
+        if (drc_draw(c, pane)) return;
+    }
+    if (original()) { f_02877100_orig(c); return; }
     if (!parent) {
-        gx2::emit(gx2::OP_LAYOUT_ROOT, {pane});
+        if (aspect::drc_original()) gx2::emit(gx2::OP_LAYOUT_ROOT, {pane});  // (else above)
     } else {
         // the wider (taller) picture shows layout space the game uses to park panes out of sight:
         // a pane whose centre, without our offsets, is off the 16:9 screen stays hidden
@@ -464,17 +578,18 @@ extern "C" void hook_02877100(Cpu* c) {
 }
 
 // the projection matrix uploaded during `fn` is tagged: the render thread narrows it (rows x and y
-// divided by kx, ky) when the target is the TV picture (gx2_core.cpp OP_SET_PROJ_REGS)
+// divided by kx, ky) when the target is the TV picture or a GamePad picture of another shape
+// (gx2_core.cpp OP_SET_PROJ_REGS)
 static thread_local int t_tag = 0;
 static void with_tv_projection(Cpu* c, void (*fn)(Cpu*)) {
-    if (aspect::original()) { fn(c); return; }
+    if (aspect::original() && aspect::drc_original()) { fn(c); return; }
     t_tag++;
     fn(c);
     t_tag--;
 }
 namespace aspect {
 bool tagged_projection() { return t_tag > 0; }
-void layout_root_target(uint32_t root, bool tv) { set_root_tv(root, tv); }
+void layout_root_target(uint32_t root, int screen) { set_root_tv(root, screen); }
 }  // namespace aspect
 
 // DrawInfo::LoadProjectionMtx(this): TV layouts are drawn into the wider screen undistorted

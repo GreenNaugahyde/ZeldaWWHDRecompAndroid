@@ -140,6 +140,11 @@ HLE(vpad, VPADRead) {
     }
     // touch panel, raw coordinates as the hardware reports them (mapping from Cemu)
     static uint16_t last_tx = 0, last_ty = 0;
+    // debug: WWHD_TOUCH_LOG=1 logs the touch panel state when it changes
+    static const bool logTouch = getenv("WWHD_TOUCH_LOG") != nullptr;
+    static bool lastTouch = false;
+    if (logTouch && p.touch != lastTouch) LOG("[touch] %s %.3f, %.3f", p.touch ? "down" : "up", p.tx, p.ty);
+    lastTouch = p.touch;
     if (p.touch) {
         last_tx = (uint16_t)(p.tx * 3883.0f + 92.0f);
         last_ty = (uint16_t)(4095.0f - p.ty * 3694.0f - 254.0f);

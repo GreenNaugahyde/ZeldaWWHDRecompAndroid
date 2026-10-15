@@ -898,7 +898,7 @@ static void after_pass(int phase) {
 }
 }  // namespace interp
 
-namespace mods { void cheats_service(); }  // mods/cheats.cpp
+namespace mods { void cheats_service(); void warp_service(); }  // mods/cheats.cpp, mods/warp.cpp
 
 // debug: WWHD_INTERP_PASS_STATS=1 adds to the 300-step log the main thread's CPU time per pass
 // (thread CPU time, so waits for the vsync and the GPU are left out): logic passes, blended hold
@@ -947,6 +947,7 @@ extern "C" void hook_0203593C(Cpu* c) {
     fx_pass_start();
     ss::service(c);  // save states: exact values are back in guest memory, all other threads idle
     mods::cheats_service();
+    mods::warp_service();
     // debug: WWHD_CRASH_TEST=n crashes the game thread after n steps (to check the crash log; "a<n>":
     // abort() instead, as a GPU driver does)
     static const char* crashEnv = getenv("WWHD_CRASH_TEST");

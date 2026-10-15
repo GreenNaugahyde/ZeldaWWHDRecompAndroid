@@ -25,9 +25,11 @@ const char* gpu_name();
 #endif
 
 #include "gx2/gx2.h"
+#include "packs.h"
 #include "platform.h"
 #include "recomp_table.h"
 #include "runtime.h"
+#include "savestate.h"
 #include "crash_info.h"
 #include "release.h"
 #include <sys/prctl.h>
@@ -137,6 +139,7 @@ static void crash_handler(int sig, siginfo_t* si, void* uctx) {
     else
         n = snprintf(buf, sizeof buf, "\nCRASH: signal %d at host address %p\n", sig, si->si_addr);
     crash_write(buf, n);
+    if (sig == SIGSEGV && (n = ss::fault_note(buf, sizeof buf)) > 0) crash_write(buf, std::min<int>(n, sizeof buf - 1));
     crash_log_details();
     {
         char pn[200];
@@ -271,6 +274,8 @@ void boot_runtime() {
     std::string rpx = config::game_dir + "/code/cking.rpx";
     if (!load_rpx(rpx, m)) fatal("cannot load %s", rpx.c_str());
 #ifdef WWHD_DEVICE_RECOMP
+    packs::init(config::game_dir);  // mod packs: patched code (compiled with them) and data
+    packs::apply_memory();
     std::string err;
     if (!recomp::load_game_code(rpx, config::code_dir, err)) fatal("game code: %s", err.c_str());
 #endif

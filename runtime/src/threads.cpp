@@ -96,7 +96,23 @@ struct HostThread {
     // loading a save state: park at this function entry (thread saved there, see try_entry_park)
     bool has_target = false;
     uint32_t tgt_fn = 0, tgt_r1 = 0, tgt_lr = 0;
+    // loading a save state saved elsewhere ("rebuild"): the thread leaves its host stack (retire:
+    // ThreadRetire thrown at its park) and enters the saved call chain again (see rebuild_run)
+    std::atomic<bool> retire{false};
+    std::mutex* park_m = nullptr;                 // the wait it is parked in (woken to retire)
+    std::condition_variable* park_cv = nullptr;
+    int fate = 0;                                 // FateNone, then after retiring: FateWait, FateRebuild, FateDrop
+    bool unwound = false;                         // retired: its host stack is gone (guarded by m)
+    std::vector<uint32_t> chain;                  // saved return addresses, outermost first
+    uint32_t chain_root = 0, chain_final = 0;     // the function entered first; the innermost callee
+    size_t chain_pos = 0;
+    bool resuming = false;                        // entering the chain (ppc_entry)
+    uint32_t forward_to = 0;                      // after the chain: the function to enter (not one on the way)
+    bool rejoin = false;                          // re-entering its saved wait: registered there already
 };
+// fates of a retired thread
+enum Fate { FateNone, FateWait, FateRebuild, FateDrop };
+struct ThreadRetire {};
 enum WaitState { kRunning = 0, kParked = 1, kRequester = 2 };
 enum WaitKind : uint8_t { W_NONE, W_MUTEX, W_EVENT, W_MSG_SEND, W_MSG_RECV, W_SLEEPQ, W_JOIN, W_RDV, W_SLEEP, W_SERVICE, W_ENTRY };
 
@@ -240,6 +256,71 @@ static std::atomic<int> g_entry_parks{0};
 static void try_entry_park(HostThread* t, Cpu* c);
 namespace threads { static std::string thread_name(HostThread* t); }
 
+// Rebuilding a call chain (save state loaded elsewhere than it was saved): the thread enters the
+// outermost function of the saved chain; each function's entry check (ppc_entry, from the recompiled
+// code's entry) continues at the call whose return address is next in the chain, which enters the
+// next function the same way. Every register is in the Cpu at a call (recomp/locals.cpp), so a
+// function entered at its call needs nothing but the saved Cpu and guest memory. At the innermost
+// call the thread parks; after the load it makes that call (an HLE wait again, or the function it
+// was parked at the entry of).
+static void park_rebuilt(HostThread* t);
+static uint32_t resume_step(HostThread* t, Cpu* c, uint32_t fn, uint32_t size) {
+    if (t->chain_pos >= t->chain.size()) {
+        // after the chain: the thread was parked at the entry of forward_to, which the innermost call
+        // reached through another function's branch; that one's code ran already: straight there
+        uint32_t to = t->forward_to;
+        t->resuming = false;
+        t->forward_to = 0;
+        if (!to || to == fn) return 0;
+        c->pc = to;
+        ppc_dispatch(c);
+        return 1;
+    }
+    uint32_t ra = t->chain[t->chain_pos];
+    if (ra - fn >= size) {
+        // entered on the way to the next function of the chain without a frame of its own (a call
+        // whose callee went on by a branch, or a hook calling the game's function): enter that one
+        // here; when it returns, so does this function
+        uint32_t next = dispatch::containing(ra);
+        if (!next || next == fn) ppc_resume_failed(c);
+        c->pc = next;
+        ppc_dispatch(c);
+        return 1;
+    }
+    size_t k = t->chain_pos++;
+    bool last = t->chain_pos == t->chain.size();
+    // the callee of that call: calls through ctr / lr (bctrl, blrl) read it there; the call sets lr
+    uint32_t callee = last ? t->chain_final : dispatch::containing(t->chain[k + 1]);
+    c->ctr = callee;
+    c->lr = callee;
+    if (last) {
+        t->resuming = t->forward_to != 0;
+        park_rebuilt(t);  // until the load is done
+        if (t->resuming) g_core_preempt[c->core] = 1;  // the next entry check forwards (scheduling may have cleared it)
+    }
+    return ra;
+}
+
+extern "C" uint32_t ppc_entry(Cpu* c, uint32_t fn, uint32_t size) {
+    HostThread* t = (HostThread*)c->thread;
+    if (__builtin_expect(t && t->resuming, 0)) return resume_step(t, c, fn, size);
+    ppc_preempt(c);
+    return 0;
+}
+
+extern "C" void ppc_resume_failed(Cpu* c) {
+    HostThread* t = (HostThread*)c->thread;
+    std::string chain;
+    if (t)
+        for (uint32_t a : t->chain) {
+            char b[12];
+            snprintf(b, sizeof b, " %08X", a);
+            chain += b;
+        }
+    fatal("save state: a thread's call chain doesn't fit the code (pc %08X, step %zu of%s)", c->pc, t ? t->chain_pos : 0,
+          chain.c_str());
+}
+
 extern "C" void ppc_preempt(Cpu* c) {
     HostThread* t = (HostThread*)c->thread;
     if (__builtin_expect(g_entry_parks.load(std::memory_order_relaxed) != 0, 0) && t) try_entry_park(t, c);
@@ -362,7 +443,7 @@ void block_end() {
             LOG("[longwait] \"%s\" blocked %.1f s (lr %08X)", mem::read_cstr(ld32(t_self->guest + osthread::kName)).c_str(), sec,
                 t_self->cpu.lr);
     }
-    if (t_self) core_acquire(t_self);
+    if (t_self && !t_self->retire.load()) core_acquire(t_self);  // (not while leaving its stack: no core needed)
 }
 bool ensure_core() {
     if (!t_self || t_self->holds_core || !g_sched_on) return false;
@@ -395,7 +476,8 @@ static HostThread* g_frz_owner = nullptr;
 
 static void park_gate(HostThread* t) {
     std::unique_lock<std::mutex> l(g_frz_m);
-    while (g_frozen && t != g_frz_owner) g_frz_cv.wait(l);
+    while (g_frozen && t != g_frz_owner && !t->retire.load()) g_frz_cv.wait(l);
+    if (t->retire.load()) throw ThreadRetire{};  // a save state from elsewhere is loaded: leave this stack
     t->wst.store(kRunning);
 }
 
@@ -410,13 +492,18 @@ static bool park_wait(std::unique_lock<std::mutex>& lk, std::condition_variable&
         if (t) {
             t->wait_kind = kind;
             t->wait_obj = obj;
+            t->park_m = lk.mutex();
+            t->park_cv = &cv;
+            t->rejoin = false;
             t->wst.store(kParked);
         }
         lk.unlock();
         threads::block_begin();
         lk.lock();
-        if (deadline) cv.wait_until(lk, *deadline, pred);
-        else cv.wait(lk, pred);
+        auto woken = [&] { return pred() || (t && t->retire.load()); };
+        if (deadline) cv.wait_until(lk, *deadline, woken);
+        else cv.wait(lk, woken);
+        if (t && t->retire.load()) throw ThreadRetire{};  // (lk unlocks as the wait's caller unwinds)
         lk.unlock();
         if (t) park_gate(t);
         threads::block_end();
@@ -441,8 +528,9 @@ static uint32_t classify_ra(uintptr_t ra) {
         if (n[0] == 'f' && n[1] == '_' && isxdigit((unsigned char)n[2])) {
             v = (uint32_t)strtoul(n + 2, nullptr, 16);
             if (v < 2) v = 0;
-        } else if (!strcmp(n, "ppc_dispatch") || !strcmp(n, "ppc_preempt") || strstr(n, "guest_call") || strstr(n, "thread_main") ||
-                   strstr(n, "try_entry_park") || strstr(n, "thread_start")) {
+        } else if (!strcmp(n, "ppc_dispatch") || !strcmp(n, "ppc_preempt") || !strcmp(n, "ppc_entry") || strstr(n, "guest_call") ||
+                   strstr(n, "thread_main") || strstr(n, "try_entry_park") || strstr(n, "thread_start") || strstr(n, "rebuild_run") ||
+                   strstr(n, "resume_step")) {
             v = 1;
         }
     }
@@ -487,24 +575,35 @@ __attribute__((noinline)) static void try_entry_park(HostThread* t, Cpu* c) {
     if (!fn || (mode == 2 && fn != t->tgt_fn)) return;
     t->wait_kind = W_ENTRY;
     t->wait_obj = fn;
-    bool held = t->holds_core;
-    if (held) core_release(t);
+    t->park_m = nullptr;
+    t->park_cv = nullptr;
+    core_release(t);
     t->wst.store(kParked);
     park_gate(t);
-    if (held) core_acquire(t);
+    core_acquire(t);
 }
 
 namespace threads {
 void park_sleep_until(std::chrono::steady_clock::time_point tp) {
     HostThread* t = t_self;
-    if (t) {
-        t->wait_kind = W_SLEEP;
-        t->wait_obj = 0;
-        t->wst.store(kParked);
+    if (!t) {
+        block_begin();
+        std::this_thread::sleep_until(tp);
+        block_end();
+        return;
     }
+    t->wait_kind = W_SLEEP;
+    t->wait_obj = 0;
+    t->park_m = &t->m;
+    t->park_cv = &t->cv;
+    t->wst.store(kParked);
     block_begin();
-    std::this_thread::sleep_until(tp);
-    if (t) park_gate(t);
+    {
+        std::unique_lock<std::mutex> l(t->m);  // (a retire wakes it early)
+        t->cv.wait_until(l, tp, [&] { return t->retire.load(); });
+        if (t->retire.load()) throw ThreadRetire{};
+    }
+    park_gate(t);
     block_end();
 }
 void service_begin() {
@@ -518,6 +617,28 @@ void service_end() {
 }
 }  // namespace threads
 
+// the parked place of a rebuilt thread: just before the innermost call of its saved chain, without
+// a core (the descent ran without one); the load waits for all of them to get here
+static void park_rebuilt(HostThread* t) {
+    t->park_m = nullptr;
+    t->park_cv = nullptr;
+    t->wst.store(kParked);
+    park_gate(t);
+    core_acquire(t);
+}
+
+// a rebuilt thread: enters its saved call chain (see resume_step); returns when the thread ends
+__attribute__((noinline)) static uint32_t rebuild_run(HostThread* ht) {
+    Cpu* c = &ht->cpu;
+    ht->chain_pos = 0;
+    ht->resuming = true;
+    ht->wst.store(kRunning);
+    g_core_preempt[c->core] = 1;  // the entry checks take their slow path (the other threads are frozen)
+    c->pc = ht->chain_root;
+    ppc_dispatch(c);
+    return c->r[3];
+}
+
 static void* thread_main(void* p) {
     HostThread* ht = (HostThread*)p;
     t_self = ht;
@@ -528,14 +649,41 @@ static void* thread_main(void* p) {
     ht->has_self = true;
     platform::set_thread_high_priority();
     if (name.empty()) platform::prefer_big_cores(true);  // the game's main thread
-    LOG("[thread] start \"%s\" core %d prio %d affinity %X", name.c_str(), ht->core, (int)ld32(ht->guest + osthread::kBasePrio),
-        ld32(ht->guest + osthread::kAffinity));
+    LOG("[thread] %s \"%s\" core %d prio %d affinity %X", ht->fate == FateRebuild ? "rebuild" : "start", name.c_str(), ht->core,
+        (int)ld32(ht->guest + osthread::kBasePrio), ld32(ht->guest + osthread::kAffinity));
     uint32_t rv = 0;
-    core_acquire(ht);
-    try {
-        rv = guest_call(&ht->cpu, ht->entry, {ht->argc, ht->argv});
-    } catch (const GuestExit& e) {
-        rv = e.value;
+    if (ht->fate != FateRebuild) core_acquire(ht);  // (a rebuilt thread takes one when it parks)
+    for (;;) {
+        try {
+            if (ht->fate == FateRebuild) {
+                ht->fate = FateNone;
+                rv = rebuild_run(ht);
+            } else {
+                rv = guest_call(&ht->cpu, ht->entry, {ht->argc, ht->argv});
+            }
+            break;
+        } catch (const GuestExit& e) {
+            rv = e.value;
+            break;
+        } catch (const ThreadRetire&) {
+            // left its host stack for a save state saved elsewhere: the load says what comes next
+            // (no core is held: it was parked)
+            std::unique_lock<std::mutex> l(ht->m);
+            ht->retire = false;
+            ht->resuming = false;
+            ht->fate = FateWait;
+            ht->unwound = true;
+            ht->cv.notify_all();
+            ht->cv.wait(l, [&] { return ht->fate != FateWait; });
+            ht->unwound = false;
+            if (ht->fate == FateDrop) {  // not running in the save: this host thread ends quietly
+                ht->fate = FateNone;
+                ht->cv.notify_all();
+                l.unlock();
+                pthread_detach(pthread_self());
+                return nullptr;
+            }
+        }
     }
     core_release(ht);
     {
@@ -859,6 +1007,10 @@ static bool event_wait(uint32_t addr, const std::chrono::steady_clock::time_poin
     HEvent* ev = g_events.get(addr);
     HostThread* t = t_self;
     std::unique_lock<std::mutex> lk(ev->m);
+    if (t && t->rejoin) {  // a rebuilt thread back in its saved wait: listed (or woken) there already
+        t->rejoin = false;
+        return park_wait(lk, ev->cv, [&] { return t->woken; }, W_EVENT, addr, deadline);
+    }
     if (ev->signaled) {
         if (ev->auto_reset) ev->signaled = false;
         return true;
@@ -1013,8 +1165,11 @@ HLE(coreinit, OSSleepThread) {
         park_wait(lk, q->cv, [&] { return q->gen != g; }, W_SLEEPQ, arg(c, 0));
         return;
     }
-    t->woken = false;
-    q->waiters.push_back(t);
+    if (t->rejoin) t->rejoin = false;  // a rebuilt thread back in its saved wait: listed (or woken) already
+    else {
+        t->woken = false;
+        q->waiters.push_back(t);
+    }
     park_wait(lk, q->cv, [&] { return t->woken; }, W_SLEEPQ, arg(c, 0));
 }
 void os_wakeup_thread_queue(uint32_t queue) {
@@ -1045,7 +1200,8 @@ HLE(coreinit, OSWaitRendezvous) {
     HRendezvous* r = g_rdv.get(arg(c, 0));
     uint32_t need = __builtin_popcount(arg(c, 1) & 7);
     std::unique_lock<std::mutex> lk(r->m);
-    r->arrived++;
+    if (t_self && t_self->rejoin) t_self->rejoin = false;  // a rebuilt thread: counted in the save already
+    else r->arrived++;
     r->cv.notify_all();
     park_wait(lk, r->cv, [&] { return r->arrived >= need; }, W_RDV, arg(c, 0));
     ret(c, 1);
@@ -1377,61 +1533,207 @@ bool threads_ss_save(ss::Writer& w, std::string& why) {
     return true;
 }
 
+// ---- loading a save state: what happens to each thread. The fast way: every thread is parked where
+// it was saved (same host call stack), nothing but the state changes. Otherwise (device-recompiled
+// code only) a thread parked elsewhere leaves its host stack and enters its saved call chain again
+// (rebuild), threads that run in the save but not now start into theirs, and threads that run now
+// but not in the save end. threads_ss_check makes the plan; threads_ss_retire, threads_ss_load and
+// threads_ss_rebuild carry it out.
+enum Action { AKeep, ARebuild, AStart, ADrop, ARemove };
+struct PlanItem {
+    uint32_t guest = 0;
+    Action act = AKeep;
+    std::vector<uint32_t> chain;  // outermost first
+    uint32_t root = 0, final = 0, forward = 0;
+    bool rejoin = false;
+};
+static std::vector<PlanItem> g_plan;
+
+static bool rebuild_allowed() {
+#ifdef WWHD_DEVICE_RECOMP
+    static const bool on = !getenv("WWHD_STATE_REBUILD") || atoi(getenv("WWHD_STATE_REBUILD")) != 0;
+    return on;
+#else
+    return false;  // the code compiled at build time has no resume entries
+#endif
+}
+
+static int32_t sext_bits(uint32_t v, int bits) { return (int32_t)(v << (32 - bits)) >> (32 - bits); }
+
+// the saved call chain of a thread parked in the save, from the snapshot's memory
+static bool saved_chain(const ThreadRec& s, PlanItem& p, std::string& why) {
+    char buf[160];
+    if (s.wst != kParked || s.wait_kind == W_NONE || s.wait_kind == W_SERVICE) { why = "not at a wait in the save"; return false; }
+    std::vector<uint32_t> ras{s.cpu.lr};
+    uint32_t a = s.cpu.r[1];
+    for (int i = 0;; i++) {
+        uint32_t prev = ss::snap_ld32(a);
+        if (i > 4096 || !prev || prev <= a || prev - a > 0x100000) { why = "its stack can't be followed"; return false; }
+        uint32_t ra = ss::snap_ld32(prev + 4);
+        if (!ra) {  // guest_call's frame: the thread's start, or a call from host code (a callback)
+            uint32_t top = ss::snap_ld32(s.guest + osthread::kStackBase), up = ss::snap_ld32(prev);
+            if (up > top || top - up > 0x100) { why = "it runs in a callback from host code"; return false; }
+            break;
+        }
+        ras.push_back(ra);
+        a = prev;
+    }
+    for (uint32_t ra : ras) {
+        uint32_t w = ld32(ra - 4), op = w >> 26, xo = (w >> 1) & 0x3FF;
+        bool call = (w & 1) && (op == 18 || op == 16 || (op == 19 && (xo == 16 || xo == 528)));
+        if (!call || !dispatch::containing(ra)) {
+            snprintf(buf, sizeof buf, "return address %08X is not after a call", ra);
+            why = buf;
+            return false;
+        }
+    }
+    p.chain.assign(ras.rbegin(), ras.rend());
+    p.root = dispatch::containing(p.chain[0]);
+    p.final = s.wait_kind == W_ENTRY ? s.wait_obj : s.cpu.ctr;
+    p.rejoin = s.wait_kind == W_EVENT || s.wait_kind == W_SLEEPQ || s.wait_kind == W_RDV;
+    // the innermost call: a direct one must reach the place it was parked at without running other
+    // game code again
+    uint32_t site = s.cpu.lr - 4, w = ld32(site), op = w >> 26;
+    if (op == 18 || op == 16) {
+        uint32_t t = op == 18 ? (uint32_t)(sext_bits(w & 0x03FFFFFC, 26) + (w & 2 ? 0 : (int32_t)site))
+                              : (uint32_t)(sext_bits(w & 0xFFFC, 16) + (w & 2 ? 0 : (int32_t)site));
+        bool game_fn = t != site && dispatch::lookup(t) != nullptr && t - 0x02000000u < 0x01000000u;
+        if (s.wait_kind == W_ENTRY) {
+            if (t != p.final) p.forward = p.final;  // reached through a branch of the function at t
+        } else if (game_fn) {
+            snprintf(buf, sizeof buf, "it waits in a call reached through game code at %08X", t);
+            why = buf;
+            return false;
+        }
+    }
+    return true;
+}
+
 // can the threads of this snapshot be put back into the current process? (all threads parked)
 bool threads_ss_check(ss::Reader r, std::string& why) {
     uint32_t n = r.u32();
     std::vector<ThreadRec> recs(n);
     for (auto& t : recs) r.bytes(&t, sizeof t);
     if (!r.ok) { why = "corrupt thread section"; return false; }
+    g_plan.clear();
     std::lock_guard<std::mutex> lk(g_threads_mutex);
     std::unordered_map<uint32_t, const ThreadRec*> by;
     for (auto& t : recs) by[t.guest] = &t;
-    char buf[200];
+    const bool rebuild = rebuild_allowed();
+    char buf[240];
+    std::string slow;  // why the fast way doesn't work (for the log)
+    auto plan = [&](const ThreadRec& s, Action act, const char* reason, HostThread* t) {
+        PlanItem p;
+        p.guest = s.guest;
+        p.act = act;
+        std::string w;
+        if ((act == ARebuild || act == AStart) && !saved_chain(s, p, w)) {
+            snprintf(buf, sizeof buf, "thread %08X %s: %s", s.guest, reason, w.c_str());
+            why = buf;
+            return false;
+        }
+        if (slow.empty()) {
+            snprintf(buf, sizeof buf, "thread %s %s", t ? threads::thread_name(t).c_str() : "(new)", reason);
+            slow = buf;
+        }
+        g_plan.push_back(std::move(p));
+        return true;
+    };
     for (auto& s : recs) {
         auto it = g_threads.find(s.guest);
         HostThread* t = it == g_threads.end() ? nullptr : it->second;
         if (t && t->service) { snprintf(buf, sizeof buf, "thread %08X is a service thread here", s.guest); why = buf; return false; }
         bool live_s = s.started && !s.exited;
-        if (!t) {
-            if (!live_s && !s.exited) continue;  // created but not started: recreated on load
-            snprintf(buf, sizeof buf, "thread %08X (running in the save) does not exist yet", s.guest);
-            why = buf;
-            return false;
+        bool live_t = t && t->started && !t->exited;
+        if (!live_s) {
+            if (!live_t) continue;  // (created but not started, or exited: set by threads_ss_load)
+            if (!rebuild) {
+                snprintf(buf, sizeof buf, "thread %s: %s in the save, running now", threads::thread_name(t).c_str(),
+                         !s.started ? "not started" : "exited");
+                why = buf;
+                return false;
+            }
+            if (t->wst.load() != kParked) { why = "thread " + threads::thread_name(t) + " is not parked"; return false; }
+            if (!plan(s, ADrop, "is not running in the save", t)) return false;
+            continue;
         }
-        bool live_t = t->started && !t->exited;
-        if (s.started != t->started || (live_s != live_t)) {
-            snprintf(buf, sizeof buf, "thread %s: %s in the save, %s now", threads::thread_name(t).c_str(),
-                     !s.started ? "not started" : s.exited ? "exited" : "running", !t->started ? "not started" : t->exited ? "exited" : "running");
-            why = buf;
-            return false;
+        if (!live_t) {
+            if (!rebuild) {
+                snprintf(buf, sizeof buf, "thread %08X (running in the save) is not running yet", s.guest);
+                why = buf;
+                return false;
+            }
+            if (!plan(s, AStart, "is not running yet", t)) return false;
+            continue;
         }
-        if (!live_s) continue;
         int wst = t->wst.load();
-        if (s.wst != wst) {
-            snprintf(buf, sizeof buf, "thread %s: %s in the save, %s now", threads::thread_name(t).c_str(),
-                     s.wst == kRequester ? "main loop" : "waiting", wst == kRequester ? "main loop" : "waiting");
-            why = buf;
+        if (s.wst == kRequester || wst == kRequester) {  // the main thread: always the fast way
+            if (s.wst != wst || !same_chain(t->cpu, s.cpu)) {
+                snprintf(buf, sizeof buf, "the main thread is at a different place (lr %08X, saved lr %08X)", t->cpu.lr, s.cpu.lr);
+                why = buf;
+                return false;
+            }
+            continue;
+        }
+        bool same = s.wst == wst && (s.wst != kParked || (s.wait_kind == t->wait_kind && s.wait_obj == t->wait_obj)) &&
+                    same_chain(t->cpu, s.cpu);
+        if (same) continue;
+        snprintf(buf, sizeof buf, "is at a different place (lr %08X sp %08X, saved lr %08X sp %08X)", t->cpu.lr, t->cpu.r[1], s.cpu.lr,
+                 s.cpu.r[1]);
+        if (!rebuild) {
+            why = "thread " + threads::thread_name(t) + " " + buf;
             return false;
         }
-        if (s.wst == kParked && (s.wait_kind != t->wait_kind || s.wait_obj != t->wait_obj)) {
-            snprintf(buf, sizeof buf, "thread %s waits on %u:%08X in the save, %u:%08X now", threads::thread_name(t).c_str(),
-                     s.wait_kind, s.wait_obj, t->wait_kind, t->wait_obj);
-            why = buf;
-            return false;
-        }
-        if (!same_chain(t->cpu, s.cpu)) {
-            snprintf(buf, sizeof buf, "thread %s is at a different place (lr %08X sp %08X, saved lr %08X sp %08X)",
-                     threads::thread_name(t).c_str(), t->cpu.lr, t->cpu.r[1], s.cpu.lr, s.cpu.r[1]);
-            why = buf;
-            return false;
-        }
+        std::string reason = buf;
+        if (!plan(s, ARebuild, reason.c_str(), t)) return false;
     }
     for (auto& [g, t] : g_threads) {
         if (t->service || !t->started || t->exited || by.count(g)) continue;
-        why = "thread " + threads::thread_name(t) + " was created after the save and is running";
-        return false;
+        if (!rebuild) {
+            why = "thread " + threads::thread_name(t) + " was created after the save and is running";
+            return false;
+        }
+        if (t->wst.load() != kParked) { why = "thread " + threads::thread_name(t) + " is not parked"; return false; }
+        PlanItem p;
+        p.guest = g;
+        p.act = ARemove;
+        if (slow.empty()) slow = "thread " + threads::thread_name(t) + " was created after the save";
+        g_plan.push_back(p);
     }
+    if (!g_plan.empty()) why = slow;  // (ok: the slow way)
     return true;
+}
+
+bool threads_ss_rebuild_needed() { return !g_plan.empty(); }
+
+// the threads that leave their host stacks do so (before anything is restored)
+void threads_ss_retire() {
+    std::vector<HostThread*> ts;
+    {
+        std::lock_guard<std::mutex> lk(g_threads_mutex);
+        for (auto& p : g_plan) {
+            if (p.act != ARebuild && p.act != ADrop && p.act != ARemove) continue;
+            auto it = g_threads.find(p.guest);
+            if (it != g_threads.end()) ts.push_back(it->second);
+        }
+    }
+    for (HostThread* t : ts) {
+        t->retire = true;
+        if (t->park_m) {  // (under the wait's mutex: it checks retire under it)
+            std::lock_guard<std::mutex> l(*t->park_m);
+        }
+        if (t->park_cv) t->park_cv->notify_all();
+        { std::lock_guard<std::mutex> l(t->m); }
+        t->cv.notify_all();
+    }
+    { std::lock_guard<std::mutex> l(g_frz_m); }
+    g_frz_cv.notify_all();
+    for (HostThread* t : ts) {
+        std::unique_lock<std::mutex> l(t->m);
+        if (!t->cv.wait_for(l, std::chrono::seconds(3), [&] { return t->unwound; }))
+            fatal("save state: thread %s did not leave its wait (lr %08X)", threads::thread_name(t).c_str(), t->cpu.lr);
+    }
+    LOG("[savestate] %zu threads left their stacks", ts.size());
 }
 
 // put the threads and HLE objects back (all threads parked, guest memory already restored)
@@ -1443,6 +1745,19 @@ void threads_ss_load(ss::Reader& r) {
     {
         std::lock_guard<std::mutex> lk(g_threads_mutex);
         g_next_id = std::max(g_next_id, next_id);
+        // threads that run now but don't exist in the save: gone (their host threads end)
+        std::unordered_map<uint32_t, Action> act;
+        for (auto& p : g_plan) {
+            act[p.guest] = p.act;
+            if (p.act != ARemove) continue;
+            auto it = g_threads.find(p.guest);
+            if (it == g_threads.end()) continue;
+            HostThread* t = it->second;
+            g_threads.erase(it);
+            std::lock_guard<std::mutex> l(t->m);
+            t->fate = FateDrop;
+            t->cv.notify_all();
+        }
         for (auto& s : recs) {
             auto it = g_threads.find(s.guest);
             HostThread* t;
@@ -1469,6 +1784,11 @@ void threads_ss_load(ss::Reader& r) {
             t->exit_value = s.exit_value;
             t->woken = s.woken;
             (void)self;
+            auto a = act.find(s.guest);
+            if (a != act.end() && (a->second == ADrop || a->second == AStart)) {
+                t->started = s.started;  // AStart: set again when its host thread starts
+                t->exited = s.exited;
+            }
         }
     }
     uint32_t cnt = r.u32();
@@ -1597,6 +1917,61 @@ void threads_ss_load(ss::Reader& r) {
         { std::lock_guard<std::mutex> l(t->m); }
         t->cv.notify_all();
     }
+}
+
+// the retired threads end or enter their saved call chains, and threads that run in the save but not
+// now start into theirs; returns once each has parked again (just before its innermost call)
+void threads_ss_rebuild() {
+    if (g_plan.empty()) return;
+    auto t0 = std::chrono::steady_clock::now();
+    std::vector<HostThread*> wait;
+    for (auto& p : g_plan) {
+        if (p.act == ARemove) continue;  // (ended in threads_ss_load)
+        HostThread* t = host_thread(p.guest);
+        if (!t) continue;
+        if (p.act == ADrop) {
+            std::lock_guard<std::mutex> l(t->m);
+            t->fate = FateDrop;
+            t->cv.notify_all();
+            continue;
+        }
+        t->chain = p.chain;
+        t->chain_root = p.root;
+        t->chain_final = p.final;
+        t->forward_to = p.forward;
+        t->rejoin = p.rejoin;
+        t->has_target = false;
+        t->wst.store(kRunning);
+        std::string chain;
+        for (uint32_t a : p.chain) {
+            char b[12];
+            snprintf(b, sizeof b, " %08X", a);
+            chain += b;
+        }
+        LOG("[savestate] thread %s: %s into%s%s", threads::thread_name(t).c_str(), p.act == AStart ? "started" : "rebuilt", chain.c_str(),
+            p.forward ? " (then its entry)" : "");
+        if (p.act == ARebuild) {
+            std::lock_guard<std::mutex> l(t->m);
+            t->fate = FateRebuild;
+            t->cv.notify_all();
+        } else {
+            t->started = true;
+            t->exited = false;
+            t->fate = FateRebuild;
+            start_host_thread(t);
+        }
+        wait.push_back(t);
+    }
+    for (HostThread* t : wait)
+        while (t->wst.load() != kParked) {
+            if (std::chrono::steady_clock::now() - t0 > std::chrono::seconds(3))
+                fatal("save state: thread %s did not get back to its wait (step %zu of %zu)", threads::thread_name(t).c_str(), t->chain_pos,
+                      t->chain.size());
+            std::this_thread::sleep_for(std::chrono::microseconds(200));
+        }
+    LOG("[savestate] %zu threads entered their saved call chains in %.1f ms", wait.size(),
+        std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count());
+    g_plan.clear();
 }
 
 static void thread_dump_loop(int secs) {

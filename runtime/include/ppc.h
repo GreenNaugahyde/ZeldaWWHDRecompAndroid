@@ -56,6 +56,11 @@ void ppc_trace_enter(uint32_t addr);
 /* per-core scheduling: a higher-priority thread on this core is ready, yield at the next function entry */
 extern volatile int g_core_preempt[3];
 void ppc_preempt(Cpu* c);
+/* the same check in the device-recompiled code (recomp/ops.c ppcop_enter), which may also continue
+   elsewhere than at the start: 0 from the start, 1 return at once, else the return address of a call
+   in the function to continue at (save states: a thread's call chain rebuilt, threads.cpp) */
+uint32_t ppc_entry(Cpu* c, uint32_t fn, uint32_t size);
+__attribute__((noreturn)) void ppc_resume_failed(Cpu* c);  /* that return address isn't a call of the function */
 #define PPC_ENTER(a) do {                                                     \
         if (__builtin_expect(g_ppc_trace, 0)) ppc_trace_enter(a);             \
         if (__builtin_expect(g_core_preempt[c->core], 0)) ppc_preempt(c);     \

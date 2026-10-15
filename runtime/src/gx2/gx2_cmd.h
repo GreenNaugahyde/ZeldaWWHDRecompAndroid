@@ -39,6 +39,7 @@ enum Op : uint32_t {
     OP_SWAP,            // present
     OP_SETUP_CONTEXT,   // GX2ContextState*: allocate shadow state and make it current
     OP_FENCE,           // fence id: the game thread waits until the render thread got here
+    OP_WARM,            // the game holds without frames (gx2::warm_while_held): warm the shader cache
     OP_COUNT
 };
 
@@ -49,6 +50,10 @@ inline void emit(Op op, std::initializer_list<uint32_t> payload) { emit(op, payl
 // register writes
 void set_reg(uint32_t reg, uint32_t value);
 void set_regs(uint32_t first, const uint32_t* values, uint32_t count);
+
+// while the game thread holds without drawing (the save state picker at the start): the renderer
+// builds cached shaders and pipelines meanwhile, as it does a few per frame in play
+void warm_while_held();
 
 // the live register file used for execution
 uint32_t* regs();

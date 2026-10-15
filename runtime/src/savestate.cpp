@@ -18,6 +18,10 @@
 // main thread always is. Worker threads normally idle at the same wait. If not, the load is retried
 // on the following frames and finally refused with a message; nothing is changed then.
 //
+// Saving stops the game only for the small sections; guest memory is captured in the background by
+// copy on write (see "background capture"). Auto saves (an interval in the options) take turns in
+// two slots of their own (auto1.bin, auto2.bin).
+//
 // Slot file (version 2): header, the sections from each module (threads + HLE sync objects + alarms
 // + guest clock, heaps, open files, AX voices, GX2 registers, runtime allocations) zstd-compressed,
 // then guest memory (MEM2, runtime objects, fixed slots, foreground bucket, MEM1) as 64 KiB chunks
@@ -33,16 +37,22 @@
 #include <mach-o/loader.h>
 #else
 #include <elf.h>
+#include <dlfcn.h>
 #include <link.h>
 #include <zlib.h>  // blocks are deflated instead of LZ4 (states don't move between platforms)
 #endif
 #include <zstd.h>
+#include <fcntl.h>
+#include <sched.h>
+#include <signal.h>
 #include <sys/mman.h>
+#include <sys/resource.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
 #include <algorithm>
 #include <atomic>
+#include <condition_variable>
 #include <cstdarg>
 #include <cstddef>
 #include <cstdlib>
@@ -53,7 +63,9 @@
 #include <thread>
 #include <unordered_map>
 
+#include "packs.h"
 #include "runtime.h"
+#include "gx2/gx2_cmd.h"
 #include "input.h"
 #include "mem_writes.h"
 #include "release.h"
@@ -61,7 +73,10 @@
 // module sections
 bool threads_ss_save(ss::Writer& w, std::string& why);
 bool threads_ss_check(ss::Reader r, std::string& why);
+bool threads_ss_rebuild_needed();
+void threads_ss_retire();
 void threads_ss_load(ss::Reader& r);
+void threads_ss_rebuild();
 void threads_ss_targets(ss::Reader r);
 void mem_ss_save(ss::Writer& w);
 bool mem_ss_check(ss::Reader r, std::string& why);
@@ -78,9 +93,12 @@ void gx2_ss_load(ss::Reader& r);
 namespace interp { void ss_reset(); }
 namespace gfx {
 uint64_t frame_count();
+void cache_progress(uint64_t out[4]);
 void request_tv_dump(const std::string& path, int frames_ahead);
 }
 namespace dispatch { std::vector<std::pair<uint32_t, std::string>> host_functions(); }
+PpcFunc dynload_resolve(const std::string& key);
+void dynload_place(uint32_t addr, const std::string& key);
 
 namespace ss {
 namespace {
@@ -123,11 +141,15 @@ struct Region { uint32_t base, size; };
 
 std::vector<Region> regions() {
     uint32_t top = (mem::runtime_top() + kChunk - 1) & ~(kChunk - 1);
-    return {{mem::kMem2Start, mem::kMem2End - mem::kMem2Start},
-            {mem::kRuntimeStart, top - mem::kRuntimeStart},
-            {mem::kFixedStart, mem::kFixedSize},
-            {mem::kFgBucket, mem::kFgBucketSize},
-            {mem::kMem1, mem::kMem1Size}};
+    std::vector<Region> r = {{mem::kMem2Start, mem::kMem2End - mem::kMem2Start},
+                             {mem::kRuntimeStart, top - mem::kRuntimeStart},
+                             {mem::kFixedStart, mem::kFixedSize},
+                             {mem::kFgBucket, mem::kFgBucketSize},
+                             {mem::kMem1, mem::kMem1Size}};
+    // mod packs' code caves hold their variables (packs.h)
+    uint32_t cave = (packs::cave_end() + kChunk - 1) & ~(kChunk - 1);
+    if (cave > packs::kCodeCave) r.push_back({packs::kCodeCave, cave - packs::kCodeCave});
+    return r;
 }
 
 // a memory chunk of a snapshot: 64 KiB as they are (comp == 0) or zstd-compressed (comp bytes)
@@ -197,7 +219,13 @@ std::chrono::steady_clock::time_point g_message_time;
 std::atomic<int> g_save_req{0};
 std::shared_ptr<Snapshot> g_load_ready;   // decompressed, waiting for the frame boundary
 std::atomic<bool> g_loading{false};       // a slot file is being read
+std::condition_variable g_hold_cv;        // (g_mu) the start hold ends, or a state is ready to load
+std::atomic<int> g_hold{0};               // start_hold_state()
+std::atomic<int> g_writes{0};             // saves still being compressed / written (writes_pending)
 int g_attempts = 0;
+std::atomic<bool> g_save_quiet{false};    // the pending save is an auto save (no message, no retries)
+std::atomic<int> g_auto_minutes{0};       // auto save interval, 0 off
+double g_auto_played = 0;                 // seconds played since the last auto save (game thread)
 const Snapshot* g_check = nullptr;        // snapshot whose memory snap_ld32 reads
 uint64_t g_check_serial = 0;              // bumped with each g_check (snap_ld32's unpacked chunk)
 
@@ -233,7 +261,19 @@ std::string state_dir() {
     }();
     return dir;
 }
-std::string slot_path(int slot, const char* ext = "bin") { return state_dir() + "/slot" + std::to_string(slot) + "." + ext; }
+// slots 1..5 (slotN), then the auto slots (autoN) and the last session (last)
+std::string slot_path(int slot, const char* ext = "bin") {
+    std::string name = slot == kLastSlot ? "last" : slot > kSlots ? "auto" + std::to_string(slot - kSlots) : "slot" + std::to_string(slot);
+    return state_dir() + "/" + name + "." + ext;
+}
+// "slot 3" / "auto slot 1" (Cap: at the start of a message)
+std::string slot_label(int slot, bool cap = false) {
+    std::string s = slot == kLastSlot ? "last session slot"
+                    : slot > kSlots   ? "auto slot " + std::to_string(slot - kSlots)
+                                      : "slot " + std::to_string(slot);
+    if (cap) s[0] = (char)toupper(s[0]);
+    return s;
+}
 
 void build_uuid(uint8_t out[16]) {
     memset(out, 0, 16);
@@ -278,12 +318,29 @@ void build_uuid(uint8_t out[16]) {
 #endif
 }
 
-// mincore() takes char* on macOS, unsigned char* on Linux
-int page_residency(void* p, size_t n, char* vec) {
+// Whether any page of [p, p + n) was ever written: untouched pages are zero and are skipped without
+// reading them (reading would map them). Not mincore(): it calls a page that was swapped out "not
+// resident", and in the background Android moves much of the game's memory to zram, so states taken
+// then lost most of their memory (a "Last session" state of 60 MB instead of 580). /proc/self/pagemap
+// tells present and swapped pages apart from untouched ones (bits 63 and 62).
+bool ever_touched(const void* p, size_t n) {
 #ifdef __APPLE__
-    return mincore(p, n, vec);
+    std::vector<char> vec(n / getpagesize() + 1);
+    if (mincore((void*)p, n, vec.data()) != 0) return true;
+    for (size_t i = 0; i < n / (size_t)getpagesize(); i++)
+        if (vec[i]) return true;
+    return false;  // (macOS: compressed pages count as resident)
 #else
-    return mincore(p, n, (unsigned char*)vec);
+    static const int fd = open("/proc/self/pagemap", O_RDONLY | O_CLOEXEC);
+    if (fd < 0) return true;  // unknown: read it
+    const size_t ps = getpagesize(), pages = n / ps;
+    uint64_t e[64];
+    if (pages > 64) return true;
+    off_t at = (off_t)((uintptr_t)p / ps * 8);
+    if (pread(fd, e, pages * 8, at) != (ssize_t)(pages * 8)) return true;
+    for (size_t i = 0; i < pages; i++)
+        if (e[i] & (3ull << 62)) return true;  // present or swapped
+    return false;
 #endif
 }
 
@@ -355,16 +412,10 @@ struct Captured {
 std::shared_ptr<Captured> capture_memory() {
     auto c = std::make_shared<Captured>();
     c->regs = regions();
-    std::vector<char> vec(kChunk / getpagesize() + 1);
     for (auto& g : c->regs) {
         for (uint32_t off = 0; off < g.size; off += kChunk) {
             uint8_t* p = mem::ptr(g.base + off);
-            // untouched pages are zero: skip them without reading (reading would commit them)
-            if (page_residency(p, kChunk, vec.data()) == 0) {
-                bool touched = false;
-                for (size_t i = 0; i < kChunk / (size_t)getpagesize(); i++) touched |= vec[i] != 0;
-                if (!touched) continue;
-            }
+            if (!ever_touched(p, kChunk)) continue;  // zero
             const uint64_t* q = (const uint64_t*)p;
             bool zero = true;
             for (size_t i = 0; i < kChunk / 8 && zero; i++) zero = q[i] == 0;
@@ -418,23 +469,317 @@ void restore_memory(const Snapshot& s) {
     work();
     for (auto& th : pool) th.join();
     if (bad) LOG("[savestate] %d memory chunks could not be unpacked", bad.load());
-    std::vector<char> vec(kChunk / getpagesize() + 1);
     for (auto& g : s.regs) {
         for (uint32_t off = 0; off < g.size; off += kChunk) {
             uint32_t a = g.base + off;
             uint8_t* p = mem::ptr(a);
             if (s.chunks.count(a)) continue;
-            if (page_residency(p, kChunk, vec.data()) == 0) {
-                bool touched = false;
-                for (size_t i = 0; i < kChunk / (size_t)getpagesize(); i++) touched |= vec[i] != 0;
-                if (!touched) continue;
-            }
+            if (!ever_touched(p, kChunk)) continue;  // zero already
             const uint64_t* q = (const uint64_t*)p;
             for (size_t i = 0; i < kChunk / 8; i++)
                 if (q[i]) { memset(p, 0, kChunk); break; }
         }
     }
 }
+
+// ---------------------------------------------------------------- background capture
+// Copy on write (not macOS): while the game is frozen, guest memory is only write-protected, and the
+// game continues at once. A background pass then takes the chunks in address order: copies one,
+// makes it writable again and compresses the copy. A write to a chunk the pass hasn't reached yet
+// faults: the handler copies the chunk as it is to a side buffer first, unprotects it, and the write
+// goes ahead; the pass compresses that copy instead. So the state is the memory at the freeze, while
+// the game only pauses for a 64 KiB copy per chunk it writes early. Host code writing guest memory
+// faults the same way; the kernel doesn't (read() into protected memory fails with EFAULT), so file
+// reads into guest memory call prepare_host_write first.
+#ifndef __APPLE__
+namespace cow {
+enum : uint8_t { kPending, kBusy, kCopied, kDone };
+
+struct Job {
+    std::vector<Region> regs;
+    std::vector<size_t> first;  // index of each region's first chunk
+    size_t n = 0;
+    std::unique_ptr<std::atomic<uint8_t>[]> st;  // by chunk
+    uint8_t* copies = nullptr;  // n chunks, NORESERVE: only the chunks copied by faults take memory
+    uint8_t* pre = nullptr;     // the chunks copied at the stop (prepared memory, pre_size bytes)
+    size_t pre_size = 0;
+    std::vector<uint32_t> pre_index;  // chunk -> its place in pre + 1 (0: in copies)
+    uint8_t* copy_of(size_t i) const { return pre_index[i] ? pre + (size_t)(pre_index[i] - 1) * kChunk : copies + i * kChunk; }
+    std::atomic<bool> failed{false};
+    std::atomic<uint32_t> faults{0}, copied{0};
+    uint32_t precopied = 0;
+    std::atomic<uint64_t> fault_ns{0}, max_fault_ns{0};
+
+    long index(uint32_t ea) const {
+        for (size_t r = 0; r < regs.size(); r++)
+            if (ea - regs[r].base < regs[r].size) return (long)(first[r] + (ea - regs[r].base) / kChunk);
+        return -1;
+    }
+    uint32_t addr(size_t i) const {
+        size_t r = regs.size() - 1;
+        while (first[r] > i) r--;
+        return regs[r].base + (uint32_t)(i - first[r]) * kChunk;
+    }
+};
+
+std::atomic<Job*> g_job{nullptr};      // the capture running now (read by the fault handler)
+struct FaultNote { volatile int entered, passed, job, code; volatile long index; } g_fault_note;
+std::shared_ptr<Job> g_last;           // kept until the next capture: a handler may still look at it
+std::atomic<bool> g_running{false};    // a background capture hasn't finished
+std::vector<uint32_t> g_hot;           // chunks the game wrote during the last capture (start copies them)
+// memory for copying g_hot at the stop, made ready by another thread before it (new memory takes a
+// page fault per 4 KiB at the first write: ~15 ms for the ~25 MB, which would add to the stop)
+std::atomic<int> g_prep_state{0};      // 0 none, 1 being made, 2 ready
+uint8_t* g_prep = nullptr;
+size_t g_prep_size = 0;
+
+// test aid: WWHD_STATE_COW=0 captures memory while the game is stopped, as before
+bool enabled() {
+    static const bool on = !getenv("WWHD_STATE_COW") || atoi(getenv("WWHD_STATE_COW")) != 0;
+    return on;
+}
+
+// game thread, before a save: true when it can start (the copy memory is ready)
+bool prepared() {
+    if (!enabled()) return true;
+    int st = g_prep_state.load(std::memory_order_acquire);
+    if (st == 2 || g_hot.empty()) return true;
+    if (st == 1) return false;
+    g_prep_state = 1;
+    size_t size = g_hot.size() * kChunk;
+    std::thread([size] {
+        void* p = mmap(nullptr, size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
+        if (p == MAP_FAILED) {
+            g_prep = nullptr;
+        } else {
+            const size_t page = getpagesize();
+            for (size_t o = 0; o < size; o += page) ((volatile uint8_t*)p)[o] = 0;
+            g_prep = (uint8_t*)p;
+            g_prep_size = size;
+        }
+        g_prep_state.store(2, std::memory_order_release);
+    }).detach();
+    return false;
+}
+struct sigaction g_prev;               // the handler before ours (the crash handler)
+
+uint64_t now_ns() {
+    timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);  // async-signal-safe
+    return (uint64_t)ts.tv_sec * 1000000000ull + ts.tv_nsec;
+}
+
+// everything writable again; the capture is lost (a protection change failed: out of mappings)
+void give_up(Job* j) {
+    j->failed = true;
+    for (auto& g : j->regs) mprotect(mem::ptr(g.base), g.size, PROT_READ | PROT_WRITE);
+}
+
+// makes chunk i writable, its content kept for the capture first (fault handler, file reads)
+void take(Job* j, size_t i) {
+    uint64_t t0 = now_ns();
+    for (;;) {
+        uint8_t v = kPending;
+        if (j->st[i].compare_exchange_strong(v, kBusy, std::memory_order_acq_rel)) {
+            uint8_t* p = mem::ptr(j->addr(i));
+            memcpy(j->copies + i * kChunk, p, kChunk);
+            if (mprotect(p, kChunk, PROT_READ | PROT_WRITE) != 0) give_up(j);
+            j->st[i].store(kCopied, std::memory_order_release);
+            j->copied.fetch_add(1, std::memory_order_relaxed);
+            break;
+        }
+        if (v != kBusy) break;  // copied or done: writable already
+        sched_yield();          // the pass is copying it (a few microseconds)
+    }
+    uint64_t d = now_ns() - t0;
+    j->faults.fetch_add(1, std::memory_order_relaxed);
+    j->fault_ns.fetch_add(d, std::memory_order_relaxed);
+    uint64_t m = j->max_fault_ns.load(std::memory_order_relaxed);
+    while (d > m && !j->max_fault_ns.compare_exchange_weak(m, d, std::memory_order_relaxed)) {}
+}
+
+void on_fault(int sig, siginfo_t* si, void* uc) {
+    g_fault_note.entered++;
+    Job* j = g_job.load(std::memory_order_acquire);
+    uintptr_t a = (uintptr_t)si->si_addr, base = (uintptr_t)mem::ptr(0);
+    long i = -1;
+    // SEGV_ACCERR, or SEGV_MAPERR for a page never touched yet (older kernels, Moto G24 Android 14):
+    // inside the captured regions, which are mapped and readable, a fault can only be the protection
+    if (j && (si->si_code == SEGV_ACCERR || si->si_code == SEGV_MAPERR) && a - base < 0x100000000ull) {
+        i = j->index((uint32_t)(a - base));
+        if (i >= 0) {
+            take(j, (size_t)i);
+            return;  // the write runs again, now on writable memory
+        }
+    }
+    // (for the crash log: why it wasn't ours)
+    g_fault_note.passed++;
+    g_fault_note.job = j != nullptr;
+    g_fault_note.code = si->si_code;
+    g_fault_note.index = i;
+    // not ours: as if this handler weren't there
+    if (g_prev.sa_flags & SA_SIGINFO) {
+        if (g_prev.sa_sigaction) return g_prev.sa_sigaction(sig, si, uc);
+    } else if (g_prev.sa_handler != SIG_DFL && g_prev.sa_handler != SIG_IGN) {
+        return g_prev.sa_handler(sig);
+    }
+    signal(sig, SIG_DFL);  // the fault happens again and ends the process
+}
+
+// ours first, then the one before (installed again if someone replaced it since)
+void install_handler() {
+    struct sigaction cur{};
+    sigaction(SIGSEGV, nullptr, &cur);
+    if ((cur.sa_flags & SA_SIGINFO) && cur.sa_sigaction == on_fault) return;
+    struct sigaction sa{};
+    sa.sa_sigaction = on_fault;
+    sa.sa_flags = SA_SIGINFO | SA_ONSTACK | SA_RESTART;
+    sigemptyset(&sa.sa_mask);
+    int rc = sigaction(SIGSEGV, &sa, &g_prev);
+    struct sigaction now{};
+    sigaction(SIGSEGV, nullptr, &now);
+    Dl_info di{};
+    const char* prev = dladdr((void*)g_prev.sa_sigaction, &di) && di.dli_sname ? di.dli_sname : "?";
+    LOG("[savestate] fault handler installed (rc %d, now ours: %d, before: %s flags %X)", rc,
+        (now.sa_flags & SA_SIGINFO) && now.sa_sigaction == on_fault, prev, (unsigned)g_prev.sa_flags);
+}
+
+// game frozen: protects guest memory for a capture; false if that isn't possible (nothing changed)
+std::shared_ptr<Job> start() {
+    auto j = std::make_shared<Job>();
+    j->regs = regions();
+    for (auto& g : j->regs) {
+        j->first.push_back(j->n);
+        j->n += g.size / kChunk;
+    }
+    j->st.reset(new std::atomic<uint8_t>[j->n]);
+    for (size_t i = 0; i < j->n; i++) j->st[i].store(kPending, std::memory_order_relaxed);
+    void* c = mmap(nullptr, j->n * kChunk, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
+    if (c == MAP_FAILED) return nullptr;
+    j->copies = (uint8_t*)c;
+    install_handler();
+    g_last = j;
+    // the chunks the game wrote early last time are copied now instead of faulting one by one when the
+    // game continues (each fault costs ~70 us, a few hundred of them would land in the first frame)
+    j->pre_index.assign(j->n, 0);
+    if (g_prep_state.load(std::memory_order_acquire) == 2) {
+        j->pre = g_prep;
+        j->pre_size = g_prep ? g_prep_size : 0;
+        g_prep = nullptr;
+        g_prep_state = 0;
+    }
+    for (uint32_t a : g_hot) {
+        long i = j->index(a);
+        if (i < 0) continue;
+        j->precopied++;
+        if (j->pre && (size_t)j->precopied * kChunk <= j->pre_size) j->pre_index[i] = j->precopied;
+        memcpy(j->copy_of((size_t)i), mem::ptr(a), kChunk);
+        j->st[i].store(kCopied, std::memory_order_relaxed);
+    }
+    g_job.store(j.get(), std::memory_order_release);  // before protecting: render / audio threads still run
+    // protect the rest (runs of chunks that weren't copied)
+    for (size_t r = 0; r < j->regs.size(); r++) {
+        size_t end = j->first[r] + j->regs[r].size / kChunk;
+        for (size_t i = j->first[r]; i < end;) {
+            if (j->st[i].load(std::memory_order_relaxed) != kPending) { i++; continue; }
+            size_t k = i;
+            while (k < end && j->st[k].load(std::memory_order_relaxed) == kPending) k++;
+            if (mprotect(mem::ptr(j->addr(i)), (k - i) * kChunk, PROT_READ) != 0) {
+                give_up(j.get());
+                g_job.store(nullptr, std::memory_order_release);
+                munmap(j->copies, j->n * kChunk);
+                if (j->pre) munmap(j->pre, j->pre_size);
+                return nullptr;
+            }
+            i = k;
+        }
+    }
+    g_running = true;
+    return j;
+}
+
+// background: the chunks compressed (in address order, on `threads` threads); null if it failed
+std::shared_ptr<Captured> finish(const std::shared_ptr<Job>& j, unsigned threads) {
+    auto c = std::make_shared<Captured>();
+    c->regs = j->regs;
+    std::vector<Captured::Piece> pieces(j->n);
+    std::vector<uint8_t> present(j->n), written(j->n);  // written: copied, and changed since
+    c->out.resize(threads);
+    std::atomic<size_t> next{0};
+    auto work = [&](unsigned t) {
+        ZSTD_CCtx* cx = ZSTD_createCCtx();
+        std::vector<uint8_t> tmp(ZSTD_compressBound(kChunk)), local(kChunk);
+        std::vector<uint8_t>& o = c->out[t];
+        for (size_t i; (i = next.fetch_add(1, std::memory_order_relaxed)) < j->n;) {
+            uint8_t* p = mem::ptr(j->addr(i));
+            const uint8_t* src = nullptr;  // null: untouched (zero)
+            bool fromCopy = false;
+            uint8_t v = kPending;
+            if (j->st[i].compare_exchange_strong(v, kBusy, std::memory_order_acq_rel)) {
+                if (ever_touched(p, kChunk)) {  // (else zero)
+                    memcpy(local.data(), p, kChunk);
+                    src = local.data();
+                }
+                if (mprotect(p, kChunk, PROT_READ | PROT_WRITE) != 0) give_up(j.get());
+                j->st[i].store(kDone, std::memory_order_release);
+            } else {
+                while (j->st[i].load(std::memory_order_acquire) == kBusy) sched_yield();
+                src = j->copy_of(i);  // copied by a write before it, or at the stop
+                fromCopy = true;
+            }
+            if (src) {
+                const uint64_t* q = (const uint64_t*)src;
+                bool zero = true;
+                for (size_t k = 0; k < kChunk / 8 && zero; k++) zero = q[k] == 0;
+                if (!zero) {
+                    size_t n = cx ? ZSTD_compressCCtx(cx, tmp.data(), tmp.size(), src, kChunk, kZstdLevel) : 0;
+                    Captured::Piece& pc = pieces[i];
+                    pc.thread = t;
+                    pc.offset = (uint32_t)o.size();
+                    if (!cx || ZSTD_isError(n) || n >= kChunk) {
+                        o.insert(o.end(), src, src + kChunk);
+                        pc.comp = 0;
+                    } else {
+                        o.insert(o.end(), tmp.data(), tmp.data() + n);
+                        pc.comp = (uint32_t)n;
+                    }
+                    present[i] = 1;
+                }
+            }
+            if (fromCopy) {
+                // still hot? (the live chunk may change while compared: only a hint for the next capture)
+                written[i] = memcmp(src, p, kChunk) != 0;
+                if (!j->pre_index[i]) madvise(j->copies + i * kChunk, kChunk, MADV_DONTNEED);  // its memory back
+            }
+        }
+        ZSTD_freeCCtx(cx);
+    };
+    std::vector<std::thread> pool;
+    for (unsigned t = 1; t < threads; t++)
+        pool.emplace_back([&, t] {
+            setpriority(PRIO_PROCESS, 0, 10);  // this thread only (Linux): the game's threads go first
+            work(t);
+        });
+    work(0);
+    for (auto& th : pool) th.join();
+    g_job.store(nullptr, std::memory_order_release);
+    munmap(j->copies, j->n * kChunk);  // nothing is pending: no handler copies into it any more
+    j->copies = nullptr;
+    if (j->pre) munmap(j->pre, j->pre_size);
+    j->pre = nullptr;
+    g_hot.clear();
+    for (size_t i = 0; i < j->n; i++)
+        if (written[i]) g_hot.push_back(j->addr(i));
+    if (j->failed) return nullptr;
+    for (size_t i = 0; i < j->n; i++)
+        if (present[i]) {
+            c->addrs.push_back(j->addr(i));
+            c->pieces.push_back(pieces[i]);
+        }
+    return c;
+}
+}  // namespace cow
+#endif
 
 // ---------------------------------------------------------------- slot files
 // version 2: header, u64 size + zstd sections, u32 count + regions, then per chunk u32 address,
@@ -741,20 +1086,36 @@ void save_dispatch(Writer& w) {
     }
 }
 
+// the host functions of the state: at the same addresses, or found by name and put there on loading
+std::vector<std::pair<uint32_t, std::string>> g_dispatch_moves;
 bool check_dispatch(Reader r, std::string& why) {
     std::unordered_map<uint32_t, std::string> cur;
     for (auto& [a, n] : dispatch::host_functions()) cur[a] = n;
+    g_dispatch_moves.clear();
     uint32_t n = r.u32();
     for (uint32_t i = 0; i < n && r.ok; i++) {
         uint32_t a = r.u32();
         std::string name = r.str();
         auto it = cur.find(a);
-        if (it == cur.end() || it->second != name) {
-            why = "host function " + name + " is not registered at the same address";
+        if (it != cur.end() && it->second == name) continue;
+        if (!dispatch::host_by_name(name) && !dynload_resolve(name)) {
+            why = "host function " + name + " is not known";
             return false;
         }
+        g_dispatch_moves.push_back({a, name});
     }
     return r.ok;
+}
+
+void load_dispatch() {
+    for (auto& [a, name] : g_dispatch_moves) {
+        PpcFunc fn = dispatch::host_by_name(name);
+        if (!fn) fn = dynload_resolve(name);
+        dispatch::place_host(a, fn, name);
+        dynload_place(a, name);
+    }
+    if (!g_dispatch_moves.empty()) LOG("[savestate] %zu host functions put at the state's addresses", g_dispatch_moves.size());
+    g_dispatch_moves.clear();
 }
 
 std::string area_label(const char* stage) {
@@ -766,25 +1127,91 @@ std::string area_label(const char* stage) {
     return it == names.end() ? std::string(stage) : it->second;
 }
 
-// true when done (saved or failed for good); false to retry on the next frame
-bool do_save(int slot) {
+// background part of a save: compress (copy-on-write captures) and write the slot file
+void finish_save(int slot, bool quiet, Header h, std::shared_ptr<Writer> payload, std::shared_ptr<Captured> memory,
+                 std::shared_ptr<void> job, std::string stage) {
+    struct Done { ~Done() { g_writes--; } } done;  // on every way out
+    auto t1 = std::chrono::steady_clock::now();
+    std::string what;
+#ifndef __APPLE__
+    if (job) {
+        setpriority(PRIO_PROCESS, 0, 10);  // this thread only (Linux): the game's threads go first
+        auto j = std::static_pointer_cast<cow::Job>(job);
+        static const unsigned nt = [] {
+            const char* e = getenv("WWHD_STATE_THREADS");
+            return std::max(1u, std::min(8u, e ? (unsigned)atoi(e) : 2u));
+        }();
+        memory = cow::finish(j, nt);
+        char buf[256];
+        snprintf(buf, sizeof buf, "; %u copied at the stop, %u faults, %u chunks copied (%.1f MB), %.1f ms in faults, longest %.2f ms; %zu hot next time",
+                 j->precopied, j->faults.load(), j->copied.load(), j->copied.load() * (double)kChunk / 1048576.0, j->fault_ns.load() / 1e6,
+                 j->max_fault_ns.load() / 1e6, cow::g_hot.size());
+        what = buf;
+        cow::g_running = false;
+        if (!memory) {
+            LOG("[savestate] %s: capture failed (protection change failed)%s", slot_label(slot).c_str(), what.c_str());
+            if (!quiet) message("%s: not saved (out of memory mappings)", slot_label(slot, true).c_str());
+            return;
+        }
+        LOG("[savestate] %s: captured %.1f MB of memory as %.1f MB in the background in %.0f ms%s", slot_label(slot).c_str(),
+            memory->addrs.size() * (double)kChunk / 1048576.0, memory->bytes() / 1048576.0,
+            std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t1).count(), what.c_str());
+    }
+#else
+    (void)job;
+#endif
+    bool ok;
+    {
+        std::lock_guard<std::mutex> io(g_io);
+        ok = write_slot(slot, h, payload->b, *memory);
+    }
+    double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t1).count();
+    struct stat st{};
+    stat(slot_path(slot).c_str(), &st);
+    LOG("[savestate] %s: %s (%.1f MB on disk, %.0f ms)", slot_label(slot).c_str(), ok ? "written" : "WRITE FAILED", st.st_size / 1048576.0, ms);
+    if (quiet && ok) return;
+    std::lock_guard<std::mutex> lk(g_mu);
+    g_message = ok ? "Saved to " + slot_label(slot) + (stage.empty() ? "" : " (" + area_label(stage.c_str()) + ")")
+                   : slot_label(slot, true) + ": write failed";
+    g_message_time = std::chrono::steady_clock::now();
+}
+
+// true when done (saved or failed for good); false to retry on the next frame. An auto save (quiet)
+// gives the game threads less time to reach their waits and doesn't retry: it comes again later.
+bool do_save(int slot, bool quiet) {
     std::string busy, why;
     auto t0 = std::chrono::steady_clock::now();
-    if (!threads::quiesce(250, busy, 1, 30)) {
+    auto ms_since = [](std::chrono::steady_clock::time_point t) {
+        return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t).count();
+    };
+    bool parked = quiet ? threads::quiesce(40, busy, 1, 10) : threads::quiesce(250, busy, 1, 30);
+    if (!parked) {
         threads::thaw();
+        if (quiet) {
+            LOG("[savestate] %s: not saved (game busy:%s), %.1f ms", slot_label(slot).c_str(), busy.c_str(), ms_since(t0));
+            return true;
+        }
         if (++g_attempts < 30) return false;
-        message("Slot %d: not saved (game busy:%s)", slot, busy.c_str());
+        message("%s: not saved (game busy:%s)", slot_label(slot, true).c_str(), busy.c_str());
         return true;
     }
+    double tQuiesce = ms_since(t0);
+    auto t = std::chrono::steady_clock::now();
     gx2_ss_drain();
+    double tDrain = ms_since(t);
+    t = std::chrono::steady_clock::now();
     Writer threads_w;
     if (!threads_ss_save(threads_w, why)) {
         threads::thaw();
+        if (quiet) {
+            LOG("[savestate] %s: not saved (%s)", slot_label(slot).c_str(), why.c_str());
+            return true;
+        }
         if (++g_attempts < 30) return false;
-        message("Slot %d: not saved (%s)", slot, why.c_str());
+        message("%s: not saved (%s)", slot_label(slot, true).c_str(), why.c_str());
         return true;
     }
-    auto payload = std::make_shared<Writer>();  // the sections (memory: capture_memory)
+    auto payload = std::make_shared<Writer>();  // the sections (memory: below)
     put_section(*payload, kSecThreads, threads_w);
     Writer w;
     mem_ss_save(w);
@@ -804,7 +1231,17 @@ bool do_save(int slot) {
     w = Writer();
     save_dispatch(w);
     put_section(*payload, kSecDispatch, w);
-    auto memory = capture_memory();
+    double tSections = ms_since(t);
+    t = std::chrono::steady_clock::now();
+    // memory: write-protected and captured in the background, or (macOS, WWHD_STATE_COW=0, or if
+    // protecting fails) compressed now
+    std::shared_ptr<void> job;
+    std::shared_ptr<Captured> memory;
+#ifndef __APPLE__
+    if (cow::enabled()) job = cow::start();
+#endif
+    if (!job) memory = capture_memory();
+    double tMemory = ms_since(t);
     Header h{};
     memcpy(h.magic, kMagic, 8);
     h.version = kVersion;
@@ -817,27 +1254,15 @@ bool do_save(int slot) {
     h.cpu_size = sizeof(Cpu);
     h.controller = input::pro_controller() ? 2 : 1;
     threads::thaw();
-    double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
-    LOG("[savestate] slot %d: captured %.1f MB of memory as %.1f MB in %.1f ms (stage %s)", slot,
-        memory->addrs.size() * (double)kChunk / 1048576.0, memory->bytes() / 1048576.0, ms, stage.c_str());
+    LOG("[savestate] %s: game stopped %.1f ms (threads parked %.1f, renderer drained %.1f, sections %.1f, memory %s %.1f), stage %s",
+        slot_label(slot).c_str(), ms_since(t0), tQuiesce, tDrain, tSections, job ? "protected" : "compressed", tMemory, stage.c_str());
+    if (memory)
+        LOG("[savestate] %s: captured %.1f MB of memory as %.1f MB", slot_label(slot).c_str(),
+            memory->addrs.size() * (double)kChunk / 1048576.0, memory->bytes() / 1048576.0);
     gfx::request_tv_dump(slot_path(slot, "png"), 0);
-    // compress and write in the background; the game continues
-    std::thread([slot, h, payload, memory, stage] {
-        auto t1 = std::chrono::steady_clock::now();
-        bool ok;
-        {
-            std::lock_guard<std::mutex> io(g_io);
-            ok = write_slot(slot, h, payload->b, *memory);
-        }
-        double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t1).count();
-        struct stat st{};
-        stat(slot_path(slot).c_str(), &st);
-        LOG("[savestate] slot %d: %s (%.1f MB on disk, %.0f ms)", slot, ok ? "written" : "WRITE FAILED", st.st_size / 1048576.0, ms);
-        std::lock_guard<std::mutex> lk(g_mu);
-        g_message = ok ? "Saved to slot " + std::to_string(slot) + (stage.empty() ? "" : " (" + area_label(stage.c_str()) + ")")
-                       : "Slot " + std::to_string(slot) + ": write failed";
-        g_message_time = std::chrono::steady_clock::now();
-    }).detach();
+    // compress (copy on write) and write in the background; the game continues
+    g_writes++;
+    std::thread(finish_save, slot, quiet, h, payload, memory, job, stage).detach();
     return true;
 }
 
@@ -845,10 +1270,12 @@ bool do_load(const std::shared_ptr<Snapshot>& s) {
     std::string busy, why;
     auto t0 = std::chrono::steady_clock::now();
     threads_ss_targets(s->section(kSecThreads));
-    if (!threads::quiesce(250, busy, 2, 0)) {
+    // the first frames: threads park only where they were saved (the fast way); then anywhere (a
+    // thread parked elsewhere gets its saved call chain rebuilt)
+    if (!threads::quiesce(250, busy, g_attempts < 3 ? 2 : 1, 0)) {
         threads::thaw();
         if (++g_attempts < 30) return false;
-        message("Slot %d: not loaded (game busy:%s)", s->slot, busy.c_str());
+        message("%s: not loaded (game busy:%s)", slot_label(s->slot, true).c_str(), busy.c_str());
         return true;
     }
     gx2_ss_drain();
@@ -860,17 +1287,28 @@ bool do_load(const std::shared_ptr<Snapshot>& s) {
     bool layout_ok = ok;
     ok = ok && threads_ss_check(s->section(kSecThreads), why);
     g_check = nullptr;
+    bool slow = ok && threads_ss_rebuild_needed();
+    if (slow && g_attempts < 3) {  // a few frames for the threads to get where they were saved
+        threads::thaw();
+        if (++g_attempts == 1) LOG("[savestate] %s: waiting for the game threads (%s)", slot_label(s->slot).c_str(), why.c_str());
+        return false;
+    }
     if (!ok) {
         threads::thaw();
         // threads at other waits right now may be where they were saved on a later frame
         if (layout_ok && ++g_attempts < 30) {
-            if (g_attempts == 1) LOG("[savestate] slot %d: waiting for the game threads (%s)", s->slot, why.c_str());
+            if (g_attempts == 1) LOG("[savestate] %s: waiting for the game threads (%s)", slot_label(s->slot).c_str(), why.c_str());
             return false;
         }
-        message("Slot %d: cannot load here (%s)", s->slot, why.c_str());
+        message("%s: cannot load here (%s)", slot_label(s->slot, true).c_str(), why.c_str());
         return true;
     }
+    if (slow) {
+        LOG("[savestate] %s: loading with rebuilt threads (%s)", slot_label(s->slot).c_str(), why.c_str());
+        threads_ss_retire();  // before anything changes: they leave their host stacks
+    }
     restore_memory(*s);
+    load_dispatch();
     Reader r = s->section(kSecAllocs);
     mem::raise_runtime_top(r.u32());
     r = s->section(kSecHeaps);
@@ -884,6 +1322,7 @@ bool do_load(const std::shared_ptr<Snapshot>& s) {
     interp::ss_reset();
     r = s->section(kSecThreads);
     threads_ss_load(r);  // last: wakes the parked threads (they continue after the thaw)
+    threads_ss_rebuild();
     threads::thaw();
     double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
     std::string area = s->h.area[0] ? " (" + area_label(s->h.area) + ")" : "";
@@ -891,12 +1330,12 @@ bool do_load(const std::shared_ptr<Snapshot>& s) {
     bool pro = s->h.controller == 2;
     if (s->h.controller && pro != input::pro_controller()) {
         input::set_pro_controller(pro);
-        message("Loaded slot %d%s; controls act as %s again", s->slot, area.c_str(), pro ? "Wii U Pro Controller" : "Wii U GamePad");
+        message("Loaded %s%s; controls act as %s again", slot_label(s->slot).c_str(), area.c_str(), pro ? "Wii U Pro Controller" : "Wii U GamePad");
     } else {
-        message("Loaded slot %d%s", s->slot, area.c_str());
+        message("Loaded %s%s", slot_label(s->slot).c_str(), area.c_str());
     }
     memw::mark_all();  // guest memory replaced: the renderer copies everything again
-    LOG("[savestate] slot %d: restored in %.1f ms", s->slot, ms);
+    LOG("[savestate] %s: restored in %.1f ms", slot_label(s->slot).c_str(), ms);
     return true;
 }
 
@@ -914,6 +1353,24 @@ std::vector<Timed> parse_timed(const char* var) {
         e++;
     }
     return v;
+}
+
+// a stage is loaded that isn't the title screen or the file select (auto and leave saves only there)
+bool in_play() {
+    std::string st = stage_name();
+    return !st.empty() && st != "sea_T" && st != "Name";
+}
+
+// the auto slot to write next: an empty one, else the one saved longest ago
+int older_auto_slot() {
+    int best = kSlots + 1;
+    time_t bestTime = 0;
+    for (int slot = kSlots + 1; slot <= kSlots + kAutoSlots; slot++) {
+        struct stat st{};
+        if (stat(slot_path(slot).c_str(), &st) != 0) return slot;
+        if (slot == kSlots + 1 || st.st_mtime < bestTime) best = slot, bestTime = st.st_mtime;
+    }
+    return best;
 }
 
 }  // namespace
@@ -943,6 +1400,7 @@ uint32_t snap_ld32(uint32_t ea) {
 
 SlotInfo slot_info(int slot) {
     SlotInfo info;
+    if (slot < 1 || slot > kAllSlots) return info;
     FILE* f = fopen(slot_path(slot).c_str(), "rb");
     if (!f) return info;
     Header h;
@@ -966,11 +1424,12 @@ SlotInfo slot_info(int slot) {
 
 void request_save(int slot) {
     if (slot < 1 || slot > kSlots) return;
+    g_save_quiet = false;
     g_save_req = slot;
 }
 
 void request_load(int slot) {
-    if (slot < 1 || slot > kSlots) return;
+    if (slot < 1 || slot > kAllSlots) return;
     if (g_loading.exchange(true)) return;
     std::thread([slot] {
         auto t0 = std::chrono::steady_clock::now();
@@ -981,8 +1440,9 @@ void request_load(int slot) {
             s = read_slot(slot, why);
         }
         if (!s) {
-            message("Slot %d: %s", slot, why.c_str());
+            message("%s: %s", slot_label(slot, true).c_str(), why.c_str());
             g_loading = false;
+            set_start_hold(false);  // the game starts as usual
             return;
         }
         if (s->converted) {  // an old state: from now on in the new form
@@ -995,7 +1455,62 @@ void request_load(int slot) {
             std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count());
         std::lock_guard<std::mutex> lk(g_mu);
         g_load_ready = s;
+        g_hold_cv.notify_all();
     }).detach();
+}
+
+void set_start_hold(bool on) {
+    std::lock_guard<std::mutex> lk(g_mu);
+    g_hold = on ? 1 : 0;
+    g_hold_cv.notify_all();
+}
+int start_hold_state() { return g_hold.load(); }
+int writes_pending() { return g_writes.load(); }
+
+void set_auto_interval(int minutes) {
+    g_auto_minutes = std::max(0, minutes);
+    LOG("[savestate] auto save %s", minutes > 0 ? ("every " + std::to_string(minutes) + " min").c_str() : "off");
+}
+int auto_interval() { return g_auto_minutes.load(); }
+
+void save_on_leave() {
+    if (g_loading || g_save_req.load() || !in_play()) return;  // the previous last session stays
+    auto t0 = std::chrono::steady_clock::now();
+    g_save_quiet = true;
+    g_save_req = kLastSlot;
+    while (g_save_req.load() == kLastSlot && std::chrono::steady_clock::now() - t0 < std::chrono::seconds(1))
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    int slot = kLastSlot;
+    bool cancelled = g_save_req.compare_exchange_strong(slot, 0);
+    LOG("[savestate] leaving the app: %s after %.0f ms", cancelled ? "NOT saved (the game didn't get there)" : "state taken",
+        std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count());
+}
+
+int fault_note(char* buf, size_t n) {
+#ifndef __APPLE__
+    const auto& f = cow::g_fault_note;
+    if (!f.entered && !cow::g_job.load()) return 0;
+    return snprintf(buf, n, "  save state fault handler: entered %d, passed on %d (capture running %d, si_code %d, chunk %ld), capture now %d\n",
+                    f.entered, f.passed, f.job, f.code, (long)f.index, cow::g_job.load() != nullptr);
+#else
+    (void)buf;
+    (void)n;
+    return 0;
+#endif
+}
+
+void prepare_host_write(uint32_t addr, uint32_t size) {
+#ifndef __APPLE__
+    cow::Job* j = cow::g_job.load(std::memory_order_acquire);
+    if (!j || !size) return;
+    for (uint64_t a = addr & ~(uint64_t)(kChunk - 1); a < (uint64_t)addr + size; a += kChunk) {
+        long i = j->index((uint32_t)a);
+        if (i >= 0) cow::take(j, (size_t)i);
+    }
+#else
+    (void)addr;
+    (void)size;
+#endif
 }
 
 std::string last_message() {
@@ -1018,8 +1533,52 @@ void service(Cpu* c) {
     }
     // test aid: WWHD_STATE_DUMP=n dumps the n TV frames after each save/load (state_<save|load><slot>_<k>.png)
     static const int dump = getenv("WWHD_STATE_DUMP") ? atoi(getenv("WWHD_STATE_DUMP")) : 0;
+#ifndef __APPLE__
+    if (cow::g_running) return;  // the last save's memory is still being captured: saves and loads wait
+#endif
+    // the app's picker at start: wait here (before the intro) for its choice, once the shader cache
+    // replay is done (the game's first draw starts it, so it can't wait before that)
+    if (g_hold.load()) {
+        uint64_t p[4];
+        gfx::cache_progress(p);
+        if (p[0] == 2) {
+            BlockingScope b;  // other threads keep their cores
+            std::unique_lock<std::mutex> lk(g_mu);
+            if (g_hold == 1 && !g_load_ready) {
+                g_hold = 2;
+                LOG("[savestate] the game waits at the start for the app's choice");
+                // meanwhile the renderer warms its shader cache (there are no frames to do it in)
+                while (!g_hold_cv.wait_for(lk, std::chrono::milliseconds(20), [] { return g_hold == 0 || g_load_ready; })) {
+                    lk.unlock();
+                    gx2::warm_while_held();
+                    lk.lock();
+                }
+            }
+        }
+    }
+    // auto save: every g_auto_minutes of play (time in the menu or in the background doesn't count),
+    // into the older of the auto slots, while a stage is loaded (not the title screen or file select)
+    {
+        static auto last = std::chrono::steady_clock::now();
+        auto now = std::chrono::steady_clock::now();
+        double dt = std::min(std::chrono::duration<double>(now - last).count(), 0.25);
+        last = now;
+        int minutes = g_auto_minutes.load();
+        g_auto_played = minutes ? g_auto_played + dt : 0;
+        static const double scale = getenv("WWHD_STATE_AUTO_SECONDS") ? 1.0 : 60.0;  // test aid: the interval in seconds
+        if (minutes && g_auto_played >= minutes * scale && !g_save_req && !g_loading) {
+            g_auto_played = 0;
+            if (in_play()) {
+                g_save_quiet = true;
+                g_save_req = older_auto_slot();
+            }
+        }
+    }
     if (int slot = g_save_req.load()) {
-        if (do_save(slot)) {
+#ifndef __APPLE__
+        if (!cow::prepared()) return;  // a frame or so
+#endif
+        if (do_save(slot, g_save_quiet)) {
             g_save_req = 0;
             g_attempts = 0;
             for (int k = 1; k <= dump; k++)
@@ -1039,6 +1598,8 @@ void service(Cpu* c) {
         }
         g_loading = false;
         g_attempts = 0;
+        g_auto_played = 0;  // the next auto save a full interval after a load
+        set_start_hold(false);  // loaded, or refused: the game goes on from here
         for (int k = 1; k <= dump; k++)
             gfx::request_tv_dump("state_load" + std::to_string(s->slot) + "_" + std::to_string(k) + ".png", k);
     }

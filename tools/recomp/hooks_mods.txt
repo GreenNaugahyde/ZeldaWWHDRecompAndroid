@@ -14,3 +14,10 @@
 025DC86C  # fopScnM_ChangeReq: scene change trigger (traces)
 # Gyro aiming with the Pro Controller selected (mods/gyro_pro.cpp): "is the Pro Controller active"
 02617AE4  # pad state: controller mode == 0 (Pro Controller); answered "no" for the gyro code
+# Faster climbing (mods/mods.cpp): the climbing animations' speed, asked for each step
+02417FF4  # daPy_lk_c::getLadderMoveAnmSpeed: ladders, ivy up / down
+024291E0  # daPy_lk_c::getClimbMoveAnmSpeed: ivy sideways
+02427D8C  # daPy_lk_c::getHangMoveAnmSpeed: along a ledge while hanging
+# Mod packs (packs.cpp): the TV layout size asked by pack code -> the TV buffer's size (720p mode)
+02739594  # TV layout width (integer)
+027395E4  # TV layout height (integer)

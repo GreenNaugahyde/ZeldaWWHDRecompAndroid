@@ -163,7 +163,11 @@ public:
         byteSlot.assign(sizeof(Cpu), -1);
         for (size_t i = 0; i < slots.size(); i++)
             for (uint32_t b = slots[i].off; b < slots[i].off + slots[i].size; b++) byteSlot[b] = (int)i;
-        for (size_t i = 0; i < slots.size(); i++) (slots[i].keepAtReturn ? keepAtReturn : scratch).set(i);
+        // mod packs' code (emit.cpp marks it "wwhd-noeabi") doesn't follow the EABI: it returns values in
+        // any register and passes the CR to its own functions (Cemu runs it exactly), so it keeps every
+        // register at returns and writes everything back before calls
+        noEabi = f.hasFnAttribute("wwhd-noeabi");
+        for (size_t i = 0; i < slots.size(); i++) (slots[i].keepAtReturn || noEabi ? keepAtReturn : scratch).set(i);
         // the CR bits (but bit 6, the vararg float flag) and XER: not read by an EABI callee (writeback)
         auto mark = [&](uint32_t off) {
             for (size_t i = 0; i < slots.size(); i++)
@@ -229,8 +233,9 @@ private:
     // the next branch. GPRs and FPRs are all written back: the compiler's register save helpers
     // (_savegpr_N: the frame in r11, LR kept in r0 across the call) don't follow the EABI.
     // Instruction hooks (site_*), the runtime's helpers and tail calls get every changed register.
-    static bool eabi_call(llvm::CallBase* cb) {
-        if (cb->isMustTailCall()) return false;
+    bool noEabi = false;
+    bool eabi_call(llvm::CallBase* cb) const {
+        if (noEabi || cb->isMustTailCall()) return false;
         llvm::Function* f = cb->getCalledFunction();
         if (!f) return false;
         llvm::StringRef n = f->getName();

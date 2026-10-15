@@ -735,6 +735,7 @@ All off by default; hooks in `tools/recomp/hooks_mods.txt`. Test switches `WWHD_
 | `101F36CC` | `l_fopOvlpM_overlap[0]` (request: `+0x20` task) | fast scene changes |
 | `101F5088` | game pad state (sead controller): `+0x124` held, `+0x18` pressed, `+0x1C` released, `+0x40` hold counter, `+0x130/0x134` main stick, `+0x138/0x13C` right stick | cleared triggers in extra steps |
 | `daPy_lk_c+0x68D9` | `mReadyItemBtn` (0 X, 1 Y, 2 R; from `itemTrigger` `023EAB40`) | left click while aiming |
+| `1046F0B0+0x5140` | `dComIfG_play_c::mNextStage` (name[8], s16 point, s8 room, s8 layer, s8 enable, s8 wipe; start stage at `+0x5134`) | warp (`mods/warp.cpp`): enable = 1 makes `dScnPly_Draw` change the scene; spawn lists made on the device from the stage files (`android/warp_catalog.cpp`) |
 
 Measured (Outset, copy of the user's save): the original right-stick camera ramps 0.48, 1.13, 1.84 …
 to 7.36°/step over 10 steps and eases out over 4 steps plus a tail; the direct camera turns

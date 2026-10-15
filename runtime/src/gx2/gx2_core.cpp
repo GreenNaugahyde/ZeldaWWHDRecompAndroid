@@ -149,7 +149,7 @@ static uint32 g_pending_ops = 0;     // debug (WWHD_TRACE_DRAWDONE): bit per op 
 static bool reads_guest(Op op) {
     switch (op) {
     case OP_NOP: case OP_SET_REGS: case OP_COPY_TO_SCAN: case OP_SET_CONTEXT: case OP_SET_PROJ_REGS: case OP_FLUSH:
-    case OP_DRAW_DONE: case OP_SWAP: case OP_SETUP_CONTEXT: case OP_FENCE:
+    case OP_DRAW_DONE: case OP_SWAP: case OP_SETUP_CONTEXT: case OP_FENCE: case OP_WARM:
     case OP_INVALIDATE:  // marks surfaces for a check at their next use (a draw, behind a later wait)
         return false;  // their payload carries what they need (or host state only)
     default:
@@ -214,6 +214,8 @@ static void emit_host(Op op, std::initializer_list<uint32> payload) {
     std::lock_guard<std::recursive_mutex> lk(g_exec_mutex);
     execute_one(op, payload.begin(), (uint32)payload.size());
 }
+
+void warm_while_held() { emit_host(OP_WARM, {}); }
 
 void set_regs(uint32 first, const uint32* values, uint32 count) {
     if (!count) return;
@@ -332,12 +334,12 @@ static void execute_one(Op op, const uint32* p, uint32 n) {
     }
     case OP_PEEK_Z: gfx::peek_z(p, n); break;
     case OP_LAYOUT_ROOT: {
-        float kx, ky;
-        aspect::layout_root_target(p[0], gfx::target_aspect_factors(g_regs[mmCB_COLOR0_TILE] & 0xFFFF, g_regs[mmCB_COLOR0_FRAG], kx, ky));
+        uint32 w = g_regs[mmCB_COLOR0_TILE] & 0xFFFF, h = g_regs[mmCB_COLOR0_FRAG];
+        aspect::layout_root_target(p[0], gfx::target_is_tv(w, h) ? aspect::kTvTarget : gfx::target_is_drc(w, h) ? aspect::kDrcTarget : aspect::kOtherTarget);
         break;
     }
     case OP_SWAP:
-        if (n) gfx::set_frame_aspect(gx2::bitsf(p[0]));  // aspect ratio from the next frame on (aspect.cpp)
+        if (n) gfx::set_frame_aspect(gx2::bitsf(p[0]), n > 1 ? gx2::bitsf(p[1]) : 0.0f);  // aspect ratios from the next frame on (aspect.cpp)
         gfx::swap();
         break;
     case OP_SETUP_CONTEXT:
@@ -351,6 +353,7 @@ static void execute_one(Op op, const uint32* p, uint32 n) {
         g_q_done_cv.notify_all();
         break;
     }
+    case OP_WARM: gfx::cache_warm_held(); break;
     default: break;
     }
 }
@@ -657,8 +660,9 @@ HLE(gx2, GX2SwapScanBuffers) {
         }
         LOG("%s", buf);
     }
-    float a = aspect::on_swap();  // aspect ratio of the next frame (game projections, render targets)
-    emit_host(OP_SWAP, {gx2::fbits(a)});
+    float drc;
+    float a = aspect::on_swap(drc);  // aspect ratios of the next frame (game projections, render targets)
+    emit_host(OP_SWAP, {gx2::fbits(a), gx2::fbits(drc)});
     {
         std::lock_guard<std::mutex> lk(g_flip_mutex);
         update_flips();

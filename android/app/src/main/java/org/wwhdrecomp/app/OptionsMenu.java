@@ -50,6 +50,12 @@ final class OptionsMenu extends Dialog {
 
     private final MainActivity a;
     private final float dp;
+    // fitted to the window (phones are ~850 x 390 dp, the tablets this was laid out on ~1200 x 750):
+    // sizes scale by s, text by ts (shrinks less, and a very large system font scale is capped);
+    // compact puts About and Quit in a bottom bar instead of a column on the left
+    private final float s, ts;
+    private final boolean compact;
+    private android.widget.HorizontalScrollView tabScroll;
     private int tab;
     private LinearLayout rows;
     private ScrollView scroll;
@@ -60,15 +66,31 @@ final class OptionsMenu extends Dialog {
 
     private String languageAtOpen;  // the game language when the menu opened: a change asks for a restart on closing
 
-    OptionsMenu(MainActivity a) {
+    // the picker at start (MainActivity.offerStartStates): only the save states and Start game; the
+    // game waits before its intro until a state is loaded or the picker is closed
+    private final boolean atStart;
+    private boolean loadChosen;
+
+    OptionsMenu(MainActivity a) { this(a, false); }
+
+    OptionsMenu(MainActivity a, boolean atStart) {
         super(a, android.R.style.Theme_Translucent_NoTitleBar_Fullscreen);
         this.a = a;
+        this.atStart = atStart;
         languageAtOpen = a.gameLanguage();
         dp = a.getResources().getDisplayMetrics().density;
         tab = lastTab;
+        android.graphics.Rect win = a.getWindowManager().getCurrentWindowMetrics().getBounds();
+        float wDp = win.width() / dp, hDp = win.height() / dp;
+        s = Math.max(0.75f, Math.min(1f, Math.min(wDp / 1100f, hDp / 600f)));
+        float fontScale = a.getResources().getConfiguration().fontScale;
+        ts = (1 - (1 - s) * 0.6f) * Math.min(1f, 1.3f / fontScale);
+        compact = wDp < 1000 || hDp < 520;
     }
 
-    private int px(float v) { return Math.round(v * dp); }
+    private int px(float v) { return Math.round(v * dp * s); }
+
+    private void sp(TextView v, float size) { v.setTextSize(TypedValue.COMPLEX_UNIT_SP, size * ts); }
 
     @Override
     protected void onCreate(Bundle state) {
@@ -79,19 +101,50 @@ final class OptionsMenu extends Dialog {
         w.getAttributes().layoutInDisplayCutoutMode = android.view.WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES;
 
         FrameLayout root = new FrameLayout(getContext());
+        // clear of a camera cutout (the window reaches into it)
+        root.setOnApplyWindowInsetsListener((v, in) -> {
+            android.graphics.Insets c = in.getInsets(WindowInsets.Type.displayCutout());
+            v.setPadding(c.left, c.top, c.right, c.bottom);
+            return in;
+        });
         LinearLayout panel = new LinearLayout(getContext());
         panel.setOrientation(LinearLayout.VERTICAL);
         panel.setBackground(new GameUi.Parchment(getContext()));
-        panel.setPadding(px(28), px(18), px(28), px(14));
+        if (compact) panel.setPadding(px(20), px(12), px(20), px(8));
+        else panel.setPadding(px(28), px(18), px(28), px(14));
         FrameLayout.LayoutParams plp = new FrameLayout.LayoutParams(-1, -1);
-        plp.setMargins(px(26), px(18), px(26), px(18));
+        if (compact) plp.setMargins(px(10), px(8), px(10), px(8));
+        else plp.setMargins(px(26), px(18), px(26), px(18));
         root.addView(panel, plp);
 
-        // tabs and Back
+        // tabs (they scroll sideways when they don't fit) and Back
         LinearLayout top = new LinearLayout(getContext());
         top.setGravity(Gravity.CENTER_VERTICAL);
+        LinearLayout strip = new LinearLayout(getContext());
+        strip.setGravity(Gravity.CENTER_VERTICAL);
+        strip.setPadding(px(2), px(2), px(2), px(2));  // room for the plates' outline
+        tabScroll = new android.widget.HorizontalScrollView(getContext());
+        tabScroll.setHorizontalScrollBarEnabled(false);
+        tabScroll.setOverScrollMode(View.OVER_SCROLL_NEVER);
+        tabScroll.addView(strip, new FrameLayout.LayoutParams(-2, -2));
+        top.addView(tabScroll, new LinearLayout.LayoutParams(0, -2, 1));
         int[] names = {R.string.opt_saves, R.string.opt_game, R.string.opt_graphics, R.string.opt_mods, R.string.opt_controls};
-        for (int i = 0; i < TABS; i++) {
+        if (atStart) {  // one plate instead of the tabs: Continue starts the game as usual
+            TextView v = new GameUi.OutlinedText(getContext());
+            v.setText(a.getString(R.string.start_states_title).toUpperCase(java.util.Locale.ROOT));
+            v.setContentDescription(a.getString(R.string.start_states_title_hint));
+            v.setTypeface(Typeface.create("sans-serif-black", Typeface.NORMAL));
+            v.setTextColor(Color.WHITE);
+            v.setGravity(Gravity.CENTER);
+            v.setPadding(px(26), px(6), px(26), px(8));
+            v.setBackground(new GameUi.TabPlate(getContext(), true, TAB_COLORS[0]));
+            sp(v, 26);
+            ((GameUi.OutlinedText) v).outline = TAB_COLORS[0].dark;
+            v.setFocusable(true);
+            v.setOnClickListener(x -> closeToGame());
+            strip.addView(v, new LinearLayout.LayoutParams(-2, -2));
+        }
+        for (int i = 0; i < TABS && !atStart; i++) {
             final int t = i;
             TextView v = new GameUi.OutlinedText(getContext());
             v.setText(a.getString(names[i]).toUpperCase(java.util.Locale.ROOT));
@@ -104,22 +157,26 @@ final class OptionsMenu extends Dialog {
             tabs[i] = v;
             LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-2, -2);
             lp.rightMargin = px(10);
-            top.addView(v, lp);
+            strip.addView(v, lp);
         }
-        View spacer = new View(getContext());
-        top.addView(spacer, new LinearLayout.LayoutParams(0, 1, 1));
-        TextView back = barButton(a.getString(R.string.opt_back), v -> dismiss());
-        top.addView(back, new LinearLayout.LayoutParams(px(130), px(46)));
+        if (!atStart) {
+            TextView back = barButton(a.getString(R.string.opt_back), v -> closeToGame());
+            LinearLayout.LayoutParams backLp = new LinearLayout.LayoutParams(px(130), px(46));
+            backLp.leftMargin = px(10);
+            top.addView(back, backLp);
+        }
         panel.addView(top, new LinearLayout.LayoutParams(-1, -2));
 
-        // actions on the left, the tab's settings on the right
+        // actions on the left (in a bottom bar when compact), the tab's settings on the right
         LinearLayout body = new LinearLayout(getContext());
-        LinearLayout left = new LinearLayout(getContext());
-        left.setOrientation(LinearLayout.VERTICAL);
-        left.setPadding(0, px(14), px(18), 0);
-        addAction(left, R.string.opt_about, a::showLicenses);
-        addAction(left, R.string.opt_quit, a::quitApp);
-        body.addView(left, new LinearLayout.LayoutParams(px(220), -1));
+        if (!compact) {
+            LinearLayout left = new LinearLayout(getContext());
+            left.setOrientation(LinearLayout.VERTICAL);
+            left.setPadding(0, px(14), px(18), 0);
+            developerSwitch(addAction(left, R.string.opt_about, a::showLicenses));
+            addAction(left, R.string.opt_quit, a::quitApp);
+            body.addView(left, new LinearLayout.LayoutParams(px(220), -1));
+        }
         scroll = new ScrollView(getContext());
         rows = new LinearLayout(getContext());
         rows.setOrientation(LinearLayout.VERTICAL);
@@ -129,11 +186,29 @@ final class OptionsMenu extends Dialog {
         panel.addView(body, new LinearLayout.LayoutParams(-1, 0, 1));
 
         TextView hint = new TextView(getContext());
-        hint.setText(R.string.opt_pad_hint);
+        hint.setText(atStart ? R.string.start_states_pad_hint : R.string.opt_pad_hint);
         hint.setTextColor(HINT);
-        hint.setTextSize(13);
-        hint.setGravity(Gravity.END);
-        panel.addView(hint, new LinearLayout.LayoutParams(-1, -2));
+        sp(hint, 13);
+        hint.setGravity(Gravity.END | Gravity.CENTER_VERTICAL);
+        if (compact) {
+            LinearLayout bottom = new LinearLayout(getContext());
+            bottom.setGravity(Gravity.CENTER_VERTICAL);
+            bottom.setPadding(0, px(6), 0, 0);
+            for (int i = 0; i < 2; i++) {
+                Runnable run = i == 0 ? a::showLicenses : a::quitApp;
+                TextView b = barButton(a.getString(i == 0 ? R.string.opt_about : R.string.opt_quit), v -> run.run());
+                if (i == 0) developerSwitch(b);
+                LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(px(130), px(46));
+                lp.rightMargin = px(10);
+                bottom.addView(b, lp);
+            }
+            hint.setMaxLines(3);
+            hint.setEllipsize(android.text.TextUtils.TruncateAt.END);
+            bottom.addView(hint, new LinearLayout.LayoutParams(0, -2, 1));
+            panel.addView(bottom, new LinearLayout.LayoutParams(-1, -2));
+        } else {
+            panel.addView(hint, new LinearLayout.LayoutParams(-1, -2));
+        }
 
         setContentView(root);
         WindowInsetsController ic = w.getInsetsController();  // the window's views exist from here on
@@ -141,7 +216,12 @@ final class OptionsMenu extends Dialog {
             ic.hide(WindowInsets.Type.systemBars());
             ic.setSystemBarsBehavior(WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE);
         }
-        selectTab(tab);
+        if (atStart) {
+            page = this::startPage;
+            fill();
+        } else {
+            selectTab(tab);
+        }
     }
 
     // sub-dialogs (frame generation, save states...) open on top; show their changes when back
@@ -154,8 +234,8 @@ final class OptionsMenu extends Dialog {
     @Override
     public boolean onKeyDown(int code, KeyEvent e) {
         switch (code) {
-            case KeyEvent.KEYCODE_BUTTON_L1: selectTab((tab + TABS - 1) % TABS); return true;
-            case KeyEvent.KEYCODE_BUTTON_R1: selectTab((tab + 1) % TABS); return true;
+            case KeyEvent.KEYCODE_BUTTON_L1: if (!atStart) selectTab((tab + TABS - 1) % TABS); return true;
+            case KeyEvent.KEYCODE_BUTTON_R1: if (!atStart) selectTab((tab + 1) % TABS); return true;
             // by position, as in the game: the bottom button (Android's A) is the Wii U's B, back;
             // the right button (Android's B) is the Wii U's A, select
             case KeyEvent.KEYCODE_BUTTON_A: onBackPressed(); return true;
@@ -176,8 +256,11 @@ final class OptionsMenu extends Dialog {
 
     // a page inside a tab (e.g. the performance overlay's settings) instead of the tab's own rows
     private Runnable page;
+    private boolean onPacksPage;  // the mod packs page is shown (leaving it with changes offers the restart)
+    private final java.util.ArrayDeque<Runnable> pageStack = new java.util.ArrayDeque<>();  // the pages it was opened from
 
     private void openPage(Runnable p) {
+        if (page != null) pageStack.push(page);
         page = p;
         fill();
         scroll.scrollTo(0, 0);
@@ -186,19 +269,31 @@ final class OptionsMenu extends Dialog {
 
     @Override
     public void onBackPressed() {
-        if (page != null) {
-            page = null;
+        if (atStart) dismiss();  // starts the game
+        else if (onPacksPage && a.askRestartForPacks(this::onBackPressed)) {
+            // asked to restart for the pack changes; "Later" comes back here and leaves the page
+        } else if (page != null) {
+            page = pageStack.poll();
             fill();
         } else {
-            super.onBackPressed();
+            closeToGame();
         }
     }
 
-    private void pageTitle(int title) {
+    // back to the game (Back, the menu's own tab, the back key, Home / Guide): pack changes that need a
+    // restart offer it first, once per change
+    private void closeToGame() {
+        if (!atStart && a.askRestartForPacks(this::dismiss)) return;
+        dismiss();
+    }
+
+    private void pageTitle(int title) { pageTitle(a.getString(title)); }
+
+    private void pageTitle(String title) {
         TextView t = new TextView(getContext());
-        t.setText("‹  " + a.getString(title));
+        t.setText("‹  " + title);
         t.setTextColor(INK);
-        t.setTextSize(20);
+        sp(t, 20);
         t.setTypeface(Typeface.create("sans-serif-black", Typeface.NORMAL));
         t.setPadding(px(12), px(6), px(12), px(10));
         t.setFocusable(true);
@@ -270,7 +365,7 @@ final class OptionsMenu extends Dialog {
         TextView v = new TextView(getContext());
         v.setText(active ? "✓" : "›");
         v.setTextColor(active ? GameUi.GREEN.dark : INK);
-        v.setTextSize(active ? 22 : 16);
+        sp(v, active ? 22 : 16);
         v.setTypeface(Typeface.create("sans-serif-medium", Typeface.BOLD));
         r.addView(v, new LinearLayout.LayoutParams(-2, -2));
         r.setOnClickListener(x -> click.run());
@@ -281,7 +376,7 @@ final class OptionsMenu extends Dialog {
         TextView t = new TextView(getContext());
         t.setText(text);
         t.setTextColor(INK);
-        t.setTextSize(16);
+        sp(t, 16);
         t.setPadding(px(12), px(4), px(12), px(14));
         rows.addView(t, new LinearLayout.LayoutParams(-1, -2));
     }
@@ -302,7 +397,7 @@ final class OptionsMenu extends Dialog {
         submenu(R.string.opt_perf_reset, 0, "", () -> { a.resetPerfOverlay(); fill(); });
     }
 
-    private final Runnable selectHeld = this::dismiss;
+    private final Runnable selectHeld = this::closeToGame;
 
     @Override
     public boolean onKeyUp(int code, KeyEvent e) {
@@ -312,7 +407,7 @@ final class OptionsMenu extends Dialog {
         }
         // Home / Guide: on release, so the release doesn't reach the game screen and reopen the menu
         if (code == KeyEvent.KEYCODE_BUTTON_MODE) {
-            dismiss();
+            closeToGame();
             return true;
         }
         return super.onKeyUp(code, e);
@@ -325,19 +420,24 @@ final class OptionsMenu extends Dialog {
             a.askRestartForLanguage();
         }
         rows.removeCallbacks(selectHeld);
+        if (atStart && !loadChosen) Native.setStartHold(false);  // the game starts as usual
         super.dismiss();
     }
 
     private void selectTab(int t) {
+        if (onPacksPage && a.askRestartForPacks(() -> selectTab(t))) return;
         page = null;
+        pageStack.clear();
         tab = lastTab = t;
         for (int i = 0; i < TABS; i++) {
             boolean on = i == t;
             GameUi.Palette pal = TAB_COLORS[i];
             tabs[i].setBackground(new GameUi.TabPlate(getContext(), on, pal));
-            tabs[i].setTextSize(on ? 26 : 21);
+            sp(tabs[i], on ? 26 : 21);
             ((GameUi.OutlinedText) tabs[i]).outline = on ? pal.dark : pal.muted().dark;
         }
+        View sel = tabs[t];  // in view when the tabs scroll
+        tabScroll.post(() -> tabScroll.smoothScrollTo(sel.getLeft() - (tabScroll.getWidth() - sel.getWidth()) / 2, 0));
         fill();
         scroll.scrollTo(0, 0);
     }
@@ -348,6 +448,7 @@ final class OptionsMenu extends Dialog {
         View focused = getCurrentFocus();
         int focusIndex = focused != null && focused.getParent() == rows ? rows.indexOfChild(focused) : -1;
         rows.removeAllViews();
+        onPacksPage = false;
         if (page != null) page.run();
         else if (tab == 0) saves();
         else if (tab == 1) game();
@@ -357,51 +458,91 @@ final class OptionsMenu extends Dialog {
         if (focusIndex >= 0 && focusIndex < rows.getChildCount()) rows.getChildAt(focusIndex).requestFocus();
     }
 
-    // save states (5 slots with their picture, time and place) and the import / export of saves
+    // save states (5 slots with their picture, time and place), the auto save and its 2 slots, the
+    // last session's state (taken when the app goes to the background), and the import / export of saves
+    static final int[] AUTO_STATE_MINUTES = {0, 2, 5, 10};
+
     private void saves() {
-        for (int slot = 1; slot <= 5; slot++) {
-            String[] info = Native.saveSlotInfo(slot);
-            boolean used = info[0].equals("1"), compatible = info[1].equals("1");
-            String desc = !used ? a.getString(R.string.opt_slot_empty)
-                    : info[3].isEmpty() ? info[2] : info[2] + " · " + info[3];
-            if (used && !info[4].isEmpty())  // the controls it was saved with (and loads with)
-                desc += " · " + a.getString(info[4].equals("pro") ? R.string.controller_pro : R.string.controller_gamepad);
-            if (used && !compatible) desc = a.getString(R.string.opt_slot_incompatible, desc);
-            LinearLayout r = rowText(a.getString(R.string.opt_slot, slot), desc);
-            ImageView pic = new ImageView(getContext());
-            pic.setScaleType(ImageView.ScaleType.CENTER_CROP);
-            android.graphics.Bitmap bmp = used ? thumbnail(slot) : null;
-            if (bmp != null) pic.setImageBitmap(bmp);
-            GradientDrawable frame = new GradientDrawable();
-            frame.setColor(0x33000000);
-            frame.setCornerRadius(px(6));
-            pic.setBackground(frame);
-            pic.setClipToOutline(true);
-            LinearLayout.LayoutParams plp = new LinearLayout.LayoutParams(px(112), px(63));
-            plp.rightMargin = px(16);
-            r.addView(pic, 0, plp);
-            final int n = slot;
+        for (int slot = 1; slot <= 5; slot++) slotRow(slot, a.getString(R.string.opt_slot, slot), true);
+        int minutes = Native.getOption("auto_state");
+        int cur = 0;
+        for (int i = 0; i < AUTO_STATE_MINUTES.length; i++) if (AUTO_STATE_MINUTES[i] == minutes) cur = i;
+        choice(R.string.opt_auto_state, R.string.opt_auto_state_hint, a.getResources().getStringArray(R.array.auto_state_modes), cur,
+                i -> a.setAutoState(AUTO_STATE_MINUTES[i]));
+        for (int k = 1; k <= 2; k++) {
+            int slot = 5 + k;
+            if (minutes != 0 || Native.saveSlotInfo(slot)[0].equals("1")) slotRow(slot, a.getString(R.string.opt_auto_slot, k), false);
+        }
+        boolean leave = a.prefs.getBoolean("leave_state", false);
+        toggle(R.string.opt_leave_state, R.string.opt_leave_state_hint, leave, on -> a.prefs.edit().putBoolean("leave_state", on).apply());
+        if (leave || Native.saveSlotInfo(8)[0].equals("1")) slotRow(8, a.getString(R.string.opt_last_slot), false);
+        choice(R.string.opt_start_mode, R.string.opt_start_mode_hint, a.getResources().getStringArray(R.array.start_modes), a.startMode(),
+                i -> a.prefs.edit().putInt("start_mode", i).apply());
+        submenu(R.string.opt_export, R.string.opt_export_hint, "", a::chooseExport);
+        submenu(R.string.opt_import, R.string.opt_import_hint, "", a::chooseImport);
+    }
+
+    // the picker at start: the last session first, then the other used slots, the latest first
+    private void startPage() {
+        java.util.List<Integer> slots = MainActivity.usedStateSlots(a.baseDir());
+        if (slots.remove(Integer.valueOf(8))) slots.add(0, 8);
+        for (int slot : slots) slotRow(slot, slotLabel(slot), false);
+    }
+
+    private String slotLabel(int slot) {
+        return slot == 8 ? a.getString(R.string.opt_last_slot)
+                : slot > 5 ? a.getString(R.string.opt_auto_slot, slot - 5) : a.getString(R.string.opt_slot, slot);
+    }
+
+    // a slot: picture, time, place and controls, its Save (not for the auto slots) and Load buttons
+    private void slotRow(int slot, String label, boolean canSave) {
+        String[] info = Native.saveSlotInfo(slot);
+        boolean used = info[0].equals("1"), compatible = info[1].equals("1");
+        String desc = !used ? a.getString(R.string.opt_slot_empty)
+                : info[3].isEmpty() ? info[2] : info[2] + " · " + info[3];
+        if (used && !info[4].isEmpty())  // the controls it was saved with (and loads with)
+            desc += " · " + a.getString(info[4].equals("pro") ? R.string.controller_pro : R.string.controller_gamepad);
+        if (used && !compatible) desc = a.getString(R.string.opt_slot_incompatible, desc);
+        LinearLayout r = rowText(label, desc);
+        ImageView pic = new ImageView(getContext());
+        pic.setScaleType(ImageView.ScaleType.CENTER_CROP);
+        android.graphics.Bitmap bmp = used ? thumbnail(slot) : null;
+        if (bmp != null) pic.setImageBitmap(bmp);
+        GradientDrawable frame = new GradientDrawable();
+        frame.setColor(0x33000000);
+        frame.setCornerRadius(px(6));
+        pic.setBackground(frame);
+        pic.setClipToOutline(true);
+        LinearLayout.LayoutParams plp = new LinearLayout.LayoutParams(px(112), px(63));
+        plp.rightMargin = px(16);
+        r.addView(pic, 0, plp);
+        final int n = slot;
+        LinearLayout.LayoutParams blp = new LinearLayout.LayoutParams(px(96), px(44));
+        blp.leftMargin = px(10);
+        if (canSave) {
             TextView save = smallButton(a.getString(R.string.opt_slot_save), true, v -> {
                 if (!used) saveTo(n);
-                else new GameDialog(getContext()).title(a.getString(R.string.opt_slot, n)).message(a.getString(R.string.state_overwrite, n))
+                else new GameDialog(getContext()).title(label).message(a.getString(R.string.state_overwrite, n))
                         .button(R.string.opt_cancel, null)
                         .button(R.string.opt_slot_save, () -> saveTo(n)).show();
             });
-            TextView load = smallButton(a.getString(R.string.opt_slot_load), used && compatible, v -> {
-                Native.loadState(n);
-                a.showStateResult();
-                dismiss();  // see the game come back
-            });
-            LinearLayout.LayoutParams blp = new LinearLayout.LayoutParams(px(96), px(44));
-            blp.leftMargin = px(10);
             r.addView(save, blp);
-            r.addView(load, new LinearLayout.LayoutParams(blp));
-            // the D-pad goes to the Save and Load buttons themselves, not the row
-            r.setFocusable(false);
-            r.setBackground(slot(0x1F000000, 0));
+        } else if (!atStart) {
+            r.addView(new View(getContext()), blp);  // the Load buttons stay in one column
         }
-        submenu(R.string.opt_export, R.string.opt_export_hint, "", a::chooseExport);
-        submenu(R.string.opt_import, R.string.opt_import_hint, "", () -> a.pickFolder(MainActivity.PICK_IMPORT));
+        TextView load = smallButton(a.getString(R.string.opt_slot_load), used && compatible, v -> {
+            Native.loadState(n);
+            if (atStart) {  // the game waits until it is loaded (a few seconds)
+                loadChosen = true;
+                android.widget.Toast.makeText(a, R.string.start_states_loading, android.widget.Toast.LENGTH_SHORT).show();
+            }
+            a.showStateResult();
+            dismiss();  // see the game come back
+        });
+        r.addView(load, new LinearLayout.LayoutParams(blp));
+        // the D-pad goes to the Save and Load buttons themselves, not the row
+        r.setFocusable(false);
+        r.setBackground(slot(0x1F000000, 0));
     }
 
     // a state is captured at the next frame boundary and written in the background (a few seconds
@@ -424,7 +565,7 @@ final class OptionsMenu extends Dialog {
     }
 
     private android.graphics.Bitmap thumbnail(int slot) {
-        java.io.File f = new java.io.File(new java.io.File(a.baseDir(), "states"), "slot" + slot + ".png");
+        java.io.File f = MainActivity.stateFile(a.baseDir(), slot, "png");
         if (!f.exists()) return null;
         android.graphics.BitmapFactory.Options o = new android.graphics.BitmapFactory.Options();
         o.inSampleSize = 8;  // about 320 px wide is plenty for the slot picture
@@ -433,7 +574,7 @@ final class OptionsMenu extends Dialog {
 
     private TextView smallButton(String text, boolean enabled, View.OnClickListener click) {
         TextView b = barButton(text, click);
-        b.setTextSize(15);
+        sp(b, 15);
         b.setEnabled(enabled);
         b.setFocusable(enabled);
         if (!enabled) b.setAlpha(0.4f);
@@ -466,10 +607,15 @@ final class OptionsMenu extends Dialog {
             String[] where = {a.getString(R.string.drc_second_display), a.getString(R.string.drc_in_layout)};
             choice(R.string.opt_drc_display, R.string.opt_drc_display_hint, where, a.drcOnSecondDisplay() ? 0 : 1,
                     i -> a.setDrcOnSecondDisplay(i == 0));
+            if (a.drcOnSecondDisplay()) {
+                String[] shapes = {a.getString(R.string.drc_shape_fill), a.getString(R.string.drc_shape_original)};
+                indentNext = true;
+                choice(R.string.opt_drc_shape, R.string.opt_drc_shape_hint, shapes, a.drcFill() ? 0 : 1, i -> a.setDrcFill(i == 0));
+            }
         }
         String[] layouts = a.getResources().getStringArray(R.array.layouts);
         if (!MainActivity.NEW_TOUCH_CONTROLS) layouts = java.util.Arrays.copyOf(layouts, MainActivity.LAYOUT_ON_DEMAND);
-        int layout = a.prefs.getInt("layout", MainActivity.LAYOUT_INSET);
+        int layout = a.layoutSetting();
         if (layout >= layouts.length) layout = MainActivity.LAYOUT_INSET;
         choice(R.string.opt_layout, 0, layouts, layout, i -> {
             a.prefs.edit().putInt("layout", i).apply();
@@ -525,59 +671,273 @@ final class OptionsMenu extends Dialog {
             }
         }
         String[] runs = new String[MainActivity.RUN_SPEEDS.length];
-        int curRun = 0, curSwim = 0;
+        int curRun = 0, curSwim = 0, curClimb = 0, curSidle = 0;
         for (int k = 0; k < runs.length; k++) {
             runs[k] = MainActivity.RUN_SPEEDS[k] == 100 ? a.getString(R.string.opt_mod_run_off)
                     : String.format(java.util.Locale.ROOT, "%.2f×", MainActivity.RUN_SPEEDS[k] / 100f).replace("0×", "×");
             if (MainActivity.RUN_SPEEDS[k] == a.prefs.getInt("mod_run_speed", 100)) curRun = k;
             if (MainActivity.RUN_SPEEDS[k] == a.prefs.getInt("mod_swim_speed", 100)) curSwim = k;
+            if (MainActivity.RUN_SPEEDS[k] == a.prefs.getInt("mod_climb_speed", 100)) curClimb = k;
+            if (MainActivity.RUN_SPEEDS[k] == a.prefs.getInt("mod_sidle_speed", 100)) curSidle = k;
+        }
+        // jump anywhere on L (not with the moon jump, which uses L too) and its double jump
+        boolean jump = a.prefs.getBoolean("mod_jump", false);
+        toggle(R.string.opt_mod_jump, R.string.opt_mod_jump_hint, jump, a::setJumpAnywhere);
+        if (jump) {
+            indentNext = true;
+            toggle(R.string.opt_mod_jump_double, R.string.opt_mod_jump_double_hint, a.prefs.getBoolean("mod_jump_double", false),
+                    on -> a.setMod("mod_jump_double", on));
+            indentNext = true;
+            toggle(R.string.opt_mod_jump_noauto, R.string.opt_mod_jump_noauto_hint, a.prefs.getBoolean("mod_jump_noauto", false),
+                    on -> a.setMod("mod_jump_noauto", on));
+        }
+        // the moon jump (hold L), and while it's on its rise and flight speed (percent of the tested values),
+        // no fall damage and the lift-off poses
+        boolean moon = a.prefs.getBoolean("cheat_moon_jump", false);
+        toggle(R.string.cheat_moon_jump, R.string.cheat_moon_jump_hint, moon, a::setMoonJump);
+        if (moon) {
+            String[] moonKey = {"cheat_moon_rise", "cheat_moon_fly"};
+            int[] moonLabel = {R.string.cheat_moon_rise, R.string.cheat_moon_fly};
+            int[][] moonSpeeds = {MainActivity.MOON_RISE_SPEEDS, MainActivity.MOON_FLY_SPEEDS};
+            for (int i = 0; i < moonKey.length; i++) {
+                String key = moonKey[i];
+                int[] speeds = moonSpeeds[i];
+                String[] pct = new String[speeds.length];
+                for (int j = 0; j < pct.length; j++) pct[j] = speeds[j] + "%";
+                int cur = java.util.Arrays.binarySearch(speeds, a.prefs.getInt(key, 100));
+                if (cur < 0) cur = java.util.Arrays.binarySearch(speeds, 100);
+                indentNext = true;
+                choice(moonLabel[i], 0, pct, cur, k -> {
+                    a.prefs.edit().putInt(key, speeds[k]).apply();
+                    Native.setOption(key, speeds[k]);
+                });
+            }
+            for (String key : new String[] {"cheat_moon_nofall", "cheat_moon_anims"}) {
+                boolean nofall = key.equals("cheat_moon_nofall");
+                indentNext = true;
+                toggle(nofall ? R.string.cheat_moon_nofall : R.string.cheat_moon_anims,
+                       nofall ? R.string.cheat_moon_nofall_hint : R.string.cheat_moon_anims_hint, a.prefs.getBoolean(key, false), on -> {
+                    a.prefs.edit().putBoolean(key, on).apply();
+                    Native.setOption(key, on ? 1 : 0);
+                });
+            }
         }
         moveSpeed("mod_run", R.string.opt_mod_run, R.string.opt_mod_run_hint, runs, curRun);
         moveSpeed("mod_swim", R.string.opt_mod_swim, R.string.opt_mod_swim_hint, runs, curSwim);
+        moveSpeed("mod_climb", R.string.opt_mod_climb_fast, R.string.opt_mod_climb_fast_hint, runs, curClimb);
+        moveSpeed("mod_sidle", R.string.opt_mod_sidle, R.string.opt_mod_sidle_hint, runs, curSidle);
         submenu(R.string.opt_cheats, R.string.opt_cheats_hint, "", () -> openPage(this::cheatsPage));
+        int packsOn = 0;
+        for (String f : ModPacks.list(a.baseDir())) if (a.prefs.getBoolean("pack_on_" + f, false)) packsOn++;
+        submenu(R.string.opt_packs, R.string.opt_packs_hint, packsOn > 0 ? a.getString(R.string.packs_on_count, packsOn) : "",
+                () -> openPage(this::packsPage));
+        if (developer()) submenu(R.string.opt_warp, R.string.opt_warp_hint, "", () -> openPage(this::warpPage));
+    }
+
+    // ---- developer options: always in debug builds, else switched by a long press on About
+    private boolean developer() { return a.debuggable() || a.prefs.getBoolean("developer", false); }
+
+    private void developerSwitch(View about) {
+        about.setOnLongClickListener(v -> {
+            boolean on = !a.prefs.getBoolean("developer", false);
+            a.prefs.edit().putBoolean("developer", on).apply();
+            android.widget.Toast.makeText(a, on ? R.string.dev_on : R.string.dev_off, android.widget.Toast.LENGTH_SHORT).show();
+            fill();
+            return true;
+        });
+    }
+
+    // warp (mods/warp.cpp): the places of WarpCatalog by category; a place opens its spawn points, a
+    // story / minigame / boss entry warps at once
+    private void warpPage() {
+        pageTitle(R.string.opt_warp);
+        String[] where = Native.warpWhere().split(",");
+        String about = a.getString(R.string.warp_about);
+        if (where.length == 4) about += "\n\n" + a.getString(R.string.warp_where, where[0], where[1], where[2], where[3]);
+        note(about);
+        String[] layers = new String[13];
+        layers[0] = a.getString(R.string.warp_layer_auto);
+        for (int i = 0; i < 12; i++) layers[i + 1] = Integer.toString(i, 16);
+        choice(R.string.warp_layer, R.string.warp_layer_hint, layers, WarpCatalog.layer + 1, i -> WarpCatalog.layer = i - 1);
+        toggle(R.string.warp_test, R.string.warp_test_hint, a.prefs.getBoolean("warp_test", false), on -> {
+            a.setWarpTest(on);
+            if (on) dismiss();  // the game, with the overlay on it
+        });
+        submenu(R.string.preset_title, R.string.preset_hint, Integer.toString(StoryPresets.list(a).size()), () -> openPage(this::presetsPage));
+        org.json.JSONArray cats = WarpCatalog.categories(a, () -> { if (isShowing()) fill(); });
+        if (cats == null) {
+            note(a.getString(R.string.warp_reading));
+            return;
+        }
+        for (int i = 0; i < cats.length(); i++) {
+            org.json.JSONObject c = cats.optJSONObject(i);
+            submenu(c.optString("name"), null, Integer.toString(c.optJSONArray("items").length()), () -> openPage(() -> warpCategory(c)));
+        }
+    }
+
+    // story presets (StoryPresets): a save's story part plus a place; warping there loads that story
+    private void presetsPage() {
+        pageTitle(R.string.preset_title);
+        note(a.getString(R.string.preset_about));
+        submenu(R.string.preset_import, R.string.preset_import_hint, "", a::pickPresetSave);
+        submenu(R.string.preset_save, R.string.preset_save_hint, "", () -> {
+            byte[] story = Native.storyBlock();
+            String[] where = Native.warpWhere().split(",");
+            if (story == null || where.length != 4) {
+                android.widget.Toast.makeText(a, R.string.warp_no_save, android.widget.Toast.LENGTH_SHORT).show();
+                return;
+            }
+            a.askName(a.getString(R.string.preset_save), where[0] + " " + where[1], name -> {
+                StoryPresets.save(a, name, where[0], Integer.parseInt(where[1]), Integer.parseInt(where[2]), -1, story);
+                fill();
+            });
+        });
+        for (StoryPresets.Preset p : StoryPresets.list(a)) {
+            String hint = p.stage + " · " + a.getString(R.string.warp_spawn, p.room, p.spawn) + " · ♥ " + p.hearts() + "/" + p.maxHearts();
+            submenu(p.name, hint, "", () -> {
+                GameDialog d = new GameDialog(getContext()).title(p.name).message(a.getString(R.string.preset_ask, hint));
+                if (p.file != null)  // made on this device (the built-in ones stay)
+                    d.button(R.string.preset_delete, () -> {
+                        //noinspection ResultOfMethodCallIgnored
+                        p.file.delete();
+                        fill();
+                    });
+                d.button(android.R.string.cancel, null).button(R.string.preset_warp, () -> warpPreset(p)).show();
+            });
+        }
+    }
+
+    private void warpPreset(StoryPresets.Preset p) {
+        if (!Native.warpPreset(p.story, p.stage, p.room, p.spawn, p.layer >= 0 ? p.layer : WarpCatalog.layer)) {
+            android.widget.Toast.makeText(a, R.string.warp_no_save, android.widget.Toast.LENGTH_SHORT).show();
+            return;
+        }
+        android.widget.Toast.makeText(a, a.getString(R.string.warp_going, p.name), android.widget.Toast.LENGTH_SHORT).show();
+        dismiss();
+    }
+
+    private void warpCategory(org.json.JSONObject c) {
+        pageTitle(c.optString("name"));
+        org.json.JSONArray items = c.optJSONArray("items");
+        for (int i = 0; i < items.length(); i++) {
+            org.json.JSONObject p = items.optJSONObject(i);
+            String name = p.optString("name"), stage = p.optString("stage");
+            org.json.JSONArray spawns = p.optJSONArray("spawns");
+            if (spawns == null) {  // a single spot
+                int room = p.optInt("room"), spawn = p.optInt("spawn");
+                submenu(name, stage + " · " + a.getString(R.string.warp_spawn, room, spawn), "", () -> warp(name, stage, room, spawn));
+            } else {
+                submenu(name, stage, Integer.toString(spawns.length()), () -> openPage(() -> warpPlace(p)));
+            }
+        }
+    }
+
+    private void warpPlace(org.json.JSONObject p) {
+        String name = p.optString("name"), stage = p.optString("stage");
+        pageTitle(name);
+        org.json.JSONArray spawns = p.optJSONArray("spawns");
+        for (int i = 0; i < spawns.length(); i++) {
+            org.json.JSONArray s = spawns.optJSONArray(i);  // room, spawn, what it is
+            int room = s.optInt(0), spawn = s.optInt(1);
+            String what = s.optString(2);
+            submenu(a.getString(R.string.warp_spawn, room, spawn), what.isEmpty() ? null : what, "", () -> warp(name, stage, room, spawn));
+        }
+    }
+
+    private void warp(String name, String stage, int room, int spawn) {
+        if (!Native.warp(stage, room, spawn, WarpCatalog.layer)) {
+            android.widget.Toast.makeText(a, R.string.warp_no_save, android.widget.Toast.LENGTH_SHORT).show();
+            return;
+        }
+        android.widget.Toast.makeText(a, a.getString(R.string.warp_going, name), android.widget.Toast.LENGTH_SHORT).show();
+        dismiss();  // the game, to see it change
     }
 
     // cheats (mods/cheats.cpp, from the original project): edits of the save file in play; one-shot
     // ones by a tap, the infinite ones as switches (kept as settings); story cheats ask first
+    // ---- mod packs (ModPacks, runtime/src/packs.h): Cemu graphic packs imported from zip files
+    private void packsPage() {
+        onPacksPage = true;
+        pageTitle(R.string.opt_packs);
+        note(a.getString(R.string.packs_about));
+        submenu(R.string.packs_import, R.string.packs_import_hint, "", () -> a.pickPacks(this::fill));
+        java.io.File base = a.baseDir();
+        java.util.List<String> folders = ModPacks.list(base);
+        if (folders.isEmpty()) note(a.getString(R.string.packs_none));
+        for (String f : folders) {
+            ModPacks.Info info = ModPacks.describe(base, a.gameDir(), a.prefs, f);
+            boolean on = a.prefs.getBoolean("pack_on_" + f, false);
+            toggle(rowText(info.name, info.summary(a)), on, v -> {
+                a.prefs.edit().putBoolean("pack_on_" + f, v).commit();
+                ModPacks.writeEnabled(base, a.prefs);
+                a.markPacksChanged();
+            });
+            if (on)
+                for (String[] c : info.categories) {
+                    String[] presets = java.util.Arrays.copyOfRange(c, 2, c.length);
+                    int cur = java.util.Arrays.asList(presets).indexOf(c[1]);
+                    indentNext = true;
+                    choice(rowText(c[0].isEmpty() ? a.getString(R.string.packs_preset) : c[0], null), presets, cur, k -> {
+                        ModPacks.select(a.prefs, f, c[0], presets[k]);
+                        ModPacks.writeEnabled(base, a.prefs);
+                        a.markPacksChanged();
+                    });
+                }
+            indentNext = true;
+            submenu(R.string.packs_details, 0, "", () -> openPage(() -> packDetailPage(f)));
+        }
+        if (a.packsChanged) {
+            note(a.getString(R.string.packs_restart_note));
+            note(a.getString(R.string.packs_title_hint));
+            addAction(rows, R.string.packs_restart, a::restartForPacks);
+        }
+    }
+
+    private void packDetailPage(String folder) {
+        java.io.File base = a.baseDir();
+        ModPacks.Info info = ModPacks.describe(base, a.gameDir(), a.prefs, folder);
+        pageTitle(info.name);
+        if (!info.description.isEmpty()) note(info.description);
+        StringBuilder b = new StringBuilder(info.summary(a));
+        if (info.hasPatches) b.append("\n").append(a.getString(R.string.packs_groups, info.groups, info.groupsOther));
+        if (info.versions != null) b.append("\n").append(a.getString(R.string.packs_versions, info.versions));
+        if (info.contentAdded > 0) {
+            b.append("\n").append(a.getResources().getQuantityString(R.plurals.packs_added, info.contentAdded, info.contentAdded));
+            for (String f : info.added) b.append("\n   ").append(f);
+        }
+        for (String u : info.unsupported) b.append("\n").append(a.getString(R.string.packs_unsupported, u));
+        for (String n : info.notes) b.append("\n").append(n);
+        b.append("\n").append(a.getString(R.string.packs_folder, folder));
+        note(b.toString());
+        addAction(rows, R.string.packs_delete, () -> new GameDialog(getContext()).title(info.name).message(R.string.packs_delete_confirm)
+                .button(R.string.opt_cancel, null)
+                .button(R.string.packs_delete, () -> {
+                    boolean wasOn = a.prefs.getBoolean("pack_on_" + folder, false);
+                    ModPacks.delete(base, a.prefs, folder);
+                    if (wasOn) a.markPacksChanged();
+                    page = pageStack.poll();
+                    fill();
+                }).show());
+    }
+
     private void cheatsPage() {
         pageTitle(R.string.opt_cheats);
         note(a.getString(R.string.cheats_about));
         submenu(R.string.cheat_items, R.string.cheat_items_hint, "", () -> a.cheat(MainActivity.CHEAT_ITEMS, R.string.cheat_items_done));
         submenu(R.string.cheat_sword, R.string.cheat_sword_hint, "", () -> a.cheat(MainActivity.CHEAT_SWORD, R.string.cheat_sword_done));
         submenu(R.string.cheat_stats, R.string.cheat_stats_hint, "", () -> a.cheat(MainActivity.CHEAT_STATS, R.string.cheat_stats_done));
-        int[] inf = {R.string.cheat_inf_health, R.string.cheat_inf_magic, R.string.cheat_inf_ammo, R.string.cheat_moon_jump};
-        int[] infHint = {0, 0, 0, R.string.cheat_moon_jump_hint};
-        for (int i = 0; i < inf.length; i++) {  // (the moon jump's no-fall-damage switch comes below its speeds)
-            String key = MainActivity.CHEATS_INFINITE[i];
+        submenu(R.string.cheat_bags, R.string.cheat_bags_hint, "", () -> a.cheat(MainActivity.CHEAT_BAGS, R.string.cheat_bags_done));
+        int[] inf = {R.string.cheat_inf_health, R.string.cheat_inf_magic, R.string.cheat_inf_ammo, R.string.cheat_inf_rupees,
+                     R.string.cheat_inf_bags, R.string.cheat_inf_breath};
+        int[] infHint = {0, 0, 0, 0, R.string.cheat_inf_bags_hint, R.string.cheat_inf_breath_hint};
+        String[] infKey = {"cheat_inf_health", "cheat_inf_magic", "cheat_inf_ammo", "cheat_inf_rupees", "cheat_inf_bags", "cheat_inf_breath"};
+        for (int i = 0; i < inf.length; i++) {
+            String key = infKey[i];
             toggle(inf[i], infHint[i], a.prefs.getBoolean(key, false), on -> {
                 a.prefs.edit().putBoolean(key, on).apply();
                 Native.setOption(key, on ? 1 : 0);
             });
         }
-        // the moon jump's rise and flight speed, in percent of the tested values
-        String[] moonKey = {"cheat_moon_rise", "cheat_moon_fly"};
-        int[] moonLabel = {R.string.cheat_moon_rise, R.string.cheat_moon_fly};
-        int[][] moonSpeeds = {MainActivity.MOON_RISE_SPEEDS, MainActivity.MOON_FLY_SPEEDS};
-        for (int i = 0; i < moonKey.length; i++) {
-            String key = moonKey[i];
-            int[] speeds = moonSpeeds[i];
-            String[] pct = new String[speeds.length];
-            for (int j = 0; j < pct.length; j++) pct[j] = speeds[j] + "%";
-            int cur = java.util.Arrays.binarySearch(speeds, a.prefs.getInt(key, 100));
-            if (cur < 0) cur = java.util.Arrays.binarySearch(speeds, 100);
-            choice(moonLabel[i], 0, pct, cur, k -> {
-                a.prefs.edit().putInt(key, speeds[k]).apply();
-                Native.setOption(key, speeds[k]);
-            });
-        }
-        toggle(R.string.cheat_moon_nofall, R.string.cheat_moon_nofall_hint, a.prefs.getBoolean("cheat_moon_nofall", false), on -> {
-            a.prefs.edit().putBoolean("cheat_moon_nofall", on).apply();
-            Native.setOption("cheat_moon_nofall", on ? 1 : 0);
-        });
-        toggle(R.string.cheat_moon_anims, R.string.cheat_moon_anims_hint, a.prefs.getBoolean("cheat_moon_anims", false), on -> {
-            a.prefs.edit().putBoolean("cheat_moon_anims", on).apply();
-            Native.setOption("cheat_moon_anims", on ? 1 : 0);
-        });
         note(a.getString(R.string.cheats_story_about));
         int[][] story = {{R.string.cheat_songs, MainActivity.CHEAT_SONGS, R.string.cheat_songs_done},
                          {R.string.cheat_triforce, MainActivity.CHEAT_TRIFORCE, R.string.cheat_triforce_done},
@@ -589,7 +949,7 @@ final class OptionsMenu extends Dialog {
                     .button(R.string.cheat_apply, () -> a.cheat(c[1], c[2])).show());
     }
 
-    // faster running or swimming: its speed, and below it (when on) when it applies and how L3 works
+    // faster running, swimming, climbing or sidling: its speed, and below it (when on) when it applies and how L3 works
     private void moveSpeed(String mod, int label, int hint, String[] values, int cur) {
         choice(label, hint, values, cur, k -> {
             a.prefs.edit().putInt(mod + "_speed", MainActivity.RUN_SPEEDS[k]).apply();
@@ -699,7 +1059,7 @@ final class OptionsMenu extends Dialog {
             TextView v = new TextView(getContext());
             v.setText(InputMapper.buttonName(m.map[i]) + "  ›");
             v.setTextColor(INK);
-            v.setTextSize(16);
+            sp(v, 16);
             v.setTypeface(Typeface.create("sans-serif-medium", Typeface.BOLD));
             r.addView(v, new LinearLayout.LayoutParams(-2, -2));
             r.setOnClickListener(x -> new GameDialog(getContext()).title(names[n])
@@ -739,14 +1099,14 @@ final class OptionsMenu extends Dialog {
         TextView t = new TextView(getContext());
         t.setText(label);
         t.setTextColor(INK);
-        t.setTextSize(18);
+        sp(t, 18);
         t.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
         text.addView(t);
         if (hint != null) {
             TextView h = new TextView(getContext());
             h.setText(hint);
             h.setTextColor(HINT);
-            h.setTextSize(13);
+            sp(h, 13);
             text.addView(h);
         }
         r.addView(text, new LinearLayout.LayoutParams(0, -2, 1));
@@ -759,20 +1119,27 @@ final class OptionsMenu extends Dialog {
     }
 
     private void toggle(int label, int hint, boolean on, BoolSetter set) {
-        LinearLayout r = row(label, hint);
+        toggle(row(label, hint), on, set);
+    }
+
+    private void toggle(LinearLayout r, boolean on, BoolSetter set) {
         TextView pill = GameUi.pill(getContext(), on);
+        sp(pill, 16);
         r.addView(pill, new LinearLayout.LayoutParams(px(92), px(38)));
         r.setOnClickListener(v -> { set.set(!on); fill(); });
     }
 
     private void choice(int label, int hint, String[] values, int cur, IntSetter set) {
-        LinearLayout r = row(label, hint);
+        choice(row(label, hint), values, cur, set);
+    }
+
+    private void choice(LinearLayout r, String[] values, int cur, IntSetter set) {
         int idx = Math.max(0, Math.min(values.length - 1, cur));
         TextView prev = arrow("◀"), next = arrow("▶");
         TextView value = new TextView(getContext());
         value.setText(values[idx]);
         value.setTextColor(INK);
-        value.setTextSize(16);
+        sp(value, 16);
         value.setTypeface(Typeface.create("sans-serif-medium", Typeface.BOLD));
         value.setGravity(Gravity.CENTER);
         value.setMinWidth(px(150));
@@ -793,11 +1160,18 @@ final class OptionsMenu extends Dialog {
     }
 
     private void submenu(int label, int hint, String value, Runnable open) {
-        LinearLayout r = row(label, hint);
+        submenu(row(label, hint), value, open);
+    }
+
+    private void submenu(String label, String hint, String value, Runnable open) {
+        submenu(rowText(label, hint), value, open);
+    }
+
+    private void submenu(LinearLayout r, String value, Runnable open) {
         TextView v = new TextView(getContext());
         v.setText(value.isEmpty() ? "›" : value + "  ›");
         v.setTextColor(INK);
-        v.setTextSize(16);
+        sp(v, 16);
         v.setTypeface(Typeface.create("sans-serif-medium", Typeface.BOLD));
         r.addView(v, new LinearLayout.LayoutParams(-2, -2));
         r.setOnClickListener(x -> open.run());
@@ -807,19 +1181,25 @@ final class OptionsMenu extends Dialog {
         TextView t = new TextView(getContext());
         t.setText(s);
         t.setTextColor(0xFFD9B400);
-        t.setTextSize(20);
+        sp(t, 20);
         t.setGravity(Gravity.CENTER);
         return t;
     }
 
-    private void addAction(LinearLayout col, int label, Runnable run) {
+    private TextView addAction(LinearLayout col, int label, Runnable run) {
         TextView b = barButton(a.getString(label), v -> run.run());
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, px(54));
         lp.bottomMargin = px(12);
         col.addView(b, lp);
+        return b;
     }
 
-    private TextView barButton(String text, View.OnClickListener click) { return GameUi.barButton(getContext(), text, click); }
+    private TextView barButton(String text, View.OnClickListener click) {
+        TextView b = GameUi.barButton(getContext(), text, click);
+        sp(b, 18);
+        b.setPadding(px(16), 0, px(16), 0);
+        return b;
+    }
 
     private Drawable slot(int fill, int stroke) { return GameUi.slot(getContext(), fill, stroke); }
 

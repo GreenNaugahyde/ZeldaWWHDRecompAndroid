@@ -2064,12 +2064,16 @@ void copy_surface(uint32_t src, uint32_t srcMip, uint32_t srcSlice, uint32_t dst
     copy_surface_impl(src, srcMip, srcSlice, dst, dstMip, dstSlice);
 }
 
+static std::atomic<float> g_drc_picture_aspect{16.0f / 9.0f};
+float drc_picture_aspect() { return g_drc_picture_aspect.load(std::memory_order_relaxed); }
+
 void copy_to_scan(uint32_t cb, uint32_t target) {
     // target: 1 = TV, 4/8 = GamePad
-    if (log_this_frame()) LOG("[scan] copy %08X to %s", cb, (target & 1) ? "TV" : "DRC");
     Screen& scr = (target & 1) ? R.tv : R.drc;
     Surface* s = surface_from_color_buffer(cb);
+    if (log_this_frame()) LOG("[scan] copy %08X (%ux%u) to %s", cb, s ? s->img.width : 0, s ? s->img.height : 0, (target & 1) ? "TV" : "DRC");
     if (!s || !s->img.image) return;
+    if (!(target & 1)) g_drc_picture_aspect.store((float)s->img.width / (float)s->img.height, std::memory_order_relaxed);
     if (!scr.img.image || scr.img.width != s->img.width || scr.img.height != s->img.height || scr.img.format != s->img.format) {
         if (scr.img.image) {
             // the old image may still be in use by queued presents
@@ -2251,67 +2255,75 @@ void dump_texture(Image& src, const char* name, bool async, bool srgbEncode) {
     vkCmdCopyImageToBuffer(command_buffer(), src.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, buf, (uint32_t)regions.size(),
                            regions.data());
     std::string file = name;
+    // the pixels are copied out on the render thread; converting and encoding the PNG (tens of ms for
+    // a full-size picture, e.g. a save state's) runs on a thread of its own when async
     auto write = [=]() {
         vmaInvalidateAllocation(R.vma, alloc, 0, VK_WHOLE_SIZE);
-        const uint8_t* raw = (const uint8_t*)info.pMappedData;
-        uint32_t W = w * layers;
-        std::vector<uint8_t> px((size_t)W * h * 4);
-        if (depth) {
-            // grey image, contrast-stretched to the range of values present
-            for (uint32_t z = 0; z < layers; z++) {
-                std::vector<float> v((size_t)w * h);
-                for (size_t i = 0; i < v.size(); i++) {
-                    size_t k = (size_t)z * w * h + i;
-                    if (f == VK_FORMAT_D16_UNORM) v[i] = ((const uint16_t*)raw)[k] / 65535.0f;
-                    else if (f == VK_FORMAT_D24_UNORM_S8_UINT || f == VK_FORMAT_X8_D24_UNORM_PACK32)
-                        v[i] = (((const uint32_t*)raw)[k] & 0xFFFFFF) / 16777215.0f;
-                    else v[i] = ((const float*)raw)[k];
-                }
-                float lo = 1, hi = 0;
-                for (float x : v) if (x < 1.0f) { lo = std::min(lo, x); hi = std::max(hi, x); }
-                for (uint32_t y = 0; y < h; y++)
-                    for (uint32_t x = 0; x < w; x++) {
-                        float d = v[(size_t)y * w + x];
-                        uint8_t g = d >= 1.0f ? 255 : (uint8_t)std::clamp((d - lo) / std::max(hi - lo, 1e-6f) * 230.0f, 0.0f, 230.0f);
-                        uint8_t* o = &px[((size_t)y * W + z * w + x) * 4];
-                        o[0] = o[1] = o[2] = g;
-                        o[3] = 255;
-                    }
-            }
-        } else {
-            for (size_t i = 0; i < (size_t)w * h; i++) {
-                uint8_t* o = &px[i * 4];
-                uint32_t v = 0;
-                if (bpp == 4) memcpy(&v, raw + i * 4, 4);
-                if (f == VK_FORMAT_A2B10G10R10_UNORM_PACK32) {
-                    o[0] = (v & 0x3FF) >> 2; o[1] = ((v >> 10) & 0x3FF) >> 2; o[2] = ((v >> 20) & 0x3FF) >> 2;
-                } else if (f == VK_FORMAT_R8G8B8A8_UNORM || f == VK_FORMAT_R8G8B8A8_SRGB) {
-                    memcpy(o, raw + i * 4, 3);
-                } else if (f == VK_FORMAT_R8_UNORM) {
-                    o[0] = o[1] = o[2] = raw[i];
-                } else if (f == VK_FORMAT_B10G11R11_UFLOAT_PACK32) {
-                    auto f11 = [](uint32_t m, uint32_t e) { return e ? ldexpf(1.0f + m / 64.0f, (int)e - 15) : ldexpf(m / 64.0f, -14); };
-                    float r = f11(v & 0x3F, (v >> 6) & 0x1F), g = f11((v >> 11) & 0x3F, (v >> 17) & 0x1F),
-                          b = ldexpf(1.0f + ((v >> 22) & 0x1F) / 32.0f, (int)((v >> 27) & 0x1F) - 15);
-                    o[0] = (uint8_t)std::min(255.0f, r * 255); o[1] = (uint8_t)std::min(255.0f, g * 255); o[2] = (uint8_t)std::min(255.0f, b * 255);
-                } else {  // RGBA16F
-                    for (int c = 0; c < 3; c++) {
-                        uint16_t hv;
-                        memcpy(&hv, raw + i * 8 + c * 2, 2);
-                        o[c] = (uint8_t)std::clamp(half_to_float(hv) * 255.0f, 0.0f, 255.0f);
-                    }
-                }
-                o[3] = 255;
-                if (srgbEncode)
-                    for (int c = 0; c < 3; c++) {
-                        float x = o[c] / 255.0f;
-                        x = x <= 0.0031308f ? x * 12.92f : 1.055f * powf(x, 1 / 2.4f) - 0.055f;
-                        o[c] = (uint8_t)std::clamp(x * 255.0f + 0.5f, 0.0f, 255.0f);
-                    }
-            }
-        }
-        if (write_png(file.c_str(), px.data(), W, h)) LOG("[gfx] wrote %s (%ux%u)", file.c_str(), W, h);
+        auto copy = std::make_shared<std::vector<uint8_t>>((const uint8_t*)info.pMappedData,
+                                                           (const uint8_t*)info.pMappedData + bi.size);
         vmaDestroyBuffer(R.vma, buf, alloc);
+        auto encode = [=]() {
+            const uint8_t* raw = copy->data();
+            uint32_t W = w * layers;
+            std::vector<uint8_t> px((size_t)W * h * 4);
+            if (depth) {
+                // grey image, contrast-stretched to the range of values present
+                for (uint32_t z = 0; z < layers; z++) {
+                    std::vector<float> v((size_t)w * h);
+                    for (size_t i = 0; i < v.size(); i++) {
+                        size_t k = (size_t)z * w * h + i;
+                        if (f == VK_FORMAT_D16_UNORM) v[i] = ((const uint16_t*)raw)[k] / 65535.0f;
+                        else if (f == VK_FORMAT_D24_UNORM_S8_UINT || f == VK_FORMAT_X8_D24_UNORM_PACK32)
+                            v[i] = (((const uint32_t*)raw)[k] & 0xFFFFFF) / 16777215.0f;
+                        else v[i] = ((const float*)raw)[k];
+                    }
+                    float lo = 1, hi = 0;
+                    for (float x : v) if (x < 1.0f) { lo = std::min(lo, x); hi = std::max(hi, x); }
+                    for (uint32_t y = 0; y < h; y++)
+                        for (uint32_t x = 0; x < w; x++) {
+                            float d = v[(size_t)y * w + x];
+                            uint8_t g = d >= 1.0f ? 255 : (uint8_t)std::clamp((d - lo) / std::max(hi - lo, 1e-6f) * 230.0f, 0.0f, 230.0f);
+                            uint8_t* o = &px[((size_t)y * W + z * w + x) * 4];
+                            o[0] = o[1] = o[2] = g;
+                            o[3] = 255;
+                        }
+                }
+            } else {
+                for (size_t i = 0; i < (size_t)w * h; i++) {
+                    uint8_t* o = &px[i * 4];
+                    uint32_t v = 0;
+                    if (bpp == 4) memcpy(&v, raw + i * 4, 4);
+                    if (f == VK_FORMAT_A2B10G10R10_UNORM_PACK32) {
+                        o[0] = (v & 0x3FF) >> 2; o[1] = ((v >> 10) & 0x3FF) >> 2; o[2] = ((v >> 20) & 0x3FF) >> 2;
+                    } else if (f == VK_FORMAT_R8G8B8A8_UNORM || f == VK_FORMAT_R8G8B8A8_SRGB) {
+                        memcpy(o, raw + i * 4, 3);
+                    } else if (f == VK_FORMAT_R8_UNORM) {
+                        o[0] = o[1] = o[2] = raw[i];
+                    } else if (f == VK_FORMAT_B10G11R11_UFLOAT_PACK32) {
+                        auto f11 = [](uint32_t m, uint32_t e) { return e ? ldexpf(1.0f + m / 64.0f, (int)e - 15) : ldexpf(m / 64.0f, -14); };
+                        float r = f11(v & 0x3F, (v >> 6) & 0x1F), g = f11((v >> 11) & 0x3F, (v >> 17) & 0x1F),
+                              b = ldexpf(1.0f + ((v >> 22) & 0x1F) / 32.0f, (int)((v >> 27) & 0x1F) - 15);
+                        o[0] = (uint8_t)std::min(255.0f, r * 255); o[1] = (uint8_t)std::min(255.0f, g * 255); o[2] = (uint8_t)std::min(255.0f, b * 255);
+                    } else {  // RGBA16F
+                        for (int c = 0; c < 3; c++) {
+                            uint16_t hv;
+                            memcpy(&hv, raw + i * 8 + c * 2, 2);
+                            o[c] = (uint8_t)std::clamp(half_to_float(hv) * 255.0f, 0.0f, 255.0f);
+                        }
+                    }
+                    o[3] = 255;
+                    if (srgbEncode)
+                        for (int c = 0; c < 3; c++) {
+                            float x = o[c] / 255.0f;
+                            x = x <= 0.0031308f ? x * 12.92f : 1.055f * powf(x, 1 / 2.4f) - 0.055f;
+                            o[c] = (uint8_t)std::clamp(x * 255.0f + 0.5f, 0.0f, 255.0f);
+                        }
+                }
+            }
+            if (write_png(file.c_str(), px.data(), W, h)) LOG("[gfx] wrote %s (%ux%u)", file.c_str(), W, h);
+        };
+        if (async) std::thread(encode).detach();
+        else encode();
     };
     if (async) {
         on_complete(write);

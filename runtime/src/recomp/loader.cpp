@@ -12,6 +12,7 @@
 #include <dirent.h>
 #include <dlfcn.h>
 #include <sys/stat.h>
+#include <sys/time.h>
 #include <unistd.h>
 
 #include <algorithm>
@@ -21,6 +22,7 @@
 #include <cstring>
 #include <fstream>
 #include <mutex>
+#include <set>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -127,12 +129,10 @@ std::string hex(const uint8_t* p, size_t n) {
     return s;
 }
 
-constexpr const char* kComplete = "/complete";  // key of the finished cache
-constexpr const char* kBuilding = "/building";  // key of the compile in progress
 
 }  // namespace
 
-std::string code_cache_key(const std::string& rpxPath) {
+std::string code_base_key(const std::string& rpxPath) {
     std::string rpx = read_file(rpxPath);
     if (rpx.empty()) return "";
     uint8_t h[20], hk[20];
@@ -151,28 +151,100 @@ std::string code_cache_key(const std::string& rpxPath) {
     return key;
 }
 
-bool code_cache_ready(const std::string& dir, const std::string& key) {
-    return !key.empty() && read_file(dir + kComplete) == key;
+std::string code_cache_key(const std::string& rpxPath) {
+    std::string key = code_base_key(rpxPath);
+    if (key.empty()) return key;
+    if (const CodePatch* p = code_patch(); p && !p->key.empty()) key += p->key + "\n";  // mod packs (packs.h)
+    return key;
 }
 
-bool begin_code_cache(const std::string& dir, const std::string& key) {
+namespace {
+constexpr int kKeepSets = 3;  // manifests (code sets) whose objects stay in the cache
+
+std::string manifest_path(const std::string& dir, const std::string& key) {
+    uint8_t h[20];
+    disc::sha1((const uint8_t*)key.data(), key.size(), h);
+    return dir + "/set_" + hex(h, 20);
+}
+
+// the object files of `key` ("" key or a missing / foreign manifest: none)
+bool manifest_objects(const std::string& dir, const std::string& key, std::vector<std::string>& out) {
+    if (key.empty()) return false;
+    std::string m = read_file(manifest_path(dir, key));
+    size_t sep = m.find("\n---\n");
+    if (sep == std::string::npos || m.substr(sep + 5) != key) return false;
+    out.clear();
+    for (size_t i = 0; i < sep;) {
+        size_t e = m.find('\n', i);
+        if (e == std::string::npos || e > sep) e = sep;
+        if (e > i) out.push_back(m.substr(i, e - i));
+        i = e + 1;
+    }
+    return !out.empty();
+}
+}  // namespace
+
+bool code_cache_ready(const std::string& dir, const std::string& key) {
+    std::vector<std::string> objs;
+    if (!manifest_objects(dir, key, objs)) return false;
+    struct stat st;
+    for (auto& o : objs)
+        if (stat((dir + "/" + o).c_str(), &st) != 0) return false;
+    return true;
+}
+
+void begin_code_cache(const std::string& dir) {
     mkdir(dir.c_str(), 0700);
-    if (read_file(dir + kBuilding) == key) return true;
-    if (DIR* d = opendir(dir.c_str())) {
-        while (dirent* e = readdir(d))
-            if (e->d_name[0] != '.') unlink((dir + "/" + e->d_name).c_str());
+    if (DIR* d = opendir(dir.c_str())) {  // the old layout: code_NNN.o, complete, building
+        while (dirent* e = readdir(d)) {
+            std::string n = e->d_name;
+            if (n.rfind("code_", 0) == 0 || n == "complete" || n == "building") unlink((dir + "/" + n).c_str());
+        }
         closedir(d);
     }
-    write_file(dir + kBuilding, key);
-    return false;
 }
 
-bool finish_code_cache(const std::string& dir, const std::string& key, std::string& err) {
-    if (!write_file(dir + kComplete, key)) {
-        err = "cannot write " + dir + kComplete;
+bool finish_code_cache(const std::string& dir, const std::string& key, const std::vector<std::string>& objects, std::string& err) {
+    std::string m;
+    for (auto& o : objects) m += o + "\n";
+    m += "---\n" + key;
+    std::string path = manifest_path(dir, key);
+    if (!write_file(path + ".tmp", m) || rename((path + ".tmp").c_str(), path.c_str()) != 0) {
+        err = "cannot write " + path;
         return false;
     }
-    unlink((dir + kBuilding).c_str());
+    // keep the objects of the newest manifests (this one included), remove the rest
+    std::vector<std::pair<long, std::string>> sets;
+    std::vector<std::string> files;
+    if (DIR* d = opendir(dir.c_str())) {
+        while (dirent* e = readdir(d)) {
+            std::string n = e->d_name;
+            struct stat st;
+            if (n.rfind("set_", 0) == 0 && n.find('.') == std::string::npos && stat((dir + "/" + n).c_str(), &st) == 0)
+                sets.push_back({(long)st.st_mtime, n});
+            else if (n.rfind("m_", 0) == 0)
+                files.push_back(n);
+        }
+        closedir(d);
+    }
+    std::sort(sets.rbegin(), sets.rend());
+    std::set<std::string> keep(objects.begin(), objects.end());
+    for (size_t i = 0; i < sets.size(); i++) {
+        std::string s = read_file(dir + "/" + sets[i].second);
+        if ((int)i >= kKeepSets && dir + "/" + sets[i].second != path) {
+            unlink((dir + "/" + sets[i].second).c_str());
+            continue;
+        }
+        size_t sep = s.find("\n---\n");
+        for (size_t p = 0; sep != std::string::npos && p < sep;) {
+            size_t e = s.find('\n', p);
+            if (e == std::string::npos || e > sep) e = sep;
+            keep.insert(s.substr(p, e - p));
+            p = e + 1;
+        }
+    }
+    for (auto& f : files)
+        if (!keep.count(f)) unlink((dir + "/" + f).c_str());
     return true;
 }
 
@@ -223,16 +295,25 @@ bool load_game_code(const std::string& rpxPath, const std::string& dir, std::str
     llvm::orc::JITDylib& jd = keep->getMainJITDylib();
     jd.addGenerator(std::make_unique<SelfGenerator>(res));
 
+    std::vector<std::string> objectFiles;
+    const std::string key = code_cache_key(rpxPath);
+    if (!manifest_objects(dir, key, objectFiles)) {
+        err = "no compiled code for this game and mod packs in " + dir;
+        return false;
+    }
+    utimes(manifest_path(dir, key).c_str(), nullptr);  // the newest set: its objects stay (finish_code_cache)
     size_t objects = 0;
-    for (;; objects++) {
-        char name[32];
-        snprintf(name, sizeof name, "/code_%03zu.o", objects);
-        auto buf = llvm::MemoryBuffer::getFile(dir + name);
-        if (!buf) break;
-        if (auto e = keep->addObjectFile(std::move(*buf))) {
-            err = std::string(name + 1) + ": " + llvm::toString(std::move(e));
+    for (auto& name : objectFiles) {
+        auto buf = llvm::MemoryBuffer::getFile(dir + "/" + name);
+        if (!buf) {
+            err = "missing " + name;
             return false;
         }
+        if (auto e = keep->addObjectFile(std::move(*buf))) {
+            err = name + ": " + llvm::toString(std::move(e));
+            return false;
+        }
+        objects++;
     }
     if (!objects) {
         err = "no compiled code in " + dir;

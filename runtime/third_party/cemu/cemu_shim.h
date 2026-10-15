@@ -24,6 +24,7 @@
 #include <string_view>
 #include <unordered_map>
 #include <unordered_set>
+#include <variant>
 
 using uint8 = uint8_t;
 using uint16 = uint16_t;
@@ -36,7 +37,7 @@ using sint64 = int64_t;
 using MPTR = uint32_t;
 
 #define cemu_assert(x) assert(x)
-#define cemu_assert_debug(x) ((void)0)
+#define cemu_assert_debug(...) ((void)0)
 #define cemu_assert_suspicious() ((void)0)
 #define cemu_assert_unimplemented() ((void)0)
 #define cemu_assert_error() assert(false)

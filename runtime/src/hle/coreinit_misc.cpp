@@ -7,6 +7,7 @@
 #include <vector>
 #include <algorithm>
 #include <mutex>
+#include <set>
 #include <string>
 #include <unordered_map>
 
@@ -187,6 +188,27 @@ static std::mutex g_dyn_mutex;
 static std::unordered_map<uint32_t, std::string> g_dyn_modules;
 static std::unordered_map<std::string, uint32_t> g_dyn_exports;
 
+static void dyn_stub(Cpu* c) {
+    log_msg("[dynload] call to unimplemented dynamic export (lr=%08X)", c->lr);
+    c->r[3] = 0;
+}
+
+// save states: a dynamic export ("lib.symbol") found again by name, and put at the address the state
+// has it at (exports get their addresses in the order the game looks them up, which varies)
+PpcFunc dynload_resolve(const std::string& key) {
+    size_t dot = key.find('.');
+    if (dot == std::string::npos) return nullptr;
+    PpcFunc fn = hle_find(key.substr(0, dot).c_str(), key.substr(dot + 1).c_str());
+    return fn ? fn : dyn_stub;
+}
+void dynload_place(uint32_t addr, const std::string& key) {
+    std::lock_guard<std::mutex> lk(g_dyn_mutex);
+    for (auto it = g_dyn_exports.begin(); it != g_dyn_exports.end();)  // another one there: looked up anew
+        if (it->second == addr && it->first != key) it = g_dyn_exports.erase(it);
+        else ++it;
+    g_dyn_exports[key] = addr;
+}
+
 HLE(coreinit, OSDynLoad_Acquire) {
     std::string name = mem::read_cstr(arg(c, 0));
     if (name.size() > 4 && name.substr(name.size() - 4) == ".rpl") name.resize(name.size() - 4);
@@ -219,8 +241,7 @@ HLE(coreinit, OSDynLoad_FindExport) {
         if (!addr) {
             LOG("[dynload] FindExport(%s, %s) not implemented", key.c_str(), is_data ? "data" : "func");
             // hand out a stub that logs when called, so the game can still look it up
-            static void (*stub)(Cpu*) = [](Cpu* c) { log_msg("[dynload] call to unimplemented dynamic export (lr=%08X)", c->lr); c->r[3] = 0; };
-            addr = is_data ? mem::runtime_alloc(0x100) : dispatch::register_host(stub, strdup(key.c_str()));
+            addr = is_data ? mem::runtime_alloc(0x100) : dispatch::register_host(dyn_stub, strdup(key.c_str()));
         }
         it = g_dyn_exports.emplace(key, addr).first;
     }
@@ -300,7 +321,15 @@ HLE(coreinit, UCReadSysConfig) {
         else if (name == "cafe.initial_launch") value = 2;
         else if (name == "parent.enable") value = 0;
         else if (name == "p_acct1.network_launcher") value = 0;
-        TRACE("[uc] read %s (size %u) -> %u", name.c_str(), size, value);
+        // WWHD_UC_OVERRIDE=name=value[,name=value]: test values for system settings (e.g. the TV resolution)
+        if (const char* o = getenv("WWHD_UC_OVERRIDE")) {
+            std::string all = o, key = name + "=";
+            for (size_t p = 0; (p = all.find(key, p)) != std::string::npos; p++)
+                if (p == 0 || all[p - 1] == ',') value = (uint32_t)strtoul(all.c_str() + p + key.size(), nullptr, 0);
+        }
+        static std::set<std::string> logged;  // each setting name the game reads, once
+        if (logged.insert(name).second) LOG("[uc] read %s (size %u) -> %u", name.c_str(), size, value);
+        else TRACE("[uc] read %s (size %u) -> %u", name.c_str(), size, value);
         if (data && size) {
             memset(mem::ptr(data), 0, size);
             if (size == 1) st8(data, value);

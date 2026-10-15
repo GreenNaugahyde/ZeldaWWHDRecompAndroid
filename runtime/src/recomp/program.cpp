@@ -49,7 +49,12 @@ uint32_t branch_target(uint32_t addr, uint32_t w) {
     return 0xFFFFFFFFu;
 }
 
+const CodePatch* g_patch = nullptr;
+
 }  // namespace
+
+void set_code_patch(const CodePatch* p) { g_patch = p; }
+const CodePatch* code_patch() { return g_patch; }
 
 bool Program::load(const std::string& path, std::string& err) {
     FILE* f = fopen(path.c_str(), "rb");
@@ -107,8 +112,59 @@ bool Program::parse(const std::vector<uint8_t>& d, std::string& err) {
     if (!text) return err = "no .text section", false;
     textLo = text->addr;
     textHi = text->addr + (uint32_t)text->data.size();
-    words.resize(text->data.size() / 4);
-    for (size_t i = 0; i < words.size(); i++) words[i] = be32(&text->data[4 * i]);
+    std::vector<uint8_t> textBytes = text->data, cave;
+    const CodePatch* pt = patch;  // (nullptr for the unpatched layout, compile.cpp)
+    if (pt && pt->caveHi > pt->caveLo) {
+        caveLo = pt->caveLo & ~3u;
+        caveHi = (pt->caveHi + 3) & ~3u;
+        if (caveHi > textLo) return err = "code cave overlaps .text", false;
+        cave.assign(caveHi - caveLo, 0);
+    }
+    if (pt)
+        for (auto& w : pt->writes)
+            for (size_t k = 0; k < w.bytes.size(); k++) {
+                uint32_t a = w.addr + (uint32_t)k;
+                if (a >= textLo && a < textHi) textBytes[a - textLo] = w.bytes[k];
+                else if (a >= caveLo && a < caveHi) cave[a - caveLo] = w.bytes[k];
+            }
+    words.resize(textBytes.size() / 4);
+    for (size_t i = 0; i < words.size(); i++) words[i] = be32(&textBytes[4 * i]);
+    caveWords.resize(cave.size() / 4);
+    for (size_t i = 0; i < caveWords.size(); i++) caveWords[i] = be32(&cave[4 * i]);
+    // code in the cave: what control flow reaches from the branches into it and the address-taken
+    // entries (packs also write instructions as data, e.g. `.int 0x7CCC42E6` for mftb; data that is
+    // never reached stays data and ends the functions before it)
+    caveIsCode.assign(caveWords.size(), false);
+    if (!caveWords.empty()) {
+        std::vector<uint32_t> work;
+        auto inCave = [&](uint32_t a) { return a >= caveLo && a < caveHi; };
+        if (pt)
+            for (uint32_t a : pt->entries)
+                if (inCave(a)) work.push_back(a);
+        for (size_t i = 0; i < words.size(); i++) {
+            uint32_t a = textLo + 4 * (uint32_t)i, w = words[i], op = w >> 26, t = 0xFFFFFFFFu;
+            if (op == 18) t = (uint32_t)(sext(w & 0x03FFFFFC, 26) + (w & 2 ? 0 : (int32_t)a));
+            else if (op == 16) t = (uint32_t)(sext(w & 0xFFFC, 16) + (w & 2 ? 0 : (int32_t)a));
+            if (inCave(t)) work.push_back(t);
+        }
+        while (!work.empty()) {
+            uint32_t a = work.back() & ~3u;
+            work.pop_back();
+            for (; inCave(a) && !caveIsCode[(a - caveLo) >> 2]; a += 4) {
+                caveIsCode[(a - caveLo) >> 2] = true;
+                uint32_t w = caveWords[(a - caveLo) >> 2], op = w >> 26;
+                if (op == 18 || op == 16) {
+                    uint32_t t = op == 18 ? (uint32_t)(sext(w & 0x03FFFFFC, 26) + (w & 2 ? 0 : (int32_t)a))
+                                          : (uint32_t)(sext(w & 0xFFFC, 16) + (w & 2 ? 0 : (int32_t)a));
+                    if (inCave(t)) work.push_back(t);
+                    if (op == 18 && !(w & 1)) break;                    // b: no fall-through
+                    if (op == 16 && !(w & 1) && (w & 0x02800000) == 0x02800000) break;  // bc always (BO 1z1zz)
+                } else if (op == 19 && ((w >> 1) & 0x3FF) != 0 && (((w >> 1) & 0x3FF) == 16 || ((w >> 1) & 0x3FF) == 528)) {
+                    if (!(w & 1) && (w & 0x02800000) == 0x02800000) break;  // blr / bctr always
+                }
+            }
+        }
+    }
 
     // symbols
     std::vector<Symbol> syms;
@@ -186,17 +242,20 @@ bool Program::parse(const std::vector<uint8_t>& d, std::string& err) {
     }
     // function entries: the entry point, call targets, address-taken code (minus jump tables)
     std::set<uint32_t> e = {entry};
-    for (size_t i = 0; i < words.size(); i++) {
-        uint32_t a = textLo + 4 * (uint32_t)i, w = words[i], op = w >> 26;
+    if (patch)
+        for (uint32_t a : patch->entries)
+            if (inText(a)) e.insert(a);
+    for_each_word([&](uint32_t a, uint32_t w) {
+        uint32_t op = w >> 26;
         if (op == 18 && (w & 1)) {
-            if (importCalls.count(a) || undefCalls.count(a)) continue;
+            if (importCalls.count(a) || undefCalls.count(a)) return;
             uint32_t t = (uint32_t)(sext(w & 0x03FFFFFC, 26) + (w & 2 ? 0 : (int32_t)a));
             if (inText(t)) e.insert(t);
         } else if (op == 16 && (w & 1)) {
             uint32_t t = (uint32_t)(sext(w & 0xFFFC, 16) + (w & 2 ? 0 : (int32_t)a));
             if (inText(t)) e.insert(t);
         }
-    }
+    });
     std::set<uint32_t> tables;
     for (auto& [b, jt] : jumpTables) tables.insert(jt.first);
     for (auto& [t, refs] : codeRefs)
@@ -211,8 +270,13 @@ uint32_t Program::funcOf(uint32_t a) const {
 }
 
 uint32_t Program::funcEnd(uint32_t start) const {
+    uint32_t regionEnd = textHi;
+    if (start >= caveLo && start < caveHi) {  // a cave function ends where its instructions do
+        regionEnd = start + 4;
+        while (regionEnd < caveHi && caveIsCode[(regionEnd - caveLo) >> 2]) regionEnd += 4;
+    }
     auto it = std::upper_bound(entries.begin(), entries.end(), start);
-    return it == entries.end() ? textHi : *it;
+    return it == entries.end() || *it > regionEnd ? regionEnd : *it;
 }
 
 // branch targets that land inside another function become entries (tail calls)
@@ -220,11 +284,11 @@ void Program::discover() {
     fixpointRounds = 0;
     for (;;) {
         std::set<uint32_t> add;
-        for (size_t i = 0; i < words.size(); i++) {
-            uint32_t a = textLo + 4 * (uint32_t)i, t = branch_target(a, words[i]);
-            if (t == 0xFFFFFFFFu || !inText(t) || std::binary_search(entries.begin(), entries.end(), t)) continue;
-            if (funcOf(t) != funcOf(a)) add.insert(t);
-        }
+        for_each_word([&](uint32_t a, uint32_t w) {
+            uint32_t t = branch_target(a, w);
+            if (t == 0xFFFFFFFFu || !inText(t) || std::binary_search(entries.begin(), entries.end(), t)) return;
+            if (funcOf(t) != funcOf(a) || (t >= caveLo && t < caveHi) != (a >= caveLo && a < caveHi)) add.insert(t);
+        });
         fixpointRounds++;
         if (add.empty()) break;
         std::set<uint32_t> all(entries.begin(), entries.end());

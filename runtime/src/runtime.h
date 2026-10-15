@@ -59,6 +59,10 @@ void init();
 uint32_t register_host(PpcFunc fn, const char* name);
 void set(uint32_t addr, PpcFunc fn);
 PpcFunc lookup(uint32_t addr);
+uint32_t containing(uint32_t addr);  // entry of the game function containing addr (0: none)
+// save states: host functions by name, and one put at a given address (a state's own layout)
+PpcFunc host_by_name(const std::string& name);
+void place_host(uint32_t addr, PpcFunc fn, const std::string& name);
 }  // namespace dispatch
 
 // call a guest function from host code (on the current guest thread)

@@ -19,12 +19,14 @@
 #include <sys/auxv.h>
 #endif
 
+#include <algorithm>
 #include <chrono>
 #include <cstdio>
 #include <mutex>
 #include <thread>
 #include <vector>
 
+#include "../disc/crypto.h"
 #include "../release.h"
 #include "emit.h"
 #include "locals.h"
@@ -87,11 +89,65 @@ bool compile_game(const CompileOptions& opt, CompileResult& res, std::string& er
     std::string features = opt.cpu.empty() ? host_features() : "";
     std::string tune = opt.cpu.empty() ? llvm::sys::getHostCPUName().str() : "";
 
-    std::vector<std::vector<uint32_t>> modules;
-    for (size_t i = 0; i < prog.entries.size(); i += opt.perModule)
-        modules.emplace_back(prog.entries.begin() + i, prog.entries.begin() + std::min(prog.entries.size(), i + opt.perModule));
+    // Modules are cut at every perModule-th entry of the unpatched executable, so mod pack patches
+    // (CodePatch) change only the modules that hold patched code; code caves get modules of their own.
+    // Each module's object file is named by a hash of everything its code depends on: the cache keeps
+    // the unchanged ones, and switching packs back finds the earlier objects.
+    std::vector<uint32_t> cuts;
+    {
+        Program base;
+        const Program* b = &prog;
+        if (code_patch()) {
+            base.patch = nullptr;
+            if (!base.load(opt.rpxPath, err)) return false;
+            b = &base;
+        }
+        for (size_t i = 0; i < b->entries.size(); i += opt.perModule) cuts.push_back(b->entries[i]);
+    }
+    std::vector<std::vector<uint32_t>> modules(cuts.size());
+    std::vector<uint32_t> caveFuncs;
+    for (uint32_t a : prog.entries) {
+        if (a >= prog.caveLo && a < prog.caveHi) {
+            caveFuncs.push_back(a);
+            continue;
+        }
+        auto it = std::upper_bound(cuts.begin(), cuts.end(), a);
+        modules[it == cuts.begin() ? 0 : it - cuts.begin() - 1].push_back(a);
+    }
+    for (size_t i = 0; i < caveFuncs.size(); i += opt.perModule)
+        modules.emplace_back(caveFuncs.begin() + i, caveFuncs.begin() + std::min(caveFuncs.size(), i + opt.perModule));
+    modules.erase(std::remove_if(modules.begin(), modules.end(), [](auto& m) { return m.empty(); }), modules.end());
+    std::vector<std::string> names(modules.size());
+    for (size_t i = 0; i < modules.size(); i++) {
+        std::string d = opt.baseKey + "\ncpu " + cpu + " " + features + " " + tune + " -O" + std::to_string(opt.optLevel) + "\n";
+        auto put = [&](uint32_t v) { d.append((const char*)&v, 4); };
+        auto isEntry = [&](uint32_t a) { return std::binary_search(prog.entries.begin(), prog.entries.end(), a); };
+        if (getenv("WWHD_PACK_TRACE") && atoi(getenv("WWHD_PACK_TRACE")) && modules[i][0] >= prog.caveLo && modules[i][0] < prog.caveHi)
+            d += "pack trace\n";  // emit.cpp, trace()
+        for (uint32_t f : modules[i]) {
+            uint32_t end = prog.funcEnd(f);
+            put(f), put(end), put(prog.inText(end) && isEntry(end));
+            for (uint32_t a = f; a < end; a += 4) {
+                uint32_t w = prog.word(a), op = w >> 26;
+                put(w);
+                // targets outside the function: a call / tail call when they are entries, else a dispatch
+                uint32_t t = 0xFFFFFFFFu;
+                if (op == 18) t = (uint32_t)(((int32_t)((w & 0x03FFFFFC) << 6) >> 6) + (w & 2 ? 0 : (int32_t)a));
+                else if (op == 16) t = (uint32_t)((int32_t)(int16_t)(w & 0xFFFC) + (w & 2 ? 0 : (int32_t)a));
+                if (t != 0xFFFFFFFFu && (t < f || t >= end)) put(t), put(isEntry(t));
+            }
+        }
+        uint8_t h[20];
+        disc::sha1((const uint8_t*)d.data(), d.size(), h);
+        char hex[48] = "m_";
+        for (int k = 0; k < 20; k++) snprintf(hex + 2 + 2 * k, 3, "%02x", h[k]);
+        names[i] = hex;
+    }
     llvm::sys::fs::create_directories(opt.outDir);
-    if (opt.modulesTotal) *opt.modulesTotal = modules.size();
+    std::vector<size_t> todo;
+    for (size_t i = 0; i < modules.size(); i++)
+        if (!llvm::sys::fs::exists(opt.outDir + "/" + names[i] + ".o")) todo.push_back(i);
+    if (opt.modulesTotal) *opt.modulesTotal = todo.size();
     std::atomic<size_t> next{0}, instructions{0}, unhandled{0}, localized{0}, localFallback{0};
     std::atomic<bool> failed{false};
     std::mutex errm;
@@ -100,17 +156,13 @@ bool compile_game(const CompileOptions& opt, CompileResult& res, std::string& er
         if (!failed.exchange(true)) err = why;
     };
     auto worker = [&] {
-        for (size_t i; !failed && (i = next++) < modules.size();) {
+        for (size_t n; !failed && (n = next++) < todo.size();) {
             if (opt.cancel && *opt.cancel) return fail("cancelled");
+            const size_t i = todo[n];
             llvm::LLVMContext ctx;
             EmitStats st;
             std::string e;
-            char name[32];
-            snprintf(name, sizeof name, "code_%03zu", i);
-            if (opt.keepExisting && llvm::sys::fs::exists(opt.outDir + "/" + name + ".o")) {
-                if (opt.modulesDone) ++*opt.modulesDone;
-                continue;
-            }
+            const char* name = names[i].c_str();
             auto m = emit_module(ctx, prog, hooks, modules[i], opt.opsBitcode, name, st, e);
             if (!m) return fail(std::string(name) + ": " + e);
             m->setTargetTriple(triple);
@@ -173,6 +225,8 @@ bool compile_game(const CompileOptions& opt, CompileResult& res, std::string& er
     for (auto& t : pool) t.join();
     res.functions = prog.entries.size();
     res.modules = modules.size();
+    res.compiled = todo.size();
+    for (auto& n : names) res.objects.push_back(n + ".o");
     res.instructions = instructions;
     res.unhandled = unhandled;
     res.localized = localized;

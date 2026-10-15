@@ -79,22 +79,56 @@ final class Native {
     static native void setPad(int buttons, float lx, float ly, float rx, float ry);
     /** Touch on the GamePad screen, 0..1 from the top left. */
     static native void setTouch(boolean down, float x, float y);
+    // the GamePad picture on a second display: its shape (0 = 16:9, else the display's), the shape of
+    // the picture the game sends now, and touches on it (0..1 of the picture)
+    static native void setDrcAspect(float aspect);
+    static native float drcPictureAspect();
+    static native void setDrcTouch(boolean down, float u, float v);
     static native void textInputDone(boolean ok, String text);
     static native void setPaused(boolean paused);
 
     /**
      * ao_mode (0..2), ao_hires, aniso, pro_controller (0/1); capture (any value); gameplay mods:
      * mod_direct_camera, mod_camera_speed (percent), mod_first_person, mod_climb, mod_quick_doors, mod_fast_scenes, mod_ff_cutscenes, mod_ff_dialogues,
-     * mod_run_speed (percent), mod_run_mode (0 always, 1 hold L3, 2 L3 switches), mod_swim_speed (percent), mod_swim_mode (as run).
+     * mod_run_speed (percent), mod_run_mode (0 always, 1 hold L3, 2 L3 switches), mod_swim_speed (percent), mod_swim_mode (as run),
+     * mod_climb_speed / mod_climb_mode, mod_sidle_speed / mod_sidle_mode (as run);
+     * auto_state (auto save state interval in minutes, 0 off).
      */
     static native void setOption(String name, int value);
+
+    /** a mod pack's description for the menu (runtime/src/packs.h, packs::describe) */
+    static native String packDescribe(String packDir, String selection, String gameDir);
+
+    /** Unpacks a mod archive (zip, RAR; open file descriptor) into destDir: null when done, else why not. */
+    static native String extractModArchive(int fd, String destDir);
     static native int getOption(String name);
 
-    /** Save state slot 1..5: {used "1"/"0", compatible "1"/"0", time, area}. */
+    /** Warp (developer menu): to a stage's room and spawn at the next frame; layer -1 = the story's. False without a loaded save file. */
+    static native boolean warp(String stage, int room, int spawn, int layer);
+    /** The warp menu's places from the game files: gameDir/warps.json (a few seconds). Null when done, else why not. */
+    static native String buildWarps(String gameDir);
+    /** Warp with a story preset (the save's dSv_save_c, 0x778 bytes) written into the live save first. */
+    static native boolean warpPreset(byte[] story, String stage, int room, int spawn, int layer);
+    /** The live save's story part (for a preset), null outside the game. */
+    static native byte[] storyBlock();
+    /** The latest warp: {0 none, 1 requested, 2 changing scene, 3 loaded, 4 refused; ms since the request, or the load time; event mode (0 none, 1 dialogue, 2 / 3 cutscene)}. */
+    static native long[] warpStatus();
+    /** "stage,room,spawn,layer" of the current scene, "" outside the game. */
+    static native String warpWhere();
+
+    /** Save state slot 1..5, auto slots 6..7, last session 8: {used "1"/"0", compatible "1"/"0", time, area, controller}. */
     static native String[] saveSlotInfo(int slot);
-    /** Saved / loaded at the next frame boundary; the result shows in saveStateMessage(). */
+    /** Saved (1..5) / loaded (1..8) at the next frame boundary; the result shows in saveStateMessage(). */
     static native void saveState(int slot);
     static native void loadState(int slot);
+    /** Before start(): the game waits before its intro (after the shader cache replay) until a state loads or this is released. */
+    static native void setStartHold(boolean on);
+    /** 0 no hold, 1 armed, 2 the game is waiting for the choice. */
+    static native int startHoldState();
+    /** The app goes to the background: saves the last session's state (slot 8); returns once it is taken (at most ~1 s). */
+    static native void saveStateOnLeave();
+    /** Save states taken but not yet written (Quit waits for them). */
+    static native int stateWritesPending();
     /** The latest save state result, "" when stale. */
     static native String saveStateMessage();
     /** Frame generation settings; applied from the next frame on (the DLL is read again). */

@@ -268,7 +268,11 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         File base = baseDir();
         // testing: WWHD_CLEAR_SHADERS=1 (an intent extra) starts as with "Delete shader cache"
         if (Os.getenv("WWHD_CLEAR_SHADERS") != null) Backup.deleteTree(new File(getNoBackupFilesDir(), "shadercache"));
+        installShaderTemplate();
         String failedDriver = applyGpuDriver();
+        // the save state picker before the intro: the game waits for it from its first frame on
+        boolean offerStates = startMode() != START_INTRO && !usedStateSlots(base).isEmpty();
+        if (offerStates) Native.setStartHold(true);
         Native.start(gameDir(), new File(base, "save").getAbsolutePath(),
                 new File(getNoBackupFilesDir(), "shadercache").getAbsolutePath(), base.getAbsolutePath());
         started = true;
@@ -276,6 +280,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         startMotion();
         showGame();
         showCacheLoading();
+        if (offerStates) offerStartStates();
         updateDrcDisplay();
         if (failedDriver != null)
             new GameDialog(this).title(R.string.opt_gpu_driver).message(getString(R.string.gpu_driver_failed, failedDriver))
@@ -501,10 +506,12 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         }
         t.setTextIsSelectable(true);
         box.addView(t);
-        Button extract = new Button(this);
-        extract.setText(R.string.setup_extract);
-        extract.setOnClickListener(v -> pickFolder(PICK_DISC));
-        box.addView(extract, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT));
+        // the files themselves, not their folder: some devices' folder picker lists nothing on the
+        // internal storage (Android 16 with AOSP DocumentsUI: iPlay 70 mini Ultra, K70 Pro)
+        Button extractFiles = new Button(this);
+        extractFiles.setText(R.string.setup_extract_files);
+        extractFiles.setOnClickListener(v -> pickDiscFiles());
+        box.addView(extractFiles, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT));
         Button retry = new Button(this);
         retry.setText(R.string.setup_retry);
         retry.setOnClickListener(v -> checkAndStart());
@@ -528,6 +535,110 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         setContentView(root);
         applyControlsAppearance();
         hideSystemBars();
+        warpTest = null;
+        if (prefs.getBoolean("warp_test", false)) setWarpTest(true);  // again after a restart (a crash while testing)
+    }
+
+    // developer: story presets from a WWHD save file (StoryPresets): the file, then a name for its slots
+    private static final int PICK_PRESET_SAVE = 7;
+
+    void pickPresetSave() {
+        Intent i = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+        i.addCategory(Intent.CATEGORY_OPENABLE);
+        i.setType("*/*");
+        i.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true);
+        startActivityForResult(i, PICK_PRESET_SAVE);
+    }
+
+    // one file: its slots get a name asked for (a WWHD save is always cking.sav); several (e.g. a
+    // collection of GameCube saves): each is named after its file
+    private void importPresetSaves(List<android.net.Uri> uris) {
+        List<String> names = new ArrayList<>();
+        List<byte[]> files = new ArrayList<>();
+        for (android.net.Uri u : uris) {
+            String name = "save";
+            try {
+                files.add(readAll(getContentResolver(), u));
+                try (android.database.Cursor c = getContentResolver().query(u, new String[] {android.provider.OpenableColumns.DISPLAY_NAME}, null, null, null)) {
+                    if (c != null && c.moveToFirst() && c.getString(0) != null) name = c.getString(0).replaceAll("\\.(sav|gci|wwp)$", "");
+                }
+                names.add(name);
+            } catch (IOException e) {
+                android.widget.Toast.makeText(this, e.getMessage(), android.widget.Toast.LENGTH_LONG).show();
+                return;
+            }
+        }
+        if (files.size() == 1) askName(getString(R.string.preset_import), names.get(0), base -> importPresets(List.of(base), files));
+        else importPresets(names, files);
+    }
+
+    private void importPresets(List<String> names, List<byte[]> files) {
+        int n = 0, failed = 0, why = R.string.preset_import_none;
+        for (int i = 0; i < files.size(); i++) {
+            try {
+                n += StoryPresets.importFile(this, names.get(i), files.get(i));
+            } catch (StoryPresets.ImportError e) {
+                failed++;
+                why = e.message;
+            }
+        }
+        String msg = n > 0 ? getString(R.string.preset_imported, n) : getString(why);
+        if (n > 0 && failed > 0) msg += " (" + getString(R.string.preset_import_skipped, failed) + ")";
+        android.widget.Toast.makeText(this, msg, android.widget.Toast.LENGTH_LONG).show();
+    }
+
+    interface NameDone { void done(String name); }
+
+    /** A dialog with a text field (a preset's name); `done` gets the text when confirmed. */
+    void askName(String title, String initial, NameDone done) {
+        EditText edit = new EditText(this);
+        edit.setInputType(InputType.TYPE_CLASS_TEXT);
+        edit.setSingleLine(true);
+        edit.setText(initial);
+        edit.setSelection(edit.getText().length());
+        edit.setTextColor(GameUi.INK);
+        edit.setTextSize(20);
+        new GameDialog(this).title(title).content(edit).button(android.R.string.cancel, null)
+                .button(R.string.opt_ok, () -> done.done(edit.getText().toString().trim())).top().show();
+    }
+
+    // developer: the warp test panel over the game (WarpTestOverlay)
+    private WarpTestOverlay warpTest;
+
+    void setWarpTest(boolean on) {
+        prefs.edit().putBoolean("warp_test", on).apply();
+        FrameLayout root = surface != null && surface.getParent() instanceof FrameLayout ? (FrameLayout) surface.getParent() : null;
+        if (warpTest != null) {
+            warpTest.stop();
+            if (warpTest.getParent() != null) ((FrameLayout) warpTest.getParent()).removeView(warpTest);
+            warpTest = null;
+        }
+        if (on && root != null) {
+            warpTest = new WarpTestOverlay(this);
+            root.addView(warpTest, warpTest.layoutParams());
+        }
+    }
+
+    // The shader head start's template (assets/shader_template.bin, when the build has one) next to the
+    // shader cache, where the runtime reads it (vk_headstart.cpp); a build without one removes an old copy
+    private void installShaderTemplate() {
+        File dir = new File(getNoBackupFilesDir(), "shadercache");
+        File out = new File(dir, "headstart-template.bin");
+        try (java.io.InputStream in = getAssets().open("shader_template.bin")) {
+            long updated = getPackageManager().getPackageInfo(getPackageName(), 0).lastUpdateTime;
+            if (out.exists() && out.lastModified() >= updated) return;
+            dir.mkdirs();
+            File tmp = new File(dir, "headstart-template.tmp");
+            try (java.io.OutputStream o = new java.io.FileOutputStream(tmp)) {
+                byte[] buf = new byte[1 << 16];
+                for (int n; (n = in.read(buf)) > 0;) o.write(buf, 0, n);
+            }
+            if (!tmp.renameTo(out)) Log.w(TAG, "cannot install " + out);
+        } catch (java.io.FileNotFoundException e) {
+            out.delete();
+        } catch (Exception e) {
+            Log.w(TAG, "shader template", e);
+        }
     }
 
     // The shader cache's replay before the first frame (Native.cacheProgress; seconds with a large
@@ -564,16 +675,73 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
                     root.removeView(screen);
                     return;
                 }
-                // only while a cache file is replayed (state 1 with a size), not while the game boots
-                if (screen.getVisibility() != View.VISIBLE && p[0] == 1 && p[2] > 0
+                // only while a cache file is replayed (state 1 with a size) or the shader head start is
+                // made from the game files (3), not while the game boots
+                if (screen.getVisibility() != View.VISIBLE && (p[0] == 1 || p[0] == 3) && p[2] > 0
                         && android.os.SystemClock.uptimeMillis() - t0 > 300)
                     screen.setVisibility(View.VISIBLE);
                 if (p[2] > 0) {
                     bar.setProgress((int) Math.min(1000, p[1] * 1000 / p[2]));
                     mySea.setProgress(Math.min(1f, (float) p[1] / p[2]));
                 }
-                detail.setText(getString(R.string.cache_loading_detail, (int) p[3]));
+                t.setText(p[0] == 3 ? R.string.headstart_building : R.string.cache_loading);
+                detail.setText(p[0] == 3 ? getString(R.string.headstart_building_detail, (int) p[3])
+                                         : getString(R.string.cache_loading_detail, (int) p[3]));
                 h.postDelayed(this, 150);
+            }
+        });
+    }
+
+    // savestate.cpp slot_path: slot 1..5, auto 6..7, last session 8
+    static File stateFile(File base, int slot, String ext) {
+        String name = slot == 8 ? "last" : slot > 5 ? "auto" + (slot - 5) : "slot" + slot;
+        return new File(new File(base, "states"), name + "." + ext);
+    }
+
+    // the slots with a state file, the latest first
+    static java.util.List<Integer> usedStateSlots(File base) {
+        java.util.List<Integer> used = new java.util.ArrayList<>();
+        for (int slot = 1; slot <= 8; slot++) if (stateFile(base, slot, "bin").exists()) used.add(slot);
+        used.sort((x, y) -> Long.compare(stateFile(base, y, "bin").lastModified(), stateFile(base, x, "bin").lastModified()));
+        return used;
+    }
+
+    // Saves > At start: the intro as usual, the save state picker, or the last session loaded at once
+    static final int START_INTRO = 0, START_STATES = 1, START_LAST = 2;
+
+    int startMode() { return prefs.getInt("start_mode", START_INTRO); }
+
+    // Once the game waits before its intro (after the shader cache replay): the last session loads
+    // right away (Saves > At start), else the save states to load, or Start
+    // game. Without a state this game can load, it starts right away.
+    private void offerStartStates() {
+        final android.os.Handler h = new android.os.Handler(android.os.Looper.getMainLooper());
+        h.post(new Runnable() {
+            @Override
+            public void run() {
+                int st = Native.startHoldState();
+                if (st == 0) return;
+                if (st == 1) { h.postDelayed(this, 100); return; }
+                // an automatic load that didn't keep running for 20 s (crashed): the picker this time
+                boolean lastFailed = prefs.getBoolean("start_last_trying", false);
+                prefs.edit().putBoolean("start_last_trying", false).commit();
+                String[] last = Native.saveSlotInfo(8);
+                if (startMode() == START_LAST && !lastFailed && last[0].equals("1") && last[1].equals("1")) {
+                    prefs.edit().putBoolean("start_last_trying", true).commit();
+                    Native.loadState(8);
+                    android.widget.Toast.makeText(MainActivity.this, R.string.start_last_loading, android.widget.Toast.LENGTH_SHORT).show();
+                    showStateResult();
+                    h.postDelayed(() -> prefs.edit().putBoolean("start_last_trying", false).apply(), 20000);
+                    return;
+                }
+                boolean any = false;
+                for (int slot : usedStateSlots(baseDir())) {
+                    String[] info = Native.saveSlotInfo(slot);
+                    any |= info[0].equals("1") && info[1].equals("1");
+                }
+                boolean picker = startMode() == START_STATES || lastFailed;
+                if (any && picker && !isFinishing()) new OptionsMenu(MainActivity.this, true).show();
+                else Native.setStartHold(false);
             }
         });
     }
@@ -589,7 +757,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         Native.setOption("ao_mode", prefs.getInt("ao_mode", Native.getOption("ao_mode")));
         Native.setOption("ao_hires", prefs.getBoolean("ao_hires", Native.getOption("ao_hires") != 0) ? 1 : 0);
         Native.setOption("aniso", prefs.getBoolean("aniso", Native.getOption("aniso") != 0) ? 1 : 0);
-        Native.setOption("pro_controller", prefs.getBoolean("pro_controller", Native.getOption("pro_controller") != 0) ? 1 : 0);
+        Native.setOption("pro_controller", prefs.getBoolean("pro_controller", true) ? 1 : 0);  // default: as a Pro Controller
         Native.setOption("invert_camera_y", prefs.getInt("invert_camera_y_mode", 0));
         Native.setOption("tv_aspect", prefs.getInt("tv_aspect", 0));
         Native.setOption("render_aspect", prefs.getInt("render_aspect", 0));
@@ -598,10 +766,18 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         Native.setOption("cheat_moon_rise", prefs.getInt("cheat_moon_rise", 100));
         Native.setOption("cheat_moon_fly", prefs.getInt("cheat_moon_fly", 100));
         Native.setOption("mod_camera_speed", prefs.getInt("mod_camera_speed", 100));
+        Native.setOption("mod_jump", prefs.getBoolean("mod_jump", false) ? 1 : 0);
+        Native.setOption("mod_jump_double", prefs.getBoolean("mod_jump_double", false) ? 1 : 0);
+        Native.setOption("mod_jump_noauto", prefs.getBoolean("mod_jump_noauto", false) ? 1 : 0);
+        Native.setOption("auto_state", prefs.getInt("auto_state", 0));
         Native.setOption("mod_run_speed", prefs.getInt("mod_run_speed", 100));
         Native.setOption("mod_swim_speed", prefs.getInt("mod_swim_speed", 100));
         Native.setOption("mod_run_mode", moveMode("mod_run"));
         Native.setOption("mod_swim_mode", moveMode("mod_swim"));
+        Native.setOption("mod_climb_speed", prefs.getInt("mod_climb_speed", 100));
+        Native.setOption("mod_climb_mode", moveMode("mod_climb"));
+        Native.setOption("mod_sidle_speed", prefs.getInt("mod_sidle_speed", 100));
+        Native.setOption("mod_sidle_mode", moveMode("mod_sidle"));
     }
 
     void applyControlsAppearance() {
@@ -670,17 +846,32 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         updateDrcDisplay();
     }
 
+    // the GamePad picture there in the display's shape (its background reaches the edges) or 16:9
+    boolean drcFill() { return prefs.getBoolean("drc_fill", true); }
+
+    void setDrcFill(boolean on) {
+        prefs.edit().putBoolean("drc_fill", on).apply();
+        if (drcDisplay != null) drcDisplay.setFill(on);
+    }
+
     private void updateDrcDisplay() {
-        if (drcDisplay == null) drcDisplay = new DrcDisplay(this, active -> updateLayout());
+        if (drcDisplay == null) {
+            drcDisplay = new DrcDisplay(this, active -> updateLayout());
+            drcDisplay.setFill(drcFill());
+        }
         drcDisplay.setWanted(started && resumed && drcOnSecondDisplay());
     }
+
+    // Graphics > Screen layout: TV only by default; with a second display (dual-screen devices) the
+    // GamePad inset, used when the GamePad is set to show in the layout instead of on that display
+    int layoutSetting() { return prefs.getInt("layout", hasSecondDisplay() ? LAYOUT_INSET : LAYOUT_TV); }
 
     void updateLayout() {
         if (surfaceW == 0 || surfaceH == 0 || controls == null) return;
         float W = surfaceW, H = surfaceH;
         RectF full = new RectF(0, 0, W, H);
         RectF tv, drc;
-        int layout = prefs.getInt("layout", LAYOUT_INSET);
+        int layout = layoutSetting();
         if (layout == LAYOUT_ON_DEMAND && !NEW_TOUCH_CONTROLS) layout = LAYOUT_INSET;
         if (drcDisplay != null && drcDisplay.active()) layout = LAYOUT_TV;  // the GamePad has its own display
         if (layout != LAYOUT_ON_DEMAND) drcShown = false;
@@ -1004,6 +1195,9 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     protected void onPause() {
         super.onPause();
         resumed = false;
+        // Android may end the app any time once it's in the background, without a word: the moment it
+        // leaves is the last chance for a state (taken now while the game still runs, written after)
+        if (started && prefs.getBoolean("leave_state", false)) Native.saveStateOnLeave();
         updateDrcDisplay();
         if (started) Native.setPaused(true);
         if (motion != null) motion.stop();
@@ -1030,6 +1224,12 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     }
 
     // ------------------------------------------------------------------ menu
+    /** Auto save states: every `minutes` of play into the two auto slots, 0 off. */
+    void setAutoState(int minutes) {
+        Native.setOption("auto_state", minutes);
+        prefs.edit().putInt("auto_state", minutes).apply();
+    }
+
     void setAo(int mode) {
         Native.setOption("ao_mode", mode);
         prefs.edit().putInt("ao_mode", mode).apply();
@@ -1085,6 +1285,24 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         if (key.equals("mod_climb")) controls.setClimbHud(on);
     }
 
+    // Mods > Jump anywhere and Mods > Moon jump both use L, so one switches the other off (the moon jump
+    // keeps its cheat_ pref and option names from when it was among the cheats)
+    void setJumpAnywhere(boolean on) {
+        setMod("mod_jump", on);
+        if (on && prefs.getBoolean("cheat_moon_jump", false)) {
+            setMod("cheat_moon_jump", false);
+            android.widget.Toast.makeText(this, R.string.cheat_moon_jump_off, android.widget.Toast.LENGTH_SHORT).show();
+        }
+    }
+
+    void setMoonJump(boolean on) {
+        setMod("cheat_moon_jump", on);
+        if (on && prefs.getBoolean("mod_jump", false)) {
+            setMod("mod_jump", false);
+            android.widget.Toast.makeText(this, R.string.opt_mod_jump_off, android.widget.Toast.LENGTH_SHORT).show();
+        }
+    }
+
     void setControlsVisible(boolean on) {
         prefs.edit().putBoolean("controls_visible", on).apply();
         autoHidden = false;
@@ -1097,7 +1315,38 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
                 .button(R.string.clear_shaders_restart, () -> restartApp(true)).show();
     }
 
+    // with "Save state when leaving the app" the last session is saved first (as onPause would, which
+    // never runs here) and the app waits until the file is written (seconds: it is written gently)
     void quitApp() {
+        if (!started || !prefs.getBoolean("leave_state", false)) {
+            exitNow();
+            return;
+        }
+        Native.saveStateOnLeave();
+        if (Native.stateWritesPending() == 0) {
+            exitNow();
+            return;
+        }
+        new GameDialog(this).title(R.string.opt_quit).message(R.string.quit_saving).cancelable(false).show();
+        final long until = android.os.SystemClock.uptimeMillis() + 60000;
+        final android.os.Handler h = new android.os.Handler(android.os.Looper.getMainLooper());
+        h.postDelayed(new Runnable() {
+            long pictureBy;
+
+            @Override
+            public void run() {
+                // the state, then its picture (written on its own, a moment later; at most 2 s more)
+                File bin = stateFile(baseDir(), 8, "bin"), png = stateFile(baseDir(), 8, "png");
+                long now = android.os.SystemClock.uptimeMillis();
+                if (Native.stateWritesPending() != 0 && now < until) { h.postDelayed(this, 200); return; }
+                if (pictureBy == 0) pictureBy = now + 2000;
+                if (png.lastModified() + 1000 < bin.lastModified() && now < pictureBy) h.postDelayed(this, 100);
+                else exitNow();
+            }
+        }, 200);
+    }
+
+    private void exitNow() {
         finishAndRemoveTask();
         System.exit(0);
     }
@@ -1151,8 +1400,9 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     // optional changes to how the game plays (runtime/src/mods), all off by default
     // cheats (mods/cheats.cpp): the one-shot ones' bits (mods.h Cheat) and the switches kept as settings
     static final int CHEAT_ITEMS = 1, CHEAT_SWORD = 2, CHEAT_STATS = 4, CHEAT_SONGS = 8, CHEAT_TRIFORCE = 16, CHEAT_DUNGEON = 32,
-                     CHEAT_KEY = 64;
-    static final String[] CHEATS_INFINITE = {"cheat_inf_health", "cheat_inf_magic", "cheat_inf_ammo", "cheat_moon_jump", "cheat_moon_nofall", "cheat_moon_anims"};
+                     CHEAT_KEY = 64, CHEAT_BAGS = 128;
+    static final String[] CHEATS_INFINITE = {"cheat_inf_health", "cheat_inf_magic", "cheat_inf_ammo", "cheat_moon_jump", "cheat_moon_nofall", "cheat_moon_anims",
+                                             "cheat_inf_rupees", "cheat_inf_bags", "cheat_inf_breath"};
 
     void cheat(int bit, int done) {
         Native.setOption("cheat", bit);
@@ -1167,11 +1417,12 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     static final int[] MOON_FLY_SPEEDS = new int[20];  // moon jump flight, percent: 50..1000 in steps of 50
     static { for (int i = 0; i < MOON_FLY_SPEEDS.length; i++) MOON_FLY_SPEEDS[i] = 50 * (i + 1); }
 
-    // faster running ("mod_run") and swimming ("mod_swim") each apply always, or with L3: held, or
-    // one press switches it on and off
-    /** faster running or swimming is on and works with L3 (the context buttons then show L3) */
+    // faster running ("mod_run"), swimming ("mod_swim"), climbing ("mod_climb_speed"; "mod_climb" itself is
+    // Climb any wall) and sidling ("mod_sidle") each apply always, or with L3: held, or one press switches
+    // it on and off
+    /** one of them is on and works with L3 (the context buttons then show L3) */
     boolean l3InUse() {
-        for (String mod : new String[] {"mod_run", "mod_swim"})
+        for (String mod : new String[] {"mod_run", "mod_swim", "mod_climb", "mod_sidle"})
             if (prefs.getInt(mod + "_speed", 100) != 100 && prefs.getBoolean(mod + "_l3", false)) return true;
         return false;
     }
@@ -1187,39 +1438,53 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     }
 
     // ------------------------------------------------------------------ game from a disc image
-    // The user picks a folder holding their .wux/.wud image, its disc key (same name, .key) and
-    // the console's common key (common.key), or a Cemu .wua archive (decrypted: no keys; used
-    // first); the game is extracted into files/game on the device.
-    private void startExtraction(android.net.Uri tree) {
+    // The user picks their .wux/.wud image, its disc key (same name, .key) and the console's common
+    // key (common.key), or a Cemu .wua archive (decrypted: no keys; used first); the game is
+    // extracted into files/game on the device.
+
+    void pickDiscFiles() {
+        Intent i = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+        i.addCategory(Intent.CATEGORY_OPENABLE);
+        i.setType("*/*");
+        i.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true);
+        startActivityForResult(i, PICK_DISC_FILES);
+    }
+
+    // the files the user picked (instead of a folder)
+    private void startExtraction(List<android.net.Uri> uris) {
+        List<String[]> files = new ArrayList<>();
+        for (android.net.Uri u : uris)
+            try (android.database.Cursor c = getContentResolver().query(u, new String[] {android.provider.OpenableColumns.DISPLAY_NAME}, null, null, null)) {
+                if (c != null && c.moveToFirst() && c.getString(0) != null) files.add(new String[] {c.getString(0), u.toString()});
+            }
+        extractFrom(files);
+    }
+
+    private void extractFrom(List<String[]> files) {
         android.content.ContentResolver cr = getContentResolver();
         android.net.Uri image = null, discKey = null, commonKey = null, archive = null;
         String imageName = null;
-        List<String[]> keys = new ArrayList<>();  // other .key files: {name, document id}
-        String treeId = android.provider.DocumentsContract.getTreeDocumentId(tree);
-        android.net.Uri children = android.provider.DocumentsContract.buildChildDocumentsUriUsingTree(tree, treeId);
-        try (android.database.Cursor c = cr.query(children, new String[] {android.provider.DocumentsContract.Document.COLUMN_DOCUMENT_ID,
-                android.provider.DocumentsContract.Document.COLUMN_DISPLAY_NAME}, null, null, null)) {
-            while (c != null && c.moveToNext()) {
-                String id = c.getString(0), name = c.getString(1), lower = name.toLowerCase(java.util.Locale.ROOT);
-                android.net.Uri u = android.provider.DocumentsContract.buildDocumentUriUsingTree(tree, id);
-                if (lower.endsWith(".wua") && archive == null) {
-                    archive = u;
-                } else if ((lower.endsWith(".wux") || lower.endsWith(".wud")) && image == null) {
-                    image = u;
-                    imageName = name.substring(0, name.length() - 4);
-                } else if (lower.equals("common.key")) {
-                    commonKey = u;
-                } else if (lower.endsWith(".key")) {
-                    keys.add(new String[] {name, id});
-                }
+        List<String[]> keys = new ArrayList<>();  // other .key files: {name, uri}
+        for (String[] f : files) {
+            String name = f[0], lower = name.toLowerCase(java.util.Locale.ROOT);
+            android.net.Uri u = android.net.Uri.parse(f[1]);
+            if (lower.endsWith(".wua") && archive == null) {
+                archive = u;
+            } else if ((lower.endsWith(".wux") || lower.endsWith(".wud")) && image == null) {
+                image = u;
+                imageName = name.substring(0, name.length() - 4);
+            } else if (lower.equals("common.key")) {
+                commonKey = u;
+            } else if (lower.endsWith(".key")) {
+                keys.add(f);
             }
         }
         if (image != null)
             for (String[] k : keys)  // the disc key: the image's name with .key, else the only other key
                 if (k[0].substring(0, k[0].length() - 4).equalsIgnoreCase(imageName))
-                    discKey = android.provider.DocumentsContract.buildDocumentUriUsingTree(tree, k[1]);
+                    discKey = android.net.Uri.parse(k[1]);
         if (discKey == null && keys.size() == 1)
-            discKey = android.provider.DocumentsContract.buildDocumentUriUsingTree(tree, keys.get(0)[1]);
+            discKey = android.net.Uri.parse(keys.get(0)[1]);
         if (archive != null) {
             image = archive;
             discKey = commonKey = null;
@@ -1275,6 +1540,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
             String err = dk == null ? Native.extractArchive(fd, work.getAbsolutePath())
                                     : Native.extractGame(fd, dk, ck, work.getAbsolutePath());
             if (err == null) {  // complete: swap it in for the old game folder
+                Native.buildWarps(work.getAbsolutePath());  // the developer warp menu's places (a few seconds; logged if not)
                 Backup.deleteTree(game);
                 if (!work.renameTo(game)) err = "cannot move the extracted files into place";
             } else {
@@ -1518,7 +1784,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
 
     // ------------------------------------------------------------------ import / export
     // the game save (files/save) and the save states (files/states) to and from a folder the user picks
-    static final int PICK_EXPORT = 2, PICK_IMPORT = 3, PICK_DISC = 4;
+    static final int PICK_EXPORT = 2, PICK_DISC_FILES = 6;
     private boolean exportSave = true, exportStates = true;
 
     void chooseExport() {
@@ -1531,15 +1797,144 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
                 .toggle(getString(R.string.backup_game_save), checked[0], on -> checked[0] = on)
                 .toggle(getString(R.string.backup_states, Math.round(states / 1048576.0)), checked[1], on -> checked[1] = on)
                 .button(R.string.opt_cancel, null)
-                .button(R.string.backup_choose_folder, () -> {
+                .button(R.string.backup_save_file, () -> {
                     exportSave = checked[0];
                     exportStates = checked[1];
-                    if (exportSave || exportStates) pickFolder(PICK_EXPORT);
+                    if (!exportSave && !exportStates) return;
+                    // one file ("save as"): some devices' folder picker can't choose or make folders
+                    Intent i = new Intent(Intent.ACTION_CREATE_DOCUMENT);
+                    i.addCategory(Intent.CATEGORY_OPENABLE);
+                    i.setType("application/zip");
+                    i.putExtra(Intent.EXTRA_TITLE, Backup.exportName());
+                    startActivityForResult(i, PICK_EXPORT);
                 }).show();
     }
 
-    void pickFolder(int request) {
-        startActivityForResult(new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE), request);
+    // the backup's files picked themselves (some devices' folder picker shows no folders)
+    private static final int PICK_IMPORT_FILES = 8;
+
+    // ---- mod packs (ModPacks): zip files with Cemu graphic packs; changes apply after a restart
+    private static final int PICK_PACKS = 9;
+    boolean packsChanged;  // enabled packs or presets changed since the start (the menu offers a restart)
+    boolean packsAsked;  // the restart was offered for the current changes ("Later": not again until the next change)
+
+    void markPacksChanged() {
+        packsChanged = true;
+        packsAsked = false;
+    }
+
+    // leaving the mod packs or the menu with changes that need a restart: offer it once per change;
+    // returns false (and runs nothing) when there is nothing to ask, else `later` runs on "Later"
+    boolean askRestartForPacks(Runnable later) {
+        if (!packsChanged || packsAsked || isFinishing() || isDestroyed()) return false;
+        packsAsked = true;
+        new GameDialog(this).title(R.string.opt_packs).message(R.string.packs_restart_ask).cancelable(false)
+                .button(R.string.res_restart_later, later)
+                .button(R.string.packs_restart, this::restartForPacks).show();
+        return true;
+    }
+    private Runnable afterPackImport;
+
+    void pickPacks(Runnable after) {
+        afterPackImport = after;
+        Intent i = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+        i.addCategory(Intent.CATEGORY_OPENABLE);
+        i.setType("*/*");
+        i.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true);
+        startActivityForResult(i, PICK_PACKS);
+    }
+
+    private void importPacks(List<android.net.Uri> uris) {
+        withProgress(R.string.packs_importing, () -> {
+            StringBuilder ok = new StringBuilder(), bad = new StringBuilder();
+            for (android.net.Uri u : uris) {
+                String name = u.getLastPathSegment();
+                try (android.database.Cursor c = getContentResolver().query(u, new String[] {android.provider.OpenableColumns.DISPLAY_NAME}, null, null, null)) {
+                    if (c != null && c.moveToFirst() && c.getString(0) != null) name = c.getString(0);
+                }
+                try {
+                    for (String f : ModPacks.importArchive(baseDir(), gameDir(), getContentResolver(), u, name)) ok.append("\n• ").append(f);
+                } catch (IOException | RuntimeException e) {
+                    bad.append("\n• ").append(name).append(": ").append(e.getMessage());
+                }
+            }
+            ModPacks.writeEnabled(baseDir(), prefs);
+            String msg = "";
+            if (ok.length() > 0) msg += getString(R.string.packs_imported) + ok;
+            if (bad.length() > 0) msg += (msg.isEmpty() ? "" : "\n\n") + getString(R.string.packs_import_failed) + bad;
+            return msg;
+        }, res -> {
+            new GameDialog(this).title(R.string.opt_packs).message(res.startsWith("!") ? res.substring(1) : res).button(R.string.opt_ok, null).show();
+            if (afterPackImport != null) afterPackImport.run();
+        });
+    }
+
+    void restartForPacks() { restartApp(); }
+
+    void chooseImport() {
+        new GameDialog(this).title(R.string.opt_import).message(R.string.backup_import_how)
+                .button(R.string.opt_cancel, null)
+                .button(R.string.backup_choose_files, () -> {
+                    Intent i = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+                    i.addCategory(Intent.CATEGORY_OPENABLE);
+                    i.setType("*/*");
+                    i.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true);
+                    startActivityForResult(i, PICK_IMPORT_FILES);
+                }).show();
+    }
+
+    private void importFiles(List<android.net.Uri> uris) {
+        List<String> names = new ArrayList<>();
+        List<android.net.Uri> kept = new ArrayList<>();
+        for (android.net.Uri u : uris)
+            try (android.database.Cursor c = getContentResolver().query(u, new String[] {android.provider.OpenableColumns.DISPLAY_NAME}, null, null, null)) {
+                if (c != null && c.moveToFirst() && c.getString(0) != null) {
+                    names.add(c.getString(0));
+                    kept.add(u);
+                }
+            }
+        // a GameCube save (.gci): converted into a WWHD game save, its three files become the three
+        // quest logs (GcSave, as the upstream gc2hd.py)
+        for (int i = 0; i < names.size(); i++) {
+            if (!names.get(i).toLowerCase(java.util.Locale.ROOT).endsWith(".gci")) continue;
+            try {
+                byte[] sav = GcSave.toCkingSav(readAll(getContentResolver(), kept.get(i)));
+                File tmp = new File(getCacheDir(), "gc-import/cking.sav");
+                //noinspection ResultOfMethodCallIgnored
+                tmp.getParentFile().mkdirs();
+                try (java.io.FileOutputStream out = new java.io.FileOutputStream(tmp)) {
+                    out.write(sav);
+                }
+                Backup.Found f = Backup.fromFiles(List.of("cking.sav"), List.of(android.net.Uri.fromFile(tmp)),
+                        getString(R.string.backup_from_gc, names.get(i)));
+                chooseWhatToImport(f);
+            } catch (GcSave.Unsupported | IOException e) {
+                info(getString(R.string.backup_failed, e.getMessage()));
+            }
+            return;
+        }
+        // a backup zip (Export): read it through for what it holds
+        for (int i = 0; i < names.size(); i++) {
+            if (!names.get(i).toLowerCase(java.util.Locale.ROOT).endsWith(".zip")) continue;
+            android.net.Uri zip = kept.get(i);
+            String name = names.get(i);
+            final Backup.Found[] found = {null};
+            withProgress(R.string.backup_scanning, () -> {
+                found[0] = Backup.scanZip(getContentResolver(), zip, name);
+                return "";
+            }, r -> {
+                if (r.startsWith("!")) info(getString(R.string.backup_failed, r.substring(1)));
+                else if (found[0].empty()) info(getString(R.string.backup_nothing_files));
+                else chooseWhatToImport(found[0]);
+            });
+            return;
+        }
+        Backup.Found f = Backup.fromFiles(names, kept, getString(R.string.backup_picked_files));
+        if (f.empty()) {
+            info(getString(R.string.backup_nothing_files));
+            return;
+        }
+        chooseWhatToImport(f);
     }
 
     /** runs `work` off the UI thread behind a progress dialog; `done` gets null or an error */
@@ -1565,61 +1960,59 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         new GameDialog(this).title(R.string.backup_title).message(msg).button(R.string.opt_ok, null).show();
     }
 
-    private void doExport(android.net.Uri tree) {
-        withProgress(R.string.backup_exporting, () -> Backup.export(getContentResolver(), tree, baseDir(), exportSave, exportStates),
-                r -> info(r.startsWith("!") ? getString(R.string.backup_failed, r.substring(1)) : getString(R.string.backup_exported, r)));
+    private void doExport(android.net.Uri file) {
+        withProgress(R.string.backup_exporting, () -> {
+            Backup.export(getContentResolver(), file, baseDir(), exportSave, exportStates);
+            return displayName(file);
+        }, r -> info(r.startsWith("!") ? getString(R.string.backup_failed, r.substring(1)) : getString(R.string.backup_exported, r)));
     }
 
-    private void doImport(android.net.Uri tree) {
-        final Backup.Found[] found = {null};
-        withProgress(R.string.backup_scanning, () -> {
-            found[0] = Backup.scan(getContentResolver(), tree);
-            return "";
-        }, r -> {
-            if (r.startsWith("!")) {
-                info(getString(R.string.backup_failed, r.substring(1)));
-                return;
+    private String displayName(android.net.Uri u) {
+        try (android.database.Cursor c = getContentResolver().query(u, new String[] {android.provider.OpenableColumns.DISPLAY_NAME}, null, null, null)) {
+            if (c != null && c.moveToFirst() && c.getString(0) != null) return c.getString(0);
+        }
+        return u.getLastPathSegment();
+    }
+
+    // what to import: the game save and/or the save states found
+    private void chooseWhatToImport(Backup.Found f) {
+        List<String> items = new ArrayList<>();
+        List<Boolean> isSave = new ArrayList<>();
+        if (!f.saveUser.isEmpty()) {
+            items.add(getString(R.string.backup_import_save, f.saveFrom));
+            isSave.add(true);
+        }
+        if (!f.slots().isEmpty()) {
+            items.add(getString(R.string.backup_import_states, android.text.TextUtils.join(", ", f.slots())));
+            isSave.add(false);
+        }
+        boolean[] checked = new boolean[items.size()];
+        java.util.Arrays.fill(checked, true);
+        GameDialog d = new GameDialog(this).title(R.string.backup_import_title);
+        for (int i = 0; i < items.size(); i++) {
+            final int k = i;
+            d.toggle(items.get(i), true, on -> checked[k] = on);
+        }
+        d.button(R.string.opt_cancel, null).button(R.string.backup_import_go, () -> {
+            boolean save = false, states = false;
+            for (int i = 0; i < checked.length; i++) {
+                if (!checked[i]) continue;
+                if (isSave.get(i)) save = true;
+                else states = true;
             }
-            Backup.Found f = found[0];
-            if (f.empty()) {
-                info(getString(R.string.backup_nothing));
-                return;
-            }
-            // what to import: the game save and/or the save states found
-            List<String> items = new ArrayList<>();
-            List<Boolean> isSave = new ArrayList<>();
-            if (!f.saveUser.isEmpty()) {
-                items.add(getString(R.string.backup_import_save, f.saveFrom));
-                isSave.add(true);
-            }
-            if (!f.slots().isEmpty()) {
-                items.add(getString(R.string.backup_import_states, android.text.TextUtils.join(", ", f.slots())));
-                isSave.add(false);
-            }
-            boolean[] checked = new boolean[items.size()];
-            java.util.Arrays.fill(checked, true);
-            GameDialog d = new GameDialog(this).title(R.string.backup_import_title);
-            for (int i = 0; i < items.size(); i++) {
-                final int k = i;
-                d.toggle(items.get(i), true, on -> checked[k] = on);
-            }
-            d.button(R.string.opt_cancel, null).button(R.string.backup_import_go, () -> {
-                boolean save = false, states = false;
-                for (int i = 0; i < checked.length; i++) {
-                    if (!checked[i]) continue;
-                    if (isSave.get(i)) save = true;
-                    else states = true;
-                }
-                runImport(f, save, states);
-            }).show();
-        });
+            runImport(f, save, states);
+        }).show();
     }
 
     private void runImport(Backup.Found f, boolean save, boolean states) {
         if (!save && !states) return;
         withProgress(R.string.backup_importing, () -> {
-            if (states) Backup.importStates(getContentResolver(), f, baseDir());
-            if (save) Backup.importSave(getContentResolver(), f, baseDir());
+            if (f.zip != null) {
+                Backup.importZip(getContentResolver(), f, baseDir(), save, states);
+            } else {
+                if (states) Backup.importStates(getContentResolver(), f, baseDir());
+                if (save) Backup.importSave(getContentResolver(), f, baseDir());
+            }
             return "";
         }, r -> {
             if (r.startsWith("!")) {
@@ -1644,13 +2037,50 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
             else driverPickDone();  // cancelled: continue (the start after a GPU hang)
             return;
         }
-        if (request == PICK_DISC && result == RESULT_OK && data != null && data.getData() != null) {
-            startExtraction(data.getData());
+        if (request == PICK_PRESET_SAVE) {
+            if (result == RESULT_OK && data != null) {
+                List<android.net.Uri> uris = new ArrayList<>();
+                if (data.getClipData() != null)
+                    for (int i = 0; i < data.getClipData().getItemCount(); i++) uris.add(data.getClipData().getItemAt(i).getUri());
+                else if (data.getData() != null)
+                    uris.add(data.getData());
+                if (!uris.isEmpty()) importPresetSaves(uris);
+            }
             return;
         }
-        if ((request == PICK_EXPORT || request == PICK_IMPORT) && result == RESULT_OK && data != null && data.getData() != null) {
-            if (request == PICK_EXPORT) doExport(data.getData());
-            else doImport(data.getData());
+        if (request == PICK_DISC_FILES && result == RESULT_OK && data != null) {
+            List<android.net.Uri> uris = new ArrayList<>();
+            if (data.getClipData() != null)
+                for (int i = 0; i < data.getClipData().getItemCount(); i++) uris.add(data.getClipData().getItemAt(i).getUri());
+            else if (data.getData() != null)
+                uris.add(data.getData());
+            startExtraction(uris);
+            return;
+        }
+        if (request == PICK_IMPORT_FILES) {
+            if (result == RESULT_OK && data != null) {
+                List<android.net.Uri> uris = new ArrayList<>();
+                if (data.getClipData() != null)
+                    for (int i = 0; i < data.getClipData().getItemCount(); i++) uris.add(data.getClipData().getItemAt(i).getUri());
+                else if (data.getData() != null)
+                    uris.add(data.getData());
+                if (!uris.isEmpty()) importFiles(uris);
+            }
+            return;
+        }
+        if (request == PICK_PACKS) {
+            if (result == RESULT_OK && data != null) {
+                List<android.net.Uri> uris = new ArrayList<>();
+                if (data.getClipData() != null)
+                    for (int i = 0; i < data.getClipData().getItemCount(); i++) uris.add(data.getClipData().getItemAt(i).getUri());
+                else if (data.getData() != null)
+                    uris.add(data.getData());
+                if (!uris.isEmpty()) importPacks(uris);
+            }
+            return;
+        }
+        if (request == PICK_EXPORT && result == RESULT_OK && data != null && data.getData() != null) {
+            doExport(data.getData());
             return;
         }
         if (request != PICK_DLL || result != RESULT_OK || data == null || data.getData() == null) return;

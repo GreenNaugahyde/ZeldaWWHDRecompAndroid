@@ -49,6 +49,7 @@ void CmdClearColorImage(VkCommandBuffer, VkImage, VkImageLayout, const VkClearCo
                         const VkImageSubresourceRange*);
 void CmdClearDepthStencilImage(VkCommandBuffer, VkImage, VkImageLayout, const VkClearDepthStencilValue*, uint32_t,
                                const VkImageSubresourceRange*);
+void CmdClearAttachments(VkCommandBuffer, uint32_t, const VkClearAttachment*, uint32_t, const VkClearRect*);
 void CmdResetQueryPool(VkCommandBuffer, VkQueryPool, uint32_t, uint32_t);
 void CmdWriteTimestamp(VkCommandBuffer, VkPipelineStageFlagBits, VkQueryPool, uint32_t);
 
@@ -86,6 +87,7 @@ void crumbs_report();
 #define vkCmdCopyImageToBuffer gfx::rec::CmdCopyImageToBuffer
 #define vkCmdClearColorImage gfx::rec::CmdClearColorImage
 #define vkCmdClearDepthStencilImage gfx::rec::CmdClearDepthStencilImage
+#define vkCmdClearAttachments gfx::rec::CmdClearAttachments
 #define vkCmdResetQueryPool gfx::rec::CmdResetQueryPool
 #define vkCmdWriteTimestamp gfx::rec::CmdWriteTimestamp
 #endif

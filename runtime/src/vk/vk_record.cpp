@@ -23,7 +23,7 @@ enum class Op : uint16_t {
     SetViewport, SetScissor, SetBlendConstants, SetDepthBias, SetStencilCompareMask, SetStencilReference,
     SetStencilWriteMask, PushConstants, Draw, DrawIndexed, Dispatch, PipelineBarrier, CopyImage, CopyImage2,
     BlitImage, CopyBufferToImage, CopyImageToBuffer, ClearColorImage, ClearDepthStencilImage, ResetQueryPool,
-    WriteTimestamp,
+    WriteTimestamp, ClearAttachments,
 };
 
 struct Header { Op op; uint16_t reserved; uint32_t size; };
@@ -283,6 +283,12 @@ void CmdClearColorImage(VkCommandBuffer cmd, VkImage image, VkImageLayout layout
     Writer w(Op::ClearColorImage, sizeof(ClearColor) + sizeof(VkImageSubresourceRange) * count);
     w.put(ClearColor{image, layout, *color, count}); w.array(ranges, count);
 }
+void CmdClearAttachments(VkCommandBuffer cmd, uint32_t count, const VkClearAttachment* atts, uint32_t rectCount,
+                         const VkClearRect* rects) {
+    if (!deferred(cmd)) return vkCmdClearAttachments(cmd, count, atts, rectCount, rects);
+    Writer w(Op::ClearAttachments, sizeof(Range) + sizeof(VkClearAttachment) * count + sizeof(VkClearRect) * rectCount);
+    w.put(Range{count, rectCount}); w.array(atts, count); w.array(rects, rectCount);
+}
 void CmdClearDepthStencilImage(VkCommandBuffer cmd, VkImage image, VkImageLayout layout,
                                const VkClearDepthStencilValue* value, uint32_t count, const VkImageSubresourceRange* ranges) {
     if (!deferred(cmd)) return vkCmdClearDepthStencilImage(cmd, image, layout, value, count, ranges);
@@ -487,6 +493,12 @@ void replay(const Stream& stream, VkCommandBuffer cmd) {
         case Op::ClearDepthStencilImage: { auto v = r.get<ClearDepth>(); vkCmdClearDepthStencilImage(cmd, v.image, v.layout, &v.value, v.count, r.array<VkImageSubresourceRange>(v.count)); break; }
         case Op::ResetQueryPool: { auto v = r.get<ResetQuery>(); vkCmdResetQueryPool(cmd, v.pool, v.first, v.count); break; }
         case Op::WriteTimestamp: { auto v = r.get<Timestamp>(); vkCmdWriteTimestamp(cmd, v.stage, v.pool, v.query); break; }
+        case Op::ClearAttachments: {
+            auto v = r.get<Range>();  // first = attachments, count = rects
+            const VkClearAttachment* atts = r.array<VkClearAttachment>(v.first);
+            vkCmdClearAttachments(cmd, v.first, atts, v.count, r.array<VkClearRect>(v.count));
+            break;
+        }
         }
         if (crumbs && !g_crumb_pass.open) {
             static const char* const kNames[] = {"copy image", "copy image", "blit", "upload (buffer to image)",

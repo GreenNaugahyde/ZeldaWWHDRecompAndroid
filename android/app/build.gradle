@@ -4,6 +4,9 @@ plugins {
     id 'com.android.application'
 }
 
+def shaderTemplate = file((project.findProperty('wwhdShaderTemplate') ?: rootProject.file('../../private/shader-template/template.bin').path) as String)
+def templateAssets = layout.buildDirectory.dir('generated/shader-template').get().asFile
+
 android {
     namespace 'org.wwhdrecomp.app'
     compileSdk 36
@@ -14,8 +17,8 @@ android {
         minSdk 30          // Vulkan 1.1, AAudio, 39-bit+ address space handling
         targetSdk 36
         // -PwwhdVersionCode / -PwwhdVersionName for a release; raise the code with every APK you share
-        versionCode((project.findProperty('wwhdVersionCode') ?: '12') as int)
-        versionName project.findProperty('wwhdVersionName') ?: '0.9.3'
+        versionCode((project.findProperty('wwhdVersionCode') ?: '13') as int)
+        versionName project.findProperty('wwhdVersionName') ?: '0.9.4'
         ndk {
             abiFilters 'arm64-v8a'
         }
@@ -63,6 +66,23 @@ android {
         }
     }
 
+    // Debug builds only: private assets from outside the repository, never in git or a release APK
+    // (e.g. story presets made from other people's saves, for your own testing: assets/presets/*.wwp).
+    // -PwwhdPrivateDir=<dir>; default: the folder "private" next to the repository.
+    def privateAssets = new File((project.findProperty('wwhdPrivateDir') ?: rootProject.file('../../private').path) as String, 'assets')
+    // The shader head start's template (code-free: program hashes, registers, pipeline state; see
+    // notes/todo-shader-headstart.md), packaged as assets/shader_template.bin into every build when
+    // present. Kept outside the repository. -PwwhdShaderTemplate=<file>; default:
+    // private/shader-template/template.bin next to the repository.
+    sourceSets {
+        main {
+            assets.srcDirs += [templateAssets]
+        }
+        debug {
+            if (privateAssets.isDirectory()) assets.srcDirs += [privateAssets]
+        }
+    }
+
     externalNativeBuild {
         cmake {
             path file('../../CMakeLists.txt')
@@ -81,3 +101,10 @@ android {
         }
     }
 }
+
+def copyShaderTemplate = tasks.register('copyShaderTemplate', Sync) {
+    from(shaderTemplate.exists() ? [shaderTemplate] : []) { rename { 'shader_template.bin' } }
+    into templateAssets
+    inputs.property('template', shaderTemplate.exists() ? shaderTemplate.path : '')
+}
+preBuild.dependsOn copyShaderTemplate

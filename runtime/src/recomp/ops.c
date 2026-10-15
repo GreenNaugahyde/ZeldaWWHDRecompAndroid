@@ -43,8 +43,13 @@ static inline void trap_if(Cpu* c, uint32_t to, uint32_t x, uint32_t y, uint32_t
         ppc_trap(c, addr);
 }
 
-/* function entry: trace and preemption check (PPC_ENTER in ppc.h); `addr` is the function */
-OP(enter) { (void)w; PPC_ENTER(addr); }
+/* function entry: trace and the per-core check (as PPC_ENTER in ppc.h); `addr` is the function, `w`
+ * its size. Where it continues: 0 from the start, else see ppc_entry (emit.cpp branches on it). */
+__attribute__((always_inline)) uint32_t ppcop_enter(Cpu* __restrict c, uint32_t w, uint32_t addr) {
+    if (__builtin_expect(g_ppc_trace, 0)) ppc_trace_enter(addr);
+    if (__builtin_expect(g_core_preempt[c->core], 0)) return ppc_entry(c, addr, w);
+    return 0;
+}
 
 /* ---- condition register (op 19) ---- */
 OP(crand) { UNUSED; c->cr[D] = c->cr[A] & c->cr[B]; }
