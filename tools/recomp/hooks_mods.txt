@@ -21,3 +21,7 @@
 # Mod packs (packs.cpp): the TV layout size asked by pack code -> the TV buffer's size (720p mode)
 02739594  # TV layout width (integer)
 027395E4  # TV layout height (integer)
+# Title controller question answered with the GamePad (controller_selection.cpp, upstream #189)
+@026D44A8 # updateSelection: copied input event, before reading its kind
+026D50C4  # SelectController_00 draw: hide the automatically answered title prompt
+026F8B54  # Parts::draw: hide only the title background during automatic choice/caption fade
