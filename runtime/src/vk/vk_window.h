@@ -26,8 +26,10 @@ float drc_picture_aspect();  // width / height of the GamePad picture the game s
 void save_caches();
 
 // performance overlay: {game fps, game frame time avg ms, worst ms, presented fps, frame generation GPU ms}
-// over the last second (any thread)
-void perf_stats(float out[7]);
+// over the last second, {game frames so far, their seconds}, then live {resolution scale, 3D view width,
+// height, dynamic resolution's minimum (0 = off), its GPU busy share (-1 = off)} (any thread)
+constexpr int kPerfStats = 12;
+void perf_stats(float out[kPerfStats]);
 // the running GPU driver's name and version ("" before the renderer started)
 const char* driver_info();
 // fast forward (mods/turbo.cpp) runs: present the game's frames only, without frame generation
@@ -41,6 +43,9 @@ bool driver_fallback();
 
 // rendering resolution scale (the app's setting); applied from the next frame on (any thread)
 void set_resolution_scale(float scale);
+// dynamic resolution's lowest scale, 0 = off (vk_dynres.cpp)
+void set_dynamic_resolution_min(float min);
+float dynamic_resolution_min();
 
 // frame generation settings (the app's menu); applied from the next frame on (any thread)
 void request_frame_generation(bool on, const char* dll, bool quality, float flowScale, int multiplier, bool uiDetection);

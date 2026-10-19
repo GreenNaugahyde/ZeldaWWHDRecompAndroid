@@ -7,6 +7,7 @@
 #include <unistd.h>
 
 #include <algorithm>
+#include <cstring>
 #include <array>
 #include <atomic>
 #include <chrono>
@@ -142,6 +143,10 @@ uint32_t current_thread() { return t_self ? t_self->guest : 0; }
 // WWHD_NO_SCHED=1 lets all threads run freely (the old behaviour).
 volatile int g_core_preempt[3];
 static const bool g_sched_on = getenv("WWHD_NO_SCHED") == nullptr;
+// The device-recompiled code reads the running thread's copy (Cpu::preempt, one load from the Cpu at
+// hand): whatever sets a core's flag sets it in its owner's Cpu too, and the slow path (ppc_entry)
+// refreshes the thread's copy from the flags when it is done.
+static inline void set_cpu_preempt(Cpu& c, bool v) { __atomic_store_n(&c.preempt, (uint32_t)v, __ATOMIC_RELAXED); }
 
 struct CoreSched {
     std::mutex m;
@@ -188,7 +193,10 @@ static void core_acquire(HostThread* t) {
         { std::lock_guard<std::mutex> tl(g_tick_m); }
         g_tick_cv.notify_one();
     }
-    if (k.owner && t->prio < k.owner->prio) g_core_preempt[core] = 1;
+    if (k.owner && t->prio < k.owner->prio) {
+        g_core_preempt[core] = 1;
+        set_cpu_preempt(k.owner->cpu, true);
+    }
     auto start = std::chrono::steady_clock::now();
     t->acquired = start;
     t->ready_since = start;
@@ -223,7 +231,8 @@ static void core_acquire(HostThread* t) {
     t->acquired = now;
     t->cpu.core = core;
     HostThread* next = best_ready(k);
-    g_core_preempt[core] = next && next->prio < t->prio;
+    g_core_preempt[core] = (next && next->prio < t->prio) || g_ppc_trace;  // (tracing: every entry, see ppc_entry)
+    set_cpu_preempt(t->cpu, g_core_preempt[core] || t->resuming);
 }
 
 static void core_release(HostThread* t) {
@@ -234,7 +243,7 @@ static void core_release(HostThread* t) {
         if (k.owner == t) k.owner = nullptr;
         t->holds_core = false;
         t->held_ns += (uint64_t)std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - t->acquired).count();
-        g_core_preempt[t->held_core] = 0;
+        g_core_preempt[t->held_core] = g_ppc_trace;
     }
     k.cv.notify_all();
 }
@@ -296,15 +305,32 @@ static uint32_t resume_step(HostThread* t, Cpu* c, uint32_t fn, uint32_t size) {
     if (last) {
         t->resuming = t->forward_to != 0;
         park_rebuilt(t);  // until the load is done
-        if (t->resuming) g_core_preempt[c->core] = 1;  // the next entry check forwards (scheduling may have cleared it)
+        if (t->resuming) {  // the next entry check forwards (scheduling may have cleared it)
+            g_core_preempt[c->core] = 1;
+            set_cpu_preempt(*c, true);
+        }
     }
     return ra;
 }
 
-extern "C" uint32_t ppc_entry(Cpu* c, uint32_t fn, uint32_t size) {
+// the device-recompiled code's entry check (recomp/ops.c ppcop_enter) only reads g_core_preempt;
+// while tracing is on, the flags stay set and the trace happens here
+// the thread's copy of the flags after the slow path: still set while its core's flag is (another
+// thread's turn, as before with the shared flag), it rebuilds a call chain, traces or may park
+static void refresh_cpu_preempt(Cpu* c, HostThread* t) {
+    set_cpu_preempt(*c, g_core_preempt[c->core % 3] || g_ppc_trace || (t && t->resuming) ||
+                            g_entry_parks.load(std::memory_order_relaxed) != 0);
+}
+extern "C" __attribute__((preserve_most)) uint32_t ppc_entry(Cpu* c, uint32_t fn, uint32_t size) {
+    if (__builtin_expect(g_ppc_trace, 0)) ppc_trace_enter(fn);
     HostThread* t = (HostThread*)c->thread;
-    if (__builtin_expect(t && t->resuming, 0)) return resume_step(t, c, fn, size);
+    if (__builtin_expect(t && t->resuming, 0)) {
+        uint32_t r = resume_step(t, c, fn, size);
+        refresh_cpu_preempt(c, t);
+        return r;
+    }
     ppc_preempt(c);
+    refresh_cpu_preempt(c, t);
     return 0;
 }
 
@@ -328,7 +354,7 @@ extern "C" void ppc_preempt(Cpu* c) {
     {
         CoreSched& k = g_sched[t->held_core];
         std::lock_guard<std::mutex> lk(k.m);
-        g_core_preempt[t->held_core] = 0;
+        g_core_preempt[t->held_core] = g_ppc_trace;
         if (!should_yield(k, t)) return;
     }
     core_release(t);
@@ -395,7 +421,10 @@ static void sched_tick_thread() {
         for (int core = 0; core < 3; core++) {
             CoreSched& k = g_sched[core];
             std::lock_guard<std::mutex> lk(k.m);
-            if (k.owner && !k.ready.empty() && should_yield(k, k.owner)) g_core_preempt[core] = 1;
+            if (k.owner && !k.ready.empty() && should_yield(k, k.owner)) {
+                g_core_preempt[core] = 1;
+                set_cpu_preempt(k.owner->cpu, true);
+            }
         }
     }
 }
@@ -634,6 +663,7 @@ __attribute__((noinline)) static uint32_t rebuild_run(HostThread* ht) {
     ht->resuming = true;
     ht->wst.store(kRunning);
     g_core_preempt[c->core] = 1;  // the entry checks take their slow path (the other threads are frozen)
+    set_cpu_preempt(*c, true);
     c->pc = ht->chain_root;
     ppc_dispatch(c);
     return c->r[3];
@@ -649,6 +679,19 @@ static void* thread_main(void* p) {
     ht->has_self = true;
     platform::set_thread_high_priority();
     if (name.empty()) platform::prefer_big_cores(true);  // the game's main thread
+    // test: WWHD_BIG_THREADS=part[,part...] also keeps guest threads whose name contains a part on the big cores
+    else if (const char* bt = getenv("WWHD_BIG_THREADS")) {
+        for (const char* e = bt; *e;) {
+            const char* comma = strchr(e, ',');
+            std::string part(e, comma ? comma - e : strlen(e));
+            if (!part.empty() && name.find(part) != std::string::npos) {
+                platform::prefer_big_cores(false);
+                break;
+            }
+            if (!comma) break;
+            e = comma + 1;
+        }
+    }
     LOG("[thread] %s \"%s\" core %d prio %d affinity %X", ht->fate == FateRebuild ? "rebuild" : "start", name.c_str(), ht->core,
         (int)ld32(ht->guest + osthread::kBasePrio), ld32(ht->guest + osthread::kAffinity));
     uint32_t rv = 0;
@@ -741,6 +784,7 @@ static HostThread* create_thread(uint32_t t, uint32_t entry, uint32_t argc, uint
     st32(t + osthread::kAffinity, attr & 7);
     init_cpu(ht->cpu, stack_top);
     ht->cpu.thread = ht;
+    ht->cpu.preempt = 1;  // the first entry check sets it right (refresh_cpu_preempt)
     ht->core = core_from_affinity(attr, t_self ? t_self->core : 1);
     ht->cpu.core = ht->core;
     ht->prio = prio;
@@ -1353,6 +1397,8 @@ bool quiesce(int timeout_ms, std::string& busy, int entry_mode, int entry_after_
         if (entry_mode && std::chrono::steady_clock::now() - start >= std::chrono::milliseconds(entry_after_ms)) {
             g_entry_parks = entry_mode;
             for (int k = 0; k < 3; k++) g_core_preempt[k] = 1;  // running threads look at their next function entry
+            std::lock_guard<std::mutex> lk(g_threads_mutex);
+            for (auto& [g, t] : g_threads) set_cpu_preempt(t->cpu, true);
         }
         busy.clear();
         {
@@ -1777,6 +1823,7 @@ void threads_ss_load(ss::Reader& r) {
             void* self = t->cpu.thread;
             t->cpu = s.cpu;
             t->cpu.thread = t;
+            t->cpu.preempt = 1;  // (saved by another build, or stale): the first entry check sets it right
             t->cpu.core = t->holds_core ? t->held_core : s.core;
             t->suspend = s.suspend;
             t->prio = s.prio;

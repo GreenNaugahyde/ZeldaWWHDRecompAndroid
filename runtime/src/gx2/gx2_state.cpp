@@ -62,10 +62,14 @@ HLE(gx2, GX2SetBlendControl) {
 HLE(gx2, GX2SetBlendControlReg) { set_reg(REGADDR::CB_BLEND0_CONTROL + (ld32(arg(c, 0)) & 7), ld32(arg(c, 0) + 4)); }
 
 HLE(gx2, GX2SetBlendConstantColor) {
-    for (int i = 0; i < 4; i++) set_reg(REGADDR::CB_BLEND_RED + i, gx2::fbits(fa(c, i)));
+    uint32 v[4];
+    for (int i = 0; i < 4; i++) v[i] = gx2::fbits(fa(c, i));
+    gx2::set_regs(REGADDR::CB_BLEND_RED, v, 4);
 }
 HLE(gx2, GX2SetBlendConstantColorReg) {
-    for (int i = 0; i < 4; i++) set_reg(REGADDR::CB_BLEND_RED + i, ld32(arg(c, 0) + 4 * i));
+    uint32 v[4];
+    for (int i = 0; i < 4; i++) v[i] = ld32(arg(c, 0) + 4 * i);
+    gx2::set_regs(REGADDR::CB_BLEND_RED, v, 4);
 }
 
 HLE(gx2, GX2SetTargetChannelMasks) {
@@ -97,8 +101,8 @@ HLE(gx2, GX2SetStencilMask) {
     f.set_STENCILREF_F(arg(c, 2) & 0xFF).set_STENCILMASK_F(arg(c, 0) & 0xFF).set_STENCILWRITEMASK_F(arg(c, 1) & 0xFF);
     LATTE_DB_STENCILREFMASK_BF b;
     b.set_STENCILREF_B(arg(c, 5) & 0xFF).set_STENCILMASK_B(arg(c, 3) & 0xFF).set_STENCILWRITEMASK_B(arg(c, 4) & 0xFF);
-    set_reg(REGADDR::DB_STENCILREFMASK, f.getRawValue());
-    set_reg(REGADDR::DB_STENCILREFMASK_BF, b.getRawValue());
+    uint32 v[2] = {f.getRawValue(), b.getRawValue()};
+    gx2::set_regs(REGADDR::DB_STENCILREFMASK, v, 2);
 }
 
 // ---------------------------------------------------------------- rasterizer
@@ -135,12 +139,11 @@ HLE(gx2, GX2SetRasterizerClipControl) {
 
 HLE(gx2, GX2SetViewport) {
     float x = fa(c, 0), y = fa(c, 1), w = fa(c, 2), h = fa(c, 3), n = fa(c, 4), f = fa(c, 5);
-    set_reg(REGADDR::PA_CL_VPORT_XSCALE, gx2::fbits(w * 0.5f));
-    set_reg(REGADDR::PA_CL_VPORT_XOFFSET, gx2::fbits(x + w * 0.5f));
-    set_reg(REGADDR::PA_CL_VPORT_YSCALE, gx2::fbits(h * -0.5f));
-    set_reg(REGADDR::PA_CL_VPORT_YOFFSET, gx2::fbits(y + h * 0.5f));
-    set_reg(REGADDR::PA_CL_VPORT_ZSCALE, gx2::fbits((f - n) * 0.5f));
-    set_reg(REGADDR::PA_CL_VPORT_ZOFFSET, gx2::fbits((n + f) * 0.5f));
+    // XSCALE, XOFFSET, YSCALE, YOFFSET, ZSCALE, ZOFFSET: one command
+    uint32 v[6] = {gx2::fbits(w * 0.5f), gx2::fbits(x + w * 0.5f), gx2::fbits(h * -0.5f),
+                   gx2::fbits(y + h * 0.5f), gx2::fbits((f - n) * 0.5f), gx2::fbits((n + f) * 0.5f)};
+    static_assert(REGADDR::PA_CL_VPORT_ZOFFSET == REGADDR::PA_CL_VPORT_XSCALE + 5);
+    gx2::set_regs(REGADDR::PA_CL_VPORT_XSCALE, v, 6);
 }
 
 HLE(gx2, GX2SetScissor) {
@@ -150,8 +153,8 @@ HLE(gx2, GX2SetScissor) {
     tl.set_TL_X(tlx).set_TL_Y(tly).set_WINDOW_OFFSET_DISABLE(true);
     LATTE_PA_SC_GENERIC_SCISSOR_BR br;
     br.set_BR_X(brx).set_BR_Y(bry);
-    set_reg(REGADDR::PA_SC_GENERIC_SCISSOR_TL, tl.getRawValue());
-    set_reg(REGADDR::PA_SC_GENERIC_SCISSOR_BR, br.getRawValue());
+    uint32 v[2] = {tl.getRawValue(), br.getRawValue()};
+    gx2::set_regs(REGADDR::PA_SC_GENERIC_SCISSOR_TL, v, 2);
 }
 
 HLE(gx2, GX2SetPointSize) {

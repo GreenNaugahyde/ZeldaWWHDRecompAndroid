@@ -92,6 +92,15 @@ final class CrashLogs {
                 ModPacks.turnAllOff(packsBase, prefs);
                 then.run();
             });
+        // frame generation was showing frames when it crashed (Lossless.dll's shaders on this GPU): start
+        // without it (Lossless.dll stays; Graphics > Frame generation turns it on again)
+        android.util.Log.i("wwhd", "crash dialog: frame generation " + prefs.getBoolean("fg_enabled", false) + ", marker "
+                + MainActivity.frameGenMarker(a).exists());
+        if (prefs.getBoolean("fg_enabled", false) && MainActivity.frameGenMarker(a).exists())
+            d.button(R.string.crash_without_fg, () -> {
+                prefs.edit().putBoolean("fg_enabled", false).remove("fg_risk_ok").commit();
+                then.run();
+            });
         d.show();
         return true;
     }

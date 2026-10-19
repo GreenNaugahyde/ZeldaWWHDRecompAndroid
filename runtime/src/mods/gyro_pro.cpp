@@ -26,13 +26,14 @@ extern "C" void hook_02617AE4(Cpu* c) {
     // without the Pro Controller, 02618604 copies the attitude, and the controller state machine
     // (02617AF4) keeps the attitude 026173B0 just computed
     static const uint32_t sites[] = {release::code(0x02618D3C), release::code(0x0261864C), release::code(0x02617E98)};
-    motion::Vpad m;
-    const bool motionIn = motion::vpad(m);
     bool gyroCode = lo && hi && c->lr >= lo && c->lr < hi;
     for (uint32_t s : sites) gyroCode |= s && c->lr == s;
+    static const bool log = getenv("WWHD_LOG_PRO_GYRO") != nullptr;
+    // (the sensors only where they decide: this runs for every controller query of the game)
+    motion::Vpad m;
+    const bool motionIn = ((!off && gyroCode && input::pro_controller()) || log) && motion::vpad(m);
     const bool fake = !off && gyroCode && input::pro_controller() && motionIn;
     // debug: WWHD_LOG_PRO_GYRO=1 logs who asks (return addresses as USA addresses) every 300 calls
-    static const bool log = getenv("WWHD_LOG_PRO_GYRO") != nullptr;
     if (log) {
         static std::mutex mu;
         static std::map<uint32_t, uint32_t> callers;

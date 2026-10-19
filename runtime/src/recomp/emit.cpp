@@ -8,6 +8,7 @@
 #include <llvm/IR/IRBuilder.h>
 #include <llvm/IR/InlineAsm.h>
 #include <llvm/IR/LLVMContext.h>
+#include <llvm/IR/MDBuilder.h>
 #include <llvm/IR/Module.h>
 #include <llvm/Linker/Linker.h>
 #include <llvm/Support/MemoryBuffer.h>
@@ -87,7 +88,41 @@ public:
             B.CreateCall(external("hook_" + sym(start)), {w->getArg(0)});
             B.CreateRetVoid();
         }
-        F = guest(hooked ? "f_" + sym(start) + "_orig" : "f_" + sym(start));
+        llvm::Function* fn = guest(hooked ? "f_" + sym(start) + "_orig" : "f_" + sym(start));
+        // A function without calls gets its slow entry path (ppc_entry) in a copy of its own (f_X_s, the
+        // whole function as below), reached by a tail call: the fast path then needs no stack frame for
+        // the return address (the call in the rejoining slow path kept LLVM from shrink-wrapping it;
+        // saving and restoring it was ~3% of the game thread on a Helio G85)
+        if (leaf()) {
+            llvm::Function* slow = llvm::Function::Create(fnTy, llvm::Function::InternalLinkage, fn->getName() + "_s", M);
+            slow->addParamAttr(0, llvm::Attribute::NoAlias);
+            emit_function(slow, nullptr);
+            emit_function(fn, slow);
+        } else {
+            emit_function(fn, nullptr);
+        }
+        S.functions++;
+    }
+
+private:
+    // no calls (and no instruction hooks or traces, which call): see emit
+    bool leaf() const {
+        static const bool on = !getenv("WWHD_RECOMP_LEAF_SPLIT") || atoi(getenv("WWHD_RECOMP_LEAF_SPLIT")) != 0;
+        if (!on || (cur >= P.caveLo && cur < P.caveHi)) return false;
+        for (uint32_t a = cur; a < end; a += 4) {
+            if (H.sites.count(a)) return false;
+            Decoded d = decode(P.word(a));
+            uint32_t w = P.word(a);
+            if ((d.kind == Kind::Branch || d.kind == Kind::BranchCond || d.kind == Kind::BranchLr || d.kind == Kind::BranchCtr) && (w & 1))
+                return false;
+        }
+        return true;
+    }
+    // the function's code into F; fastTo: F only checks the entry flag and goes to that copy when it is
+    // set (which has the slow path), instead of the slow path itself
+    void emit_function(llvm::Function* fn, llvm::Function* fastTo) {
+        F = fn;
+        const uint32_t start = cur;
         if (start >= P.caveLo && start < P.caveHi) F->addFnAttr("wwhd-noeabi");  // mod pack code (locals.cpp)
         c = F->getArg(0);
         auto* entry = llvm::BasicBlock::Create(C, "entry", F);  // first: the function's entry block
@@ -101,10 +136,22 @@ public:
         // back to the caller, or after one of the function's calls (a save state's call chain is
         // rebuilt: the thread enters each function of the chain at its call, see threads.cpp)
         resumes.clear();
-        llvm::Value* where = B.CreateCall(M.getFunction("ppcop_enter"), {regs, B.getInt32(end - start), B.getInt32(start)});
-        auto* resume = llvm::BasicBlock::Create(C, "resume", F);
+        llvm::Value* where = nullptr;
+        llvm::BasicBlock* resume = nullptr;
         auto* body = llvm::BasicBlock::Create(C, "body", F);
-        B.CreateCondBr(B.CreateICmpNE(where, B.getInt32(0)), resume, body);
+        if (fastTo) {
+            auto* slow = llvm::BasicBlock::Create(C, "slow", F);
+            llvm::Value* flag = load32(offsetof(Cpu, preempt));  // as ppcop_enter
+            B.CreateCondBr(B.CreateICmpNE(flag, B.getInt32(0)), slow, body, llvm::MDBuilder(C).createBranchWeights(1, 1 << 20));
+            B.SetInsertPoint(slow);
+            tail(fastTo);
+        } else {
+            where = B.CreateCall(M.getFunction("ppcop_enter"), {regs, B.getInt32(end - start), B.getInt32(start)});
+            resume = llvm::BasicBlock::Create(C, "resume", F);
+            // (rare: save states rebuilding a call chain, preemption; weighted so the resume switch is laid
+            // out after the function's code instead of between its entry and body)
+            B.CreateCondBr(B.CreateICmpNE(where, B.getInt32(0)), resume, body, llvm::MDBuilder(C).createBranchWeights(1, 1 << 20));
+        }
         B.SetInsertPoint(body);
         for (uint32_t a = start; a < end; a += 4) {
             auto it = blocks.find(a);
@@ -120,7 +167,7 @@ public:
             }
             if (H.sites.count(a)) B.CreateCall(external("site_" + sym(a)), {c});
             instruction(a, P.word(a));
-            S.instructions++;
+            if (!fastTo) S.instructions++;  // (a function split in two: counted once)
         }
         if (!B.GetInsertBlock()->getTerminator()) {  // falls through into the next function
             if (std::binary_search(P.entries.begin(), P.entries.end(), end)) {  // (a code cave's data: no)
@@ -131,6 +178,7 @@ public:
                 B.CreateRetVoid();
             }
         }
+        if (!resume) return;
         // where: 1 returns, a call's return address goes to that call (its callee continues the
         // chain); anything else is a chain that doesn't fit this function
         B.SetInsertPoint(resume);
@@ -144,10 +192,8 @@ public:
         B.SetInsertPoint(bad);
         B.CreateCall(external("ppc_resume_failed"), {c});
         B.CreateRetVoid();
-        S.functions++;
     }
 
-private:
     llvm::Module& M;
     llvm::LLVMContext& C;
     const Program& P;
@@ -206,10 +252,26 @@ private:
         ci->setTailCallKind(llvm::CallInst::TCK_MustTail);
         B.CreateRetVoid();
     }
+    // an indirect call or jump to the address in pc: game code is looked up in g_ppc_text_table
+    // right here (one range check and load); anything else, or an address without a function, goes
+    // through ppc_dispatch (imports, HLE, host functions, the error for an unknown address)
     void dispatch(bool isTail) {
         llvm::Function* d = external("ppc_dispatch");
-        if (isTail) tail(d);
-        else B.CreateCall(d, {c});
+        llvm::Value* off = B.CreateSub(load32(offsetof(Cpu, pc)), B.getInt32(0x02000000));
+        llvm::Value* inText = B.CreateICmpULT(off, B.getInt32(0x01000000));
+        llvm::Value* idx = B.CreateSelect(inText, B.CreateLShr(off, 2), B.getInt32(0));
+        llvm::GlobalVariable* table = M.getGlobalVariable("g_ppc_text_table");
+        if (!table)
+            table = new llvm::GlobalVariable(M, ptrTy, false, llvm::GlobalValue::ExternalLinkage, nullptr, "g_ppc_text_table");
+        llvm::Value* base = B.CreateLoad(ptrTy, table);
+        llvm::Value* fn = B.CreateLoad(ptrTy, B.CreateInBoundsGEP(ptrTy, base, B.CreateZExt(idx, B.getInt64Ty())));
+        llvm::Value* found = B.CreateAnd(inText, B.CreateICmpNE(fn, llvm::ConstantPointerNull::get(ptrTy)));
+        llvm::Value* target = B.CreateSelect(found, fn, d);
+        llvm::CallInst* ci = B.CreateCall(fnTy, target, {c});
+        if (isTail) {
+            ci->setTailCallKind(llvm::CallInst::TCK_MustTail);
+            B.CreateRetVoid();
+        }
     }
     void loop_barrier() {
         // guest loops may wait for another core's store: memory is re-read every iteration
@@ -368,7 +430,7 @@ private:
             return;
         }
         case Kind::Unhandled:
-            S.unhandled++;
+            if (F->hasExternalLinkage() || !F->getName().ends_with("_s")) S.unhandled++;
             call_unimplemented(a, w);
             return;
         case Kind::Branch: {
@@ -444,6 +506,15 @@ std::unique_ptr<llvm::Module> emit_module(llvm::LLVMContext& ctx, const Program&
         if (!f.isDeclaration() && f.getName().starts_with("ppcop_")) f.setLinkage(llvm::GlobalValue::InternalLinkage);
     FunctionEmitter fe(*m, prog, hooks, stats);
     for (uint32_t f : functions) fe.emit(f);
+    // the slow entry copies (emit) after all the module's functions: rarely run, they stay out of the
+    // way of the code that runs (functions are laid out in this order)
+    std::vector<llvm::Function*> slow;
+    for (llvm::Function& f : *m)
+        if (f.hasInternalLinkage() && f.getName().starts_with("f_") && f.getName().ends_with("_s")) slow.push_back(&f);
+    for (llvm::Function* f : slow) {
+        f->removeFromParent();
+        m->getFunctionList().push_back(f);
+    }
     return m;
 }
 

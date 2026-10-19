@@ -26,6 +26,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cctype>
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
@@ -36,6 +37,7 @@
 
 #include "gx2/gx2_cmd.h"
 #include "hud.h"
+#include "mods/mods.h"
 #include "runtime.h"
 
 namespace aspect {
@@ -529,6 +531,140 @@ static bool drc_draw(Cpu* c, uint32_t pane) {
     return true;
 }
 
+// ---- the GamePad screen's touch targets for the controller (MainActivity's highlight): the game's
+// hit boxes (Bounding panes, named B_*) drawn into a GamePad layout, with the frame they were drawn in
+namespace aspect {
+namespace {
+struct Target { std::string name, parent; float x, y, w, h; uint64_t frame; };
+std::mutex g_target_mu;
+std::unordered_map<uint32_t, Target> g_targets;
+std::atomic<uint64_t> g_cursor_frame{0};
+
+std::string pane_name(uint32_t p) { return std::string((const char*)mem::ptr(p + kPaneName), strnlen((const char*)mem::ptr(p + kPaneName), 24)); }
+
+void note_drc_pane(uint32_t pane) {
+    const char* n = (const char*)mem::ptr(pane + kPaneName);
+    bool target = n[0] == 'B' && n[1] == '_', cursor = !target && name_is(pane, "W_Cursor_00");
+    if (!target && !cursor) return;
+    uint32_t root = pane;
+    for (int i = 0; i < 16 && ld32(root + kPaneParent); i++) root = ld32(root + kPaneParent);
+    if (ld32(root + kPaneParent) || root_screen(root) != kDrcTarget) return;
+    if (cursor) { g_cursor_frame.store(g_swaps, std::memory_order_relaxed); return; }
+    const uint32_t m = pane + kPaneGlobal;  // layout space: 1280x720, centre 0,0, y up
+    float gx = (float)ldf32(m + 0xC), gy = (float)ldf32(m + 0x1C);
+    float w = (float)ldf32(pane + kPaneSize) * std::hypot((float)ldf32(m), (float)ldf32(m + 0x10));
+    float h = (float)ldf32(pane + kPaneSize + 4) * std::hypot((float)ldf32(m + 4), (float)ldf32(m + 0x14));
+    if (!(w > 1.0f && h > 1.0f) || std::fabs(gx) > 640.0f || std::fabs(gy) > 360.0f) return;  // parked
+    Target t{pane_name(pane), pane_name(ld32(pane + kPaneParent)), 0.5f + gx / 1280.0f, 0.5f - gy / 720.0f, w / 1280.0f, h / 720.0f, g_swaps};
+    // a chart square's view: its two boxes are always there; the balloon (W_MapBalloon_00) shows while
+    // it is small (B_Btn_00 its box) and fades out once it is magnified (B_BtnFullZoom_00 its box)
+    if (t.parent == "N_StandardPos_00") {
+        uint32_t s = ld32(pane + kPaneParent) + kPaneChildren, balloon = 0;
+        int k = 0;
+        for (uint32_t n = ld32(s); n && n != s && k < 32; n = ld32(n), k++)
+            if (name_is(n, "W_MapBalloon_00")) balloon = n;
+        if (balloon) {
+            bool small = ld8(balloon + kPaneAlpha) == 255;
+            if (t.name == (small ? "B_BtnFullZoom_00" : "B_Btn_00")) return;
+        }
+    }
+    // WWHD_HUD_LOG: an item slot's panes (name, visible bit, own and global alpha, vtable), each
+    // different look once: what tells an empty slot from one with an item
+    static const bool log_slots = getenv("WWHD_HUD_LOG") != nullptr;
+    // WWHD_HUD_LOG: a chart square's view (N_StandardPos_00): its panes and ancestors (visible, alpha,
+    // scale, size), to tell the small view from the one magnified further
+    if (log_slots && t.parent == "N_StandardPos_00") {
+        std::string sig;
+        char b[128];
+        uint32_t sp = ld32(pane + kPaneParent), s = sp + kPaneChildren;
+        int k = 0;
+        for (uint32_t n = ld32(s); n && n != s && k < 24; n = ld32(n), k++) {
+            snprintf(b, sizeof b, " %s[v%d a%d g%d s%.2f,%.2f z%.0f,%.0f]", pane_name(n).c_str(), ld8(n + kPaneFlags) & 1, ld8(n + kPaneAlpha), ld8(n + kPaneAlpha + 1),
+                     (float)ldf32(n + kPaneScale), (float)ldf32(n + kPaneScale + 4), (float)ldf32(n + kPaneSize), (float)ldf32(n + kPaneSize + 4));
+            sig += b;
+        }
+        sig += " |";
+        for (uint32_t a = sp; a; a = ld32(a + kPaneParent)) {
+            snprintf(b, sizeof b, " %s[v%d a%d g%d s%.2f,%.2f]", pane_name(a).c_str(), ld8(a + kPaneFlags) & 1, ld8(a + kPaneAlpha), ld8(a + kPaneAlpha + 1),
+                     (float)ldf32(a + kPaneScale), (float)ldf32(a + kPaneScale + 4));
+            sig += b;
+        }
+        static std::mutex mu;
+        static std::string last;
+        std::lock_guard<std::mutex> lk(mu);
+        if (sig != last) LOG("[drc-chartview] %s:%s", t.name.c_str(), (last = sig).c_str());
+    }
+    if (log_slots && t.parent.rfind("L_BtnItemIcon", 0) == 0) {
+        std::string sig;
+        auto walk = [&](auto&& self, uint32_t p, int depth) -> void {
+            uint32_t s = p + kPaneChildren;
+            int k = 0;
+            for (uint32_t n = ld32(s); n && n != s && k < 24; n = ld32(n), k++) {
+                char b[96];
+                snprintf(b, sizeof b, " %s[v%d a%d g%d %08X]", pane_name(n).c_str(), ld8(n + kPaneFlags) & 1, ld8(n + kPaneAlpha), ld8(n + kPaneAlpha + 1), ld32(n + 8));
+                sig += b;
+                if (depth < 3) { sig += "("; self(self, n, depth + 1); sig += ")"; }
+            }
+        };
+        walk(walk, ld32(pane + kPaneParent), 0);
+        static std::mutex mu;
+        static std::set<std::string> seen;
+        std::lock_guard<std::mutex> lk(mu);
+        if (seen.insert(sig).second) LOG("[drc-slot] %s:%s", t.parent.c_str(), sig.c_str());
+    }
+    std::lock_guard<std::mutex> lk(g_target_mu);
+    if (g_targets.size() > 512) g_targets.clear();
+    g_targets[pane] = std::move(t);
+}
+}  // namespace
+
+// the GamePad item page's slots (L_BtnItemIcon_00..18) -> inventory slots (dSv_player_item_c, 21,
+// GameCube order); found with every item given (2026-10-19). The sail and the Wind Waker are
+// not on the page
+constexpr uint8_t kItemPageSlot[19] = {0, 18, 3, 6, 13, 14, 15, 7, 11, 5, 12, 19, 16, 17, 8, 4, 20, 9, 10};
+
+// an item page slot without an item: not a target for the controller
+bool empty_item_slot(const std::string& parent, const uint8_t inv[21]) {
+    if (parent.size() != 16 || parent.compare(0, 14, "L_BtnItemIcon_") || !isdigit((unsigned char)parent[14]) || !isdigit((unsigned char)parent[15])) return false;
+    int i = (parent[14] - '0') * 10 + (parent[15] - '0');
+    return i < 19 && inv[kItemPageSlot[i]] == 0xFF;
+}
+
+std::string drc_targets() {
+    std::string out;
+    uint8_t inv[21];
+    bool have_inv = mods::inventory(inv);
+    std::lock_guard<std::mutex> lk(g_target_mu);
+    char buf[160];
+    for (auto it = g_targets.begin(); it != g_targets.end();) {
+        const Target& t = it->second;
+        if (g_swaps - t.frame > 3) { it = g_targets.erase(it); continue; }
+        if (have_inv && empty_item_slot(t.parent, inv)) { ++it; continue; }
+        snprintf(buf, sizeof buf, "%s %s %.4f %.4f %.4f %.4f;", t.name.c_str(), t.parent.empty() ? "-" : t.parent.c_str(), t.x, t.y, t.w, t.h);
+        out += buf;
+        ++it;
+    }
+    // WWHD_HUD_LOG: each new set of targets once
+    static const bool log = getenv("WWHD_HUD_LOG") != nullptr;
+    if (log && !out.empty()) {
+        static std::set<std::string> seen;
+        std::string key;
+        for (auto& e : g_targets) key += e.second.parent + "/" + e.second.name + " ";
+        if (seen.insert(key).second) {
+            LOG("[drc-targets] %s", out.c_str());
+            if (have_inv) {
+                char b[80];
+                for (int i = 0; i < 21; i++) snprintf(b + i * 3, 4, "%02X ", inv[i]);
+                LOG("[drc-inventory] %s", b);
+            }
+        }
+    }
+    return out;
+}
+
+bool drc_game_cursor() { uint64_t f = g_cursor_frame.load(std::memory_order_relaxed); return f && g_swaps - f < 4; }
+}  // namespace aspect
+
 // Pane::Draw(this, DrawInfo&): the render thread reports where each layout root is drawn. The
 // game thread can't tell: TV and GamePad layouts share DrawInfos and are recorded on threads that
 // don't bind the targets.
@@ -550,19 +686,18 @@ extern "C" void hook_02877100(Cpu* c) {
     if (hud_hidden(pane)) return skipped("hidden");  // a HUD element the player hid (hud.h): neither it nor its children
     if (hud_fade_gone(kFadeHearts) && name_is(pane, "N_Default_00")) return skipped("hearts");  // hearts faded out completely
     if (hud_fade_gone(kFadeRupees) && name_is(pane, "L_Rupy_00")) return skipped("rupees");     // rupees too
+    if (ld32(pane + kPaneParent)) note_drc_pane(pane);
     // a layout root drawn to the TV: the pause menu's? (hud.h; the GamePad shows the same item layout
     // all the time)
     if (!ld32(pane + kPaneParent) && root_on_tv(pane)) hud_root_drawn(pane);
     uint32_t parent = ld32(pane + kPaneParent);
+    // where each root is drawn (TV or GamePad): its shape below, and the GamePad's touch targets (note_drc_pane),
+    // also with both pictures in their original shape
+    if (!parent) gx2::emit(gx2::OP_LAYOUT_ROOT, {pane});
     // a GamePad picture of another shape: where each root is drawn decides how (also with a 16:9 TV)
-    if (!aspect::drc_original()) {
-        if (!parent) gx2::emit(gx2::OP_LAYOUT_ROOT, {pane});
-        if (drc_draw(c, pane)) return;
-    }
+    if (!aspect::drc_original() && drc_draw(c, pane)) return;
     if (original()) { f_02877100_orig(c); return; }
-    if (!parent) {
-        if (aspect::drc_original()) gx2::emit(gx2::OP_LAYOUT_ROOT, {pane});  // (else above)
-    } else {
+    if (parent) {
         // the wider (taller) picture shows layout space the game uses to park panes out of sight:
         // a pane whose centre, without our offsets, is off the 16:9 screen stays hidden
         uint32_t child = pane, root = parent;

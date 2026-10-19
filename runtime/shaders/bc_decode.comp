@@ -1,0 +1,94 @@
+#version 450
+layout(local_size_x = 64) in;
+layout(std430, binding = 0) readonly buffer Src { uint src[]; };
+layout(std430, binding = 1) writeonly buffer Dst { uint dst[]; };
+layout(push_constant) uniform PC { uint mode, bw, bh, blocks; } pc;
+
+uint ex5(uint v) { return (v << 3) | (v >> 2); }
+uint ex6(uint v) { return (v << 2) | (v >> 4); }
+uint ex4(uint v) { return (v << 4) | v; }
+int tdiv(int n, int d) { return n < 0 ? -((-n) / d) : n / d; }  // C division (truncates)
+
+// BC4 block in words lo/hi -> 16 bytes (signed values as two's complement bytes)
+void bc4(uint lo, uint hi, bool sgn, out uint v[16]) {
+    int a0 = int(lo & 0xFFu), a1 = int((lo >> 8) & 0xFFu);
+    if (sgn) {
+        a0 = (a0 << 24) >> 24; a1 = (a1 << 24) >> 24;
+        if (a0 == -128) a0 = -127;
+        if (a1 == -128) a1 = -127;
+    }
+    int p[8];
+    p[0] = a0; p[1] = a1;
+    if (a0 > a1) {
+        for (int i = 1; i < 7; i++) p[i + 1] = tdiv((7 - i) * a0 + i * a1 + 3, 7);
+    } else {
+        for (int i = 1; i < 5; i++) p[i + 1] = tdiv((5 - i) * a0 + i * a1 + 2, 5);
+        p[6] = sgn ? -127 : 0;
+        p[7] = sgn ? 127 : 255;
+    }
+    uint il = (lo >> 16) | (hi << 16), ih = hi >> 16;  // 48 index bits
+    for (int i = 0; i < 16; i++) {
+        int b = 3 * i;
+        uint x = b < 32 ? ((il >> b) | (b > 0 ? ih << (32 - b) : 0u)) : (ih >> (b - 32));
+        v[i] = uint(p[x & 7u]) & 0xFFu;
+    }
+}
+
+// BC1 color block -> 16 RGBA8 words
+void bc1(uint w0, uint w1, bool punch, out uint px[16]) {
+    uint c0 = w0 & 0xFFFFu, c1 = w0 >> 16;
+    uvec4 p[4];
+    p[0] = uvec4(ex5((c0 >> 11) & 31u), ex6((c0 >> 5) & 63u), ex5(c0 & 31u), 255u);
+    p[1] = uvec4(ex5((c1 >> 11) & 31u), ex6((c1 >> 5) & 63u), ex5(c1 & 31u), 255u);
+    if (c0 > c1 || !punch) {
+        p[2] = uvec4((2u * p[0].rgb + p[1].rgb + 1u) / 3u, 255u);
+        p[3] = uvec4((p[0].rgb + 2u * p[1].rgb + 1u) / 3u, 255u);
+    } else {
+        p[2] = uvec4((p[0].rgb + p[1].rgb) / 2u, 255u);
+        p[3] = uvec4(0u);
+    }
+    uint q[4];
+    for (int i = 0; i < 4; i++) q[i] = p[i].r | (p[i].g << 8) | (p[i].b << 16) | (p[i].a << 24);
+    for (int i = 0; i < 16; i++) px[i] = q[(w1 >> (2 * i)) & 3u];
+}
+
+void main() {
+    uint id = gl_GlobalInvocationID.x + gl_GlobalInvocationID.y * gl_NumWorkGroups.x * 64u;
+    if (id >= pc.blocks) return;
+    uint x = id % pc.bw, t = id / pc.bw, y = t % pc.bh, z = t / pc.bh;
+    uint wpb = pc.mode <= 2u ? 4u : (pc.mode <= 4u ? 1u : 2u);  // output words per block row
+    uint row0 = (z * pc.bh + y) * 4u, rowWords = pc.bw * wpb;
+    if (pc.mode <= 2u) {  // BC1, BC2, BC3 -> RGBA8
+        uint px[16];
+        if (pc.mode == 0u) {
+            bc1(src[id * 2u], src[id * 2u + 1u], true, px);
+        } else {
+            uint w0 = src[id * 4u], w1 = src[id * 4u + 1u];
+            bc1(src[id * 4u + 2u], src[id * 4u + 3u], false, px);
+            uint a[16];
+            if (pc.mode == 1u) {
+                for (int i = 0; i < 16; i++) a[i] = ex4(((i < 8 ? w0 : w1) >> (4 * (i & 7))) & 15u);
+            } else {
+                bc4(w0, w1, false, a);
+            }
+            for (int i = 0; i < 16; i++) px[i] = (px[i] & 0x00FFFFFFu) | (a[i] << 24);
+        }
+        for (uint r = 0u; r < 4u; r++)
+            for (uint c = 0u; c < 4u; c++) dst[(row0 + r) * rowWords + x * 4u + c] = px[r * 4u + c];
+    } else if (pc.mode <= 4u) {  // BC4 -> R8
+        uint v[16];
+        bc4(src[id * 2u], src[id * 2u + 1u], pc.mode == 4u, v);
+        for (uint r = 0u; r < 4u; r++)
+            dst[(row0 + r) * rowWords + x] = v[r * 4u] | (v[r * 4u + 1u] << 8) | (v[r * 4u + 2u] << 16) | (v[r * 4u + 3u] << 24);
+    } else {  // BC5 -> RG8
+        uint rr[16], gg[16];
+        bool sgn = pc.mode == 6u;
+        bc4(src[id * 4u], src[id * 4u + 1u], sgn, rr);
+        bc4(src[id * 4u + 2u], src[id * 4u + 3u], sgn, gg);
+        for (uint r = 0u; r < 4u; r++) {
+            uint i = r * 4u;
+            dst[(row0 + r) * rowWords + x * 2u] = rr[i] | (gg[i] << 8) | (rr[i + 1u] << 16) | (gg[i + 1u] << 24);
+            dst[(row0 + r) * rowWords + x * 2u + 1u] = rr[i + 2u] | (gg[i + 2u] << 8) | (rr[i + 3u] << 16) | (gg[i + 3u] << 24);
+        }
+    }
+}

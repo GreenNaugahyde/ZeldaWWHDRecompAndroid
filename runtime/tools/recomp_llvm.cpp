@@ -26,6 +26,7 @@ int main(int argc, char** argv) {
     opt.rpxPath = argv[1];
     opt.opsBitcode = slurp(argv[2]);
     for (const char* f : {"hooks.txt", "hooks_climb.txt", "hooks_mods.txt", "hooks_aspect.txt"}) opt.hooksText += slurp(std::string(argv[3]) + "/" + f) + "\n";
+    opt.hotText = slurp(std::string(argv[3]) + "/hot_functions.txt");
     opt.outDir = argv[4];
     opt.cpu = "generic";
     if (argc > 5) opt.perModule = strtoul(argv[5], nullptr, 10);

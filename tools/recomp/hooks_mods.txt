@@ -25,3 +25,4 @@
 @026D44A8 # updateSelection: copied input event, before reading its kind
 026D50C4  # SelectController_00 draw: hide the automatically answered title prompt
 026F8B54  # Parts::draw: hide only the title background during automatic choice/caption fade
+026D87D0  # Options > Controller: switch handler; locked to the GamePad (controller_selection.cpp)

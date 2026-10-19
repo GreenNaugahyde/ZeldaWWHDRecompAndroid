@@ -21,6 +21,7 @@ public final class SeaView extends View {
     private float progress = -1;  // 0..1: the boat's way across; < 0: it bobs in the middle
     private float boatX = -1;     // eased towards the progress position
     private final long t0 = SystemClock.uptimeMillis();
+    private long frameMs = 0;     // > 0: redraw at most every frameMs (0: every display frame)
 
     private final Paint fill = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint stroke = new Paint(Paint.ANTI_ALIAS_FLAG);
@@ -48,6 +49,11 @@ public final class SeaView extends View {
     /** 0..1 moves the boat across the screen; a negative value lets it bob in the middle. */
     public void setProgress(float p) { progress = p; }
 
+    /** Redraws at most every {@code ms} milliseconds (0: every display frame). Screens that wait for
+     *  CPU-heavy work (compiling the game code) use 66: on slow phones the animation at 60 fps took a
+     *  big core more than half busy (Helio G85), and the scene moves slowly enough for 15 fps. */
+    public void setFrameInterval(long ms) { frameMs = ms; }
+
     @Override
     protected void onSizeChanged(int w, int h, int ow, int oh) {
         float horizon = h * 0.58f;
@@ -74,7 +80,8 @@ public final class SeaView extends View {
         drawWind(c, w, horizon, t);
         drawIsland(c, w * 0.13f, horizon, Math.min(w, h) * 0.065f, t);
         drawSea(c, w, h, horizon, t);
-        postInvalidateOnAnimation();
+        if (frameMs > 0) postInvalidateDelayed(frameMs);
+        else postInvalidateOnAnimation();
     }
 
     // ---- sky

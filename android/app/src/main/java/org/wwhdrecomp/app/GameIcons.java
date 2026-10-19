@@ -21,7 +21,7 @@ import java.util.Map;
  */
 final class GameIcons {
     private static final String DIR = "game_icons";
-    private static final int VERSION = 2;  // bump to rebuild after a change of the list
+    private static final int VERSION = 3;  // bump to rebuild after a change of the list
     private static final String ITEMS = "BtnItemIcon_00", COLLECT = "BtnCollectIcon_00";
     private static final Map<String, Bitmap> cache = new HashMap<>();
     private static volatile boolean building;
@@ -93,6 +93,8 @@ final class GameIcons {
             {"PictographBox_00", "LStick_00^t"},           // L3
             {"PictographBox_00", "RStick_00^t"},           // R3
             {"BtnDungeonItemIcon_00", "MapItemIcon_00^l"}, // +: menu (map)
+            {"Cursor_00", "Crsor_00^t"},                   // the menus' cursor: its top left corner, frame 1
+            {"Cursor_00", "Crsor_01^t"},                   // ... frame 2
     };
 
     /** the game icon for an action code (dActStts), or null; sword / shield: the equipped ones */

@@ -16,12 +16,30 @@ Latte::E_GX2SURFFMT LatteTexture_ReconstructGX2Format(const Latte::LATTE_SQ_TEX_
 
 namespace gfx {
 
-static uint64_t fnv(const uint8_t* p, size_t n) {
-    uint64_t h = 1469598103934665603ull;
-    // sample the data sparsely for large surfaces; enough to notice CPU updates
-    size_t step = n > (1 << 16) ? 61 : 1;
-    for (size_t i = 0; i < n; i += step) h = (h ^ p[i]) * 1099511628211ull;
-    return h ^ n;
+// A surface's content, to notice CPU updates: every 8-byte word of small surfaces, one per cache line of
+// large ones (the lines a byte every 61 read before). Four independent lanes: one serial multiply per
+// byte made this ~3% of the render thread at Windfall on a Helio G85. Only compared with its own earlier
+// values (Surface::contentHash).
+static uint64_t content_hash(const uint8_t* p, size_t n) {
+    const size_t step = n > (1 << 16) ? 64 : 8;
+    uint64_t a = 0x243F6A8885A308D3ull, b = 0x13198A2E03707344ull, c = 0xA4093822299F31D0ull, d = 0x082EFA98EC4E6C89ull;
+    auto lane = [](uint64_t& h, const uint8_t* q) {
+        uint64_t w;
+        memcpy(&w, q, 8);
+        h = (h ^ w) * 0x9E3779B97F4A7C15ull;
+        h ^= h >> 29;
+    };
+    size_t i = 0;
+    for (; i + 3 * step + 8 <= n; i += 4 * step) {
+        lane(a, p + i);
+        lane(b, p + i + step);
+        lane(c, p + i + 2 * step);
+        lane(d, p + i + 3 * step);
+    }
+    for (; i + 8 <= n; i += step) lane(a, p + i);
+    if (step == 8)
+        for (; i < n; i++) a = (a ^ p[i]) * 0x100000001B3ull;
+    return (a ^ (b << 17 | b >> 47)) * 0xFF51AFD7ED558CCDull ^ (c ^ (d << 41 | d >> 23)) * 0xC4CEB9FE1A85EC53ull ^ n;
 }
 
 static uint64_t g_write_seq = 0;
@@ -77,6 +95,9 @@ static float g_res = [] {
     return v;
 }();
 static std::atomic<float> g_res_requested{0};
+static float g_res_setting = g_res;  // the setting; dynamic resolution may go below it
+// for the performance overlay (read from the app's thread)
+static std::atomic<float> g_res_shown{g_res}, g_tv_kx_shown{1}, g_tv_ky_shown{1};
 
 float resolution_scale() { return g_res; }
 
@@ -84,9 +105,22 @@ void set_resolution_scale(float v) { g_res_requested = clamp_scale(v); }
 
 void latch_resolution_scale() {
     float v = g_res_requested.exchange(0);
-    if (v <= 0 || v == g_res) return;
+    if (v > 0 && v != g_res_setting) {
+        g_res_setting = v;
+        LOG("[gfx] resolution scale setting %.2fx (3D view %.0fx%.0f)", v, 1280 * v, 720 * v);
+    }
+    v = dynres_scale(g_res_setting);
+    if (v == g_res) return;
     g_res = v;
-    LOG("[gfx] resolution scale %.2fx (3D view %.0fx%.0f)", v, 1280 * v, 720 * v);
+    g_res_shown = v;
+    if (!dynamic_resolution_on()) LOG("[gfx] resolution scale %.2fx (3D view %.0fx%.0f)", v, 1280 * v, 720 * v);
+}
+
+void resolution_shown(float out[3]) {
+    float s = g_res_shown;
+    out[0] = s;
+    out[1] = (float)std::max(1L, lroundf(1280 * s * g_tv_kx_shown));
+    out[2] = (float)std::max(1L, lroundf(720 * s * g_tv_ky_shown));
 }
 
 static bool screen_shaped(const Surface* s) {
@@ -115,6 +149,8 @@ void set_frame_aspect(float a, float drc) {
     if (kx != g_aspect_kx || ky != g_aspect_ky) LOG("[gfx] aspect %.4f: TV targets x%.4f wide, x%.4f tall", a, kx, ky);
     g_aspect_kx = kx;
     g_aspect_ky = ky;
+    g_tv_kx_shown = kx;
+    g_tv_ky_shown = ky;
     aspect_factors(drc, kx, ky);
     if (kx != g_drc_kx || ky != g_drc_ky) LOG("[gfx] GamePad aspect %.4f: GamePad targets x%.4f wide, x%.4f tall", drc, kx, ky);
     g_drc_kx = kx;
@@ -163,12 +199,28 @@ Surface* rescaled(Surface* s) {
         s->ay = oldAy;
         return s;
     }
-    // keep the contents: a filtered copy where the format allows, else a nearest one; none if the
-    // GPU can't blit the format (depth on some GPUs: the game clears depth every frame anyway)
+    // keep the contents: a clear still waiting for the next pass (lazy clears) moves to the new image;
+    // else a filtered copy where the format allows, else a nearest one; formats the GPU can't
+    // blit (depth + stencil on Adreno) start cleared (depth 1, stencil 0, colour 0). Before, the new
+    // image started with whatever its memory held and the game's clear, waiting on the old image, was
+    // dropped: a frame of block noise over the 3D picture at each change (dynamic resolution)
     VkFormatProperties fp;
     vkGetPhysicalDeviceFormatProperties(R.pd, s->img.format, &fp);
     VkFormatFeatureFlags f = fp.optimalTilingFeatures;
-    if ((f & VK_FORMAT_FEATURE_BLIT_SRC_BIT) && (f & VK_FORMAT_FEATURE_BLIT_DST_BIT)) {
+    const bool blit = (f & VK_FORMAT_FEATURE_BLIT_SRC_BIT) && (f & VK_FORMAT_FEATURE_BLIT_DST_BIT);
+    const Image::PendingClear& pc = old.pendingClear;
+    if (!blit || (pc.on && pc.layer == 0 && pc.aspects == s->img.aspect)) {
+        Image::PendingClear& c = s->img.pendingClear;
+        c.on = true;
+        c.layer = 0;
+        c.aspects = s->img.aspect;
+        if (s->img.aspect & VK_IMAGE_ASPECT_COLOR_BIT) {
+            if (pc.on && pc.layer == 0) c.value = pc.value;
+        } else {
+            c.value.depthStencil.depth = pc.on && pc.layer == 0 && (pc.aspects & VK_IMAGE_ASPECT_DEPTH_BIT) ? pc.value.depthStencil.depth : 1.0f;
+            c.value.depthStencil.stencil = pc.on && pc.layer == 0 && (pc.aspects & VK_IMAGE_ASPECT_STENCIL_BIT) ? pc.value.depthStencil.stencil : 0;
+        }
+    } else {
         bool linear = !s->fmt.depth && (f & VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT);
         prepare(old, Use::COPY_SRC);
         prepare(s->img, Use::COPY_DST);
@@ -198,7 +250,8 @@ Surface* rescaled(Surface* s) {
     }
     static int logged = 0;
     if (getenv("WWHD_LOG_RESCALE") || logged++ < 3)
-        LOG("[gfx] rescaled %08X %ux%u to %ux%u", s->addr, s->width, s->height, s->img.width, s->img.height);
+        LOG("[gfx] rescaled %08X %ux%u to %ux%u (%s)", s->addr, s->width, s->height, s->img.width, s->img.height,
+            s->img.pendingClear.on ? "cleared" : "copied");
     return s;
 }
 
@@ -458,17 +511,29 @@ static Surface* game_level(const SurfaceDesc& d, uint32_t level) {
     return best;
 }
 
-static Surface* with_mip_chain(Surface* s, const SurfaceDesc& d) {
+static Surface* with_mip_chain(Surface* s, const SurfaceDesc& d, uint32_t maxLevels) {
     static const bool off = getenv("WWHD_NO_RT_MIPS") != nullptr;
     uint32_t mips = d.mips;
+    // In place (default): the picture's own image gets the levels the first time it is sampled with mips
+    // (its level 0 copied over once), and the chain is built in it: no copy of level 0 into a separate
+    // chain image whenever the picture changed (5 copies a frame at Windfall, ~1.1 ms on a Mali-G52).
+    // WWHD_RT_MIPS_SEPARATE=1: a separate chain image, as before.
+    static const bool separate = getenv("WWHD_RT_MIPS_SEPARATE") != nullptr;
     if (off || mips <= 1 || s->fmt.depth || s->fmt.compressed || s->img.type != VK_IMAGE_TYPE_2D || s->img.layers != 1 ||
-        s->img.mips != 1 || !s->img.image)
+        (s->img.mips != 1 && (separate || !s->mipsInPlace)) || !s->img.image)
         return s;
     const uint32_t w = s->img.width, h = s->img.height;
     uint32_t full = 1;
     while ((std::max(w, h) >> full) > 0) full++;
     mips = std::min(mips, full);
     if (mips <= 1) return s;
+    // Only the levels the sampler reaches are built (its MAX_LOD, plus one: linear mip filtering at a
+    // whole LOD may still fetch the next level at weight 0). Each level is a blit and a barrier, which
+    // on Mali drains the GPU: the full chains cost ~3.5 ms a frame at Windfall on a Mali-G52 (0.75x).
+    // A sampler without mips reads the picture itself. The image keeps all levels (other samplers).
+    static const bool allLevels = getenv("WWHD_RT_MIPS_ALL") != nullptr;  // debug: every level, as before
+    const uint32_t need = allLevels ? mips : std::min(mips, std::max(maxLevels, 1u));
+    if (need <= 1) return s;
     static std::unordered_map<VkFormat, bool> blittable;
     auto bl = blittable.find(s->img.format);
     if (bl == blittable.end()) {
@@ -479,20 +544,46 @@ static Surface* with_mip_chain(Surface* s, const SurfaceDesc& d) {
         bl = blittable.emplace(s->img.format, (fp.optimalTilingFeatures & need) == need).first;
     }
     if (!bl->second) return s;
-    // the game's own levels, and a key of everything the chain is built from
+    // the game's own levels, and per level a key of what it is built from: the picture (level 0), the
+    // game's own level, or the level below. The game renders its own downsampling chain a level at a
+    // time and samples after each: only the levels from the first changed one on are built again
+    // (rebuilding the whole chain each time cost copies, blits and barriers that drain Mali GPUs).
     Surface* levels[16] = {};
-    uint64_t key = s->writeSeq * 0x9E3779B97F4A7C15ull;
+    uint64_t keys[16] = {};
+    keys[0] = s->writeSeq * 0x9E3779B97F4A7C15ull + 1;
     for (uint32_t l = 1; l < mips && l < 16; l++) {
         levels[l] = game_level(d, l);
-        key = (key ^ (levels[l] ? levels[l]->writeSeq + l : l)) * 0xFF51AFD7ED558CCDull;
+        keys[l] = levels[l] ? (levels[l]->writeSeq + 1) * 0xC2B2AE3D27D4EB4Full ^ l : (keys[l - 1] ^ l) * 0xFF51AFD7ED558CCDull;
     }
-    Surface* c = s->mipChain;
-    if (c && (c->img.mips != mips || c->img.width != w || c->img.height != h || c->img.format != s->img.format)) {
+    Surface* c = separate ? s->mipChain : s;
+    if (!separate) {
+        if (s->img.mips != mips) {
+            if (s->img.mips != 1) return s;  // (another level count than it was given: as without a chain)
+            Image ni;
+            if (!create_image(ni, VK_IMAGE_TYPE_2D, VK_IMAGE_VIEW_TYPE_2D, s->img.format, w, h, 1, 1, mips,
+                              VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT |
+                                  VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
+                              false, false, false))
+                return s;
+            prepare(s->img, Use::COPY_SRC);
+            prepare(ni, Use::COPY_DST);
+            VkImageCopy cp{};
+            cp.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+            cp.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+            cp.extent = {w, h, 1};
+            vkCmdCopyImage(command_buffer(), s->img.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, ni.image,
+                           VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &cp);
+            retire_image(s->img);  // (views, framebuffers and descriptor sets of the old image are dropped)
+            s->img = std::move(ni);
+            s->mipsInPlace = true;
+            s->mipChainLevels = 0;
+        }
+    } else if (c && (c->img.mips != mips || c->img.width != w || c->img.height != h || c->img.format != s->img.format)) {
         retire_image(c->img);
         delete c;
         c = s->mipChain = nullptr;
     }
-    if (!c) {
+    if (separate && !c) {
         c = new Surface();
         c->width = s->width;
         c->height = s->height;
@@ -512,20 +603,31 @@ static Surface* with_mip_chain(Surface* s, const SurfaceDesc& d) {
             return s;
         }
         s->mipChain = c;
-        s->mipChainSeq = ~0ull;
+        s->mipChainLevels = 0;
     }
-    if (s->mipChainSeq == key) return c;
-    s->mipChainSeq = key;
-    prepare(s->img, Use::COPY_SRC);
-    for (uint32_t l = 1; l < mips && l < 16; l++)
+    static const bool whole = getenv("WWHD_RT_MIPS_WHOLE") != nullptr;  // debug: every chain from level 0, as before
+    uint32_t from = 0;  // the first level to build
+    while (from < need && from < s->mipChainLevels && s->mipChainKey[from] == keys[from]) from++;
+    if (from >= need) return c;
+    if (whole) from = 0;
+    if (!separate && from == 0) {  // level 0 is the picture itself
+        s->mipChainKey[0] = keys[0];
+        from = 1;
+    }
+    for (uint32_t l = from; l < need; l++) s->mipChainKey[l] = keys[l];
+    s->mipChainLevels = need;
+    if (from == 0) prepare(s->img, Use::COPY_SRC);
+    for (uint32_t l = std::max(from, 1u); l < need; l++)
         if (levels[l]) prepare(levels[l]->img, Use::COPY_SRC);
-    prepare(c->img, Use::COPY_DST);  // all levels in TRANSFER_DST
+    prepare(c->img, Use::COPY_DST);  // all levels in TRANSFER_DST (the kept ones keep their contents)
     VkCommandBuffer cmd = command_buffer();
-    VkImageCopy cp{};
-    cp.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
-    cp.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
-    cp.extent = {w, h, 1};
-    vkCmdCopyImage(cmd, s->img.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, c->img.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &cp);
+    if (from == 0) {
+        VkImageCopy cp{};
+        cp.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+        cp.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+        cp.extent = {w, h, 1};
+        vkCmdCopyImage(cmd, s->img.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, c->img.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &cp);
+    }
     auto to_src = [&](uint32_t level) {  // a finished level becomes the next blit's source
         VkImageMemoryBarrier b{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
         b.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
@@ -537,8 +639,19 @@ static Surface* with_mip_chain(Surface* s, const SurfaceDesc& d) {
         b.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, level, 1, 0, 1};
         vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &b);
     };
+    if (from >= 2) {  // the kept levels below the one the first blit reads: back to transfer sources
+        VkImageMemoryBarrier b{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+        b.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        b.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+        b.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+        b.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+        b.srcQueueFamilyIndex = b.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        b.image = c->img.image;
+        b.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, from - 1, 0, 1};
+        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &b);
+    }
     uint32_t fromGame = 0;
-    for (uint32_t l = 1; l < mips; l++) {
+    for (uint32_t l = std::max(from, 1u); l < need; l++) {
         to_src(l - 1);
         VkImageBlit b{};
         b.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, l, 0, 1};
@@ -557,11 +670,24 @@ static Surface* with_mip_chain(Surface* s, const SurfaceDesc& d) {
                            &b, VK_FILTER_LINEAR);
         }
     }
-    to_src(mips - 1);
+    to_src(need - 1);
+    if (need < mips) {  // the levels not built: the same layout as the rest (one layout per image)
+        VkImageMemoryBarrier b{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+        b.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        b.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+        b.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+        b.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+        b.srcQueueFamilyIndex = b.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        b.image = c->img.image;
+        b.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, need, mips - need, 0, 1};
+        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &b);
+    }
     c->img.layout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;  // every level is now a transfer source
     c->img.use = Use::COPY_SRC;
     static int logged = 0;
-    if (logged++ < 8) LOG("[gfx] mip chain for %08X %ux%u: %u levels, %u of them the game's own", s->addr, w, h, mips, fromGame);
+    if (logged++ < 8)
+        LOG("[gfx] mip chain for %08X %ux%u: levels %u-%u of %u built, %u of them the game's own", s->addr, w, h, from, need - 1, mips,
+            fromGame);
     return c;
 }
 
@@ -627,7 +753,8 @@ struct TexLookup {
 };
 static TexLookup g_tex_lookups[512];
 
-Surface* sampled_texture(const uint32_t* w, bool isDepthSampler) {
+static const bool g_shadow_color_lookup = getenv("WWHD_SHADOW_COLOR_LOOKUP") != nullptr;  // debug: as before (sampled_texture)
+Surface* sampled_texture(const uint32_t* w, bool isDepthSampler, uint32_t maxLevels) {
     uint64_t key = 0x9E3779B97F4A7C15ull;
     for (int i = 0; i < 7; i++) key = (key ^ w[i]) * 0xFF51AFD7ED558CCDull;
     TexLookup& tl = g_tex_lookups[(key ^ (key >> 29)) & 511];
@@ -635,7 +762,7 @@ Surface* sampled_texture(const uint32_t* w, bool isDepthSampler) {
         memcmp(tl.w, w, sizeof tl.w) == 0) {
         Surface* s = check_texture(tl.s);
         if (s && s->gpuWritten && tl.d.dim == (uint32_t)Latte::E_DIM::DIM_3D) return with_volume(s, tl.d);
-        if (s && s->gpuWritten && tl.d.mips > 1 && !isDepthSampler) return with_mip_chain(s, tl.d);
+        if (s && s->gpuWritten && tl.d.mips > 1 && !isDepthSampler) return with_mip_chain(s, tl.d, maxLevels);
         return s;
     }
     Latte::LATTE_SQ_TEX_RESOURCE_WORD0_N w0;
@@ -683,7 +810,7 @@ Surface* sampled_texture(const uint32_t* w, bool isDepthSampler) {
     // A depth-compare (shadow) sampler looks for the depth surfaces at this address, as the original
     // project's renderer does: a GPU-written colour image aliasing the shadow map's memory must not
     // win over the cascade (the shadows alternated between two states).
-    static const bool colorLookup = getenv("WWHD_SHADOW_COLOR_LOOKUP") != nullptr;  // debug: as before
+    const bool colorLookup = g_shadow_color_lookup;
     d.isDepth = isDepthSampler && !colorLookup;
     Surface* s = find_or_create_surface(d, false);
     s = check_texture(s);
@@ -695,7 +822,7 @@ Surface* sampled_texture(const uint32_t* w, bool isDepthSampler) {
     tl.s = s;
     tl.used = true;
     if (s && s->gpuWritten && d.dim == (uint32_t)Latte::E_DIM::DIM_3D) return with_volume(s, d);
-    if (s && s->gpuWritten && d.mips > 1 && !d.isDepth) return with_mip_chain(s, d);
+    if (s && s->gpuWritten && d.mips > 1 && !d.isDepth) return with_mip_chain(s, d, maxLevels);
     return s;
 }
 
@@ -742,101 +869,10 @@ static Surface* check_texture(Surface* s) {
 // them to RGBA8 / R8 / RG8 instead of the CPU. Bit-exact with convert_row() in vk_formats.cpp.
 // One invocation per 4x4 block; input = the detiled blocks, output = rows of texels as the copy
 // to the image expects them. WWHD_BC_DECODE=cpu keeps the CPU decoder (for comparisons).
-static const char* kBcDecodeGlsl = R"(#version 450
-layout(local_size_x = 64) in;
-layout(std430, binding = 0) readonly buffer Src { uint src[]; };
-layout(std430, binding = 1) writeonly buffer Dst { uint dst[]; };
-layout(push_constant) uniform PC { uint mode, bw, bh, blocks; } pc;
-
-uint ex5(uint v) { return (v << 3) | (v >> 2); }
-uint ex6(uint v) { return (v << 2) | (v >> 4); }
-uint ex4(uint v) { return (v << 4) | v; }
-int tdiv(int n, int d) { return n < 0 ? -((-n) / d) : n / d; }  // C division (truncates)
-
-// BC4 block in words lo/hi -> 16 bytes (signed values as two's complement bytes)
-void bc4(uint lo, uint hi, bool sgn, out uint v[16]) {
-    int a0 = int(lo & 0xFFu), a1 = int((lo >> 8) & 0xFFu);
-    if (sgn) {
-        a0 = (a0 << 24) >> 24; a1 = (a1 << 24) >> 24;
-        if (a0 == -128) a0 = -127;
-        if (a1 == -128) a1 = -127;
-    }
-    int p[8];
-    p[0] = a0; p[1] = a1;
-    if (a0 > a1) {
-        for (int i = 1; i < 7; i++) p[i + 1] = tdiv((7 - i) * a0 + i * a1 + 3, 7);
-    } else {
-        for (int i = 1; i < 5; i++) p[i + 1] = tdiv((5 - i) * a0 + i * a1 + 2, 5);
-        p[6] = sgn ? -127 : 0;
-        p[7] = sgn ? 127 : 255;
-    }
-    uint il = (lo >> 16) | (hi << 16), ih = hi >> 16;  // 48 index bits
-    for (int i = 0; i < 16; i++) {
-        int b = 3 * i;
-        uint x = b < 32 ? ((il >> b) | (b > 0 ? ih << (32 - b) : 0u)) : (ih >> (b - 32));
-        v[i] = uint(p[x & 7u]) & 0xFFu;
-    }
-}
-
-// BC1 color block -> 16 RGBA8 words
-void bc1(uint w0, uint w1, bool punch, out uint px[16]) {
-    uint c0 = w0 & 0xFFFFu, c1 = w0 >> 16;
-    uvec4 p[4];
-    p[0] = uvec4(ex5((c0 >> 11) & 31u), ex6((c0 >> 5) & 63u), ex5(c0 & 31u), 255u);
-    p[1] = uvec4(ex5((c1 >> 11) & 31u), ex6((c1 >> 5) & 63u), ex5(c1 & 31u), 255u);
-    if (c0 > c1 || !punch) {
-        p[2] = uvec4((2u * p[0].rgb + p[1].rgb + 1u) / 3u, 255u);
-        p[3] = uvec4((p[0].rgb + 2u * p[1].rgb + 1u) / 3u, 255u);
-    } else {
-        p[2] = uvec4((p[0].rgb + p[1].rgb) / 2u, 255u);
-        p[3] = uvec4(0u);
-    }
-    uint q[4];
-    for (int i = 0; i < 4; i++) q[i] = p[i].r | (p[i].g << 8) | (p[i].b << 16) | (p[i].a << 24);
-    for (int i = 0; i < 16; i++) px[i] = q[(w1 >> (2 * i)) & 3u];
-}
-
-void main() {
-    uint id = gl_GlobalInvocationID.x + gl_GlobalInvocationID.y * gl_NumWorkGroups.x * 64u;
-    if (id >= pc.blocks) return;
-    uint x = id % pc.bw, t = id / pc.bw, y = t % pc.bh, z = t / pc.bh;
-    uint wpb = pc.mode <= 2u ? 4u : (pc.mode <= 4u ? 1u : 2u);  // output words per block row
-    uint row0 = (z * pc.bh + y) * 4u, rowWords = pc.bw * wpb;
-    if (pc.mode <= 2u) {  // BC1, BC2, BC3 -> RGBA8
-        uint px[16];
-        if (pc.mode == 0u) {
-            bc1(src[id * 2u], src[id * 2u + 1u], true, px);
-        } else {
-            uint w0 = src[id * 4u], w1 = src[id * 4u + 1u];
-            bc1(src[id * 4u + 2u], src[id * 4u + 3u], false, px);
-            uint a[16];
-            if (pc.mode == 1u) {
-                for (int i = 0; i < 16; i++) a[i] = ex4(((i < 8 ? w0 : w1) >> (4 * (i & 7))) & 15u);
-            } else {
-                bc4(w0, w1, false, a);
-            }
-            for (int i = 0; i < 16; i++) px[i] = (px[i] & 0x00FFFFFFu) | (a[i] << 24);
-        }
-        for (uint r = 0u; r < 4u; r++)
-            for (uint c = 0u; c < 4u; c++) dst[(row0 + r) * rowWords + x * 4u + c] = px[r * 4u + c];
-    } else if (pc.mode <= 4u) {  // BC4 -> R8
-        uint v[16];
-        bc4(src[id * 2u], src[id * 2u + 1u], pc.mode == 4u, v);
-        for (uint r = 0u; r < 4u; r++)
-            dst[(row0 + r) * rowWords + x] = v[r * 4u] | (v[r * 4u + 1u] << 8) | (v[r * 4u + 2u] << 16) | (v[r * 4u + 3u] << 24);
-    } else {  // BC5 -> RG8
-        uint rr[16], gg[16];
-        bool sgn = pc.mode == 6u;
-        bc4(src[id * 4u], src[id * 4u + 1u], sgn, rr);
-        bc4(src[id * 4u + 2u], src[id * 4u + 3u], sgn, gg);
-        for (uint r = 0u; r < 4u; r++) {
-            uint i = r * 4u;
-            dst[(row0 + r) * rowWords + x * 2u] = rr[i] | (gg[i] << 8) | (rr[i + 1u] << 16) | (gg[i + 1u] << 24);
-            dst[(row0 + r) * rowWords + x * 2u + 1u] = rr[i + 2u] | (gg[i + 2u] << 8) | (rr[i + 3u] << 16) | (gg[i + 3u] << 24);
-        }
-    }
-}
-)";
+// runtime/shaders/bc_decode.comp, compiled to SPIR-V at build time
+static const uint32_t kBcDecodeSpv[] = {
+#include "bc_decode.comp.inc"
+};
 
 namespace {
 struct BcDecoder {
@@ -856,15 +892,9 @@ static VkPipeline bc_decoder() {
         LOG("[vk] BC textures: decoded on the CPU (WWHD_BC_DECODE=cpu)");
         return VK_NULL_HANDLE;
     }
-    std::vector<uint32_t> spirv;
-    std::string log;
-    if (!compile_glsl_compute(kBcDecodeGlsl, spirv, log)) {
-        LOG("[vk] BC decode shader failed, decoding on the CPU: %s", log.c_str());
-        return VK_NULL_HANDLE;
-    }
     VkShaderModuleCreateInfo mi{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
-    mi.codeSize = spirv.size() * 4;
-    mi.pCode = spirv.data();
+    mi.codeSize = sizeof kBcDecodeSpv;
+    mi.pCode = kBcDecodeSpv;
     VkShaderModule mod;
     VK_CHECK(vkCreateShaderModule(R.device, &mi, nullptr, &mod));
     VkDescriptorSetLayoutBinding b[2]{};
@@ -1065,7 +1095,7 @@ void upload_surface(Surface* s) {
         s->dataSize = (uint32_t)info.surfSize;
         surfaces_changed();  // invalidate's index (vk_device.cpp)
     }
-    uint64_t hash = fnv(mem::ptr(s->addr), (size_t)info.surfSize);
+    uint64_t hash = content_hash(mem::ptr(s->addr), (size_t)info.surfSize);
     if (hash == s->contentHash) return;
     s->contentHash = hash;
     s->writeSeq = next_write_seq();  // fresh CPU data is now the newest version of this memory
@@ -1224,6 +1254,7 @@ void write_back_linear() {
         for (uint32_t y = 0; y < s->height; y++)
             memcpy(mem::ptr(s->addr + y * pitch * bytes), texels.data() + (size_t)y * s->width * bytes, (size_t)s->width * bytes);
         guest_memory_written(s->addr);
+        memw::mark(s->addr, s->height * pitch * bytes);  // (kept vertex copies, vk_draw.cpp)
         static int logged = 0;
         if (logged++ < 8) LOG("[gfx] linear target %08X %ux%u (format %X) written to guest memory", s->addr, s->width, s->height, s->format);
     }
@@ -1240,6 +1271,7 @@ void write_back_linear() {
                 memcpy(mem::ptr(lc.base + o), texels.data() + ((size_t)y * lc.w + x) * bytes, bytes);
             }
         guest_memory_written(lc.base);
+        memw::mark(lc.base, (uint32_t)std::min<uint64_t>(lc.info.surfSize, 0xFFFFFFFFu));
         static int logged = 0;
         if (logged++ < 8) LOG("[gfx] linear copy %08X %ux%u (format %X) written to guest memory", lc.base, lc.w, lc.h, lc.s->format);
     }
@@ -1379,6 +1411,7 @@ void copy_surface_impl(uint32_t srcAddr, uint32_t srcMip, uint32_t srcSlice, uin
             uint32_t dofs = element_offset(di, dtm, x, y, dstSlice, bpp, dswz, &dci);
             memcpy(mem::ptr(dbase + dofs), mem::ptr(sbase + so), f.bytesPerBlock);
         }
+    memw::mark(dbase, (uint32_t)std::min<uint64_t>(di.surfSize, 0xFFFFFFFFu));  // (kept vertex copies, vk_draw.cpp)
     // force re-upload of any texture made from the destination
     auto dr = R.surfaces.equal_range(dbase);
     for (auto it = dr.first; it != dr.second; ++it) it->second->lastCheckedFrame = ~0ull;

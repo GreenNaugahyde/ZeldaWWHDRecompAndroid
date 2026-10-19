@@ -46,8 +46,10 @@ static inline void trap_if(Cpu* c, uint32_t to, uint32_t x, uint32_t y, uint32_t
 /* function entry: trace and the per-core check (as PPC_ENTER in ppc.h); `addr` is the function, `w`
  * its size. Where it continues: 0 from the start, else see ppc_entry (emit.cpp branches on it). */
 __attribute__((always_inline)) uint32_t ppcop_enter(Cpu* __restrict c, uint32_t w, uint32_t addr) {
-    if (__builtin_expect(g_ppc_trace, 0)) ppc_trace_enter(addr);
-    if (__builtin_expect(g_core_preempt[c->core], 0)) return ppc_entry(c, addr, w);
+    /* one load from the Cpu and a branch (the thread's copy of g_core_preempt, threads.cpp; the global
+       array cost a GOT load, the core index and the flag: ~4% of the game thread on a Helio G85). While
+       tracing is on the flags stay set and ppc_entry traces */
+    if (__builtin_expect(c->preempt, 0)) return ppc_entry(c, addr, w);
     return 0;
 }
 
@@ -85,38 +87,100 @@ OP(rlwinm) { UNUSED; c->r[A] = rotl32(c->r[D], B) & ppc_mask(CC, (w >> 1) & 31);
 OP(rlwimi) { UNUSED; uint32_t m = ppc_mask(CC, (w >> 1) & 31); c->r[A] = (rotl32(c->r[D], B) & m) | (c->r[A] & ~m); rc0(c, w, c->r[A]); }
 OP(rlwnm) { UNUSED; c->r[A] = rotl32(c->r[D], c->r[B] & 31) & ppc_mask(CC, (w >> 1) & 31); rc0(c, w, c->r[A]); }
 
-/* ---- integer loads / stores, D-form ---- */
-OP(lwz) { UNUSED; c->r[D] = ld32(RA0 + SIMM); }
+/* ---- integer loads / stores, D-form ----
+ * The host address is base + register + offset in 64 bits, not the 32-bit guest address: LLVM folds the
+ * offset into the load or store (ldr w8, [x9, #0x98]) and shares the base between the fields of a struct,
+ * instead of an add and a register-offset access each. It differs only where base + offset wraps past
+ * 0 or 4 GiB, an invalid access on the console too (the guest window has guard ranges on both sides,
+ * mem::init). Indexed forms keep 32-bit addresses: their index register may hold a negative value. */
+#define DP(off) (PPC_MEM_BASE + (uint64_t)RA0 + (int64_t)(int32_t)(off))
+static inline uint32_t ld32p(const uint8_t* p) { uint32_t v; memcpy(&v, p, 4); return __builtin_bswap32(v); }
+static inline uint16_t ld16p(const uint8_t* p) { uint16_t v; memcpy(&v, p, 2); return __builtin_bswap16(v); }
+static inline uint64_t ld64p(const uint8_t* p) { uint64_t v; memcpy(&v, p, 8); return __builtin_bswap64(v); }
+static inline void st32p(uint8_t* p, uint32_t v) { v = __builtin_bswap32(v); memcpy(p, &v, 4); }
+static inline void st16p(uint8_t* p, uint16_t v) { v = __builtin_bswap16(v); memcpy(p, &v, 2); }
+static inline void st64p(uint8_t* p, uint64_t v) { v = __builtin_bswap64(v); memcpy(p, &v, 8); }
+static inline double ldf32p(const uint8_t* p) { return (double)ldbe_f32(p); }
+OP(lwz) { UNUSED; c->r[D] = ld32p(DP(SIMM)); }
 OP(lwzu) { UNUSED; uint32_t ea = c->r[A] + SIMM; c->r[D] = ld32(ea); c->r[A] = ea; }
-OP(lbz) { UNUSED; c->r[D] = ld8(RA0 + SIMM); }
+OP(lbz) { UNUSED; c->r[D] = *DP(SIMM); }
 OP(lbzu) { UNUSED; uint32_t ea = c->r[A] + SIMM; c->r[D] = ld8(ea); c->r[A] = ea; }
-OP(lhz) { UNUSED; c->r[D] = ld16(RA0 + SIMM); }
+OP(lhz) { UNUSED; c->r[D] = ld16p(DP(SIMM)); }
 OP(lhzu) { UNUSED; uint32_t ea = c->r[A] + SIMM; c->r[D] = ld16(ea); c->r[A] = ea; }
-OP(lha) { UNUSED; c->r[D] = (uint32_t)(int32_t)(int16_t)ld16(RA0 + SIMM); }
+OP(lha) { UNUSED; c->r[D] = (uint32_t)(int32_t)(int16_t)ld16p(DP(SIMM)); }
 OP(lhau) { UNUSED; uint32_t ea = c->r[A] + SIMM; c->r[D] = (uint32_t)(int32_t)(int16_t)ld16(ea); c->r[A] = ea; }
-OP(stw) { UNUSED; st32(RA0 + SIMM, c->r[D]); }
+OP(stw) { UNUSED; st32p(DP(SIMM), c->r[D]); }
 OP(stwu) { UNUSED; uint32_t ea = c->r[A] + SIMM; st32(ea, c->r[D]); c->r[A] = ea; }
-OP(stb) { UNUSED; st8(RA0 + SIMM, (uint8_t)c->r[D]); }
+OP(stb) { UNUSED; *DP(SIMM) = (uint8_t)c->r[D]; }
 OP(stbu) { UNUSED; uint32_t ea = c->r[A] + SIMM; st8(ea, (uint8_t)c->r[D]); c->r[A] = ea; }
-OP(sth) { UNUSED; st16(RA0 + SIMM, (uint16_t)c->r[D]); }
+OP(sth) { UNUSED; st16p(DP(SIMM), (uint16_t)c->r[D]); }
 OP(sthu) { UNUSED; uint32_t ea = c->r[A] + SIMM; st16(ea, (uint16_t)c->r[D]); c->r[A] = ea; }
 OP(lmw) { UNUSED; uint32_t ea = RA0 + SIMM; for (uint32_t r = D; r < 32; r++) c->r[r] = ld32(ea + 4 * (r - D)); }
 OP(stmw) { UNUSED; uint32_t ea = RA0 + SIMM; for (uint32_t r = D; r < 32; r++) st32(ea + 4 * (r - D), c->r[r]); }
 
 /* ---- floating point loads / stores, D-form ---- */
-OP(lfs) { UNUSED; double v = ldf32(RA0 + SIMM); F0(D) = v; F1(D) = v; }
+OP(lfs) { UNUSED; double v = ldf32p(DP(SIMM)); F0(D) = v; F1(D) = v; }
 OP(lfsu) { UNUSED; uint32_t ea = c->r[A] + SIMM; double v = ldf32(ea); F0(D) = v; F1(D) = v; c->r[A] = ea; }
-OP(lfd) { UNUSED; F0(D) = ldf64(RA0 + SIMM); }
+OP(lfd) { UNUSED; F0(D) = u64_as_f64(ld64p(DP(SIMM))); }
 OP(lfdu) { UNUSED; uint32_t ea = c->r[A] + SIMM; F0(D) = ldf64(ea); c->r[A] = ea; }
-OP(stfs) { UNUSED; stf32(RA0 + SIMM, F0(D)); }
+OP(stfs) { UNUSED; stbe_f32(DP(SIMM), (float)F0(D)); }
 OP(stfsu) { UNUSED; uint32_t ea = c->r[A] + SIMM; stf32(ea, F0(D)); c->r[A] = ea; }
-OP(stfd) { UNUSED; stf64(RA0 + SIMM, F0(D)); }
+OP(stfd) { UNUSED; st64p(DP(SIMM), f64_as_u64(F0(D))); }
 OP(stfdu) { UNUSED; uint32_t ea = c->r[A] + SIMM; stf64(ea, F0(D)); c->r[A] = ea; }
 #define PSQ_OFF ((uint32_t)((int32_t)(w << 20) >> 20))
-OP(psq_l) { UNUSED; psq_load(c, D, RA0 + PSQ_OFF, (w >> 15) & 1, (w >> 12) & 7); }
-OP(psq_lu) { UNUSED; uint32_t ea = c->r[A] + PSQ_OFF; psq_load(c, D, ea, (w >> 15) & 1, (w >> 12) & 7); c->r[A] = ea; }
-OP(psq_st) { UNUSED; psq_store(c, D, RA0 + PSQ_OFF, (w >> 15) & 1, (w >> 12) & 7); }
-OP(psq_stu) { UNUSED; uint32_t ea = c->r[A] + PSQ_OFF; psq_store(c, D, ea, (w >> 15) & 1, (w >> 12) & 7); c->r[A] = ea; }
+/* paired-single quantized loads and stores: the game's GQRs are almost always type 0 (plain
+   floats), which is two 32-bit loads or stores. That path is inlined; the scaled integer types go
+   through the shared helpers (ppc.h), which LLVM kept out of line anyway (psq_load was ~5% of the
+   game thread on a Helio G85 when every psq_l called it). */
+__attribute__((noinline)) static void psq_load_q(Cpu* c, int fd, uint32_t ea, int w, int i) { psq_load(c, fd, ea, w, i); }
+__attribute__((noinline)) static void psq_store_q(Cpu* c, int fs, uint32_t ea, int w, int i) { psq_store(c, fs, ea, w, i); }
+static inline __attribute__((always_inline)) void psq_ld(Cpu* c, int fd, uint32_t ea, int w, int i) {
+    if (__builtin_expect(((c->gqr[i] >> 16) & 7) < 4, 1)) {
+        if (w) {
+            c->f[fd].ps0 = ldf32(ea);
+            c->f[fd].ps1 = 1.0;
+        } else {
+            ldbe_f32x2(ppc_ptr(ea), &c->f[fd].ps0, &c->f[fd].ps1);
+        }
+        return;
+    }
+    psq_load_q(c, fd, ea, w, i);
+}
+static inline __attribute__((always_inline)) void psq_st(Cpu* c, int fs, uint32_t ea, int w, int i) {
+    if (__builtin_expect((c->gqr[i] & 7) < 4, 1)) {
+        if (w) stf32(ea, c->f[fs].ps0);
+        else stbe_f32x2(ppc_ptr(ea), c->f[fs].ps0, c->f[fs].ps1);
+        return;
+    }
+    psq_store_q(c, fs, ea, w, i);
+}
+/* D-form (as DP above): the fast path through the 64-bit host address, the quantized one with the guest's */
+static inline __attribute__((always_inline)) void psq_ld_d(Cpu* c, int fd, uint32_t ra, int32_t off, int w, int i) {
+    if (__builtin_expect(((c->gqr[i] >> 16) & 7) < 4, 1)) {
+        const uint8_t* p = PPC_MEM_BASE + (uint64_t)ra + (int64_t)off;
+        if (w) {
+            c->f[fd].ps0 = ldf32p(p);
+            c->f[fd].ps1 = 1.0;
+        } else {
+            ldbe_f32x2(p, &c->f[fd].ps0, &c->f[fd].ps1);
+        }
+        return;
+    }
+    psq_load_q(c, fd, ra + (uint32_t)off, w, i);
+}
+static inline __attribute__((always_inline)) void psq_st_d(Cpu* c, int fs, uint32_t ra, int32_t off, int w, int i) {
+    if (__builtin_expect((c->gqr[i] & 7) < 4, 1)) {
+        uint8_t* p = PPC_MEM_BASE + (uint64_t)ra + (int64_t)off;
+        if (w) stbe_f32(p, (float)c->f[fs].ps0);
+        else stbe_f32x2(p, c->f[fs].ps0, c->f[fs].ps1);
+        return;
+    }
+    psq_store_q(c, fs, ra + (uint32_t)off, w, i);
+}
+OP(psq_l) { UNUSED; psq_ld_d(c, D, RA0, (int32_t)PSQ_OFF, (w >> 15) & 1, (w >> 12) & 7); }
+OP(psq_lu) { UNUSED; uint32_t ea = c->r[A] + PSQ_OFF; psq_ld(c, D, ea, (w >> 15) & 1, (w >> 12) & 7); c->r[A] = ea; }
+OP(psq_st) { UNUSED; psq_st_d(c, D, RA0, (int32_t)PSQ_OFF, (w >> 15) & 1, (w >> 12) & 7); }
+OP(psq_stu) { UNUSED; uint32_t ea = c->r[A] + PSQ_OFF; psq_st(c, D, ea, (w >> 15) & 1, (w >> 12) & 7); c->r[A] = ea; }
 
 /* ---- traps, system call ---- */
 OP(twi) { trap_if(c, D, c->r[A], SIMM, addr); }
@@ -370,10 +434,10 @@ OP(ps_madd) { UNUSED; PAIR(F0(A) * round25(F0(CC)) + F0(B), F1(A) * round25(F1(C
 OP(ps_nmsub) { UNUSED; PAIR(-(F0(A) * round25(F0(CC)) - F0(B)), -(F1(A) * round25(F1(CC)) - F1(B))); }
 OP(ps_nmadd) { UNUSED; PAIR(-(F0(A) * round25(F0(CC)) + F0(B)), -(F1(A) * round25(F1(CC)) + F1(B))); }
 #define PSQX_EA(upd) (((upd) ? c->r[A] : RA0) + c->r[B])
-OP(psq_lx) { UNUSED; psq_load(c, D, PSQX_EA(0), (w >> 10) & 1, (w >> 7) & 7); }
-OP(psq_lux) { UNUSED; uint32_t ea = PSQX_EA(1); psq_load(c, D, ea, (w >> 10) & 1, (w >> 7) & 7); c->r[A] = ea; }
-OP(psq_stx) { UNUSED; psq_store(c, D, PSQX_EA(0), (w >> 10) & 1, (w >> 7) & 7); }
-OP(psq_stux) { UNUSED; uint32_t ea = PSQX_EA(1); psq_store(c, D, ea, (w >> 10) & 1, (w >> 7) & 7); c->r[A] = ea; }
+OP(psq_lx) { UNUSED; psq_ld(c, D, PSQX_EA(0), (w >> 10) & 1, (w >> 7) & 7); }
+OP(psq_lux) { UNUSED; uint32_t ea = PSQX_EA(1); psq_ld(c, D, ea, (w >> 10) & 1, (w >> 7) & 7); c->r[A] = ea; }
+OP(psq_stx) { UNUSED; psq_st(c, D, PSQX_EA(0), (w >> 10) & 1, (w >> 7) & 7); }
+OP(psq_stux) { UNUSED; uint32_t ea = PSQX_EA(1); psq_st(c, D, ea, (w >> 10) & 1, (w >> 7) & 7); c->r[A] = ea; }
 OP(ps_cmp0) { UNUSED; cr_set_f(c, D >> 2, F0(A), F0(B)); }
 OP(ps_cmp1) { UNUSED; cr_set_f(c, D >> 2, F1(A), F1(B)); }
 #define UNARY(e0, e1) do { double v0 = (e0), v1 = (e1); F0(D) = v0; F1(D) = v1; fprc(c, w); } while (0)

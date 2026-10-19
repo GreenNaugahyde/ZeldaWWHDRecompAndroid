@@ -17,6 +17,7 @@ struct CompileOptions {
     std::string rpxPath;      // game/code/cking.rpx
     std::string opsBitcode;   // ops.c as LLVM bitcode
     std::string hooksText;    // the hooks*.txt files, concatenated
+    std::string hotText;      // hot_functions.txt: functions placed together in modules of their own, first
     std::string outDir;       // m_<hash>.o are written here (existing ones are kept: the hash names their content)
     std::string baseKey;      // what the code depends on besides its own instructions (code_base_key, loader.h)
     std::string cpu;          // target CPU ("" = the host's, e.g. on the device; "generic" for a PC build)

@@ -4,6 +4,7 @@
 // GX2 core: command execution, display lists, context states, draws, clears,
 // copies and presentation.
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <mutex>
 #include <thread>
@@ -35,13 +36,18 @@ static std::unordered_map<uint32, std::vector<uint32>> g_contexts;
 constexpr uint32 kRegBlock = 64;
 static bool g_reg_touched[kNumRegs / kRegBlock];
 static std::vector<uint16_t> g_reg_blocks;
-static void touch_regs(uint32 first, uint32 n) {
-    if (!n) return;
+static void touch_regs_slow(uint32 first, uint32 n) {
     for (uint32 b = first / kRegBlock, e = (first + n - 1) / kRegBlock; b <= e && b < kNumRegs / kRegBlock; b++)
         if (!g_reg_touched[b]) {
             g_reg_touched[b] = true;
             g_reg_blocks.push_back((uint16_t)b);
         }
+}
+__attribute__((always_inline)) static inline void touch_regs(uint32 first, uint32 n) {
+    if (!n) return;
+    uint32 b = first / kRegBlock;  // (mostly one block, touched long ago)
+    if (b == (first + n - 1) / kRegBlock && b < kNumRegs / kRegBlock && g_reg_touched[b]) return;
+    touch_regs_slow(first, n);
 }
 static void touch_all_regs() { touch_regs(0, kNumRegs); }
 static std::recursive_mutex g_exec_mutex;
@@ -70,41 +76,158 @@ static bool shader_irrelevant(uint32 reg) {
 // The renderer may name exactly the register changes that alter its shader key (vk_draw.cpp);
 // without a filter every register outside shader_irrelevant counts (the Metal renderer).
 extern "C" { bool (*g_shader_reg_filter)(uint32 reg, uint32 oldv, uint32 newv) = nullptr; }
+// ... and which registers it needs to look at (by register: kShaderRegNever, kShaderRegAlways, or
+// kShaderRegCheck = ask the filter); null: ask the filter for every register
+extern "C" { const uint8_t* g_shader_reg_kind = nullptr; }
+// ... and is told after a register command changed any of those (first, count: the command's range;
+// g_regs holds the new values), so it can keep its own summary of them up to date
+extern "C" { void (*g_shader_regs_changed)(uint32 first, uint32 n) = nullptr; }
+// bumped when registers change other than through register commands (a context loaded, a save
+// state): the renderer's summary is to be rebuilt
+extern "C" { uint64_t g_shader_bulk_gen = 1; }
+// shader_irrelevant by register (looked up per changed register instead of the range checks)
+static uint8_t g_irrelevant[kNumRegs];
+static const bool g_irrelevant_filled = [] {
+    for (uint32 r = 0; r < kNumRegs; r++) g_irrelevant[r] = shader_irrelevant(r);
+    return true;
+}();
 
 // debug: WWHD_GEN_STATS=1 counts what bumps g_shader_state_gen (logged with the frame line)
 static const bool g_gen_stats = getenv("WWHD_GEN_STATS") != nullptr;
 static uint64_t g_gen_ctx = 0, g_gen_ctx_calls = 0, g_gen_regs = 0;
 static std::unordered_map<uint32, uint64_t> g_gen_by_reg;
 
-static void apply_regs(uint32 first, const uint32* v, uint32 n) {
-    if (first + n > kNumRegs) return;
-    touch_regs(first, n);
-    if (memcmp(&g_regs[first], v, n * 4) != 0) {
-        static const bool coarse = getenv("WWHD_COARSE_SHADER_GEN") != nullptr;  // debug: the old rule
-        bool draw = false, shader = false;
-        for (uint32 i = 0; i < n && !(draw && shader); i++) {
-            if (g_regs[first + i] == v[i] || shader_irrelevant(first + i)) continue;
-            draw = true;  // any state a draw resolves (textures, samplers, targets, ...)
-            if (!shader && (g_shader_reg_filter && !coarse ? g_shader_reg_filter(first + i, g_regs[first + i], v[i]) : true)) {
-                shader = true;
-                if (g_gen_stats) {
-                    g_gen_regs++;
-                    g_gen_by_reg[first + i]++;
-                }
+// register writes: copies of a few words mostly (display lists set registers in groups of 1-6), so
+// short ones copy inline instead of calling memcpy
+__attribute__((always_inline)) static inline void copy_words(uint32* d, const uint32* v, uint32 n) {
+    if (n > 8) {
+        memcpy(d, v, n * 4);
+        return;
+    }
+    switch (n) {  // (a loop would become a memcpy call again)
+    case 8: d[7] = v[7]; [[fallthrough]];
+    case 7: d[6] = v[6]; [[fallthrough]];
+    case 6: d[5] = v[5]; [[fallthrough]];
+    case 5: d[4] = v[4]; [[fallthrough]];
+    case 4: d[3] = v[3]; [[fallthrough]];
+    case 3: d[2] = v[2]; [[fallthrough]];
+    case 2: d[1] = v[1]; [[fallthrough]];
+    case 1: d[0] = v[0]; [[fallthrough]];
+    default: break;
+    }
+}
+// (file scope: no guard check on every call, as a function-local static has)
+static const bool g_coarse_gen = getenv("WWHD_COARSE_SHADER_GEN") != nullptr;  // debug: the old rule
+// a write that changes a register (from word i on): which generations it bumps, then the copy
+__attribute__((noinline)) static void apply_changed(uint32 first, const uint32* v, uint32 n, uint32 i) {
+    const bool coarse = g_coarse_gen;
+    bool draw = false, shader = false;
+    const uint8_t* kind = coarse ? nullptr : g_shader_reg_kind;
+    for (; i < n && !(draw && shader); i++) {
+        const uint32 r = first + i;
+        if (g_regs[r] == v[i] || g_irrelevant[r]) continue;
+        draw = true;  // any state a draw resolves (textures, samplers, targets, ...)
+        if (shader) continue;
+        bool relevant;
+        if (!g_shader_reg_filter || coarse) relevant = true;
+        else if (kind) relevant = kind[r] == kShaderRegAlways || (kind[r] == kShaderRegCheck && g_shader_reg_filter(r, g_regs[r], v[i]));
+        else relevant = g_shader_reg_filter(r, g_regs[r], v[i]);
+        if (relevant) {
+            shader = true;
+            if (g_gen_stats) {
+                g_gen_regs++;
+                g_gen_by_reg[first + i]++;
             }
         }
-        if (shader) g_shader_state_gen++;
-        if (draw) g_draw_state_gen++;
-        memcpy(&g_regs[first], v, n * 4);
     }
-    if (g_shadow) memcpy(&g_shadow[first], v, n * 4);
+    if (shader) g_shader_state_gen++;
+    if (draw) g_draw_state_gen++;
+    copy_words(&g_regs[first], v, n);
+    if (shader && g_shader_regs_changed) g_shader_regs_changed(first, n);
+}
+
+// debug (WWHD_GEN_STATS): register commands by kind, size and adjacency to the previous one
+static uint64_t g_rs_calls, g_rs_words, g_rs_alu, g_rs_unchanged, g_rs_adjacent, g_rs_small[5], g_rs_prev_end;
+static void reg_stats(uint32 first, uint32 n, bool alu, bool unchanged) {
+    g_rs_calls++;
+    g_rs_words += n;
+    g_rs_alu += alu;
+    g_rs_unchanged += unchanged;
+    g_rs_adjacent += first == g_rs_prev_end;
+    g_rs_prev_end = first + n;
+    g_rs_small[n <= 1 ? 0 : n <= 2 ? 1 : n <= 4 ? 2 : n <= 8 ? 3 : 4]++;
+}
+
+__attribute__((always_inline)) static inline void apply_regs(uint32 first, const uint32* v, uint32 n) {
+    if (first + n > kNumRegs) return;
+    touch_regs(first, n);
+    // uniform constants (most of the register traffic): no draw or shader state, nothing to compare
+    if (first >= mmSQ_ALU_CONSTANT0_0 && first + n <= mmSQ_ALU_CONSTANT0_0 + 0x1000) {
+        if (g_gen_stats) reg_stats(first, n, true, false);
+        copy_words(&g_regs[first], v, n);
+        if (g_shadow) copy_words(&g_shadow[first], v, n);
+        return;
+    }
+    const uint32* r = &g_regs[first];
+    uint32 i = 0;
+    while (i < n && r[i] == v[i]) i++;
+    if (g_gen_stats) reg_stats(first, n, false, i == n);
+    if (i < n) apply_changed(first, v, n, i);
+    if (g_shadow) copy_words(&g_shadow[first], v, n);
 }
 
 // ---------------------------------------------------------------- display list recording
-struct Recording {
+// Display lists being recorded, one slot per recording thread, found by the thread pointer. A
+// thread_local here cost a dynamic TLS lookup per command (in a dlopened library every access goes
+// through the TLS resolver): the WorkerMgr worker records nearly all the time, so every emit on
+// every thread paid it (~4% of the worker on a Helio G85). A slot is only written by its owner.
+// The owners sit apart from the positions: every emit on every thread scans the owners, while the
+// recording thread writes its position per command (in one cache line, the line kept moving between
+// the cores: ~2% of the worker on a Helio G85).
+struct alignas(64) Recording {
     uint32 start = 0, pos = 0, end = 0;
 };
-static thread_local Recording t_rec;
+constexpr int kMaxRecorders = 16;
+alignas(64) static std::atomic<uintptr_t> g_rec_owner[kMaxRecorders];
+static Recording g_recs[kMaxRecorders];
+alignas(64) static std::atomic<int> g_recording{0};  // slots in use
+static std::atomic<int> g_rec_slots{0};  // slots ever claimed (the scan's end)
+static inline uintptr_t self_id() {
+#if defined(__aarch64__) || defined(__x86_64__)
+    return (uintptr_t)__builtin_thread_pointer();
+#else
+    return (uintptr_t)pthread_self();
+#endif
+}
+static inline Recording* find_rec(uintptr_t id) {
+    for (int i = 0, n = g_rec_slots.load(std::memory_order_relaxed); i < n; i++)
+        if (g_rec_owner[i].load(std::memory_order_relaxed) == id) return &g_recs[i];
+    return nullptr;
+}
+static inline Recording* recording() {
+    if (!g_recording.load(std::memory_order_relaxed)) return nullptr;
+    return find_rec(self_id());
+}
+static Recording* claim_rec() {
+    uintptr_t id = self_id();
+    if (Recording* r = find_rec(id)) return r;
+    for (int i = 0; i < kMaxRecorders; i++) {
+        uintptr_t z = 0;
+        if (g_rec_owner[i].compare_exchange_strong(z, id)) {
+            int n = g_rec_slots.load();
+            while (n < i + 1 && !g_rec_slots.compare_exchange_weak(n, i + 1)) {}
+            g_recording++;
+            return &g_recs[i];
+        }
+    }
+    LOG("[gx2] too many threads recording display lists");
+    return nullptr;
+}
+static void release_rec(Recording* r) {
+    r->start = r->pos = r->end = 0;
+    g_rec_owner[r - g_recs].store(0);
+    g_recording--;
+}
 
 static void execute_one(Op op, const uint32* p, uint32 n);
 
@@ -121,7 +244,7 @@ static uint64_t g_fence_issued = 0, g_fence_done = 0;
 static void render_thread_main() {
     platform::set_thread_name("GX2 render");
     platform::set_thread_high_priority();
-    platform::prefer_big_cores(false);
+    if (!getenv("WWHD_RENDER_LITTLE")) platform::prefer_big_cores(false);  // test switch: =1 leaves it to the system
     for (;;) {
         {
             std::unique_lock<std::mutex> lk(g_q_mutex);
@@ -141,7 +264,7 @@ static void render_thread_main() {
 // Commands queued since the last completed render_sync that may read guest memory the game can
 // rewrite once GX2DrawDone returns (draws, display lists, copies, clears...). The game ends its frame
 // with GX2DrawDone, copy to the scan buffers and swap, then GX2DrawDone again: that second wait only
-// waited for the render thread to present (0.5 ms, up to 12 ms at 60 fps on the tablet), with nothing
+// waited for the render thread to present (0.5 ms, up to 12 ms at 60 fps on a Snapdragon 7+ Gen 3), with nothing
 // of the game's left to protect. GX2DrawDone now waits only when such a command is pending.
 // WWHD_LAZY_DRAWDONE=0: always (as before).
 static bool g_pending_reads = true;  // (under g_q_mutex)
@@ -156,18 +279,24 @@ static bool reads_guest(Op op) {
         return true;
     }
 }
-static void enqueue(Op op, const uint32* payload, uint32 n) {
+static void enqueue2(Op op, bool hasHead, uint32 head, const uint32* payload, uint32 n) {
     static std::once_flag once;
     std::call_once(once, [] { std::thread(render_thread_main).detach(); });
+    uint32 total = n + (hasHead ? 1 : 0);
     std::lock_guard<std::mutex> lk(g_q_mutex);
     if (reads_guest(op)) {
         g_pending_reads = true;
         g_pending_ops |= 1u << (op & 31);
     }
-    g_q_pending.push_back(op | (n << 8));
-    g_q_pending.insert(g_q_pending.end(), payload, payload + n);
+    size_t at = g_q_pending.size();
+    g_q_pending.resize(at + 1 + total);
+    uint32* w = g_q_pending.data() + at;
+    *w++ = op | (total << 8);
+    if (hasHead) *w++ = head;
+    memcpy(w, payload, n * 4);
     if (g_q_waiting) g_q_cv.notify_one();
 }
+static void enqueue(Op op, const uint32* payload, uint32 n) { enqueue2(op, false, 0, payload, n); }
 
 // block the game thread until the render thread has executed everything queued so far
 static void render_sync() {
@@ -184,26 +313,44 @@ static void render_sync() {
     g_q_done_cv.wait(lk, [&] { return g_fence_done >= id; });
 }
 
-void emit(Op op, const uint32* payload, uint32 n) {
-    if (t_rec.start) {
-        uint32 bytes = 4 * (n + 1);
-        if (t_rec.pos + bytes > t_rec.end) {
-            LOG("[gx2] display list overflow at %08X", t_rec.start);
-            return;
-        }
-        uint32* w = (uint32*)mem::ptr(t_rec.pos);
-        w[0] = op | (n << 8);
-        memcpy(w + 1, payload, n * 4);
-        t_rec.pos += bytes;
-        return;
-    }
+// one command made of a head word (if hasHead) and a payload: written straight into the display
+// list being recorded, or queued (no staging copy, set_regs)
+__attribute__((noinline)) static void emit2_unrecorded(Op op, bool hasHead, uint32 head, const uint32* payload, uint32 n) {
+    uint32 total = n + (hasHead ? 1 : 0);
     if (g_render_thread) {
-        enqueue(op, payload, n);
+        enqueue2(op, hasHead, head, payload, n);
         return;
     }
     std::lock_guard<std::recursive_mutex> lk(g_exec_mutex);
-    execute_one(op, payload, n);
+    if (!hasHead) {
+        execute_one(op, payload, n);
+        return;
+    }
+    std::vector<uint32> buf(total);
+    buf[0] = head;
+    memcpy(&buf[1], payload, n * 4);
+    execute_one(op, buf.data(), total);
 }
+static inline void emit2(Op op, bool hasHead, uint32 head, const uint32* payload, uint32 n) {
+    uint32 total = n + (hasHead ? 1 : 0);
+    Recording* r = recording();
+    if (!r) {
+        emit2_unrecorded(op, hasHead, head, payload, n);
+        return;
+    }
+    uint32 bytes = 4 * (total + 1);
+    if (r->pos + bytes > r->end) [[unlikely]] {
+        LOG("[gx2] display list overflow at %08X", r->start);
+        return;
+    }
+    uint32* w = (uint32*)mem::ptr(r->pos);
+    r->pos += bytes;
+    *w++ = op | (total << 8);
+    if (hasHead) *w++ = head;
+    copy_words(w, payload, n);
+}
+
+void emit(Op op, const uint32* payload, uint32 n) { emit2(op, false, 0, payload, n); }
 
 // host-only commands never go into display lists
 static void emit_host(Op op, std::initializer_list<uint32> payload) {
@@ -218,14 +365,10 @@ static void emit_host(Op op, std::initializer_list<uint32> payload) {
 void warm_while_held() { emit_host(OP_WARM, {}); }
 
 void set_regs(uint32 first, const uint32* values, uint32 count) {
-    if (!count) return;
-    static thread_local std::vector<uint32> buf;
-    buf.resize(count + 1);
-    buf[0] = first;
-    memcpy(&buf[1], values, count * 4);
-    emit(OP_SET_REGS, buf.data(), count + 1);
+    if (count) emit2(OP_SET_REGS, true, first, values, count);
 }
-void set_reg(uint32 reg, uint32 value) { emit(OP_SET_REGS, {reg, value}); }
+// (no stack canary for the value passed by address: it is only read)
+__attribute__((no_stack_protector)) void set_reg(uint32 reg, uint32 value) { emit2(OP_SET_REGS, true, reg, &value, 1); }
 
 void execute(const uint32* words, uint32 count) {
     uint32 i = 0;
@@ -237,7 +380,10 @@ void execute(const uint32* words, uint32 count) {
             LOG("[gx2] corrupt display list command %08X", hdr);
             return;
         }
-        execute_one(op, &words[i + 1], n);
+        // register writes (~37000 commands a frame at Windfall, most rewriting the same values) right here,
+        // without the calls through execute_one
+        if (op == OP_SET_REGS && n) apply_regs(words[i + 1], &words[i + 2], n - 1);
+        else execute_one(op, &words[i + 1], n);
         i += 1 + n;
     }
 }
@@ -265,6 +411,7 @@ static void set_context(uint32 ctx) {
     for (uint16_t b : g_reg_blocks) memcpy(&g_regs[b * kRegBlock], &g_shadow[b * kRegBlock], kRegBlock * 4);
     g_loaded_context = g_shadow;
     g_shader_state_gen++;
+    g_shader_bulk_gen++;
     g_draw_state_gen++;
     if (g_gen_stats) g_gen_ctx++;
 }
@@ -479,18 +626,24 @@ HLE(gx2, GX2GetContextStateDisplayList) {
 
 // ---------------------------------------------------------------- display lists
 HLE(gx2, GX2BeginDisplayListEx) {
-    t_rec.start = t_rec.pos = arg(c, 0);
-    t_rec.end = arg(c, 0) + arg(c, 1);
+    if (Recording* r = claim_rec()) {
+        r->start = r->pos = arg(c, 0);
+        r->end = arg(c, 0) + arg(c, 1);
+    }
 }
 HLE(gx2, GX2EndDisplayList) {
-    uint32 size = t_rec.pos - t_rec.start;
-    t_rec = Recording{};
+    uint32 size = 0;
+    if (Recording* r = recording()) {
+        size = r->pos - r->start;
+        release_rec(r);
+    }
     ret(c, size);
 }
 HLE(gx2, GX2GetCurrentDisplayList) {
-    if (arg(c, 0)) st32(arg(c, 0), t_rec.start);
-    if (arg(c, 1)) st32(arg(c, 1), t_rec.start ? t_rec.end - t_rec.start : 0);
-    ret(c, t_rec.start != 0);
+    Recording* r = recording();
+    if (arg(c, 0)) st32(arg(c, 0), r ? r->start : 0);
+    if (arg(c, 1)) st32(arg(c, 1), r ? r->end - r->start : 0);
+    ret(c, r != nullptr);
 }
 HLE(gx2, GX2CallDisplayList) { emit(OP_CALL, {arg(c, 0), arg(c, 1)}); }
 HLE(gx2, GX2DirectCallDisplayList) { emit(OP_CALL, {arg(c, 0), arg(c, 1)}); }
@@ -548,7 +701,7 @@ HLE(gx2, GX2CopySurface) {
     // 5070881). A linear destination is also read by the CPU right away: the Picto Box JPEG-encodes
     // its picture from one (issue #22; the render thread writes it back, vk_surfaces.cpp). Not for
     // display lists: they run when called.
-    if (!t_rec.start) {
+    if (!recording()) {
         BlockingScope b;
         render_sync();
     }
@@ -693,6 +846,12 @@ HLE(gx2, GX2SwapScanBuffers) {
                 g_gen_ctx / 300.0, g_gen_regs / 300.0, t.c_str());
             g_gen_ctx = g_gen_ctx_calls = g_gen_regs = 0;
             g_gen_by_reg.clear();
+            LOG("[gx2] per frame: register commands %.0f (%.0f words; uniform constants %.0f, unchanged %.0f, adjacent to the previous %.0f; "
+                "by size 1:%.0f 2:%.0f 3-4:%.0f 5-8:%.0f more:%.0f)", g_rs_calls / 300.0, g_rs_words / 300.0, g_rs_alu / 300.0,
+                g_rs_unchanged / 300.0, g_rs_adjacent / 300.0, g_rs_small[0] / 300.0, g_rs_small[1] / 300.0, g_rs_small[2] / 300.0,
+                g_rs_small[3] / 300.0, g_rs_small[4] / 300.0);
+            g_rs_calls = g_rs_words = g_rs_alu = g_rs_unchanged = g_rs_adjacent = 0;
+            for (auto& k : g_rs_small) k = 0;
         }
     }
 }
@@ -804,6 +963,7 @@ void gx2_ss_load(ss::Reader& r) {
     std::lock_guard<std::recursive_mutex> lk(g_exec_mutex);
     r.u32();
     r.bytes(g_regs, sizeof g_regs);
+    g_shader_bulk_gen++;
     touch_all_regs();  // a loaded state may use any register
     g_contexts.clear();
     uint32 n = r.u32();

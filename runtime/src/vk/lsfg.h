@@ -21,6 +21,12 @@ struct Config {
 
 // Read and check the shaders; false (and a log message) if the DLL can't be used.
 bool load(const Config& cfg);
+// GPUs where the network can hang the GPU: every Mali (the G57 lost the device within seconds at any
+// flow scale, the G52 when switching it; newer ones untested);
+// false before the renderer has started. There load() runs only once the player accepted the app's
+// warning (set_risk_accepted, at start WWHD_LSFG_RISK_OK=1)
+bool risky_gpu();
+void set_risk_accepted(bool on);
 bool loaded();
 // GPU time of the network per game frame in ms, smoothed (0 until measured)
 float gpu_ms();

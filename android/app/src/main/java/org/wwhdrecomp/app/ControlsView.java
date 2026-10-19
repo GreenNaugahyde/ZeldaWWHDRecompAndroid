@@ -4,6 +4,7 @@ import android.content.Context;
 import android.graphics.Canvas;
 import android.graphics.Paint;
 import android.graphics.RectF;
+import android.os.SystemClock;
 import android.util.SparseArray;
 import android.view.MotionEvent;
 import android.view.View;
@@ -92,29 +93,40 @@ final class ControlsView extends View {
         controls.add(new Control(KIND_BUTTON, Native.A, "A", true));
         controls.add(new Control(KIND_BUTTON, Native.B, "B", true));
         controls.add(new Control(KIND_BUTTON, Native.Y, "Y", true));
-        controls.add(new Control(KIND_BUTTON, Native.MINUS, "−", true));
         controls.add(new Control(KIND_BUTTON, Native.PLUS, "+", true));
         controls.add(new Control(KIND_BUTTON, Native.STICK_L, "L3", true));
         controls.add(new Control(KIND_BUTTON, Native.STICK_R, "R3", true));
         controls.add(new Control(KIND_MENU, 0, "≡", true));
-        controls.add(new Control(KIND_SCREEN, 0, "", false));  // 16: TV / GamePad picture (GamePad on demand)
+        controls.add(new Control(KIND_SCREEN, 0, "", false));  // 15: TV / GamePad picture (GamePad on demand)
     }
 
-    // ---- "GamePad on demand": the screen button switches between the TV picture (with the controls)
-    // and the full GamePad picture (only the screen button; touches go to the GamePad)
+    // ---- the full GamePad picture (+, or the screen button of "GamePad on demand"): the TV picture
+    // with the controls, or the GamePad picture with only + and the screen button (touches go to the GamePad)
     private boolean screenButton, drcMode;
 
     void setScreenButton(boolean on, boolean drcShown) {
         screenButton = on;
         if (drcShown != drcMode) releaseAll();
-        drcMode = on && drcShown;
+        drcMode = drcShown;
+        invalidate();
+    }
+
+    // booting, the title screen, the file select and a new game's opening: no controls but the menu
+    // button (touches there: A on the title, the GamePad picture on the file select, + in the opening)
+    private int front = Native.FRONT_BOOT;
+
+    void setFrontScreen(int f) {
+        if (f == front) return;
+        if (f != 0) releaseAll();
+        front = f;
         invalidate();
     }
 
     /** whether a control is part of the current screen mode */
     private boolean inMode(Control c) {
+        if (front != 0) return c.kind == KIND_MENU;
         if (c.kind == KIND_SCREEN) return screenButton;
-        return !drcMode;
+        return !drcMode || (c.kind == KIND_BUTTON && c.bit == Native.PLUS);
     }
 
     // ---- layout editor: drag a control to move it, pinch (or Size -/+) to resize it, tap to select it
@@ -489,6 +501,17 @@ final class ControlsView extends View {
 
     private String perfVersion;  // the overlay's last line
 
+    // "Res: 0.85× 1088×612  Dyn ≥0.5× GPU 93%": the resolution in effect, live (dynamic resolution moves it)
+    private static String resLine(PerfStats p) {
+        StringBuilder b = new StringBuilder("Res: ").append(num(p.resScale, "%.2f")).append("× ")
+                .append(Math.round(p.resW)).append('×').append(Math.round(p.resH));
+        if (p.dynMin > 0) {
+            b.append("  Dyn ≥").append(num(p.dynMin, "%.2f")).append('×');
+            if (p.dynBusy >= 0) b.append(" GPU ").append(num(p.dynBusy * 100, "%.0f")).append('%');
+        }
+        return b.toString();
+    }
+
     private void drawPerfHud(Canvas canvas) {
         PerfStats p = perf;
         if (p == null) return;
@@ -501,6 +524,7 @@ final class ControlsView extends View {
                     + (Math.abs(p.shownFps - p.gameFps) > 0.5f ? "  Shown: " + num(p.shownFps, "%.0f") : ""));
         if ((it & PERF_FRAME) != 0)
             list.add("Frame: " + unit(p.frameMs, "%.1f", " ms") + "  Max: " + unit(p.frameMaxMs, "%.1f", " ms"));
+        if ((it & (PERF_FRAME | PERF_SETTINGS)) != 0) list.add(resLine(p));
         StringBuilder load = new StringBuilder();
         if ((it & PERF_CPU) != 0) load.append("CPU: ").append(unit(p.cpuPercent, "%.0f", "%")).append("  ");
         if ((it & PERF_GPU) != 0) {
@@ -542,8 +566,11 @@ final class ControlsView extends View {
         float pad = 6 * density, lineH = perfText.getFontSpacing(), w = 0;
         for (String l : lines) if (l != null) w = Math.max(w, perfText.measureText(l));
         float bw = w + 2 * pad, bh = lines.length * lineH + 2 * pad;
-        // default: below the top edge's system overlays, at the left; else where the user put it
-        float x = perfFx < 0 ? 12 * density : perfFx * getWidth(), y = perfFy < 0 ? 40 * density : perfFy * getHeight();
+        // default: below the top edge's system overlays and the menu button, at the left; else where the user put it
+        Control menu = controls.get(14);
+        float x = perfFx < 0 ? 12 * density : perfFx * getWidth();
+        float y = perfFy >= 0 ? perfFy * getHeight()
+                : menu.cx - menu.w / 2 < x + bw ? Math.max(40 * density, menu.cy + menu.h / 2 + 8 * density) : 40 * density;
         x = Math.max(0, Math.min(getWidth() - bw, x));
         y = Math.max(0, Math.min(getHeight() - bh, y));
         tmp.set(x, y, x + bw, y + bh);
@@ -589,17 +616,15 @@ final class ControlsView extends View {
     // for them and say what (the game's own button cluster is hidden, MainActivity)
     private boolean context;
     private int[] state = new int[12];
-    private boolean gamepadMode, l3InUse;
-    private boolean zrLatched;  // ZR held by a tap for crouching  // - swaps the screens in GamePad mode; L3: our run / swim mod
+    private boolean l3InUse;  // L3: our run / swim mod
+    private boolean zrLatched;  // ZR held by a tap for crouching
     private final Runnable pollState = new Runnable() {
         @Override
         public void run() {
             int[] s = Native.touchState();
-            boolean gp = Native.getOption("pro_controller") == 0;
             boolean l3 = MainActivity.instance != null && MainActivity.instance.l3InUse();
-            if (!java.util.Arrays.equals(s, state) || gp != gamepadMode || l3 != l3InUse) {
+            if (!java.util.Arrays.equals(s, state) || l3 != l3InUse) {
                 state = s;
-                gamepadMode = gp;
                 l3InUse = l3;
                 invalidate();
             }
@@ -630,7 +655,6 @@ final class ControlsView extends View {
         if (c.bit == Native.R) return state[5] != 0xFF;
         if (c.bit == Native.ZR) return state[7] != 0;
         if (c.bit == Native.L) return false;  // the game doesn't read L in play (checked 2026-10-08); the pause menu shows it
-        if (c.bit == Native.MINUS) return gamepadMode;  // swaps TV and GamePad pictures; nothing in Pro Controller mode (checked)
         if (c.bit == Native.STICK_L) return l3InUse;  // our faster running / swimming (the game itself: not seen to use L3)
         return true;
     }
@@ -651,7 +675,6 @@ final class ControlsView extends View {
         if (c.bit == Native.B && state[6] == 0x35) t = GameIcons.swordTexture(state[2]);  // B: the sword (not other B actions)
         else if (c.bit == Native.A) t = GameIcons.actionTexture(state[1], state[2], state[11]);
         else if (c.bit == Native.ZR) t = GameIcons.actionTexture(state[7], state[2], state[11]);
-        else if (c.bit == Native.MINUS) t = "TvDrcIcon_00^t";
         else if (c.bit == Native.STICK_L) t = "LStick_00^t";
         else if (c.bit == Native.STICK_R) t = "RStick_00^t";
         else if (c.bit == Native.PLUS) t = "MapItemIcon_00^l";
@@ -672,7 +695,6 @@ final class ControlsView extends View {
         if (c.bit == Native.ZL) return "target";
         if (c.bit == Native.STICK_R) return "eye";
         if (c.bit == Native.PLUS) return "menu";
-        if (c.bit == Native.MINUS) return "swap";
         return null;
     }
 
@@ -728,6 +750,20 @@ final class ControlsView extends View {
         super.onDetachedFromWindow();
     }
 
+    // a touch on the title screen holds A (in the opening: + , the game's skip) while the finger is
+    // down, at least TITLE_A_MS (a few frames)
+    private static final long TITLE_A_MS = 120;
+    private int titlePointer = -1, titleBit;
+    private long titleAUntil;
+
+    /** a short press of `bit` (a button outside these controls, e.g. the file select's Back) */
+    void pulse(int bit) {
+        titleBit = bit;
+        titleAUntil = SystemClock.uptimeMillis() + TITLE_A_MS;
+        listener.onControlsChanged();
+        postDelayed(listener::onControlsChanged, TITLE_A_MS + 10);
+    }
+
     int buttons() {
         int b = 0;
         if (editing) return 0;
@@ -735,6 +771,7 @@ final class ControlsView extends View {
             if (c.kind == KIND_BUTTON && c.pressed) b |= c.bit;
             if (c.kind == KIND_DPAD) b |= c.dpadBits;
         }
+        if (titlePointer >= 0 || SystemClock.uptimeMillis() < titleAUntil) b |= titleBit;
         return b;
     }
     float stickX(int i) { return controls.get(5 + i).sx; }
@@ -767,12 +804,11 @@ final class ControlsView extends View {
         set(8, fx + d, fy, r, r);                                      // A (right)
         set(9, fx, fy + d, r, r);                                      // B (bottom)
         set(10, fx - d, fy, r, r);                                     // Y (left)
-        set(11, W * 0.5f - u * 1.1f, H - m - u * 0.35f, u * 0.6f, u * 0.6f);  // -
-        set(12, W * 0.5f + u * 1.1f, H - m - u * 0.35f, u * 0.6f, u * 0.6f);  // +
-        set(13, colL + u * 1.55f, H - m - u * 0.35f, u * 0.55f, u * 0.55f);   // L3
-        set(14, colR - u * 1.55f, H - m - u * 0.35f, u * 0.55f, u * 0.55f);   // R3
-        set(15, W * 0.5f, H - m - u * 0.35f, u * 0.6f, u * 0.6f);             // menu
-        set(16, W * 0.5f, m + u * 0.35f, u * 0.8f, u * 0.55f);                // screen button
+        set(11, W * 0.5f, H - m - u * 0.35f, u * 0.6f, u * 0.6f);             // +
+        set(12, colL + u * 1.55f, H - m - u * 0.35f, u * 0.55f, u * 0.55f);   // L3
+        set(13, colR - u * 1.55f, H - m - u * 0.35f, u * 0.55f, u * 0.55f);   // R3
+        set(14, m + u * 0.3f, m + u * 0.4f, u * 0.6f, u * 0.6f);              // menu (left of ZL)
+        set(15, W * 0.5f, m + u * 0.35f, u * 0.8f, u * 0.55f);                // screen button
         // context buttons: the shoulder buttons are round, the size of the face buttons
         for (int i = 0; i < 4; i++) {
             Control s = controls.get(i);
@@ -842,6 +878,7 @@ final class ControlsView extends View {
         zrLatched = false;
         for (Control c : controls) release(c);
         pointers.clear();
+        titlePointer = -1;
         swipePointer = -1;
         if (drcPointer >= 0) Native.setTouch(false, 0, 0);
         drcPointer = -1;
@@ -849,9 +886,141 @@ final class ControlsView extends View {
 
     private boolean inDrc(float x, float y) { return !drcRect.isEmpty() && drcRect.contains(x, y); }
 
+    // the picture sits in drcRect in its own shape (16:9, or the screen's while the game draws it so,
+    // as on a display of its own: DrcDisplay); aspect.cpp maps it to the game's 16:9 touch screen
+    private void pictureRect(RectF out) {
+        float pa = Native.drcPictureAspect();
+        if (!(pa > 0.1f)) pa = 16f / 9f;
+        out.set(drcRect);
+        float pw = drcRect.width(), ph = drcRect.height();
+        if (pw / ph > pa) out.inset((pw - ph * pa) / 2, 0);
+        else out.inset(0, (ph - pw / pa) / 2);
+    }
+
+    private final RectF pic = new RectF();
+
+    /** where a finger last touched the GamePad picture, on the game's 16:9 screen (0..1; MainActivity: which chart square it opened) */
+    static volatile float fingerX = -1, fingerY = -1;
+
     private void touchDrc(boolean down, float x, float y) {
-        float tx = (x - drcRect.left) / drcRect.width(), ty = (y - drcRect.top) / drcRect.height();
-        Native.setTouch(down, Math.max(0, Math.min(1, tx)), Math.max(0, Math.min(1, ty)));
+        pictureRect(pic);
+        float tx = (x - pic.left) / pic.width(), ty = (y - pic.top) / pic.height();
+        if (down) {
+            float pa = Native.drcPictureAspect(), kx = pa > 16f / 9f ? pa / (16f / 9f) : 1f, ky = pa > 0.1f && pa < 16f / 9f ? (16f / 9f) / pa : 1f;
+            fingerX = (tx - 0.5f) * kx + 0.5f;  // (pictureU / pictureV backwards)
+            fingerY = (ty - 0.5f) * ky + 0.5f;
+        }
+        Native.setDrcTouch(down, Math.max(0, Math.min(1, tx)), Math.max(0, Math.min(1, ty)));
+    }
+
+    /** the picture's u, v (0..1) of a point on the game's 16:9 GamePad screen (the picture may be wider: Fill) */
+    static float pictureU(float x) {
+        float pa = Native.drcPictureAspect(), k = pa > 16f / 9f ? pa / (16f / 9f) : 1f;
+        return (x - 0.5f) / k + 0.5f;
+    }
+
+    static float pictureV(float y) {
+        float pa = Native.drcPictureAspect(), k = pa > 0.1f && pa < 16f / 9f ? (16f / 9f) / pa : 1f;
+        return (y - 0.5f) / k + 0.5f;
+    }
+
+    // ---- the controller's highlight on the GamePad picture: a touch target of the game (MainActivity)
+    private boolean focusOn, focusPressed;
+    private final RectF focusGame = new RectF(), focusRect = new RectF();
+
+    /** x, y (centre), w, h on the game's 16:9 GamePad screen (0..1); on = false hides it */
+    void setFocus(boolean on, float x, float y, float w, float h, boolean pressed) {
+        if (on == focusOn && pressed == focusPressed && focusGame.left == x - w / 2 && focusGame.top == y - h / 2
+                && focusGame.right == x + w / 2 && focusGame.bottom == y + h / 2) return;
+        focusOn = on;
+        focusPressed = pressed;
+        focusGame.set(x - w / 2, y - h / 2, x + w / 2, y + h / 2);
+        invalidate();
+    }
+
+    // the game's cursor (Cursor_00: a top-left corner in two frames, luminance + alpha, which the game
+    // tints: white inside, brown outline), mirrored into the four corners
+    private final Paint cursorPaint = new Paint(Paint.FILTER_BITMAP_FLAG);
+    {
+        float br = 0x50, bg = 0x30, bb = 0x14;  // the outline's brown
+        cursorPaint.setColorFilter(new android.graphics.ColorMatrixColorFilter(new float[] {
+                (255 - br) / 255f, 0, 0, 0, br,
+                0, (255 - bg) / 255f, 0, 0, bg,
+                0, 0, (255 - bb) / 255f, 0, bb,
+                0, 0, 0, 1, 0}));
+    }
+    private final RectF cornerDst = new RectF();
+
+    private boolean drawGameCursor(Canvas canvas, RectF r, float unit) {
+        boolean second = (SystemClock.uptimeMillis() / 250) % 2 == 1;  // the game's cursor wobbles between its two frames
+        android.graphics.Bitmap bm = GameIcons.get(getContext(), second ? "Crsor_01^t" : "Crsor_00^t", () -> post(this::invalidate));
+        if (bm == null) return false;
+        float cs = 40 * unit, o = cs * 0.3f;  // 40 layout units, reaching a little outside the target
+        for (int i = 0; i < 4; i++) {
+            float sx = (i & 1) == 0 ? 1 : -1, sy = (i & 2) == 0 ? 1 : -1;
+            canvas.save();
+            canvas.translate(sx > 0 ? r.left : r.right, sy > 0 ? r.top : r.bottom);
+            canvas.scale(sx, sy);
+            cornerDst.set(-o, -o, cs - o, cs - o);
+            canvas.drawBitmap(bm, null, cornerDst, cursorPaint);
+            canvas.restore();
+        }
+        postInvalidateDelayed(250);
+        return true;
+    }
+
+    // ---- a Back button (the game's Back icon) on the GamePad picture's Options / Save while no controller is
+    // connected: their A / B hints are hidden (MainActivity.setMenuTouch) and they have no Back of their own; a tap = B
+    private boolean menuBack;
+    private final Paint menuBackPaint = new Paint(Paint.FILTER_BITMAP_FLAG | Paint.ANTI_ALIAS_FLAG);
+    private final RectF menuBackRect = new RectF();
+    private static final float MENU_BACK_X = 0.957f, MENU_BACK_Y = 0.85f, MENU_BACK_H = 0.12f;  // on the 16:9 screen, right of the description box
+
+    void setMenuBack(boolean on) {
+        if (on == menuBack) return;
+        menuBack = on;
+        invalidate();
+    }
+
+    private boolean placeMenuBack() {
+        if (!menuBack || !drcMode || drcRect.isEmpty()) return false;
+        pictureRect(pic);
+        float h = MENU_BACK_H * (pictureV(1) - pictureV(0)) * pic.height(), cx = pic.left + pictureU(MENU_BACK_X) * pic.width(), cy = pic.top + pictureV(MENU_BACK_Y) * pic.height();
+        menuBackRect.set(cx - h / 2, cy - h / 2, cx + h / 2, cy + h / 2);
+        return true;
+    }
+
+    private void drawMenuBack(Canvas canvas) {
+        if (!placeMenuBack()) return;
+        android.graphics.Bitmap bm = GameIcons.get(getContext(), "Back_00^t", () -> post(this::invalidate));
+        if (bm == null) return;
+        float k = Math.min(menuBackRect.width() / bm.getWidth(), menuBackRect.height() / bm.getHeight());
+        float w = bm.getWidth() * k, h = bm.getHeight() * k;
+        tmp.set(menuBackRect.centerX() - w / 2, menuBackRect.centerY() - h / 2, menuBackRect.centerX() + w / 2, menuBackRect.centerY() + h / 2);
+        canvas.drawBitmap(bm, null, tmp, menuBackPaint);
+    }
+
+    private void drawFocus(Canvas canvas) {
+        if (!focusOn || !drcMode || drcRect.isEmpty()) return;
+        pictureRect(pic);
+        focusRect.set(pic.left + pictureU(focusGame.left) * pic.width(), pic.top + pictureV(focusGame.top) * pic.height(),
+                pic.left + pictureU(focusGame.right) * pic.width(), pic.top + pictureV(focusGame.bottom) * pic.height());
+        // layout units (1280x720 on the 16:9 screen) in pixels
+        float unit = pic.height() * (pictureV(1) - pictureV(0)) / 720f;
+        if (focusPressed) focusRect.inset(focusRect.width() * 0.04f, focusRect.height() * 0.04f);  // a touch: pressed in a little
+        if (drawGameCursor(canvas, focusRect, unit)) return;
+        float d = getResources().getDisplayMetrics().density;
+        focusRect.inset(-3 * d, -3 * d);
+        float sw = stroke.getStrokeWidth();
+        int sc = stroke.getColor();
+        stroke.setStrokeWidth(5 * d);
+        stroke.setColor(0x90000000);
+        canvas.drawRoundRect(focusRect, 8 * d, 8 * d, stroke);
+        stroke.setStrokeWidth(3 * d);
+        stroke.setColor(focusPressed ? 0xFFFFFFFF : 0xFFFFD21F);
+        canvas.drawRoundRect(focusRect, 8 * d, 8 * d, stroke);
+        stroke.setStrokeWidth(sw);
+        stroke.setColor(sc);
     }
 
     @Override
@@ -877,6 +1046,22 @@ final class ControlsView extends View {
                         listener.onScreenToggle();
                         return true;
                     }
+                }
+                if (placeMenuBack() && menuBackRect.contains(x, y)) {
+                    pulse(Native.B);
+                    return true;
+                }
+                // the title screen: a touch anywhere (the menu and screen buttons aside) is A, to the file select;
+                // the opening: + (the game's skip: the first shows the prompt, the second skips)
+                if (titlePointer < 0 && (front == Native.FRONT_TITLE || front == Native.FRONT_OPENING)) {
+                    titlePointer = id;
+                    titleBit = front == Native.FRONT_TITLE ? Native.A : Native.PLUS;
+                    titleAUntil = SystemClock.uptimeMillis() + TITLE_A_MS;
+                    postDelayed(listener::onControlsChanged, TITLE_A_MS + 10);  // a quick tap lets go of A then
+                    changed = true;
+                    break;
+                }
+                if (c != null) {
                     // ZR latches for crouching (context buttons: its action is Crouch) and while ZL (targeting)
                     // is latched (the shield stays up); otherwise (fast forward held in cutscenes) it stays a
                     // normal button. A latched ZR is released by a tap.
@@ -901,7 +1086,7 @@ final class ControlsView extends View {
                 } else if (drcPointer < 0 && inDrc(x, y)) {
                     drcPointer = id;
                     touchDrc(true, x, y);
-                } else if (flexible && controlsVisible && !drcMode) {
+                } else if (flexible && controlsVisible && !drcMode && front == 0) {
                     // a floating stick where the thumb landed (one per side), or the swipe camera
                     boolean left = x < getWidth() / 2f;
                     Control s = controls.get(left ? 5 : 6);
@@ -977,6 +1162,10 @@ final class ControlsView extends View {
                     drcPointer = -1;
                 }
                 if (id == swipePointer) swipePointer = -1;
+                if (id == titlePointer) {
+                    titlePointer = -1;
+                    changed = true;
+                }
                 Control c = pointers.get(id);
                 if (c != null) {
                     release(c);
@@ -1081,6 +1270,8 @@ final class ControlsView extends View {
             }
         }
         if (editing) drawEditor(canvas);
+        else drawFocus(canvas);
+        drawMenuBack(canvas);
     }
 
     private void drawDpadArm(Canvas canvas, Control c, int dx, int dy, float s, boolean on, int a) {

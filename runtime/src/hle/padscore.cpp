@@ -3,6 +3,11 @@
 // and constants follow Cemu's padscore.
 #include "../runtime.h"
 #include "../input.h"
+#include "../release.h"
+
+#include <mutex>
+#include <set>
+#include <string>
 
 namespace interp { bool repeat_input(); bool fresh_sticks(); }
 
@@ -12,6 +17,28 @@ constexpr int32_t kKpadErrNone = 0, kKpadErrNoController = -2;
 constexpr uint8_t kDevURCC = 31, kDevNone = 253, kFormatURCC = 22;
 
 bool connected(uint32_t chan) { return chan == 0 && input::pro_controller(); }
+
+// debug: WWHD_WPAD_TRACE=1 logs each new chain of game callers (USA addresses) asking for a Wii
+// Remote / Pro Controller
+void trace_caller(Cpu* c, const char* what) {
+    static const bool on = getenv("WWHD_WPAD_TRACE") != nullptr;
+    if (!on) return;
+    char b[16];
+    snprintf(b, sizeof b, "%08X", release::usa_code(c->lr));
+    std::string chain = b;
+    uint32_t sp = c->r[1];
+    for (int i = 0; i < 8 && sp >= 0x10000000 && sp < 0x50000000; i++) {
+        uint32_t next = ld32(sp);
+        if (next <= sp || next >= 0x50000000) break;
+        snprintf(b, sizeof b, " %08X", release::usa_code(ld32(next + 4)));
+        chain += b;
+        sp = next;
+    }
+    static std::mutex mu;
+    static std::set<std::string> seen;
+    std::lock_guard<std::mutex> lk(mu);
+    if (seen.insert(std::string(what) + chain).second) LOG("[pad] %s from %s", what, chain.c_str());
+}
 
 // VPAD button bits (input::PadState) -> Pro Controller (URCC) bits
 uint32_t pro_buttons(uint32_t v) {
@@ -48,6 +75,7 @@ HLE(padscore, WPADProbe) {
     // (chan, uint32* type) -> WPAD error
     uint32_t chan = arg(c, 0), type = arg(c, 1);
     bool on = connected(chan);
+    trace_caller(c, "WPADProbe");
     TRACE("[pad] WPADProbe(%u) -> %s", chan, on ? "pro" : "none");
     if (type) st32(type, on ? kDevURCC : kDevNone);
     ret(c, (uint32_t)(on ? kWpadErrNone : kWpadErrNoController));
@@ -56,6 +84,7 @@ HLE(padscore, WPADProbe) {
 HLE(padscore, KPADReadEx) {
     // (chan, KPADStatus* buf, count, int32* err) -> samples written
     uint32_t chan = arg(c, 0), st = arg(c, 1), count = arg(c, 2), err = arg(c, 3);
+    trace_caller(c, "KPADReadEx");
     TRACE("[pad] KPADReadEx(%u, %08X, %u) connected=%d", chan, st, count, connected(chan));
     if (!connected(chan) || !st || (int32_t)count <= 0) {
         if (err) st32(err, (uint32_t)(connected(chan) ? kKpadErrNone : kKpadErrNoController));

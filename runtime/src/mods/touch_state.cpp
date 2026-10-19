@@ -59,6 +59,13 @@ void touch_state(int32_t out[12]) {
     out[11] = ld8(s + kSelectEquip + 1);  // shield (0x3B Hero's, 0x3C Mirror)
 }
 
+bool inventory(uint8_t out[21]) {
+    uint32_t s = save_address();
+    if (!s) return false;
+    for (int i = 0; i < 21; i++) out[i] = ld8(s + kInventory + i);
+    return true;
+}
+
 // hearts only in combat (hud.h): shown while the sword is in Link's hand (daPy_lk_c::mEquipItem,
 // GameCube 0x3560 -> HD 0x69B0; daPyItem_SWORD 0x103) and for a while after he took damage
 void hearts_step() {

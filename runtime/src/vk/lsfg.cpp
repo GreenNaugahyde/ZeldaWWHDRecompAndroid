@@ -23,7 +23,10 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cerrno>
 #include <cmath>
+#include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <array>
 #include <map>
@@ -206,6 +209,22 @@ std::atomic<float> g_gpu_ms{0};  // the network's GPU time per game frame, smoot
 bool g_loaded = false;
 std::mutex g_error_mutex;
 std::string g_error;  // why the last load failed
+// the file WWHD_FG_MARKER names exists while frame generation is loaded: after a crash, the app's
+// dialog offers to start without frame generation
+bool g_marked = false;
+
+void mark_in_use(bool on) {
+    const char* path = getenv("WWHD_FG_MARKER");
+    if (!path || !*path || on == g_marked) return;
+    g_marked = on;
+    if (!on) {
+        remove(path);
+        return;
+    }
+    FILE* f = fopen(path, "w");
+    if (f) fclose(f);
+    LOG("[fg] in use: %s", f ? "marked for the crash dialog" : strerror(errno));
+}
 
 void set_error(const std::string& e) {
     std::lock_guard<std::mutex> lk(g_error_mutex);
@@ -242,6 +261,7 @@ struct Pipe {
     VkDescriptorSetLayout dsl = VK_NULL_HANDLE;
     VkPipelineLayout layout = VK_NULL_HANDLE;
     VkPipeline pipe = VK_NULL_HANDLE;
+    uint32_t dynamic = 0;  // uniform buffers (dynamic offsets at binding)
 };
 Pipe g_pipes[kShaders];
 VkSampler g_borderBlack = VK_NULL_HANDLE, g_borderWhite = VK_NULL_HANDLE, g_clamp = VK_NULL_HANDLE;
@@ -327,7 +347,11 @@ void create_pipelines() {
     for (uint32_t i : used) {
         Pipe& p = g_pipes[i];
         std::vector<VkDescriptorSetLayoutBinding> bs;
-        for (uint32_t b : g_shaders[i].bindings) bs.push_back({b, type_of(b), 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr});
+        p.dynamic = 0;
+        for (uint32_t b : g_shaders[i].bindings) {
+            bs.push_back({b, type_of(b), 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr});
+            p.dynamic += type_of(b) == VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC;
+        }
         VkDescriptorSetLayoutCreateInfo dl{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
         dl.bindingCount = (uint32_t)bs.size();
         dl.pBindings = bs.data();
@@ -584,7 +608,8 @@ void run(VkCommandBuffer cmd, const std::vector<Pass>& passes, uint32_t frameInd
         const Pipe& pp = g_pipes[p.shader];
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pp.pipe);
         uint32_t off = (uint32_t)((frameIndex * kMaxLevels + p.level) * kUboStride);
-        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pp.layout, 0, 1, &p.set, 1, &off);
+        // a dynamic offset only for shaders with a uniform buffer (an extra one is invalid usage)
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pp.layout, 0, 1, &p.set, pp.dynamic ? 1 : 0, &off);
         vkCmdDispatch(cmd, p.gx, p.gy, 1);
         for (auto* t : p.outs) written.push_back(t);
         for (auto* t : p.ins) read.push_back(t);
@@ -593,15 +618,32 @@ void run(VkCommandBuffer cmd, const std::vector<Pass>& passes, uint32_t frameInd
 }  // namespace
 
 // ---------------------------------------------------------------- interface
+static std::atomic<int> g_risk_accepted{-1};  // -1: not set by the app yet, then WWHD_LSFG_RISK_OK
+
+bool risky_gpu() { return R.device && R.props.vendorID == 0x13B5; }  // ARM (Mali)
+
+void set_risk_accepted(bool on) { g_risk_accepted = on; }
+
 bool load(const Config& cfg) {
+    if (g_risk_accepted < 0) {
+        const char* e = getenv("WWHD_LSFG_RISK_OK");
+        g_risk_accepted = e && atoi(e) != 0;
+    }
+    if (risky_gpu() && !g_risk_accepted) {
+        LOG("[fg] %s can hang with frame generation and the warning wasn't accepted; frame generation disabled", R.props.deviceName);
+        set_error("the warning for this GPU wasn't accepted");
+        return false;
+    }
     g_cfg = cfg;
     g_cfg.multiplier = std::clamp(cfg.multiplier, 2, (int)kMaxOut + 1);
     g_cfg.flowScale = std::clamp(cfg.flowScale, 0.25f, 1.0f);
     std::vector<uint8_t> file;
     std::map<uint32_t, std::pair<size_t, size_t>> res;
     std::string err;
-    // the 16-bit float set when the device can run it
-    bool fp16 = R.shaderFloat16 && !getenv("WWHD_LSFG_FP32");
+    // the 16-bit float set when the device can run it; not on Mali (the G52's driver r32p1 draws
+    // garbage with it: black and blue shapes, flicker)
+    const bool mali = R.props.vendorID == 0x13B5;
+    bool fp16 = R.shaderFloat16 && !mali && !getenv("WWHD_LSFG_FP32");
     if (!read_dll(cfg.dll, file, res, err) || !read_set(file, res, fp16 ? kFp16Base : kFp32Base, g_shaders, err)) {
         LOG("[fg] %s: %s; frame generation disabled", cfg.dll.c_str(), err.c_str());
         set_error(err);
@@ -614,6 +656,7 @@ bool load(const Config& cfg) {
         set_error("this GPU can't write the image format frame generation needs");
         return false;
     }
+    mark_in_use(true);  // (on Mali, switching it on in play can lose the device before the network first runs)
     create_pipelines();
     g_loaded = true;
     set_error("");
@@ -809,6 +852,7 @@ void unload() {
     g_loaded = false;
     g_gpu_ms = 0;
     set_error("");
+    mark_in_use(false);
     LOG("[fg] frame generation off");
 }
 

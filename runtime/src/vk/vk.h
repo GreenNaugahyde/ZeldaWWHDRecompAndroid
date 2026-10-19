@@ -21,6 +21,10 @@ namespace gfx {
 // the GPU driver lost the device (it hung or crashed): leaves a note for the app's next start, which
 // offers to load another GPU driver (vk_device.cpp)
 void vk_note_device_lost();
+// vkWaitForFences for one fence without a time limit, but a submission that doesn't finish in 10 s
+// counts as a GPU hang (a lost device the driver doesn't report): noted as above, then fatal, so the
+// app shows its crash dialog at the next start instead of staying frozen (vk_device.cpp)
+void wait_fence(VkFence f);
 // vkCreateGraphicsPipelines with the pipeline cache, one at a time where the driver needs it (vk_device.cpp)
 VkResult create_graphics_pipeline(const VkGraphicsPipelineCreateInfo* ci, VkPipeline* out);
 #define VK_CHECK(x)                                                                     \
@@ -44,8 +48,21 @@ struct Image {
     VkImageAspectFlags aspect = VK_IMAGE_ASPECT_COLOR_BIT;
     VkImageLayout layout = VK_IMAGE_LAYOUT_UNDEFINED;
     Use use = Use::NONE;
+    // while sampled: the shader stages its last write was made visible to, and the use that wrote it
+    // (a reader in another stage needs a barrier of its own)
+    VkPipelineStageFlags readStages = 0;
+    Use writtenAs = Use::NONE;
     bool cube = false;  // created cube compatible
     std::vector<VkImageView> attachViews;  // per layer, for rendering
+    // A clear of one layer not recorded yet (clear_surface): the next render pass that draws into all
+    // of it clears it with its load op (no separate pass over the image, which tiled GPUs pay dearly
+    // for); any other use records it first (prepare).
+    struct PendingClear {
+        bool on = false;
+        uint32_t layer = 0;
+        VkImageAspectFlags aspects = 0;
+        VkClearValue value{};
+    } pendingClear;
 };
 
 // A host image backing a guest surface (render target, depth buffer or sampled texture).
@@ -71,7 +88,9 @@ struct Surface {
     float ax = 1.0f, ay = 1.0f;       // aspect ratio widening (taller) of TV-shaped targets, on top of rscale
     Surface* feedbackCopy = nullptr;  // copy sampled while this surface is a bound attachment
     Surface* mipChain = nullptr;      // a rendered picture with coarser levels, for sampling with mips
-    uint64_t mipChainSeq = ~0ull;     // writeSeq of the source when mipChain was last built
+    uint64_t mipChainKey[16] = {};    // per level of mipChain: what it was built from (with_mip_chain)
+    uint32_t mipChainLevels = 0;      // ... and how many of its levels are valid
+    bool mipsInPlace = false;         // the image itself was given the levels (with_mip_chain)
     Surface* volume = nullptr;        // a render target with slices, as the 3D texture the game samples
     uint64_t volumeSeq = ~0ull;       // writeSeq of the source when volume was last copied
     bool aliased = false;             // another colour surface of the same texel bits shares the address
@@ -151,6 +170,11 @@ VkDescriptorSet alloc_descriptor_set(VkDescriptorSetLayout layout);
 uint32_t& draws_since_commit();  // draws recorded since the last submission
 // make an image ready for `use` (records a barrier; ends the render pass if needed)
 void prepare(Image& img, Use use);
+// for sampling by these shader stages only (VK_PIPELINE_STAGE_VERTEX/FRAGMENT_SHADER_BIT): the GPU
+// can still overlap the other stages' work with the write before
+void prepare_read(Image& img, VkPipelineStageFlags stages);
+// a clear waiting for the render pass that draws into all of layer `layer` (w x h): taken over as its load op
+bool take_pending_clear(Image& img, uint32_t layer, uint32_t w, uint32_t h, VkImageAspectFlags& aspects, VkClearValue& value);
 
 // a surface was added or its data size changed (invalidate's address index)
 void surfaces_changed();
@@ -161,7 +185,10 @@ void prof_cmd_end();
 void prof_pass_begin(uint32_t w, uint32_t h, const VkFormat* colors, uint32_t nColors, VkFormat depth);
 void prof_pass_end();
 void prof_draw(uint32_t ps);
+void prof_op_begin(VkCommandBuffer cmd, const char* kind, uint32_t w = 0, uint32_t h = 0);
+void prof_op_end(VkCommandBuffer cmd);
 void prof_frame();
+bool gpu_timestamps();  // the GPU can time command buffers
 
 // ---- transient memory
 Upload upload_alloc(VkDeviceSize size, VkDeviceSize align = 256);
@@ -185,7 +212,9 @@ Surface* color_target(const uint32_t* regs, int index, uint32_t* slice = nullptr
 Surface* depth_target(const uint32_t* regs, uint32_t* slice = nullptr);             // from DB_DEPTH_* registers
 Surface* surface_from_color_buffer(uint32_t gx2ColorBuffer, uint32_t* firstSlice = nullptr, uint32_t* numSlices = nullptr);
 Surface* surface_from_depth_buffer(uint32_t gx2DepthBuffer, uint32_t* firstSlice = nullptr, uint32_t* numSlices = nullptr);
-Surface* sampled_texture(const uint32_t* texWords, bool isDepthSampler);  // from SQ_TEX_RESOURCE words
+// from SQ_TEX_RESOURCE words; maxLevels: the mip levels the sampler can reach (a rendered picture's
+// mip chain is built that far)
+Surface* sampled_texture(const uint32_t* texWords, bool isDepthSampler, uint32_t maxLevels = 16);
 void write_back_linear();  // GX2DrawDone: render results the CPU reads, to guest memory
 void upload_surface(Surface* s);
 // a private image like `like` (render targets the game doesn't know about)
@@ -194,6 +223,16 @@ bool create_surface_image(Surface* s, bool forRendering);
 // setting); a change requested with set_resolution_scale() takes effect at the next frame
 float resolution_scale();
 void latch_resolution_scale();  // frame boundary (swap)
+// the overlay: {scale in effect, 3D view width, height} (any thread)
+void resolution_shown(float out[3]);
+// ---- dynamic resolution (vk_dynres.cpp): the scale goes down to `min` when the GPU holds the game
+// below its frame rate, and back up to the Rendering resolution setting; 0 = off
+void set_dynamic_resolution_min(float min);
+float dynamic_resolution_min();
+bool dynamic_resolution_on();
+float dynamic_resolution_busy();      // GPU busy share 0..1 over the last half second, -1 when off
+void dynres_gpu_busy(double ns);      // a command buffer's GPU time (vk_profile.cpp)
+float dynres_scale(float setting);    // at the swap: the scale for the next frame
 // a render target made at another scale: reallocate it at the current one, keeping its contents
 Surface* rescaled(Surface* s);
 // forget everything that refers to `old` and free it once the GPU is done with it
@@ -203,7 +242,6 @@ void retire_image(const Image& old);
 void shader_compiler_init();
 // GLSL (Cemu decompiler output, Vulkan flavour) -> SPIR-V; false and a log message on errors
 bool compile_glsl(const char* src, bool vertex, std::vector<uint32_t>& spirv, std::string& log);
-bool compile_glsl_compute(const char* src, std::vector<uint32_t>& spirv, std::string& log);
 
 // ---- debugging (vk_device.cpp)
 void dump_texture(Image& img, const char* name, bool async, bool srgbEncode);

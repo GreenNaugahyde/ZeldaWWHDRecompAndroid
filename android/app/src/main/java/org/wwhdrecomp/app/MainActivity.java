@@ -11,6 +11,7 @@ import android.system.Os;
 import android.text.InputFilter;
 import android.text.InputType;
 import android.util.Log;
+import android.util.TypedValue;
 import android.view.Gravity;
 import android.view.InputDevice;
 import android.view.KeyEvent;
@@ -61,6 +62,32 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     static final int LAYOUT_INSET = 0, LAYOUT_SIDE = 1, LAYOUT_TV = 2, LAYOUT_DRC_LARGE = 3, LAYOUT_ON_DEMAND = 4;
     // "TV, GamePad on demand": the GamePad picture is shown instead of the TV picture (screen button)
     private boolean drcShown;
+    // the file select is shown as the GamePad picture (touchable) on a single screen, until it's left
+    private boolean drcForFiles;
+    private int front = -1;
+    private final Runnable frontPoll = new Runnable() {
+        @Override
+        public void run() {
+            int f = Native.frontScreen();
+            boolean noPad = !controllerConnected();
+            setFilesTouch(f == Native.FRONT_FILES && noPad);
+            setMenuTouch(noPad && drcScreen() && Native.drcGameCursor());
+            if (f != front && controls != null) {
+                front = f;
+                controls.setFrontScreen(f);
+                boolean files = f == Native.FRONT_FILES && !drcOnOwnDisplay();
+                if (files && !drcShown) {
+                    drcShown = drcForFiles = true;
+                    updateLayout();
+                } else if (!files && drcForFiles) {
+                    drcShown = drcForFiles = false;
+                    updateLayout();
+                }
+            }
+            frontHandler.postDelayed(this, 250);
+        }
+    };
+    private final android.os.Handler frontHandler = new android.os.Handler(android.os.Looper.getMainLooper());
     private static final float TV_ASPECT = 16f / 9f, DRC_ASPECT = 854f / 480f;
 
     SharedPreferences prefs;
@@ -70,7 +97,16 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     private ControlsView controls;
     private final InputMapper mapper = new InputMapper();
     private boolean autoHidden;
-    private int surfaceW, surfaceH;
+    private int surfaceW, surfaceH;  // the game view's size (screen pixels)
+    // Display resolution (Graphics): the surface's buffers can be smaller than the view; the display
+    // hardware scales them up for free. Auto sizes them to what the picture needs: 1.5x the 3D view's
+    // height (Sharp upscaling still enlarges), at least 720 lines, never more than the screen. On a 2560x1600 screen with a
+    // Helio G99 / Mali-G57, presenting at full size cost ~6 ms of a 33 ms frame and Sharp another ~4.7 ms.
+    // Full: the screen's own resolution (classic). WWHD_SURFACE_SCALE=<0.25..1> fixes the factor (tests).
+    static final int DISPLAY_RES_AUTO = 0, DISPLAY_RES_FULL = 1;
+    private float bufScale = 1;      // buffer pixels per view pixel, as the surface has it now
+    private float bufRequested = 1;  // what was last asked for (setFixedSize)
+    private float renderScale = 1;   // the rendering resolution setting (the 3D view is 720 lines at 1x)
 
     @Override
     protected void onCreate(Bundle state) {
@@ -273,12 +309,23 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         // the save state picker before the intro: the game waits for it from its first frame on
         boolean offerStates = startMode() != START_INTRO && !usedStateSlots(base).isEmpty();
         if (offerStates) Native.setStartHold(true);
+        // the last run's frame generation mark is read (crash dialog); frame generation switched off there
+        // since the library loaded (the renderer reads WWHD_LSFG_DLL when it starts)
+        //noinspection ResultOfMethodCallIgnored
+        frameGenMarker(this).delete();
+        if (!frameGenOn()) {
+            try {
+                Os.unsetenv("WWHD_LSFG_DLL");
+            } catch (ErrnoException ignored) {
+            }
+        }
         Native.start(gameDir(), new File(base, "save").getAbsolutePath(),
                 new File(getNoBackupFilesDir(), "shadercache").getAbsolutePath(), base.getAbsolutePath());
         started = true;
         applyOptions();
         startMotion();
         showGame();
+        frontHandler.post(frontPoll);
         showCacheLoading();
         if (offerStates) offerStartStates();
         updateDrcDisplay();
@@ -507,7 +554,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         t.setTextIsSelectable(true);
         box.addView(t);
         // the files themselves, not their folder: some devices' folder picker lists nothing on the
-        // internal storage (Android 16 with AOSP DocumentsUI: iPlay 70 mini Ultra, K70 Pro)
+        // internal storage (Android 16 with AOSP DocumentsUI, on a Snapdragon and a Unisoc device)
         Button extractFiles = new Button(this);
         extractFiles.setText(R.string.setup_extract_files);
         extractFiles.setOnClickListener(v -> pickDiscFiles());
@@ -528,10 +575,27 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         FrameLayout root = new FrameLayout(this);
         surface = new SurfaceView(this);
         surface.getHolder().addCallback(this);
+        bufScale = bufRequested = 1;
+        try {
+            renderScale = Float.parseFloat(String.valueOf(Os.getenv("WWHD_RES_SCALE")));  // the setting, or wwhd.env's
+        } catch (NumberFormatException e) {
+            renderScale = Float.parseFloat(prefs.getString("res_scale", "1"));
+        }
         root.addView(surface, new FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
         controls = new ControlsView(this, this);
         root.addView(controls, new FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT,
                 Gravity.CENTER));
+        // the file select's Back (B) while no controller is connected, in the game's green button style
+        filesBack = GameUi.barButton(this, getString(R.string.opt_back), v -> controls.pulse(Native.B), true);
+        filesBack.setTextSize(TypedValue.COMPLEX_UNIT_SP, 20);
+        filesBack.setTextColor(0xFFFFFFFF);  // white lettering outlined in dark green, as the game's buttons
+        filesBack.setTypeface(android.graphics.Typeface.create("sans-serif", android.graphics.Typeface.BOLD));
+        filesBack.setShadowLayer(GameUi.px(this, 2.5f), 0, 0, 0xFF1F5E14);
+        filesBack.setVisibility(filesTouch ? View.VISIBLE : View.GONE);
+        int m = GameUi.px(this, 12);
+        FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(GameUi.px(this, 120), GameUi.px(this, 48), Gravity.TOP | Gravity.END);
+        lp.setMargins(m, m, m, m);
+        root.addView(filesBack, lp);
         setContentView(root);
         applyControlsAppearance();
         hideSystemBars();
@@ -662,6 +726,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         box.addView(detail);
         View screen = seaScreen(box);
         final SeaView mySea = sea;
+        mySea.setFrameInterval(66);  // pipelines are being built: the CPU is for them
         sea = null;  // the game's screen: no work screen of its own
         screen.setVisibility(View.GONE);
         root.addView(screen, new FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
@@ -757,10 +822,15 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         Native.setOption("ao_mode", prefs.getInt("ao_mode", Native.getOption("ao_mode")));
         Native.setOption("ao_hires", prefs.getBoolean("ao_hires", Native.getOption("ao_hires") != 0) ? 1 : 0);
         Native.setOption("aniso", prefs.getBoolean("aniso", Native.getOption("aniso") != 0) ? 1 : 0);
-        Native.setOption("pro_controller", prefs.getBoolean("pro_controller", true) ? 1 : 0);  // default: as a Pro Controller
+        Native.setOption("upscale", prefs.getInt("upscale", Native.getOption("upscale")));
+        // every controller and the touch controls act as the Wii U GamePad (+ shows its screen, see
+        // pushInput); the setting "Controls act as" is gone, as is the Pro Controller mode
+        Native.setOption("pro_controller", 0);
+        if (prefs.contains("pro_controller")) prefs.edit().remove("pro_controller").apply();
         Native.setOption("invert_camera_y", prefs.getInt("invert_camera_y_mode", 0));
         Native.setOption("tv_aspect", prefs.getInt("tv_aspect", 0));
         Native.setOption("render_aspect", prefs.getInt("render_aspect", 0));
+        Native.setOption("dyn_res_min", prefs.getInt("dyn_res_min", 0));
         for (String m : MODS) Native.setOption(m, prefs.getBoolean(m, false) ? 1 : 0);
         for (String c : CHEATS_INFINITE) Native.setOption(c, prefs.getBoolean(c, false) ? 1 : 0);
         Native.setOption("cheat_moon_rise", prefs.getInt("cheat_moon_rise", 100));
@@ -792,12 +862,52 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         // context buttons: the game's button cluster (X, Y, R, B, ZR, A's seat and floating label) is hidden
         boolean context = flexible && prefs.getBoolean("context_buttons", false);
         controls.setContext(context);
-        Native.setHudHidden(context ? "N_X_00,N_Y_00,N_R_00,P_B_00,P_ZR_00,P_SetSeatASpecial_00,W_SetSeatA_00,L_CommandA_00" : "");
+        hudContext = context;
+        applyHudHidden();
         Native.setHudFade(0, nw && prefs.getBoolean("hearts_combat", false));
         Native.setHudFade(1, nw && prefs.getBoolean("rupees_on_change", false));
         if (!controls.editing()) controls.setLayoutString(nw ? prefs.getString("controls_layout", "") : "");
         Native.setTouchSwipeCamera(flexible && swipe);
         updateLayout();
+    }
+
+    // the game's button cluster (X, Y, R, B, ZR, A's seat and floating label): hidden for the context
+    // buttons, and on the file select while no controller is connected (its A OK / B Back icons don't
+    // take touches; filesBack stands in for B), and on the GamePad picture's Options / Save while no
+    // controller is connected (their A / B hints)
+    private static final String HUD_BUTTONS = "N_X_00,N_Y_00,N_R_00,P_B_00,P_ZR_00,P_SetSeatASpecial_00,W_SetSeatA_00,L_CommandA_00";
+    private boolean hudContext, filesTouch, menuTouch;
+    private TextView filesBack;
+
+    private void applyHudHidden() { Native.setHudHidden(hudContext || filesTouch || menuTouch ? HUD_BUTTONS : ""); }
+
+    /** the game's Options on the GamePad picture (its rows: L_BtnOption_*; targets as of the last frame) */
+    private boolean optionsOpen() {
+        for (Target t : targets)
+            if (t.key.startsWith("L_BtnOption_")) return true;
+        return false;
+    }
+
+    private void setMenuTouch(boolean on) {
+        if (controls != null) controls.setMenuBack(on && optionsOpen());  // (Save has its own Cancel)
+        if (on == menuTouch) return;
+        menuTouch = on;
+        applyHudHidden();
+    }
+
+    private void setFilesTouch(boolean on) {
+        if (on == filesTouch) return;
+        filesTouch = on;
+        applyHudHidden();
+        if (filesBack != null) filesBack.setVisibility(on ? View.VISIBLE : View.GONE);
+    }
+
+    private static boolean controllerConnected() {
+        for (int id : InputDevice.getDeviceIds()) {
+            InputDevice d = InputDevice.getDevice(id);
+            if (d != null && !d.isVirtual() && InputMapper.isController(d)) return true;
+        }
+        return false;
     }
 
     // ------------------------------------------------------------------ surface and screen layout
@@ -806,8 +916,11 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
 
     @Override
     public void surfaceChanged(SurfaceHolder holder, int format, int w, int h) {
-        surfaceW = w;
-        surfaceH = h;
+        boolean laidOut = surface != null && surface.getWidth() > 0 && surface.getHeight() > 0;
+        surfaceW = laidOut ? surface.getWidth() : w;
+        surfaceH = laidOut ? surface.getHeight() : h;
+        bufScale = Math.min(1f, (float) h / surfaceH);
+        updateBufferSize();  // may ask for another size: surfaceChanged again
         updateLayout();
         Native.surfaceChanged(holder.getSurface());
     }
@@ -849,9 +962,13 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     // the GamePad picture there in the display's shape (its background reaches the edges) or 16:9
     boolean drcFill() { return prefs.getBoolean("drc_fill", true); }
 
+    /** the TV picture covers the whole screen (rendered in the screen's shape, or stretched / filled), not 16:9 with bars */
+    boolean tvFillsScreen() { return prefs.getInt("render_aspect", 0) != 0 || prefs.getInt("tv_aspect", 0) != 0; }
+
     void setDrcFill(boolean on) {
         prefs.edit().putBoolean("drc_fill", on).apply();
         if (drcDisplay != null) drcDisplay.setFill(on);
+        updateLayout();
     }
 
     private void updateDrcDisplay() {
@@ -861,6 +978,8 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         }
         drcDisplay.setWanted(started && resumed && drcOnSecondDisplay());
     }
+
+    private boolean drcOnOwnDisplay() { return drcDisplay != null && drcDisplay.active(); }
 
     // Graphics > Screen layout: TV only by default; with a second display (dual-screen devices) the
     // GamePad inset, used when the GamePad is set to show in the layout instead of on that display
@@ -873,18 +992,26 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         RectF tv, drc;
         int layout = layoutSetting();
         if (layout == LAYOUT_ON_DEMAND && !NEW_TOUCH_CONTROLS) layout = LAYOUT_INSET;
-        if (drcDisplay != null && drcDisplay.active()) layout = LAYOUT_TV;  // the GamePad has its own display
-        if (layout != LAYOUT_ON_DEMAND) drcShown = false;
+        if (drcOnOwnDisplay()) {  // the GamePad has its own display
+            layout = LAYOUT_TV;
+            drcShown = false;
+        }
         controls.setScreenButton(layout == LAYOUT_ON_DEMAND, drcShown);
         // the inset sits between the shoulder buttons, sized to leave them free
         float insetW = Math.min(W * 0.3f, W - 2 * (Math.min(W, H) / 7f * 3.6f));
         RectF inset = new RectF((W - insetW) / 2, 0, (W + insetW) / 2, insetW / DRC_ASPECT);
+        if (drcShown) layout = -1;  // + (or the screen button): only the GamePad picture
         switch (layout) {
+            case -1:  // width -1: the TV picture is not drawn
+                tv = new RectF(0, 0, -1, -1);
+                drc = full;
+                break;
             case LAYOUT_SIDE:
                 tv = new RectF(0, 0, W * 0.7f, H);
                 drc = new RectF(W * 0.7f, 0, W, H);
                 break;
             case LAYOUT_TV:
+            case LAYOUT_ON_DEMAND:
                 tv = full;
                 drc = null;
                 break;
@@ -892,18 +1019,19 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
                 drc = full;
                 tv = inset;
                 break;
-            case LAYOUT_ON_DEMAND:  // the TV picture, or only the GamePad picture (width -1: not drawn)
-                tv = drcShown ? new RectF(0, 0, -1, -1) : full;
-                drc = drcShown ? full : null;
-                break;
             default:
                 tv = full;
                 drc = inset;
                 break;
         }
-        Native.setLayout(new float[] {tv.left, tv.top, tv.right < 0 ? -1 : tv.width(), tv.right < 0 ? -1 : tv.height()},
-                drc == null ? null : new float[] {drc.left, drc.top, drc.width(), drc.height()}, drc != null);
-        controls.setDrcRect(drc == null ? null : fit(drc, DRC_ASPECT));
+        float k = bufScale;  // buffer pixels
+        Native.setLayout(new float[] {tv.left * k, tv.top * k, tv.right < 0 ? -1 : tv.width() * k, tv.right < 0 ? -1 : tv.height() * k},
+                drc == null ? null : new float[] {drc.left * k, drc.top * k, drc.width() * k, drc.height() * k}, drc != null);
+        // the GamePad picture of + takes the TV picture's shape: no jump between the two. The game lays it out in
+        // that shape also while it's hidden (no GamePad picture in this layout), so + shows it ready, not 16:9 first
+        boolean fillDrc = (drcShown || drc == null) && tvFillsScreen() && !drcForFiles;  // (the file select: its stretched sides flickered)
+        if (!drcOnOwnDisplay()) Native.setDrcAspect(fillDrc ? W / H : 0);
+        controls.setDrcRect(drc == null ? null : fillDrc ? drc : fit(drc, DRC_ASPECT));
         controls.setTvRect(tv.right < 0 ? null : fit(tv, TV_ASPECT));
         controls.setClimbHud(prefs.getBoolean("mod_climb", false));
         controls.setPerfHud(prefs.getBoolean("perf_hud", false));
@@ -914,15 +1042,374 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     }
 
     // ------------------------------------------------------------------ input
+    private boolean plusHeld;
+
     private void pushInput() {
         if (controls == null) return;
-        int b = controls.buttons() | mapper.padButtons | mapper.keyButtons;
-        float lx = pick(controls.stickX(0), mapper.lx, mapper.keyLX());
-        float ly = pick(controls.stickY(0), mapper.ly, mapper.keyLY());
+        // − only swapped the TV and GamePad pictures (the GamePad is the only controller now): never sent
+        int b = (controls.buttons() | mapper.padButtons | mapper.keyButtons) & ~Native.MINUS;
+        // + (touch or controller) shows or hides the full GamePad picture, unless the GamePad has a
+        // display of its own: there + goes to the game
+        if (!drcOnOwnDisplay() && front != Native.FRONT_OPENING) {  // (the opening: + is the game's skip)
+            boolean plus = (b & Native.PLUS) != 0, press = plus && !plusHeld;
+            plusHeld = plus;
+            if (press) controls.post(this::plusToggle);  // not inside this call: the switch releases the touch controls
+            b &= ~Native.PLUS;
+        }
+        boolean focus = focusMode(), ownStick = focus && !Native.drcGameCursor();  // (the game's cursor: the stick is the game's too)
+        if (focus) {  // the controller works the GamePad screen through its touch targets (focusTick)
+            int pad = mapper.padButtons | mapper.keyButtons;
+            if (!Native.drcGameCursor()) {  // (where the game has its own cursor, its buttons are the game's)
+                int pressed = pad & ~focusPad;
+                if ((pressed & Native.B) != 0 && touchAt == 0) touchAt = -2;  // B: the game's Back, else back to the game (focusTick)
+                if ((pressed & Native.A) != 0 && touchAt == 0) touchAt = -1;  // A: a tap (focusTick)
+                int slot = (pressed & Native.Y) != 0 ? 0 : (pressed & Native.X) != 0 ? 1 : (pressed & Native.R) != 0 ? 2 : -1;
+                if (slot >= 0 && touchAt == 0) touchSlot = slot;  // Y / X / R: the item onto that button
+                if ((pressed & Native.UP) != 0) focusMove(0, -1);
+                if ((pressed & Native.DOWN) != 0) focusMove(0, 1);
+                if ((pressed & Native.LEFT) != 0) focusMove(-1, 0);
+                if ((pressed & Native.RIGHT) != 0) focusMove(1, 0);
+                b &= ~(Native.A | Native.B | Native.X | Native.Y | Native.R | Native.UP | Native.DOWN | Native.LEFT | Native.RIGHT);
+            }
+            focusPad = pad;
+        }
+        if (focus || drcScreen()) startFocusTick();
+        float lx = ownStick ? 0 : pick(controls.stickX(0), mapper.lx, mapper.keyLX());
+        float ly = ownStick ? 0 : pick(controls.stickY(0), mapper.ly, mapper.keyLY());
         float rx = pick(controls.stickX(1), mapper.rx, mapper.keyRX());
         float ry = pick(controls.stickY(1), mapper.ry, mapper.keyRY());
         if (mapper.keyLX() != 0 && mapper.keyLY() != 0) { lx *= 0.7071f; ly *= 0.7071f; }
         Native.setPad(b, lx, ly, rx, ry);
+    }
+
+    // ---- the controller on the full GamePad picture (single screen, +): the game's GamePad screen takes
+    // touch only (its item pages), so a highlight sits on one of its touch targets (the game's own hit
+    // boxes, Native.drcTargets) and moves with the D-pad / left stick; A taps it, Y / X / R put the
+    // highlighted item onto that button (a drag to the game's drop box, B_Y_00 / B_X_00 / B_R_00, as a
+    // finger does), B taps the game's Back button where it shows one (an open bag, the chart from the map)
+    // and otherwise goes back to the game, + as always. Touch works the whole time; a touch hides the
+    // highlight (lastController null). Where the game shows its own cursor (Options), the buttons are the game's.
+    private static final class Target {
+        String key, name;
+        float x, y, w, h;
+    }
+
+    private final java.util.ArrayList<Target> targets = new java.util.ArrayList<>();
+    private String focusKey;
+    private float focusX = 0.5f, focusY = 0.5f, touchX, touchY;
+    private int focusPad;
+    private boolean focusTicking, focusTouch;
+    private long stickRepeatAt;
+    // the touch the buttons make: touchAt its start (-1: A pressed, -2: B pressed; start next frame), touchSlot the
+    // Y / X / R drop box it goes to (-1: a tap where it is)
+    private long touchAt;
+    private int touchSlot = -1;
+    private float fromX, fromY, toX, toY;
+    private static final String[] SLOT_BOXES = {"B_Y_00", "B_X_00", "B_R_00"};
+    private static final long TAP_MS = 100, DRAG_HOLD = 150, DRAG_MOVE = 150, DRAG_DROP = 100;
+
+    /** the drop box of slot i on the screen now (the one inside the picture: a sliding page shows two) */
+    private Target slotBox(int i) {
+        Target best = null;
+        for (Target t : targets)
+            if (t.name.equals(SLOT_BOXES[i]) && t.x > 0f && t.x < 1f && (best == null || Math.abs(t.x - 0.5f) < Math.abs(best.x - 0.5f))) best = t;
+        return best;
+    }
+
+    /** the game's Back button on the screen now (an open bag or chart: L_BtnBack_00), or null */
+    private Target backButton() {
+        for (Target t : targets)
+            if (t.key.startsWith("L_BtnBack_") && t.x > 0f && t.x < 1f) return t;
+        return null;
+    }
+
+    private void touchTo(boolean down, float x, float y) {
+        touchX = x;
+        touchY = y;
+        focusTouch = down;
+        Native.setDrcTouch(down, ControlsView.pictureU(x), ControlsView.pictureV(y));
+    }
+
+    private boolean focusMode() {
+        return drcShown && !drcForFiles && front == 0 && lastController != null && !drcOnOwnDisplay();
+    }
+
+    private void startFocusTick() {
+        if (focusTicking) return;
+        focusTicking = true;
+        android.view.Choreographer.getInstance().postFrameCallback(focusTick);
+    }
+
+    private void readTargets() {
+        targets.clear();
+        chart = null;
+        java.util.HashMap<String, Integer> seen = new java.util.HashMap<>();
+        for (String t : Native.drcTargets().split(";")) {
+            String[] f = t.trim().split(" ");
+            if (f.length != 6) continue;
+            try {
+                Target g = new Target();
+                g.x = Float.parseFloat(f[2]);
+                g.y = Float.parseFloat(f[3]);
+                g.w = Float.parseFloat(f[4]);
+                g.h = Float.parseFloat(f[5]);
+                if (f[0].equals("B_Area_00") && f[1].equals("N_All_00")) {  // the sea chart: one area, 7 x 7 squares
+                    chart = g;
+                    for (int r = 0; r < 7; r++)
+                        for (int c = 0; c < 7; c++) {
+                            Target q = new Target();
+                            q.w = g.w / 7f;
+                            q.h = g.h / 7f;
+                            q.x = g.x - g.w / 2f + (c + 0.5f) * q.w;
+                            q.y = g.y - g.h / 2f + (r + 0.5f) * q.h;
+                            q.key = TILE + r + c;
+                            q.name = f[0];
+                            targets.add(q);
+                        }
+                    continue;
+                }
+                // a page-wide swipe area is not a button; the dungeon map's floor map (N_MapArea_00) is (a tap zooms it)
+                if (g.w * g.h > 0.25f && !f[1].equals("N_MapArea_00")) continue;
+                String k = f[1] + "/" + f[0];
+                Integer n = seen.get(k);
+                seen.put(k, n == null ? 1 : n + 1);
+                g.key = n == null ? k : k + "#" + n;
+                g.name = f[0];
+                targets.add(g);
+            } catch (NumberFormatException ignored) {
+            }
+        }
+        // a chart square's view (N_StandardPos_00; Native.drcTargets gives the box of the one shown: B_Btn_00
+        // small, B_BtnFullZoom_00 magnified): the only target while it is open, as it takes the touches
+        Target view = null;
+        for (Target t : targets)
+            if (t.key.startsWith("N_StandardPos_00/")) view = t;
+        // a chart opened over the sea chart (Tingle's Chart): its Back button is the only target, unframed
+        backOnly = false;
+        if (view == null && chart != null) {
+            view = backButton();
+            backOnly = view != null;
+        }
+        if (view != null) {
+            targets.clear();
+            targets.add(view);
+        }
+    }
+
+    private boolean backOnly, wasBackOnly;  // readTargets: only the game's Back button (A and B tap it), no highlight
+    private String keptKey;
+    private float keptX, keptY;
+
+    private Target chart;  // the sea chart's area (readTargets), or null
+
+    private static final String TILE = "N_All_00/B_Area_00/";
+    // the chart square (row * 10 + column) whose view is open: the one A opened, or the one a finger
+    // touched (trackView); forgotten once its view closes
+    private int tile = -1;
+    private boolean viewOpen;
+    /** the chart square under a point, or -1 */
+    private int tileAt(float x, float y) {
+        if (chart == null) return -1;
+        int c = (int) Math.floor((x - (chart.x - chart.w / 2f)) / (chart.w / 7f)), r = (int) Math.floor((y - (chart.y - chart.h / 2f)) / (chart.h / 7f));
+        return c < 0 || c > 6 || r < 0 || r > 6 ? -1 : r * 10 + c;
+    }
+
+    private float[] tileCenter(int t) {
+        float tw = chart.w / 7f, th = chart.h / 7f;
+        return new float[] {chart.x - chart.w / 2f + (t % 10 + 0.5f) * tw, chart.y - chart.h / 2f + (t / 10 + 0.5f) * th};
+    }
+
+    /** where B taps to close a chart square's view: the magnified one on itself, the small one on its square again */
+    private float[] viewClose(Target v) {
+        if (v.key.endsWith("/B_BtnFullZoom_00") || chart == null || tile < 0) return new float[] {v.x, v.y};
+        return tileCenter(tile);
+    }
+
+    /** the chart square's magnified view, when one is open (readTargets keeps only it) */
+    private Target chartView() {
+        return targets.size() == 1 && targets.get(0).key.startsWith("N_StandardPos_00/") ? targets.get(0) : null;
+    }
+
+    /** the Y / X / R slots (their icons, and the drop boxes items are dragged onto) are targets only for Y / X / R
+     * (slotBox); the highlight doesn't go there, as in the game's own menu */
+    private static boolean selectable(Target t) {
+        return !t.key.startsWith("N_DropSlide_00/") && !t.key.startsWith("L_YItemIcon_") && !t.key.startsWith("L_XItemIcon_") && !t.key.startsWith("L_RItemIcon_");
+    }
+
+    private Target focused() {
+        Target best = null;
+        float bd = Float.MAX_VALUE;
+        for (Target t : targets) {
+            if (!selectable(t)) continue;
+            if (t.key.equals(focusKey)) return t;
+            float d = dist(t.x - focusX, t.y - focusY);
+            if (d < bd) { bd = d; best = t; }
+        }
+        return best;  // the target gone (page changed): the nearest one
+    }
+
+    private static float dist(float dx, float dy) { return (float) Math.hypot(dx * 16f / 9f, dy); }
+
+    /** the highlight to the next target in direction dx, dy */
+    private void focusMove(int dx, int dy) {
+        readTargets();
+        Target cur = focused();
+        if (cur == null) return;
+        Target best = null;
+        float bs = Float.MAX_VALUE;
+        for (Target t : targets) {
+            if (t == cur || !selectable(t)) continue;
+            float ex = (t.x - cur.x) * 16f / 9f, ey = t.y - cur.y;
+            float along = ex * dx + ey * dy, across = Math.abs(ex * dy - ey * dx);
+            if (along < 0.01f) continue;
+            float s = along + 2.5f * across;
+            if (s < bs) { bs = s; best = t; }
+        }
+        if (best != null) setFocused(best);
+    }
+
+    private void setFocused(Target t) {
+        focusKey = t.key;
+        focusX = t.x;
+        focusY = t.y;
+    }
+
+    private final android.view.Choreographer.FrameCallback focusTick = new android.view.Choreographer.FrameCallback() {
+        @Override
+        public void doFrame(long now) {
+            boolean game = Native.drcGameCursor(), screen = drcScreen();
+            if (controls == null || !focusMode()) {
+                if (focusTouch) touchTo(false, touchX, touchY);
+                touchAt = 0;
+                touchSlot = -1;
+                if (controls != null) controls.setFocus(false, 0, 0, 0, 0, false);
+                if (controls == null || !screen) {
+                    pauseForMenu(false);
+                    focusTicking = false;
+                    return;
+                }
+                pauseForMenu(true);
+                readTargets();  // touch only: still follows the chart views (which square a finger opened)
+                trackView();
+                android.view.Choreographer.getInstance().postFrameCallback(this);
+                return;
+            }
+            pauseForMenu(true);
+            readTargets();
+            trackView();
+            Target cur = game ? null : focused();
+            if (cur != null) setFocused(cur);
+            focusFrame(game, cur);
+            android.view.Choreographer.getInstance().postFrameCallback(this);
+        }
+    };
+
+    // a single screen shows the GamePad picture of + instead of the game: the game pauses meanwhile (as its own TV
+    // menu does with the Pro Controller); its own Options / Save pause it too and are left alone
+
+    private void pauseForMenu(boolean on) {
+        Native.setGamePaused(on && Native.pauseKind() == 0);  // (each frame: it runs out by itself; the game's Options / Save pause it their own way)
+    }
+
+    /** the GamePad picture is shown on its own (the screen the controller and the fingers work) */
+    private boolean drcScreen() {
+        return drcShown && !drcForFiles && front == 0 && !drcOnOwnDisplay();
+    }
+
+    /** a chart square's view opening and closing: which square it belongs to, the highlight back there after */
+    private void trackView() {
+        // Tingle's Chart: the highlight comes back to where it was (its button) once it is closed
+        if (backOnly && !wasBackOnly) { keptKey = focusKey; keptX = focusX; keptY = focusY; }
+        if (!backOnly && wasBackOnly && keptKey != null) { focusKey = keptKey; focusX = keptX; focusY = keptY; }
+        wasBackOnly = backOnly;
+        Target open = chartView();
+        if (viewOpen && open == null) {  // a view closed: the highlight back on its square
+            if (tile >= 0 && chart != null) {
+                float[] p = tileCenter(tile);
+                focusKey = TILE + tile / 10 + tile % 10;
+                focusX = p[0];
+                focusY = p[1];
+            }
+            tile = -1;
+        }
+        if (!viewOpen && open != null && tile < 0) {  // opened by touch (A sets it before)
+            tile = tileAt(ControlsView.fingerX, ControlsView.fingerY);
+            if (Os.getenv("WWHD_HUD_LOG") != null)
+                Log.i(TAG, String.format(java.util.Locale.ROOT, "[drc-view] opened by touch at %.3f %.3f: square %d (chart %s)", ControlsView.fingerX, ControlsView.fingerY, tile,
+                        chart == null ? "-" : chart.x + " " + chart.y + " " + chart.w + " " + chart.h));
+        }
+        viewOpen = open != null;
+    }
+
+    private void focusFrame(boolean game, Target cur) {
+        // the left stick: a tilt moves the highlight once, held it repeats
+        float x = pick(mapper.lx, mapper.keyLX(), 0), y = pick(mapper.ly, mapper.keyLY(), 0);
+        long ms = android.os.SystemClock.uptimeMillis();
+        if (!game && Math.hypot(x, y) > 0.6f) {
+            if (ms >= stickRepeatAt) {
+                boolean first = stickRepeatAt == 0;
+                stickRepeatAt = ms + (first ? 350 : 140);
+                if (Math.abs(x) > Math.abs(y)) focusMove(x > 0 ? 1 : -1, 0);
+                else focusMove(0, y > 0 ? -1 : 1);
+                cur = focused();
+            }
+        } else {
+            stickRepeatAt = 0;
+        }
+        // Y / X / R on an item: down on it, hold, slide to the drop box, hold, let go (as a finger)
+        if (touchSlot >= 0 && touchAt == 0) {
+            Target box = slotBox(touchSlot);
+            if (cur != null && box != null && cur.key.contains("L_BtnItemIcon")) {
+                fromX = cur.x;
+                fromY = cur.y;
+                toX = box.x;
+                toY = box.y;
+                touchAt = ms;
+                touchTo(true, fromX, fromY);
+            } else {
+                touchSlot = -1;
+            }
+        } else if (touchAt == -2) {  // B: a tap on the game's Back button, or the inventory closes
+            Target view = chartView(), back = view != null ? null : backButton();
+            if (view != null) {  // a chart square's view: the tap that closes it
+                float[] p = viewClose(view);
+                touchAt = ms;
+                touchTo(true, p[0], p[1]);
+            } else if (back != null) {
+                touchAt = ms;
+                touchTo(true, back.x, back.y);
+            } else {
+                touchAt = 0;
+                controls.post(MainActivity.this::onScreenToggle);
+            }
+        } else if (touchAt == -1) {  // A: a tap on the highlight
+            if (cur != null && cur.key.startsWith(TILE)) tile = Integer.parseInt(cur.key.substring(TILE.length()));
+            if (cur != null) {
+                touchAt = ms;
+                touchTo(true, cur.x, cur.y);
+            } else {
+                touchAt = 0;
+            }
+        } else if (touchAt > 0) {
+            long t = ms - touchAt;
+            if (touchSlot < 0) {
+                if (t >= TAP_MS) {
+                    touchTo(false, touchX, touchY);
+                    touchAt = 0;
+                }
+            } else if (t < DRAG_HOLD) {
+                touchTo(true, fromX, fromY);
+            } else if (t < DRAG_HOLD + DRAG_MOVE + DRAG_DROP) {
+                float k = Math.min(1f, (t - DRAG_HOLD) / (float) DRAG_MOVE);
+                touchTo(true, fromX + (toX - fromX) * k, fromY + (toY - fromY) * k);
+            } else {
+                touchTo(false, toX, toY);
+                touchAt = 0;
+                touchSlot = -1;
+            }
+        }
+        if (cur == null || backOnly) controls.setFocus(false, 0, 0, 0, 0, false);
+        else controls.setFocus(true, cur.x, cur.y, cur.w, cur.h, focusTouch);
     }
 
     private static float pick(float a, float b, float c) {
@@ -999,10 +1486,26 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     @Override
     public void onControlsChanged() { pushInput(); }
 
+    /** + : back to the game; where the GamePad picture shows the game's Options or Save (its own cursor), those
+     * close first (B, again until they're gone), else the game picture would show the game's "Pause" */
+    private void plusToggle() {
+        if (!drcScreen() || !Native.drcGameCursor()) { onScreenToggle(); return; }
+        closeMenusThenToggle(6);
+    }
+
+    private void closeMenusThenToggle(int tries) {
+        if (!drcScreen()) return;
+        if (!Native.drcGameCursor() || tries == 0) { onScreenToggle(); return; }
+        controls.pulse(Native.B);
+        controls.postDelayed(() -> closeMenusThenToggle(tries - 1), 400);
+    }
+
     @Override
     public void onScreenToggle() {
         drcShown = !drcShown;
+        drcForFiles = false;
         updateLayout();
+        pushInput();  // the switch let go of the touch +: else it still counts as held and the next + is lost
     }
 
     /** the on-screen controls' layout editor (ControlsView); the menu closes for it */
@@ -1029,19 +1532,12 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     static final int[] PERF_LABELS = {R.string.perf_fps, R.string.perf_frame, R.string.perf_cpu, R.string.perf_gpu,
             R.string.perf_temp_cpu, R.string.perf_temp_gpu, R.string.perf_temp_bat, R.string.perf_settings};
 
-    /** the overlay's settings lines: resolution, ambient occlusion and the optional effects (the driver is in ControlsView) */
+    /** the overlay's settings lines: ambient occlusion and the optional effects (the resolution and the driver are in ControlsView) */
     java.util.List<String> perfSettingsLines() {
         java.util.List<String> l = new java.util.ArrayList<>();
-        String scale = prefs.getString("res_scale", "1");
-        float f;
-        try {
-            f = Float.parseFloat(scale);
-        } catch (NumberFormatException e) {
-            f = 1;
-        }
         String[] ao = {"Wii U", "centre fix", "centre+noise"};
         int aoMode = Math.max(0, Math.min(2, Native.getOption("ao_mode")));
-        l.add("Res: " + scale + "× " + Math.round(720 * f) + "p  AO: " + ao[aoMode]);
+        l.add("AO: " + ao[aoMode]);
         StringBuilder fx = new StringBuilder();
         if (Native.getOption("aniso") != 0) fx.append("Aniso: 16×  ");
         if (Native.getOption("ao_hires") != 0) fx.append("AO depth: full size");
@@ -1121,8 +1617,8 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         return super.dispatchKeyEvent(e);
     }
 
-    // A controller's Select (View): held for 0.6 s it opens the menu, a shorter press is the game's
-    // - button (sent on release, held for a few frames so the game sees it)
+    // A controller's Select (View): held for 0.6 s it opens the menu, a shorter press is the Wii U button
+    // assigned to it (sent on release, held for a few frames so the game sees it; − is dropped in pushInput)
     private static final long SELECT_HOLD_MS = 600;
     private final android.os.Handler keyHandler = new android.os.Handler(android.os.Looper.getMainLooper());
     private boolean selectDown, selectOpenedMenu;
@@ -1276,7 +1772,53 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         if (RES_SCALES[i].equals(prefs.getString("res_scale", "1"))) return;
         prefs.edit().putString("res_scale", RES_SCALES[i]).commit();
         Native.setOption("res_scale", Math.round(Float.parseFloat(RES_SCALES[i]) * 100));
+        renderScale = Float.parseFloat(RES_SCALES[i]);
+        updateBufferSize();
         controls.resetPerfAverage();
+    }
+
+    // dynamic resolution's lowest scale in percent (0 = off): the Rendering resolution is its upper limit
+    static final int[] DYN_RES_MINS = {0, 75, 60, 50, 40};
+
+    void setDynResMin(int i) {
+        prefs.edit().putInt("dyn_res_min", DYN_RES_MINS[i]).apply();
+        Native.setOption("dyn_res_min", DYN_RES_MINS[i]);
+        controls.resetPerfAverage();
+    }
+
+    void setDisplayRes(int i) {
+        prefs.edit().putInt("display_res", i).apply();
+        updateBufferSize();
+    }
+
+    /** the surface buffer's size for the Display resolution setting (see bufScale) */
+    void updateBufferSize() {
+        if (surface == null || surfaceW <= 0 || surfaceH <= 0) return;
+        float k = 1;
+        String test = null;
+        try {
+            test = Os.getenv("WWHD_SURFACE_SCALE");
+        } catch (Exception ignored) {
+        }
+        if (test != null) {
+            try {
+                k = Float.parseFloat(test);
+            } catch (NumberFormatException ignored) {
+            }
+        } else if (prefs.getInt("display_res", DISPLAY_RES_AUTO) == DISPLAY_RES_AUTO) {
+            // 1.5x the 3D view's lines (it fills the height; wider screens add width only), at least the
+            // game's own 720 lines: small screens keep their resolution (writing them is cheap)
+            k = Math.max(720f * renderScale * 1.5f, 720f) / surfaceH;
+            k = (float) Math.ceil(k * 8) / 8;          // eighths: a few sizes, not one per setting
+        }
+        k = Math.max(0.25f, Math.min(1f, k));
+        if (k == bufRequested) return;
+        bufRequested = k;
+        SurfaceHolder holder = surface.getHolder();
+        if (k >= 1) holder.setSizeFromLayout();
+        else holder.setFixedSize(Math.round(surfaceW * k / 2) * 2, Math.round(surfaceH * k / 2) * 2);
+        Log.i(TAG, "display resolution: buffer " + (k >= 1 ? "full" : Math.round(surfaceW * k / 2) * 2 + "x" + Math.round(surfaceH * k / 2) * 2)
+                + " for " + surfaceW + "x" + surfaceH);
     }
 
     void setMod(String key, boolean on) {
@@ -1386,8 +1928,6 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
             public void run() {
                 String m = Native.saveStateMessage();
                 if (!m.isEmpty() && !m.equals(before)) {
-                    // a loaded state brings its controls along: keep the setting in step
-                    prefs.edit().putBoolean("pro_controller", Native.getOption("pro_controller") != 0).apply();
                     android.widget.Toast.makeText(MainActivity.this, m, android.widget.Toast.LENGTH_SHORT).show();
                 } else if (android.os.SystemClock.uptimeMillis() < until) {
                     h.postDelayed(this, 200);
@@ -1581,6 +2121,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         box.addView(cancel, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT));
         setContentView(seaScreen(box));
         final SeaView mySea = sea;
+        mySea.setFrameInterval(66);  // the CPU is for the work (SeaView)
         final android.os.Handler h = new android.os.Handler(android.os.Looper.getMainLooper());
         h.post(new Runnable() {
             @Override
@@ -1687,7 +2228,39 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
 
     private File frameGenDll() { return new File(new File(getFilesDir(), "lsfg"), "Lossless.dll"); }
 
-    private boolean frameGenOn() { return prefs.getBoolean("fg_enabled", false) && frameGenDll().exists(); }
+    // exists while the renderer has shown generated frames in this run (lsfg.cpp): read by the crash dialog
+    static File frameGenMarker(android.content.Context c) { return new File(new File(c.getFilesDir(), "lsfg"), "in_use"); }
+
+    private boolean frameGenOn() { return prefs.getBoolean("fg_enabled", false) && frameGenDll().exists() && frameGenAllowed(); }
+
+    // Mali GPUs: frame generation can hang the GPU there; it runs only after the player accepted a
+    // warning (asked each time it's switched on; before the library loads, the renderer checks it itself)
+    private static boolean frameGenRiskyGpu() { return libraryLoaded && Native.frameGenRiskyGpu(); }
+
+    private boolean frameGenAllowed() { return !frameGenRiskyGpu() || prefs.getBoolean("fg_risk_ok", false); }
+
+    /** the setting as the menu shows it (on, and on these GPUs accepted) */
+    boolean frameGenSwitchedOn() { return prefs.getBoolean("fg_enabled", false) && frameGenAllowed(); }
+
+    /** switches frame generation on, on these GPUs after the warning; `after` runs either way */
+    void enableFrameGen(Runnable after) {
+        if (frameGenAllowed()) {
+            setFrameGen("fg_enabled", true);
+            if (after != null) after.run();
+            return;
+        }
+        new GameDialog(this).title(R.string.fg_risk_title).message(getString(R.string.fg_risk_text, PerfStats.gpuName()))
+                .button(R.string.fg_risk_keep_off, () -> {
+                    setFrameGen("fg_enabled", false);
+                    if (after != null) after.run();
+                })
+                .button(R.string.fg_risk_accept, () -> {
+                    prefs.edit().putBoolean("fg_risk_ok", true).commit();
+                    Native.setFrameGenRiskAccepted(true);
+                    setFrameGen("fg_enabled", true);
+                    if (after != null) after.run();
+                }).show();
+    }
 
     // the frame rates the Frame rate setting offers: off, 60, and 120 where the display shows it
     int[] interpRates() {
@@ -1719,6 +2292,8 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         for (android.view.Display.Mode m : getWindowManager().getDefaultDisplay().getSupportedModes())
             hz = Math.max(hz, m.getRefreshRate());
         setenv("WWHD_DISPLAY_HZ", String.valueOf(Math.round(hz)));
+        setenv("WWHD_FG_MARKER", frameGenMarker(this).getAbsolutePath());
+        setenv("WWHD_LSFG_RISK_OK", prefs.getBoolean("fg_risk_ok", false) ? "1" : "0");
         if (!frameGenOn()) return;
         setenv("WWHD_LSFG_DLL", frameGenDll().getAbsolutePath());
         setenv("WWHD_LSFG_MULTIPLIER", String.valueOf(prefs.getInt("fg_multiplier", 2)));
@@ -1736,7 +2311,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
 
     String frameGenLabel() {
         if (!frameGenDll().exists()) return getString(R.string.fg_no_dll);
-        if (!prefs.getBoolean("fg_enabled", false)) return getString(R.string.off);
+        if (!frameGenSwitchedOn()) return getString(R.string.off);
         if (!Native.frameGenError().isEmpty()) return getString(R.string.fg_not_working);
         return "×" + prefs.getInt("fg_multiplier", 2);
     }
@@ -1767,6 +2342,10 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
 
     void setFrameGen(String key, boolean v) {
         prefs.edit().putBoolean(key, v).commit();
+        if (key.equals("fg_enabled") && !v) {  // the warning comes again next time
+            prefs.edit().remove("fg_risk_ok").commit();
+            Native.setFrameGenRiskAccepted(false);
+        }
         frameGenChanged();
     }
 
@@ -2108,11 +2687,12 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         }
         //noinspection ResultOfMethodCallIgnored
         tmp.renameTo(frameGenDll());
-        prefs.edit().putBoolean("fg_enabled", true).commit();
-        applyFrameGenNow();
-        new GameDialog(this).title(R.string.fg_title)
-                .message(Native.frameGenDllTested(frameGenDll().getAbsolutePath()) ? R.string.fg_dll_ok : R.string.fg_dll_untested)
-                .button(R.string.opt_ok, null).show();
+        enableFrameGen(() -> {
+            if (!frameGenOn()) return;  // (the warning for this GPU declined)
+            new GameDialog(this).title(R.string.fg_title)
+                    .message(Native.frameGenDllTested(frameGenDll().getAbsolutePath()) ? R.string.fg_dll_ok : R.string.fg_dll_untested)
+                    .button(R.string.opt_ok, null).show();
+        });
     }
 
     // the resolution applies to render targets as the game creates them: start a fresh process

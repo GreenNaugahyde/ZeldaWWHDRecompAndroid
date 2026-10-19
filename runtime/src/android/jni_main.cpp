@@ -28,6 +28,7 @@
 #include "../packs.h"
 #include "../platform.h"
 #include "../release.h"
+#include "../guest_addr.h"
 #include "../runtime.h"
 #include "../savestate.h"
 #include "../vk/lsfg.h"
@@ -40,6 +41,8 @@ int ao_mode();
 void set_ao_mode(int m);
 bool aniso_enabled();
 void set_aniso(bool v);
+int upscale_mode();
+void set_upscale_mode(int m);
 bool ao_hires_enabled();
 void set_ao_hires(bool v);
 void request_capture();
@@ -215,6 +218,8 @@ JNI_FN(jboolean, frameGenDllTested)(JNIEnv* env, jclass, jstring path) {
 }
 
 // why frame generation couldn't start ("" if it runs or is off)
+JNI_FN(jboolean, frameGenRiskyGpu)(JNIEnv*, jclass) { return gfx::fg::risky_gpu(); }
+JNI_FN(void, setFrameGenRiskAccepted)(JNIEnv*, jclass, jboolean on) { gfx::fg::set_risk_accepted(on); }
 JNI_FN(jstring, frameGenError)(JNIEnv* env, jclass) { return env->NewStringUTF(gfx::fg::last_error().c_str()); }
 
 // GamePad motion: one sensor sample (SDL controller axes, rad/s and m/s²), or forget the state
@@ -312,7 +317,7 @@ JNI_FN(jbyteArray, parseKey)(JNIEnv* env, jclass, jbyteArray data) {
 
 #include "../recomp/compile.h"
 #include "../recomp/locals.h"
-extern "C" const char wwhd_ops_bc[], wwhd_ops_bc_end[], wwhd_hooks[], wwhd_hooks_end[];  // recomp_data.S
+extern "C" const char wwhd_ops_bc[], wwhd_ops_bc_end[], wwhd_hooks[], wwhd_hooks_end[], wwhd_hot[], wwhd_hot_end[];  // recomp_data.S
 
 #ifdef WWHD_DEVICE_RECOMP
 #include "../recomp/loader.h"
@@ -328,6 +333,7 @@ static std::string compile_code(const std::string& gameDir, const std::string& o
     opt.rpxPath = gameDir + "/code/cking.rpx";
     opt.opsBitcode.assign(wwhd_ops_bc, wwhd_ops_bc_end);
     opt.hooksText.assign(wwhd_hooks, wwhd_hooks_end);
+    opt.hotText.assign(wwhd_hot, wwhd_hot_end);
     opt.outDir = outDir;
     opt.baseKey = recomp::code_base_key(opt.rpxPath);
     // about 500 MB per job; more than 4 barely help on big.LITTLE CPUs
@@ -427,6 +433,9 @@ JNI_FN(void, start)(JNIEnv* env, jclass, jstring gameDir, jstring saveDir, jstri
     config::save_dir = jstr(env, saveDir);
     config::cache_dir = jstr(env, cacheDir);
     config::code_dir = config::cache_dir.substr(0, config::cache_dir.find_last_of('/')) + "/codecache";
+    // debug: the shader caches (records, SPIR-V, pipelines) in another folder, e.g. a fresh one to
+    // measure a first start while the usual one stays as it is (the game code's cache stays)
+    if (const char* e = getenv("WWHD_SHADER_CACHE_DIR"); e && *e) config::cache_dir = e;
     std::string work = jstr(env, workDir);
     mkdir(config::save_dir.c_str(), 0755);
     mkdir(config::cache_dir.c_str(), 0755);
@@ -513,13 +522,20 @@ JNI_FN(void, setOption)(JNIEnv* env, jclass, jstring name, jint value) {
     if (n == "ao_mode") gfx::set_ao_mode(value);
     else if (n == "ao_hires") gfx::set_ao_hires(value != 0);
     else if (n == "aniso") gfx::set_aniso(value != 0);
+    else if (n == "upscale") gfx::set_upscale_mode(value);
     else if (n == "pro_controller") input::set_pro_controller(value != 0);
     else if (n == "invert_camera_y") mods::set_invert_y(value);
     else if (n == "capture") gfx::request_capture();
     else if (n == "res_scale") gfx::set_resolution_scale(value / 100.0f);
+    // dynamic resolution's lowest scale in percent, 0 = off (vk_dynres.cpp)
+    else if (n == "dyn_res_min") {
+        if (!getenv("WWHD_DYN_RES_MIN")) gfx::set_dynamic_resolution_min(value / 100.0f);  // debug: the env wins
+    }
     else if (n == "tv_aspect") gfx::set_tv_aspect(value);
     // aspect ratio the game renders at (aspect.cpp): 0 = 16:9 (original), 1 = the screen's shape
-    else if (n == "render_aspect") aspect::set_mode(value == 1 ? aspect::kWindow : aspect::kOriginal);
+    else if (n == "render_aspect") {
+        if (!getenv("WWHD_ASPECT")) aspect::set_mode(value == 1 ? aspect::kWindow : aspect::kOriginal);  // debug: the env wins
+    }
     // frame interpolation (interp.cpp): 0 off, else the frame rate (60, 120)
     else if (n == "interp_fps") {
         if (value) interp::set_fps(value);
@@ -573,9 +589,11 @@ JNI_FN(jint, getOption)(JNIEnv* env, jclass, jstring name) {
     if (n == "auto_state") return ss::auto_interval();
     if (n == "ao_hires") return gfx::ao_hires_enabled();
     if (n == "aniso") return gfx::aniso_enabled();
+    if (n == "upscale") return gfx::upscale_mode();
     if (n == "pro_controller") return input::pro_controller();
     if (n == "invert_camera_y") return mods::invert_y();
     if (n == "tv_aspect") return gfx::tv_aspect();
+    if (n == "dyn_res_min") return (int)lroundf(gfx::dynamic_resolution_min() * 100);
     if (n == "render_aspect") return aspect::mode() == aspect::kWindow ? 1 : 0;
     if (n == "interp_fps") return interp::mode() == 1 ? interp::fps() : 0;
     if (n == "mod_direct_camera") return mods::direct_camera();
@@ -671,6 +689,20 @@ JNI_FN(void, loadState)(JNIEnv*, jclass, jint slot) { ss::request_load(slot); }
 // the picker at start: armed before start(), released by "Start game" (or by the load)
 JNI_FN(void, setStartHold)(JNIEnv*, jclass, jboolean on) { ss::set_start_hold(on); }
 JNI_FN(jint, startHoldState)(JNIEnv*, jclass) { return ss::start_hold_state(); }
+JNI_FN(jint, frontScreen)(JNIEnv*, jclass) { return g_started ? ss::front_screen() : 4; }
+JNI_FN(jstring, drcTargets)(JNIEnv* env, jclass) { return env->NewStringUTF(g_started ? aspect::drc_targets().c_str() : ""); }
+JNI_FN(jboolean, drcGameCursor)(JNIEnv*, jclass) { return g_started && aspect::drc_game_cursor(); }
+// the world stops for a few frames: the play scene's hit-stop timer (dScnPly_ply_c::nextPauseTimer 101EACB7,
+// taken into pauseTimer 101EACB6 by calcPauseTimer 025B02E8; actors and events wait while it runs). Not the
+// menu's pause switch (dMenu_flag 101EA069): the game's own Options / Save states set that one and don't start
+// while it is already on. Called each frame while wanted; it runs out by itself.
+JNI_FN(void, setGamePaused)(JNIEnv*, jclass, jboolean on) {
+    if (g_started && on) st8(GD(0x101EACB7), 3);
+}
+// the game's pause kind (101F8348, 0270E320): 0 while it plays, else one of its own pausing states runs
+// (2 Options / Save on the GamePad, 4 "look at the GamePad")
+JNI_FN(jint, pauseKind)(JNIEnv*, jclass) { return g_started ? (jint)ld32(GD(0x101F8348)) : 0; }
+
 // the app goes to the background: the last session's state (returns once it is taken)
 JNI_FN(void, saveStateOnLeave)(JNIEnv*, jclass) { if (g_started) ss::save_on_leave(); }
 JNI_FN(jint, stateWritesPending)(JNIEnv*, jclass) { return ss::writes_pending(); }
@@ -685,12 +717,13 @@ JNI_FN(void, applyFrameGen)(JNIEnv* env, jclass, jboolean on, jstring dll, jbool
 }
 
 // performance overlay: {game fps, frame time avg ms, worst ms, presented fps, frame generation GPU ms,
-// game frames so far, their time in seconds (without pauses)}
+// game frames so far, their time in seconds (without pauses), resolution scale, 3D view width, height,
+// dynamic resolution's minimum (0 = off), its GPU busy share (-1 = off)}
 JNI_FN(jfloatArray, perfStats)(JNIEnv* env, jclass) {
-    float v[7];
+    float v[gfx::kPerfStats];
     gfx::perf_stats(v);
-    jfloatArray a = env->NewFloatArray(7);
-    env->SetFloatArrayRegion(a, 0, 7, v);
+    jfloatArray a = env->NewFloatArray(gfx::kPerfStats);
+    env->SetFloatArrayRegion(a, 0, gfx::kPerfStats, v);
     return a;
 }
 

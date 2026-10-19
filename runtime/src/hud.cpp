@@ -7,6 +7,8 @@
 #include <cstdlib>
 #include <cstring>
 #include <mutex>
+#include <string_view>
+#include <unordered_set>
 #include <vector>
 
 #include "runtime.h"
@@ -14,7 +16,14 @@
 namespace {
 constexpr uint32_t kPaneName = 0x80;  // nw::lyt::Pane name (aspect.cpp)
 std::mutex g_mu;
-std::vector<std::string> g_names;
+// the list as the game thread reads it: replaced whole (the old one is kept: changes come from the
+// settings, a handful per session), so the per-pane check takes no lock; looked up by name (the
+// names share prefixes: comparing each cost ~0.5% of the game thread with a list set)
+struct Names {
+    std::vector<std::string> list;
+    std::unordered_set<std::string_view> set;  // (views into list) names of up to 24 characters
+};
+std::atomic<const Names*> g_names{nullptr};
 std::atomic<bool> g_any{false};
 
 void parse(const std::string& s, std::vector<std::string>& out) {
@@ -80,8 +89,11 @@ void hud_set_hidden(const std::string& names) {
     parse(names, v);
     if (const char* e = getenv("WWHD_HUD_HIDE")) parse(e, v);
     std::lock_guard<std::mutex> lk(g_mu);
-    g_names.swap(v);
-    g_any = !g_names.empty();
+    g_any = !v.empty();
+    auto* n = new Names{std::move(v), {}};
+    for (const std::string& h : n->list)
+        if (h.size() <= 24) n->set.insert(std::string_view(h));
+    g_names.store(n, std::memory_order_release);
 }
 
 bool hud_hidden(uint32_t pane) {
@@ -92,9 +104,9 @@ bool hud_hidden(uint32_t pane) {
     }();
     (void)init;
     if (!g_any.load(std::memory_order_relaxed)) return false;
+    const Names* names = g_names.load(std::memory_order_acquire);
+    if (!names) return false;
+    // (as strncmp over 24 characters: the name up to its end or 24 characters)
     const char* n = (const char*)mem::ptr(pane + kPaneName);
-    std::lock_guard<std::mutex> lk(g_mu);
-    for (const std::string& h : g_names)
-        if (!strncmp(n, h.c_str(), 24) && h.size() <= 24) return true;
-    return false;
+    return names->set.count(std::string_view(n, strnlen(n, 24))) != 0;
 }

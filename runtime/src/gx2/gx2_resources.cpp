@@ -273,8 +273,8 @@ HLE(gx2, GX2InitFetchShaderEx) {
 
 HLE(gx2, GX2SetFetchShader) {
     uint32 fs = arg(c, 0);
-    set_reg(mmSQ_PGM_START_FS, ld32(fs + 0x0C) >> 8);
-    set_reg(mmSQ_PGM_START_FS + 1, ld32(fs + 0x08) >> 3);
+    uint32 v[2] = {ld32(fs + 0x0C) >> 8, ld32(fs + 0x08) >> 3};
+    set_regs(mmSQ_PGM_START_FS, v, 2);
 }
 
 // ---------------------------------------------------------------- uniforms and attribute buffers
@@ -290,7 +290,7 @@ static void uniform_regs(uint32 stageBase, uint32 offset, uint32 count, uint32 v
     if (offset & 0x8000) return;
     count &= ~3u;
     if (offset + count > 0x400) count = 0x400 - std::min<uint32>(offset, 0x400);
-    static thread_local uint32 tmp[0x400];  // per thread: several cores record display lists at once
+    uint32 tmp[0x400];  // on the stack: per thread (several cores record display lists at once), no TLS lookup
     for (uint32 i = 0; i < count; i++) tmp[i] = ld32(values + 4 * i);
     if (stageBase == 0x400 && count == 16 && aspect::tagged_projection()) {  // a layout projection (aspect.cpp)
         uint32 w[17];

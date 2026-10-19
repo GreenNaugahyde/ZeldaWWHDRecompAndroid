@@ -56,9 +56,18 @@ const LocalsOptions& locals_options() {
     return o;
 }
 
+// compile.cpp: hot functions ordered by their calls (WWHD_RECOMP_HOT_ORDER=0: by rank only)
+bool hot_call_order() {
+    static const bool on = !getenv("WWHD_RECOMP_HOT_ORDER") || atoi(getenv("WWHD_RECOMP_HOT_ORDER")) != 0;
+    return on;
+}
+
 std::string code_switches() {
     const LocalsOptions& o = locals_options();
-    return std::string("locals ") + (o.on ? "1" : "0") + " poison " + (o.poison ? "1" : "0");
+    // (emit.cpp: WWHD_RECOMP_LEAF_SPLIT=0 keeps the slow entry path inside functions without calls)
+    const bool leaf = !getenv("WWHD_RECOMP_LEAF_SPLIT") || atoi(getenv("WWHD_RECOMP_LEAF_SPLIT")) != 0;
+    return std::string("locals ") + (o.on ? "1" : "0") + " poison " + (o.poison ? "1" : "0") + (leaf ? "" : " leafsplit 0") +
+           (hot_call_order() ? "" : " hotorder 0");
 }
 
 namespace {
@@ -101,6 +110,7 @@ std::vector<Slot> cpu_slots(llvm::LLVMContext& C) {
     s.push_back({(uint32_t)offsetof(Cpu, res_val), 4, i32, true, Poison::None});
     s.push_back({(uint32_t)offsetof(Cpu, pc), 4, i32, false, Poison::None});
     s.push_back({(uint32_t)offsetof(Cpu, core), 4, i32, true, Poison::None});
+    s.push_back({(uint32_t)offsetof(Cpu, preempt), 4, i32, true, Poison::None});  // read at entry only
     s.push_back({(uint32_t)offsetof(Cpu, thread), 8, ptr, true, Poison::None});
     return s;
 }
@@ -237,7 +247,7 @@ private:
     bool eabi_call(llvm::CallBase* cb) const {
         if (noEabi || cb->isMustTailCall()) return false;
         llvm::Function* f = cb->getCalledFunction();
-        if (!f) return false;
+        if (!f) return !cb->isInlineAsm();  // the emitter's inline dispatch (a game function or ppc_dispatch)
         llvm::StringRef n = f->getName();
         return n.starts_with("f_") || n.starts_with("imp_") || n.starts_with("hook_") || n == "ppc_dispatch";
     }

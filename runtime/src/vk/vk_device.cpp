@@ -310,7 +310,7 @@ void record_thread_main() {
         while (!flights.empty()) {
             RecordFlight& f = flights.front();
             if (flights.size() > 16)
-                vkWaitForFences(R.device, 1, &f.fence, VK_TRUE, UINT64_MAX);
+                wait_fence(f.fence);
             else if (vkGetFenceStatus(R.device, f.fence) != VK_SUCCESS)
                 break;
             RecordDone done;
@@ -406,7 +406,7 @@ void wait_record_idle(bool drain = true) {
 void poll(bool wait = false) {
     while (!g_inflight.empty()) {
         InFlight& f = g_inflight.front();
-        if (wait) vkWaitForFences(R.device, 1, &f.fence, VK_TRUE, UINT64_MAX);
+        if (wait) wait_fence(f.fence);
         else if (vkGetFenceStatus(R.device, f.fence) != VK_SUCCESS) break;
         InFlight done = std::move(f);
         g_inflight.pop_front();
@@ -485,7 +485,7 @@ uint64_t submit(VkSemaphore wait = VK_NULL_HANDLE, VkSemaphore signal = VK_NULL_
     g_draws_since_commit_ = 0;
     // bound the work in flight (memory held by transient buffers)
     while (g_inflight.size() > 16) {
-        vkWaitForFences(R.device, 1, &g_inflight.front().fence, VK_TRUE, UINT64_MAX);
+        wait_fence(g_inflight.front().fence);
         poll();
     }
     poll();
@@ -607,15 +607,44 @@ static VkAccessFlags use_accesses(Use u) {
     }
 }
 
-void prepare(Image& img, Use use) {
+static void record_pending_clear(Image& img);
+static void transition(Image& img, Use use, VkPipelineStageFlags readStages);
+
+void prepare(Image& img, Use use) { transition(img, use, use == Use::SAMPLED ? use_stages(Use::SAMPLED) : 0); }
+
+// Sampled by some shader stages only. WWHD_BROAD_SAMPLED=1: every stage, as before.
+void prepare_read(Image& img, VkPipelineStageFlags stages) {
+    static const bool all = getenv("WWHD_BROAD_SAMPLED") != nullptr;
+    transition(img, Use::SAMPLED, all ? use_stages(Use::SAMPLED) : stages);
+}
+
+static void transition(Image& img, Use use, VkPipelineStageFlags readStages) {
     if (!img.image) return;
+    if (img.pendingClear.on) record_pending_clear(img);
     // render passes order attachment writes among themselves (subpass dependencies); reads after reads need nothing
-    if (img.use == use && (use == Use::SAMPLED || use == Use::COLOR || use == Use::DEPTH)) return;
+    if (img.use == use && (use == Use::COLOR || use == Use::DEPTH)) return;
+    const bool broad = broad_barriers();
+    if (img.use == use && use == Use::SAMPLED) {
+        if ((img.readStages & readStages) == readStages || broad) return;
+        // a reader in another stage: the last write must be made visible to it too (same layout)
+        end_pass();
+        VkImageMemoryBarrier b{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+        b.srcAccessMask = use_writes(img.writtenAs);
+        b.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+        b.oldLayout = b.newLayout = img.layout;
+        b.srcQueueFamilyIndex = b.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        b.image = img.image;
+        b.subresourceRange = {img.aspect, 0, VK_REMAINING_MIP_LEVELS, 0, VK_REMAINING_ARRAY_LAYERS};
+        vkCmdPipelineBarrier(command_buffer(), use_stages(img.writtenAs), readStages & ~img.readStages, 0, 0, nullptr, 0, nullptr, 1, &b);
+        img.readStages |= readStages;
+        return;
+    }
     end_pass();
     VkImageMemoryBarrier b{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
-    const bool broad = broad_barriers();
-    VkPipelineStageFlags srcStage = broad ? VK_PIPELINE_STAGE_ALL_COMMANDS_BIT : use_stages(img.use);
-    VkPipelineStageFlags dstStage = broad ? VK_PIPELINE_STAGE_ALL_COMMANDS_BIT : use_stages(use);
+    VkPipelineStageFlags srcStage = broad ? VK_PIPELINE_STAGE_ALL_COMMANDS_BIT
+                                    : img.use == Use::SAMPLED && img.readStages ? img.readStages
+                                                                                : use_stages(img.use);
+    VkPipelineStageFlags dstStage = broad ? VK_PIPELINE_STAGE_ALL_COMMANDS_BIT : use == Use::SAMPLED ? readStages : use_stages(use);
     if (broad) {
         b.srcAccessMask = img.use == Use::NONE ? 0 : VK_ACCESS_MEMORY_WRITE_BIT;
         b.dstAccessMask = VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT;
@@ -630,6 +659,10 @@ void prepare(Image& img, Use use) {
     b.subresourceRange = {img.aspect, 0, VK_REMAINING_MIP_LEVELS, 0, VK_REMAINING_ARRAY_LAYERS};
     vkCmdPipelineBarrier(command_buffer(), srcStage, dstStage, 0, 0, nullptr, 0, nullptr, 1, &b);
     img.layout = b.newLayout;
+    if (use == Use::SAMPLED) {
+        img.writtenAs = img.use;
+        img.readStages = readStages;
+    }
     img.use = use;
 }
 
@@ -705,8 +738,9 @@ static bool has_ext(const std::vector<VkExtensionProperties>& exts, const char* 
 }
 
 // one pipeline cache per driver (a user-installed GPU driver and the system's keep their own);
-// pipelines.vkcache and pipelines-*.vkcache are the names of builds before (the latter holds pipelines
-// of shaders translated before strictMul: not loaded, so they don't stay in the cache for good)
+// pipelines.vkcache, pipelines-*.vkcache and pipelines2-*.vkcache are the names of builds before (the
+// latter two hold pipelines of shaders translated before strictMul / before mul_nonIEEE's select form:
+// not loaded, so they don't stay in the cache for good)
 static std::string pipeline_cache_path(bool legacy = false) {
     std::string dir = config::cache_dir.empty() ? "." : config::cache_dir;
     if (legacy) return dir + "/pipelines.vkcache";
@@ -718,20 +752,20 @@ static std::string pipeline_cache_path(bool legacy = false) {
     mix(&R.props.deviceID, 4);
     mix(R.props.pipelineCacheUUID, VK_UUID_SIZE);
     char name[40];
-    snprintf(name, sizeof name, "/pipelines2-%08x.vkcache", h);
+    snprintf(name, sizeof name, "/pipelines3-%08x.vkcache", h);
     return dir + name;
 }
-static std::string pipeline_cache_path_v1() {
+static std::string pipeline_cache_path_v(const char* prefix) {
     std::string p = pipeline_cache_path();
-    return p.replace(p.rfind("/pipelines2-"), 12, "/pipelines-");
+    return p.replace(p.rfind("/pipelines3-"), 12, prefix);
 }
 
 // Qualcomm's older drivers (v502 on the Adreno 640/650, issue #25) sometimes build broken pipelines
 // when several threads create them at once with a pipeline cache; the GPU then hangs each time one is
-// drawn with (about every second start on a Mi 9, mostly in the first seconds while the shader cache
+// drawn with (about every second start on a Snapdragon 855, mostly in the first seconds while the shader cache
 // is replayed). Not with one thread at a time (0 in 25 starts), nor without the cache, nor with a
 // cache for each thread (5 in 15). There pipelines are created one at a time; the shaders' translation
-// stays parallel. The tablet's v762 never hung. WWHD_SERIAL_PIPELINES=0/1 overrides.
+// stays parallel. v762 on the Adreno 732 never hung. WWHD_SERIAL_PIPELINES=0/1 overrides.
 static bool serial_pipelines() {
     static const bool on = [] {
         if (const char* e = getenv("WWHD_SERIAL_PIPELINES")) return strcmp(e, "0") != 0;
@@ -812,7 +846,8 @@ void save_caches() {
         ok &= fclose(f) == 0;
         if (ok && rename(tmp.c_str(), path.c_str()) == 0) {
             remove(pipeline_cache_path(true).c_str());
-            remove(pipeline_cache_path_v1().c_str());
+            remove(pipeline_cache_path_v("/pipelines-").c_str());
+            remove(pipeline_cache_path_v("/pipelines2-").c_str());
         }
     }
 }
@@ -955,6 +990,11 @@ static void create_device() {
     std::vector<VkExtensionProperties> exts(n);
     vkEnumerateDeviceExtensionProperties(R.pd, nullptr, &n, exts.data());
     std::vector<const char*> devExts = {VK_KHR_SWAPCHAIN_EXTENSION_NAME};
+    {  // the device's extensions, once (what a driver offers decides workarounds; e.g. depth clip control)
+        std::string all;
+        for (auto& e : exts) all += std::string(all.empty() ? "" : " ") + e.extensionName;
+        LOG("[vk] device extensions: %s", all.c_str());
+    }
     if (has_ext(exts, VK_KHR_SAMPLER_MIRROR_CLAMP_TO_EDGE_EXTENSION_NAME)) {
         devExts.push_back(VK_KHR_SAMPLER_MIRROR_CLAMP_TO_EDGE_EXTENSION_NAME);
         R.mirrorClampToEdge = true;
@@ -1026,28 +1066,13 @@ static void create_device() {
 
 // ---------------------------------------------------------------- presentation
 namespace {
-const char* kPresentVS = R"(#version 450
-layout(push_constant) uniform PC { vec4 rect; vec4 opts; } pc;
-layout(location = 0) out vec2 uv;
-void main() {
-    vec2 p = vec2((gl_VertexIndex << 1) & 2, gl_VertexIndex & 2);   // triangle strip corners
-    uv = p * 0.5;
-    vec2 ndc = pc.rect.xy + p * 0.5 * pc.rect.zw;                    // 0..1 within the window
-    gl_Position = vec4(ndc * 2.0 - 1.0, 0.0, 1.0);
-}
-)";
-const char* kPresentFS = R"(#version 450
-layout(push_constant) uniform PC { vec4 rect; vec4 opts; } pc;
-layout(set = 0, binding = 0) uniform sampler2D tex;
-layout(location = 0) in vec2 uv;
-layout(location = 0) out vec4 color;
-void main() {
-    vec3 c = clamp(texture(tex, uv).rgb, 0.0, 1.0);
-    // opts.x: the scan buffer is sRGB, i.e. the display encodes (the window surface is UNORM)
-    if (pc.opts.x > 0.5) c = mix(c * 12.92, 1.055 * pow(c, vec3(1.0 / 2.4)) - 0.055, step(vec3(0.0031308), c));
-    color = vec4(c, 1.0);
-}
-)";
+// runtime/shaders/present.vert and .frag, compiled to SPIR-V at build time
+const uint32_t kPresentVS[] = {
+#include "present.vert.inc"
+};
+const uint32_t kPresentFS[] = {
+#include "present.frag.inc"
+};
 
 struct Swapchain {
     ANativeWindow* window = nullptr;
@@ -1073,21 +1098,18 @@ VkDescriptorSetLayout g_present_dsl = VK_NULL_HANDLE;
 VkPipelineLayout g_present_layout = VK_NULL_HANDLE;
 VkShaderModule g_present_vs = VK_NULL_HANDLE, g_present_fs = VK_NULL_HANDLE;
 
-VkShaderModule make_module(const char* src, bool vertex) {
-    std::vector<uint32_t> spv;
-    std::string log;
-    if (!compile_glsl(src, vertex, spv, log)) fatal("present shader: %s", log.c_str());
+template <size_t N> VkShaderModule make_module(const uint32_t (&spv)[N]) {
     VkShaderModuleCreateInfo ci{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
-    ci.codeSize = spv.size() * 4;
-    ci.pCode = spv.data();
+    ci.codeSize = sizeof spv;
+    ci.pCode = spv;
     VkShaderModule m;
     VK_CHECK(vkCreateShaderModule(R.device, &ci, nullptr, &m));
     return m;
 }
 
 void create_present_objects() {
-    g_present_vs = make_module(kPresentVS, true);
-    g_present_fs = make_module(kPresentFS, false);
+    g_present_vs = make_module(kPresentVS);
+    g_present_fs = make_module(kPresentFS);
     VkDescriptorSetLayoutBinding b{0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr};
     VkDescriptorSetLayoutCreateInfo dl{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
     dl.bindingCount = 1;
@@ -1193,6 +1215,12 @@ static void request_display_rate(ANativeWindow* window, bool force) {
         // without it the game flips at most 60 times a second (more with interpolation): let a 90/120 Hz
         // panel drop to 60 Hz (from pull request #8 by SSunnKing, 62a723b); WWHD_NO_60HZ=1 leaves it alone
         rate = no_60hz_request() ? 0.0f : (float)std::max(60, shown);
+    }
+    // test: WWHD_DISPLAY_RATE=<Hz> asks for that rate as a fixed source (MediaTek FPSGO derives its target from it?)
+    static const float testRate = getenv("WWHD_DISPLAY_RATE") ? (float)atof(getenv("WWHD_DISPLAY_RATE")) : 0.0f;
+    if (testRate > 0) {
+        rate = testRate;
+        compat = ANATIVEWINDOW_FRAME_RATE_COMPATIBILITY_FIXED_SOURCE;
     }
     if (!force && rate == g_rate_requested) return;
     g_rate_requested = rate;
@@ -1357,6 +1385,11 @@ void report_tv_shape(const ScreenRect& r, VkExtent2D ext) {
     if (h > 0) aspect::set_window_aspect(w / h);
 }
 
+// Upscaling of the pictures to the screen (app setting): 0 = bilinear (classic), 1 = sharp.
+// WWHD_UPSCALE=0/1 sets the starting value.
+std::atomic<int> g_upscale{[] { const char* e = getenv("WWHD_UPSCALE"); return e ? atoi(e) : 1; }()};
+float upscale_sharpness() { return g_upscale.load(std::memory_order_relaxed) ? 0.5f : 0.0f; }
+
 void draw_screen(VkCommandBuffer cmd, Screen& scr, const ScreenRect& r, VkExtent2D ext, int mode = 0) {
     if (!scr.img.image) return;
     float pc[8];
@@ -1371,7 +1404,8 @@ void draw_screen(VkCommandBuffer cmd, Screen& scr, const ScreenRect& r, VkExtent
         vkCmdSetScissor(cmd, 0, 1, &sc);
     }
     pc[4] = scr.srgb ? 1.0f : 0.0f;
-    pc[5] = pc[6] = pc[7] = 0;
+    pc[5] = upscale_sharpness();
+    pc[6] = pc[7] = 0;
     VkDescriptorSet set = alloc_descriptor_set(g_present_dsl);
     if (!scr.view) scr.view = make_view(scr.img, VK_IMAGE_VIEW_TYPE_2D, 0, 1, {}, VK_IMAGE_ASPECT_COLOR_BIT);
     VkDescriptorImageInfo ii{R.linearClamp, scr.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
@@ -1604,7 +1638,7 @@ bool fg_present(const Image* img) {
     std::lock_guard<std::mutex> wl(g_window_mutex);
     if (!ensure_swapchain(g_sc)) return false;
     PresentSlot& ps = g_fg_slots[g_fg_next];
-    vkWaitForFences(R.device, 1, &ps.fence, VK_TRUE, UINT64_MAX);
+    wait_fence(ps.fence);
     uint32_t idx = 0;
     VkResult r;
     {
@@ -2016,9 +2050,63 @@ void run_main_loop() {}  // Android: the activity owns the main thread
 void with_autorelease_pool(void (*fn)()) { fn(); }
 
 // ---------------------------------------------------------------- clears
+// Clears wait for the next render pass on the image (Image::pendingClear); WWHD_NO_LAZY_CLEARS=1
+// records them at once, as before.
+static bool lazy_clears() {
+    static const bool on = getenv("WWHD_NO_LAZY_CLEARS") == nullptr;
+    return on;
+}
+
+static void record_pending_clear(Image& img) {
+    Image::PendingClear c = img.pendingClear;
+    img.pendingClear.on = false;
+    prepare(img, Use::COPY_DST);
+    VkImageSubresourceRange range{c.aspects, 0, 1, c.layer, 1};
+    if (c.aspects & VK_IMAGE_ASPECT_COLOR_BIT)
+        vkCmdClearColorImage(command_buffer(), img.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &c.value.color, 1, &range);
+    else
+        vkCmdClearDepthStencilImage(command_buffer(), img.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &c.value.depthStencil, 1, &range);
+}
+
+bool take_pending_clear(Image& img, uint32_t layer, uint32_t w, uint32_t h, VkImageAspectFlags& aspects, VkClearValue& value) {
+    Image::PendingClear& c = img.pendingClear;
+    if (!c.on || c.layer != layer || img.width != w || img.height != h) return false;  // prepare records it
+    aspects = c.aspects;
+    value = c.value;
+    c.on = false;
+    return true;
+}
+
 static void clear_surface(Surface* s, const float* rgba, bool clearDepth, float depth, bool clearStencil, uint32_t stencil,
                           uint32_t firstSlice = 0, uint32_t numSlices = 1) {
     if (!s || !s->img.image) return;
+    uint32_t layers = std::min(numSlices, s->img.layers - std::min(firstSlice, s->img.layers - 1));
+    if (lazy_clears() && layers == 1) {
+        VkImageAspectFlags aspects = s->isDepth ? (clearDepth ? VK_IMAGE_ASPECT_DEPTH_BIT : 0) |
+                                                      (clearStencil && s->fmt.stencil ? VK_IMAGE_ASPECT_STENCIL_BIT : 0)
+                                                : VK_IMAGE_ASPECT_COLOR_BIT;
+        if (!aspects) return;
+        Image::PendingClear& c = s->img.pendingClear;
+        if (c.on && c.layer != firstSlice) record_pending_clear(s->img);
+        if (!c.on) c.aspects = 0;
+        // the open render pass draws into it: what follows must start a pass that clears first
+        bool attached = R.passDepth == s;
+        for (auto* a : R.passColor) attached |= a == s;
+        if (attached) end_pass();
+        c.on = true;
+        c.layer = firstSlice;
+        c.aspects |= aspects;
+        if (s->isDepth) {
+            if (aspects & VK_IMAGE_ASPECT_DEPTH_BIT) c.value.depthStencil.depth = depth;
+            if (aspects & VK_IMAGE_ASPECT_STENCIL_BIT) c.value.depthStencil.stencil = stencil;
+        } else if (s->fmt.kind == FormatInfo::FLOAT) {
+            memcpy(c.value.color.float32, rgba, 16);
+        } else {
+            for (int i = 0; i < 4; i++) c.value.color.uint32[i] = (uint32_t)rgba[i];
+        }
+        mark_gpu_written(s);
+        return;
+    }
     prepare(s->img, Use::COPY_DST);
     VkCommandBuffer cmd = command_buffer();
     uint32_t n = std::min(numSlices, s->img.layers - std::min(firstSlice, s->img.layers - 1));
@@ -2042,7 +2130,8 @@ static void clear_surface(Surface* s, const float* rgba, bool clearDepth, float 
 
 void clear_color(const uint32_t* regs, uint32_t cb, const float rgba[4]) {
     uint32_t first = 0, num = 1;
-    Surface* s = surface_from_color_buffer(cb, &first, &num);
+    // (at the current resolution scale: the draws that follow use that image)
+    Surface* s = rescaled(surface_from_color_buffer(cb, &first, &num));
     if (log_this_frame() && s)
         LOG("[clear] color %08X %ux%u fmt %X -> %.3f %.3f %.3f %.3f", s->addr, s->width, s->height, s->format, rgba[0], rgba[1], rgba[2], rgba[3]);
     clear_surface(s, rgba, false, 0, false, 0, first, num);
@@ -2051,7 +2140,7 @@ void clear_color(const uint32_t* regs, uint32_t cb, const float rgba[4]) {
 void clear_depth_stencil(const uint32_t* regs, uint32_t db, float depth, uint32_t stencil, uint32_t flags) {
     // flags: 1 = depth, 2 = stencil
     uint32_t first = 0, num = 1;
-    Surface* s = surface_from_depth_buffer(db, &first, &num);
+    Surface* s = rescaled(surface_from_depth_buffer(db, &first, &num));
     if (log_this_frame() && s)
         LOG("[clear] depth %08X %ux%ux%u fmt %X vk %d -> depth %.4f stencil %u flags %u slices %u+%u", s->addr, s->width, s->height,
             s->slices, s->format, (int)s->fmt.format, depth, stencil, flags, first, num);
@@ -2385,7 +2474,7 @@ void frame_waiter_thread() {
             g_fw_cv.wait(lk, [] { return !g_fw_pending.empty(); });
             f = g_fw_pending.front();
         }
-        vkWaitForFences(R.device, 1, &f, VK_TRUE, UINT64_MAX);
+        wait_fence(f);
         vkResetFences(R.device, 1, &f);
         g_frames_completed++;
         std::lock_guard<std::mutex> lk(g_fw_mutex);
@@ -2448,7 +2537,7 @@ static void service_tv_dumps() {
 
 // performance overlay: game frame times over one-second windows, and running totals for the average
 static std::mutex g_perf_mu;
-static float g_perf[7];
+static float g_perf[kPerfStats];
 static void perf_frame() {
     using clk = std::chrono::steady_clock;
     static clk::time_point last{}, windowStart{};
@@ -2512,9 +2601,23 @@ void vk_note_device_lost() {
 }
 bool driver_fallback() { return g_driver_fallback; }
 
-void perf_stats(float out[7]) {
-    std::lock_guard<std::mutex> lk(g_perf_mu);
-    memcpy(out, g_perf, sizeof g_perf);
+void wait_fence(VkFence f) {
+    // (10 s: far beyond any frame's work; Mali's own job timeout, when it fires, reports a lost device)
+    VkResult r = vkWaitForFences(R.device, 1, &f, VK_TRUE, 10'000'000'000ull);
+    if (r == VK_SUCCESS) return;
+    if (r == VK_TIMEOUT) LOG("[vk] GPU hang: a submission didn't finish in 10 s%s", fg::loaded() ? " (frame generation on)" : "");
+    vk_note_device_lost();
+    fatal("vkWaitForFences failed: VkResult %d (%s)", (int)r, r == VK_TIMEOUT ? "GPU hang" : "device lost");
+}
+
+void perf_stats(float out[kPerfStats]) {
+    {
+        std::lock_guard<std::mutex> lk(g_perf_mu);
+        memcpy(out, g_perf, sizeof g_perf);
+    }
+    resolution_shown(out + 7);  // live, not per second
+    out[10] = dynamic_resolution_on() ? dynamic_resolution_min() : 0.0f;
+    out[11] = dynamic_resolution_busy();
 }
 
 void swap() {
@@ -2645,6 +2748,12 @@ void invalidate(uint32_t flags, uint32_t addr, uint32_t size) {
             next_write_seq();  // draws must check their textures again (draw's fast path)
         }
     }
+}
+
+int upscale_mode() { return g_upscale.load(std::memory_order_relaxed); }
+void set_upscale_mode(int m) {
+    g_upscale = m;
+    LOG("[gfx] upscaling %s", m ? "sharp" : "bilinear");
 }
 
 }  // namespace gfx

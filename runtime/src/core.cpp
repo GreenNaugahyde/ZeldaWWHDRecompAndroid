@@ -67,6 +67,18 @@ void init() {
     if (!platform::map_fixed(PPC_MEM_BASE, 0x100000000ull)) fatal("cannot reserve guest address space at %p", PPC_MEM_BASE);
     // null page guard: catches guest null-pointer accesses
     mprotect(PPC_MEM_BASE, 0x10000, PROT_NONE);
+    // guard ranges around the window: the recompiled code's D-form accesses add their offset (+-32 KiB)
+    // in 64 bits (recomp/ops.c), so one that wraps on the console lands here and faults
+#ifndef MAP_FIXED_NOREPLACE
+#define MAP_FIXED_NOREPLACE 0x100000
+#endif
+    for (uint8_t* g : {PPC_MEM_BASE - 0x10000, PPC_MEM_BASE + 0x100000000ull}) {
+        void* p = mmap(g, 0x10000, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE | MAP_FIXED_NOREPLACE, -1, 0);
+        if (p != (void*)g) {
+            if (p != MAP_FAILED) munmap(p, 0x10000);
+            LOG("[mem] no guard range at %p (taken): an access wrapping past the guest window isn't caught", g);
+        }
+    }
 }
 
 // start of the loaded executable (macOS) or shared library (Android)
@@ -176,6 +188,8 @@ bool load_rpx(const std::string& path, LoadedModule& out) {
 }
 
 // ---------------------------------------------------------------- dispatch
+extern "C" PpcFunc* g_ppc_text_table = nullptr;
+
 namespace dispatch {
 static constexpr uint32_t kTextBase = 0x02000000;
 static constexpr uint32_t kTextSize = 0x01000000;  // 16 MiB covers cking.rpx .text
@@ -192,6 +206,7 @@ static std::unordered_map<uint32_t, std::string> g_host_names;
 
 void init() {
     g_text_table = (PpcFunc*)calloc(kTextSize / 4, sizeof(PpcFunc));
+    g_ppc_text_table = g_text_table;  // for the recompiled code's inline lookup (ppc.h)
     for (unsigned i = 0; i < g_recomp_func_count; i++) set(g_recomp_funcs[i].addr, g_recomp_funcs[i].fn);
     // imported functions are reachable through their import slot addresses
     for (unsigned i = 0; i < g_recomp_import_count; i++)

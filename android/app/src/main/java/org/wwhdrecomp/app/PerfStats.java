@@ -21,6 +21,9 @@ import java.util.List;
  */
 final class PerfStats {
     float gameFps, frameMs, frameMaxMs, shownFps, fgGpuMs;
+    // live: rendering resolution scale in effect, the 3D view's size, dynamic resolution's minimum
+    // (0 = off) and the GPU busy share it measured (-1 = off)
+    float resScale = 1, resW = 1280, resH = 720, dynMin, dynBusy = -1;
     float avgFps = Float.NaN;  // since the overlay was switched on
     private float frames0 = -1, sec0;
     float cpuPercent = -1, gpuPercent = -1;
@@ -62,6 +65,13 @@ final class PerfStats {
         frameMaxMs = n[2];
         shownFps = n[3];
         fgGpuMs = n[4];
+        if (n.length >= 12) {
+            resScale = n[7];
+            resW = n[8];
+            resH = n[9];
+            dynMin = n[10];
+            dynBusy = n[11];
+        }
         if (frames0 < 0) {
             frames0 = n[5];
             sec0 = n[6];

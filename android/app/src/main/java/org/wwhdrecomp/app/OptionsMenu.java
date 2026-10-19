@@ -50,7 +50,7 @@ final class OptionsMenu extends Dialog {
 
     private final MainActivity a;
     private final float dp;
-    // fitted to the window (phones are ~850 x 390 dp, the tablets this was laid out on ~1200 x 750):
+    // fitted to the window (phones are ~850 x 390 dp, the screens this was laid out on ~1200 x 750):
     // sizes scale by s, text by ts (shrinks less, and a very large system font scale is capped);
     // compact puts About and Quit in a bottom bar instead of a column on the left
     private final float s, ts;
@@ -311,8 +311,11 @@ final class OptionsMenu extends Dialog {
             return;
         }
         String err = Native.frameGenError();
-        if (a.prefs.getBoolean("fg_enabled", false) && !err.isEmpty()) note(a.getString(R.string.fg_error, err));
-        toggle(R.string.opt_framegen, 0, a.prefs.getBoolean("fg_enabled", false), on -> a.setFrameGen("fg_enabled", on));
+        if (a.frameGenSwitchedOn() && !err.isEmpty()) note(a.getString(R.string.fg_error, err));
+        toggle(R.string.opt_framegen, 0, a.frameGenSwitchedOn(), on -> {
+            if (on) a.enableFrameGen(this::fill);  // (Mali GPUs: after a warning)
+            else a.setFrameGen("fg_enabled", false);
+        });
         // the rate frame generation reaches: frames shown without it (30, or interpolated) times the
         // multiplier; above the display's refresh rate it generates nothing (the renderer checks)
         String[] mult = new String[3];
@@ -500,8 +503,8 @@ final class OptionsMenu extends Dialog {
         boolean used = info[0].equals("1"), compatible = info[1].equals("1");
         String desc = !used ? a.getString(R.string.opt_slot_empty)
                 : info[3].isEmpty() ? info[2] : info[2] + " · " + info[3];
-        if (used && !info[4].isEmpty())  // the controls it was saved with (and loads with)
-            desc += " · " + a.getString(info[4].equals("pro") ? R.string.controller_pro : R.string.controller_gamepad);
+        if (used && info[4].equals("pro"))  // saved before every controller acted as the GamePad
+            desc += " · " + a.getString(R.string.controller_pro);
         if (used && !compatible) desc = a.getString(R.string.opt_slot_incompatible, desc);
         LinearLayout r = rowText(label, desc);
         ImageView pic = new ImageView(getContext());
@@ -585,6 +588,14 @@ final class OptionsMenu extends Dialog {
         String[] res = new String[MainActivity.RES_SCALES.length];
         for (int i = 0; i < res.length; i++) res[i] = a.resolutionLabel(MainActivity.RES_SCALES[i]);
         choice(R.string.opt_resolution, 0, res, indexOf(MainActivity.RES_SCALES, a.prefs.getString("res_scale", "1"), 2), a::setResolution);
+        String[] dyn = new String[MainActivity.DYN_RES_MINS.length];
+        int dynCur = 0;
+        for (int i = 0; i < dyn.length; i++) {
+            int m = MainActivity.DYN_RES_MINS[i];
+            dyn[i] = m == 0 ? a.getString(R.string.opt_off) : a.getString(R.string.dyn_res_down_to, String.valueOf(m / 100f), Math.round(7.2f * m) + "p");
+            if (m == a.prefs.getInt("dyn_res_min", 0)) dynCur = i;
+        }
+        choice(R.string.opt_dyn_res, R.string.opt_dyn_res_hint, dyn, dynCur, a::setDynResMin);
         int[] rates = a.interpRates();
         String[] rateNames = new String[rates.length];
         int rate = 0;
@@ -598,10 +609,12 @@ final class OptionsMenu extends Dialog {
                a.prefs.getInt("render_aspect", 0), i -> {
                    a.prefs.edit().putInt("render_aspect", i).apply();
                    Native.setOption("render_aspect", i);
+                   a.updateLayout();  // (the GamePad picture of + follows the TV picture's shape)
                });
         choice(R.string.opt_aspect, 0, a.getResources().getStringArray(R.array.aspect_modes), a.prefs.getInt("tv_aspect", 0), i -> {
             a.prefs.edit().putInt("tv_aspect", i).apply();
             Native.setOption("tv_aspect", i);
+            a.updateLayout();
         });
         if (a.hasSecondDisplay()) {
             String[] where = {a.getString(R.string.drc_second_display), a.getString(R.string.drc_in_layout)};
@@ -624,6 +637,13 @@ final class OptionsMenu extends Dialog {
         choice(R.string.opt_ao, 0, a.getResources().getStringArray(R.array.ao_modes), Native.getOption("ao_mode"), a::setAo);
         toggle(R.string.opt_ao_hires, 0, Native.getOption("ao_hires") != 0, on -> a.setBool("ao_hires", on));
         toggle(R.string.opt_aniso, 0, Native.getOption("aniso") != 0, on -> a.setBool("aniso", on));
+        choice(R.string.opt_upscale, R.string.opt_upscale_hint, a.getResources().getStringArray(R.array.upscale_modes),
+               Native.getOption("upscale"), i -> {
+                   a.prefs.edit().putInt("upscale", i).apply();
+                   Native.setOption("upscale", i);
+               });
+        choice(R.string.opt_display_res, R.string.opt_display_res_hint, a.getResources().getStringArray(R.array.display_res_modes),
+               a.prefs.getInt("display_res", MainActivity.DISPLAY_RES_AUTO), a::setDisplayRes);
         submenu(R.string.opt_perf, R.string.opt_perf_hint, a.getString(a.prefs.getBoolean("perf_hud", false) ? R.string.opt_on : R.string.opt_off),
                 () -> openPage(this::perfPage));
         if (GpuDrivers.supported())
@@ -980,8 +1000,6 @@ final class OptionsMenu extends Dialog {
             a.prefs.edit().putFloat("controls_scale", MainActivity.CONTROL_SIZES[i]).apply();
             a.applyControlsAppearance();
         });
-        String[] kinds = {a.getString(R.string.controller_gamepad), a.getString(R.string.controller_pro)};
-        choice(R.string.opt_controller, 0, kinds, Native.getOption("pro_controller") != 0 ? 1 : 0, i -> a.setBool("pro_controller", i == 1));
         choice(R.string.opt_invert_camera_y, R.string.opt_invert_camera_y_hint, a.getResources().getStringArray(R.array.invert_camera_y_modes),
                a.prefs.getInt("invert_camera_y_mode", 0), a::setInvertCameraY);
         toggle(R.string.opt_motion, R.string.opt_motion_hint, a.prefs.getBoolean("motion", true), a::setMotion);

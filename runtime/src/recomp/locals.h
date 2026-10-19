@@ -29,4 +29,5 @@ constexpr const char* kLocalCpuName = "cpu.local";
 // at calls and exits, or back into the Cpu struct where that isn't possible.
 void localize_registers(llvm::Module& m, const LocalsOptions& opt, LocalsStats& st);
 
+bool hot_call_order();  // hot functions next to their callers (compile.cpp); in code_switches
 }  // namespace recomp

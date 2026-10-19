@@ -91,6 +91,8 @@ void touch_state_step();
 // {valid, A action, sword id, X item, Y item, R item, B action, ZR action, event mode, pause menu open,
 // has the Wind Waker, shield id} (ids 0xFF: none; all 0 when not in a game: title screen, file select)
 void touch_state(int32_t out[12]);
+// the 21 inventory slots' item numbers (0xFF empty); false without a loaded save
+bool inventory(uint8_t out[21]);
 
 // ---- cheats (cheats.cpp): one-shot save data edits, applied at the top of the next frame ----
 enum Cheat {

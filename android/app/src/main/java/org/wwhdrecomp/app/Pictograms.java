@@ -458,10 +458,6 @@ final class Pictograms {
                     c.drawRoundRect(r, s * 0.04f, s * 0.04f, line);
                 }
                 return true;
-            case "swap":  // arrows both ways (swap the screens)
-                arrow(c, -0.36f, -0.14f, 0.36f, -0.14f);
-                arrow(c, 0.36f, 0.16f, -0.36f, 0.16f);
-                return true;
             case "note": {  // music note (the Wind Waker)
                 c.drawCircle(x(-0.14f), y(0.26f), s * 0.12f, solid);
                 c.drawLine(x(-0.03f), y(0.26f), x(-0.03f), y(-0.38f), line);

@@ -16,7 +16,7 @@ void set_thread_name(const char* name);
 void set_thread_high_priority();
 // game and render thread: kept on the big cores where the scheduler places threads by load alone
 // (no performance hint session: Android 12 and older, or the device refuses one). Without the
-// session's guidance, a lighter render thread or the game thread drifts to the little cores (Mi 9:
+// session's guidance, a lighter render thread or the game thread drifts to the little cores (Snapdragon 855:
 // render thread 10.6 ms a frame on big cores, 21 ms as scheduled). WWHD_BIG_CORES=0 never, 1 only
 // without a session (default), 2 always.
 // (game: the game's main thread, which frame interpolation also keeps on the fastest cores; see

@@ -15,6 +15,27 @@ bool enabled() {
     return !ask && !input::pro_controller();
 }
 
+// the title/name controller's state machine (at +0x10): states are objects (USA 1049EA2C ControllerSelect,
+// 1049EA58 SaveDataSelect = the file select, 1049EAB0 Cancel = back to the title), the previous one
+// at +0x1C; a state's id comes from its vtable +0x14
+constexpr uint32_t kControllerSelect = 0x1049EA2C, kSaveDataSelect = 0x1049EA58, kCancel = 0x1049EAB0;
+
+uint32_t state_id(Cpu* c, uint32_t state) {
+    uint32_t vt = ld32(state + 8);
+    return object(vt) ? guest_call(c, ld32(vt + 0x14), {state}) : 0;
+}
+
+// the owner is in its Cancel state (on its way back to the title)
+bool cancelling(Cpu* c) {
+    if (!enabled()) return false;
+    uint32_t owner = ld32(GD(0x101F82EC));
+    if (!object(owner)) return false;
+    uint32_t state = guest_call(c, GC(0x02006478), {owner + 0x10});
+    if (!object(state)) return false;
+    uint32_t id = state_id(c, state);
+    return id && id == state_id(c, GD(kCancel));
+}
+
 // the GamePad's place on the screen (0), or -1: not the title's question, or it isn't complete
 int option(Cpu* c, uint32_t screen, bool background_transition = false) {
     if (!enabled() || !object(screen)) return -1;
@@ -28,14 +49,14 @@ int option(Cpu* c, uint32_t screen, bool background_transition = false) {
     uint32_t vt = ld32(state + 8);
     if (!object(vt)) return -1;
     uint32_t key = guest_call(c, ld32(vt + 0x14), {state});
-    uint32_t expected = GD(0x1049EA2C);
+    uint32_t expected = GD(kControllerSelect);
     vt = ld32(expected + 8);
     if (!object(vt)) return -1;
     if (key != guest_call(c, ld32(vt + 0x14), {expected})) {
         // The background fades its old caption after the owner has entered file
         // select. Hide that outgoing caption until the game's text update runs.
         uint32_t background = ld32(owner + 0x12C);
-        uint32_t file_select = GD(0x1049EA58);
+        uint32_t file_select = GD(kSaveDataSelect);
         vt = ld32(file_select + 8);
         if (!background_transition || ld32(owner + 0x1C) != expected || !object(background) ||
             ld32(background + 0x50) != 1 || ld32(background + 0x54) != 0 || !object(vt) ||
@@ -57,11 +78,17 @@ int option(Cpu* c, uint32_t screen, bool background_transition = false) {
 // After updateSelection copied the current input event into its local frame,
 // before it reads the event kind. The original code consumes this exactly as a
 // button's SPECIAL (17) event. No game flags, mode or selection state are written.
+// Back from the file select (B / Back there leads to this question): the question's own Cancel
+// instead, as its B does (the flag updateSelection sets for it, read by the owner's execute
+// 0270AB10), so Back goes on to the title.
 extern "C" void site_026D44A8(Cpu* c) {
     Cpu saved = *c;
     uint32_t screen = c->r[28];
     int selected = option(c, screen);
-    if (selected >= 0) {
+    if (selected >= 0 && ld32(ld32(GD(0x101F82EC)) + 0x1C) == GD(kSaveDataSelect)) {
+        st8(screen + 0x50, 1);
+        LOG("[controller-select] back from the file select: to the title");
+    } else if (selected >= 0) {
         uint32_t index = ld32(GD(0x10102B80) + selected * 4);
         uint32_t child = ld32(ld32(screen + 0x4C) + index * 4);
         uint32_t receiver = ld32(child + 0x50);
@@ -79,7 +106,7 @@ extern "C" void site_026D44A8(Cpu* c) {
 extern "C" void f_026D50C4_orig(Cpu*);
 extern "C" void hook_026D50C4(Cpu* c) {
     Cpu saved = *c;
-    bool automatic = option(c, c->r[3]) >= 0;
+    bool automatic = option(c, c->r[3]) >= 0 || cancelling(c);
     *c = saved;
     if (!automatic) f_026D50C4_orig(c);
 }
@@ -94,10 +121,24 @@ extern "C" void hook_026F8B54(Cpu* c) {
         uint32_t owner = ld32(GD(0x101F82EC));
         if (object(owner) && ld32(owner + 0x12C) == c->r[3]) {
             Cpu saved = *c;
-            bool automatic = option(c, ld32(owner + 0x130), true) >= 0;
+            bool automatic = option(c, ld32(owner + 0x130), true) >= 0 || cancelling(c);
             *c = saved;
             if (automatic) return;
         }
     }
     f_026F8B54_orig(c);
+}
+
+// The game's own Options > Controller: its switch handler (026D87D0, the row's entry in the option
+// table at 101030D8) checks whether the other controller is available and enters the ChangeConnect
+// state ("Please connect a Wii U Pro Controller." when it isn't). Every controller acts as the
+// GamePad, so the row is locked: it keeps showing "Wii U GamePad" and changing it does nothing
+// (the handler's "not available" answer, without the message). Left / right / A (026D6650) step the
+// row's value (+0x104 + row, Controller = row 3: 0 GamePad, 1 Pro) before they call the handler and
+// redraw the row after it: the value goes back to the GamePad here, so it doesn't show "Pro Controller".
+extern "C" void f_026D87D0_orig(Cpu*);
+extern "C" void hook_026D87D0(Cpu* c) {
+    if (input::pro_controller()) { f_026D87D0_orig(c); return; }
+    st8(c->r[3] + 0x107, 0);
+    c->r[3] = 0;
 }

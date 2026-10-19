@@ -112,4 +112,7 @@ __attribute__((constructor)) static void trace_init() {
         g_ppc_trace = 1;
         signal(SIGUSR1, on_usr1);
     }
+    // the recompiled code's entry check reads only these (ppc_entry traces); the scheduler keeps them set
+    if (g_ppc_trace)
+        for (int k = 0; k < 3; k++) g_core_preempt[k] = 1;
 }

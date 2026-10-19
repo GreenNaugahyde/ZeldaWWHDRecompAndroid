@@ -713,14 +713,14 @@ constexpr auto kPacedBudget = std::chrono::nanoseconds(kPacedStep + std::chrono:
 // start of every pass: the last pass's own duration, and the wait before a logic pass that follows
 // a dropped in-between pass (and at 120/240 fps before every logic pass that comes early)
 // The decision after a logic pass sees the time so far, but not the rest of the pass: its frame still
-// waits for the render thread and the vsync. Where that rest is long (Mi 9: a logic pass decides at
+// waits for the render thread and the vsync. Where that rest is long (Snapdragon 855: a logic pass decides at
 // 14 ms but shows at the second vsync, 33.4 ms) every in-between frame was drawn and a step took 50 ms
 // (40 fps, the game at 2/3 of its speed). So at 60 fps the steps that draw in-between frames are
 // timed (logic start to logic start): when more than two thirds of the last kWindow (2 s) run over the
 // budget, in-between frames are left out. Each switch between 60 and 30 fps shows as a stutter, more
-// than a late step does, so short heavy moments keep 60 fps (the user's choice on the tablet; faster
+// than a late step does, so short heavy moments keep 60 fps (the user's choice on a Snapdragon 7+ Gen 3; faster
 // devices have no late steps anyway). A probe then draws them for kProbeSteps (1 s), judged by its second
-// half (at most half of it late): the clocks need that long to rise again after 30 fps (tablet: single
+// half (at most half of it late): the clocks need that long to rise again after 30 fps (Snapdragon 7+ Gen 3: single
 // probe steps took 40-66 ms, steady 60 fps 33.3 ms), and the first steps are out of phase with the
 // vsync. A failed probe doubles the wait for the next (kProbeAfter up to kProbeMax).
 constexpr int kWindow = 60, kProbeSteps = 30;
@@ -872,7 +872,7 @@ static void after_pass(int phase) {
     const bool probe = phase == 0 && now - g_last_hold >= kProbeAfter;
     // At 60 fps an in-between pass that fits takes one vsync tick; one that runs over is what the step
     // timing (steps_fit) catches. Its average estimate instead stayed high after a few late passes
-    // (27-29 ms on the tablet while moving), and as no in-between frame fit any more it was never
+    // (27-29 ms on a Snapdragon 7+ Gen 3 while moving), and as no in-between frame fit any more it was never
     // measured again: 30 fps for good.
     const auto pass = std::chrono::duration_cast<std::chrono::nanoseconds>(probe || in_between() == 1 ? vsync_tick() : g_hold_avg).count();
     if (g_pace_trace > 0)

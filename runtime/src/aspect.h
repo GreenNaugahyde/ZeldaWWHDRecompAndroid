@@ -2,6 +2,8 @@
 #pragma once
 #include <cstdint>
 
+#include <string>
+
 namespace aspect {
 enum Mode : int { kOriginal = 0, kWindow, k16x10, k21x9, k32x9, kCustom, kModes };
 int mode();
@@ -15,6 +17,11 @@ float requested();                 // what the setting asks for now
 // for the GamePad picture)
 float on_swap(float& drc);
 float game();
+// the GamePad screen's touch targets (the game's hit boxes, panes "B_*", drawn this frame) as
+// "name parent x y w h;" (16:9 screen, 0..1, y down), and whether the game shows its own button
+// cursor there (W_Cursor_00: it takes the buttons itself, e.g. Options)
+std::string drc_targets();
+bool drc_game_cursor();
 uint64_t game_frame();                // swaps so far                      // aspect the game draws with this frame
 // HD layouts: the game thread marks uploads of layout projection matrices and the drawing of layout
 // roots; the render thread, which knows the target, narrows the projection for TV-shaped targets

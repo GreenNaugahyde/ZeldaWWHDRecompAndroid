@@ -32,6 +32,8 @@ typedef struct Cpu {
     uint32_t res_addr, res_val; /* lwarx/stwcx. reservation */
     uint32_t pc;               /* target for indirect dispatch */
     uint32_t core;             /* host-side: which emulated core this thread runs on */
+    uint32_t preempt;          /* host-side: this thread's copy of g_core_preempt (the device-recompiled
+                                  code's entry check: one load); in what was padding, sizeof unchanged */
     void* thread;              /* host-side: owning guest thread object */
 } Cpu;
 
@@ -59,7 +61,12 @@ void ppc_preempt(Cpu* c);
 /* the same check in the device-recompiled code (recomp/ops.c ppcop_enter), which may also continue
    elsewhere than at the start: 0 from the start, 1 return at once, else the return address of a call
    in the function to continue at (save states: a thread's call chain rebuilt, threads.cpp) */
-uint32_t ppc_entry(Cpu* c, uint32_t fn, uint32_t size);
+/* preserve_most: the rare slow path saves what it uses, so a function's fast path needs no stack
+   frame for it (small functions are called very often) */
+__attribute__((preserve_most)) uint32_t ppc_entry(Cpu* c, uint32_t fn, uint32_t size);
+/* the game code's functions by address, (addr - 0x02000000) / 4 over 16 MiB (dispatch, core.cpp):
+   indirect calls in the device-recompiled code look up here before falling back to ppc_dispatch */
+extern PpcFunc* g_ppc_text_table;
 __attribute__((noreturn)) void ppc_resume_failed(Cpu* c);  /* that return address isn't a call of the function */
 #define PPC_ENTER(a) do {                                                     \
         if (__builtin_expect(g_ppc_trace, 0)) ppc_trace_enter(a);             \
@@ -83,9 +90,44 @@ static inline uint64_t f64_as_u64(double d) { uint64_t u; memcpy(&u, &d, 8); ret
 static inline float u32_as_f32(uint32_t u) { float f; memcpy(&f, &u, 4); return f; }
 static inline uint32_t f32_as_u32(float f) { uint32_t u; memcpy(&u, &f, 4); return u; }
 
-static inline double ldf32(uint32_t ea) { return (double)u32_as_f32(ld32(ea)); }
+/* Big-endian floats through the FP/SIMD registers on AArch64 (ldr s + rev32, rev32 + str s): no move
+   between a general and an FP register (ldr w, rev, fmov s), and a pair (psq_l/psq_st) as one 8-byte
+   access, swapped and converted in both lanes at once. Same bits as the scalar forms. */
+#if defined(__aarch64__) && defined(__clang__)
+typedef uint8_t ppc_v8u8 __attribute__((vector_size(8)));
+typedef uint32_t ppc_v2u32 __attribute__((vector_size(8)));
+typedef float ppc_v2f32 __attribute__((vector_size(8)));
+typedef double ppc_v2f64 __attribute__((vector_size(16)));
+#define PPC_REV32(v) __builtin_shufflevector((ppc_v8u8)(v), (ppc_v8u8)(v), 3, 2, 1, 0, 7, 6, 5, 4)
+static inline float ldbe_f32(const uint8_t* p) {
+    uint32_t x; memcpy(&x, p, 4);
+    ppc_v2u32 v = {x, 0};
+    return ((ppc_v2f32)PPC_REV32(v))[0];
+}
+static inline void stbe_f32(uint8_t* p, float f) {
+    ppc_v2f32 v = {f, 0};
+    uint32_t x = ((ppc_v2u32)PPC_REV32(v))[0];
+    memcpy(p, &x, 4);
+}
+static inline void ldbe_f32x2(const uint8_t* p, double* a, double* b) {
+    ppc_v8u8 v; memcpy(&v, p, 8);
+    ppc_v2f64 d = __builtin_convertvector((ppc_v2f32)PPC_REV32(v), ppc_v2f64);
+    *a = d[0]; *b = d[1];
+}
+static inline void stbe_f32x2(uint8_t* p, double a, double b) {
+    ppc_v2f64 d = {a, b};
+    ppc_v8u8 v = PPC_REV32(__builtin_convertvector(d, ppc_v2f32));
+    memcpy(p, &v, 8);
+}
+#else
+static inline float ldbe_f32(const uint8_t* p) { uint32_t v; memcpy(&v, p, 4); return u32_as_f32(__builtin_bswap32(v)); }
+static inline void stbe_f32(uint8_t* p, float f) { uint32_t v = __builtin_bswap32(f32_as_u32(f)); memcpy(p, &v, 4); }
+static inline void ldbe_f32x2(const uint8_t* p, double* a, double* b) { *a = ldbe_f32(p); *b = ldbe_f32(p + 4); }
+static inline void stbe_f32x2(uint8_t* p, double a, double b) { stbe_f32(p, (float)a); stbe_f32(p + 4, (float)b); }
+#endif
+static inline double ldf32(uint32_t ea) { return (double)ldbe_f32(ppc_ptr(ea)); }
 static inline double ldf64(uint32_t ea) { return u64_as_f64(ld64(ea)); }
-static inline void stf32(uint32_t ea, double d) { st32(ea, f32_as_u32((float)d)); }
+static inline void stf32(uint32_t ea, double d) { stbe_f32(ppc_ptr(ea), (float)d); }
 static inline void stf64(uint32_t ea, double d) { st64(ea, f64_as_u64(d)); }
 
 /* ---- integer helpers ---- */
@@ -153,7 +195,9 @@ static inline void cr_set_f(Cpu* c, int f, double a, double b) {
     int un = isnan(a) || isnan(b);
     c->cr[4 * f + 0] = !un && a < b; c->cr[4 * f + 1] = !un && a > b;
     c->cr[4 * f + 2] = !un && a == b; c->cr[4 * f + 3] = (uint8_t)un;
-    c->fpscr = (c->fpscr & ~0xF000u) | ((uint32_t)(c->cr[4 * f] << 3 | c->cr[4 * f + 1] << 2 | c->cr[4 * f + 2] << 1 | un) << 12);
+    // FPSCR's FPCC (bits 12-15) is not updated: only mffs could read it, and the game compares through
+    // CR. It cost ~10 instructions per compare (~1.3% of the game thread); Dolphin leaves it out as well
+    // by default (FPRF emulation off).
 }
 
 static inline uint64_t ppc_fctiwz(double d) {

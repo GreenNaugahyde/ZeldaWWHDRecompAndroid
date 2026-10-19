@@ -26,6 +26,7 @@ void set_touch(bool down, float x, float y);  // mouse on the GamePad window
 
 // Which Wii U controller the keyboard and host controllers act as. In Pro Controller mode the
 // GamePad stays connected (its screen and touch still work) but its buttons and sticks are idle.
+// The Android app always uses the GamePad (WWHD_PRO_CONTROLLER is overridden there).
 bool pro_controller();
 void set_pro_controller(bool on);
 

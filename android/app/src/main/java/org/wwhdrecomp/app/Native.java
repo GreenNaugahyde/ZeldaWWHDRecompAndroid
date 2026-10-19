@@ -68,6 +68,10 @@ final class Native {
     static native long[] cacheProgress();
     /** Why frame generation couldn't start, or "" (it runs, or it is off). */
     static native String frameGenError();
+    // GPUs where frame generation can hang the GPU (lsfg.cpp risky_gpu; false before the renderer starts),
+    // and whether the player accepted the warning for them
+    static native boolean frameGenRiskyGpu();
+    static native void setFrameGenRiskAccepted(boolean on);
 
     static native void surfaceChanged(Object surface);
     static native void surfaceDestroyed();
@@ -125,6 +129,16 @@ final class Native {
     static native void setStartHold(boolean on);
     /** 0 no hold, 1 armed, 2 the game is waiting for the choice. */
     static native int startHoldState();
+    /** The stage loaded: FRONT_TITLE (title screen), FRONT_FILES (file select), FRONT_OPENING (on from the
+     *  file select: a new game's opening, or loading), FRONT_BOOT (no stage yet) or 0. */
+    static native int frontScreen();
+    /** the GamePad screen's touch targets drawn now: "name parent x y w h;" (16:9 screen, 0..1, y down) */
+    static native String drcTargets();
+    /** the game shows its own button cursor on the GamePad screen (it takes the buttons there) */
+    static native boolean drcGameCursor();
+    static native void setGamePaused(boolean on);
+    static native int pauseKind();
+    static final int FRONT_TITLE = 1, FRONT_FILES = 2, FRONT_OPENING = 3, FRONT_BOOT = 4;
     /** The app goes to the background: saves the last session's state (slot 8); returns once it is taken (at most ~1 s). */
     static native void saveStateOnLeave();
     /** Save states taken but not yet written (Quit waits for them). */

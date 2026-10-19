@@ -32,8 +32,7 @@ The original project (macOS, the 60 fps modes, decompilation tools) is described
 - **An in-game options menu** in the style of the game's own menus, with tabs for saves, the game,
   graphics, mods and controls, usable by touch and with a controller (see below); it fits phone
   screens too.
-- **Save states**: five slots with a picture, time and place of each state, and the controls it was
-  saved with (GamePad or Pro Controller), which loading it switches back to. Saving stops the game
+- **Save states**: five slots with a picture, time and place of each state. Saving stops the game
   for only a few hundredths of a second (the memory is copied in the background), and a state loads
   anywhere: in the game, at the title screen or the file select. An auto save every 2, 5 or 10 minutes
   into two slots of its own, a "Last session" state when you leave the app or quit, and at start the
@@ -63,17 +62,25 @@ The original project (macOS, the 60 fps modes, decompilation tools) is described
   its proportions at the screen edges.
 - **The Wii U's sun and haze**: the sun's corona and lens flare (hidden behind walls and hills as on
   the console), the haze in the distance and the bloom around bright light.
-- **Display options**: rendering resolution from 0.5× to 3×, aspect ratio (bars, stretched, or
-  filling the screen), screen layouts for the TV and GamePad pictures (GamePad inset, side by side,
-  TV only, GamePad with TV inset). All of them apply immediately, without a restart.
+- **Display options**: rendering resolution from 0.5× to 3×, dynamic resolution (lowered by itself
+  while the GPU can't keep up, down to a limit you choose), sharp or bilinear upscaling, a display
+  resolution that draws the picture only as large as it needs to be on high-resolution screens,
+  aspect ratio (bars, stretched, or filling the screen), screen layouts for the TV and GamePad
+  pictures (GamePad inset, side by side, TV with the GamePad on +, GamePad with TV inset). All of
+  them apply immediately, without a restart.
+- **One controller, the GamePad**: every controller and the on-screen controls act as the Wii U
+  GamePad, with its gyro aiming and rumble. On a single screen, + shows the touchable GamePad
+  screen (items, map, bottles) in place of the TV picture and pauses the game, and + again goes
+  back. With a controller, a highlight in the game's own cursor style moves over the GamePad
+  screen: A taps, Y / X / R put the highlighted item on that button, B goes back. The title
+  screen's controller question is answered by itself (from the original project).
 - **Dual-screen devices** (AYN Thor and the like): the GamePad picture goes to the second screen by
   itself, with touch, and the main screen shows the TV picture; Graphics › GamePad screen switches
   back to the screen layouts. The GamePad screens (items, map, bottles) fill a second screen of
   another shape, such as the Thor's lower screen; Graphics › GamePad picture keeps the original 16:9.
 - **On-screen controls** for the whole GamePad, which hide while a controller is in use.
 - **Gyro aiming** with the device's motion sensors or a controller's (DualSense, DualShock 4, Switch
-  Pro and others that Android reports with sensors), also with "Wii U Pro Controller" selected,
-  where the original game has no gyro aiming.
+  Pro and others that Android reports with sensors).
 - **Rumble** on the controller in use, or on the device while playing by touch.
 - **The original project's gameplay mods** on Android: climb any wall, direct right-stick camera,
   first person on R3, quick doors, fast scene changes.
@@ -86,11 +93,17 @@ The original project (macOS, the 60 fps modes, decompilation tools) is described
   separately. The game plays its normal frames, only more of them per second (up to 4×, as fast as
   the device can draw them: about 2× on a Snapdragon 7+ Gen 3), so nothing is skipped; text boxes
   still wait for your button.
-- **Performance work for weaker devices**: BC textures unpacked on the GPU where it can't sample
-  them (most Mali and PowerVR GPUs), precise Vulkan barriers (on a Mali-G52 the GPU time per frame
-  drops from 52 to 40 ms), much less work on the render thread, faster game code (the guest
-  registers kept in the CPU's own registers), a second thread for the Vulkan commands, the game and
-  render threads on the fast cores, Android performance hints and game modes.
+- **Performance work for weaker devices**, above all Mali GPUs: textures wait only for the shader
+  stage that reads them (on a Helio G85 / Mali-G52 MC2 at 0.5×: 19.7 → 28.5 fps), clears done as
+  part of the next render pass, mipmap chains built in place and only as far as they are read,
+  exact float multiplies only where a value can be infinite (Mali-G52 at 1×: GPU time 47 → 40 ms),
+  shadows with emulated depth clamping where the GPU has none, BC textures unpacked on the GPU where
+  it can't sample them (most Mali and PowerVR GPUs). On the CPU side: faster recompiled game code
+  (guest registers in the CPU's own registers, cheaper function entries and memory accesses, hot
+  functions grouped together), a render thread with a third less work, unchanged vertex and index
+  data kept across frames, a second thread for the Vulkan commands, the game and render threads on
+  the fast cores, Android performance hints and game modes. On a Helio G85 / Mali-G52 MC2, 0.75×
+  rendering resolution is now playable at close to 30 fps.
 - **Crash logs**: if the game crashes, the next start offers its log in Android's share menu, for a
   bug report. It shows where the game crashed and with which app and game version, device and
   settings; it contains no personal data. About › Share crash logs shares the logs kept; a shared
@@ -101,6 +114,37 @@ The original project (macOS, the 60 fps modes, decompilation tools) is described
 - **No internet access**: the app doesn't request it, and its manifest explicitly excludes it.
 
 ## Version history
+
+**0.9.5**
+
+- Much faster on Mali GPUs and slower phones. On a Helio G85 / Mali-G52 MC2: 0.5× rendering
+  resolution from about 20 to 30 fps, 0.75× now playable at close to 30 fps, 1× from about 19 to
+  24 fps. Textures wait only for the shader stage that reads them, clears are part of the next
+  render pass, mipmap chains are built in place and only as far as they are read, exact float
+  multiplies only where needed.
+- Faster game code and render thread (on a Helio G85: game thread about 16% less CPU time, render
+  thread about 33% less); the game code compiles faster too.
+- Graphics › Dynamic resolution: lowers the resolution while the GPU can't keep up, down to a
+  limit you choose, and raises it back when there is room.
+- Graphics › Display resolution (Auto by default): on high-resolution screens the picture is drawn
+  only as large as it needs to be (Helio G99 / Mali-G57 at 2560×1600, 1×: 26 → 29 fps).
+- Graphics › Upscaling: sharp (keeps edges crisp at lower resolutions) or bilinear.
+- Much less shader stutter: shader variants that only differ in settings the shader doesn't read
+  share one translation. Also fixes the crash with very large shader caches (issue #48).
+- The shader head start knows more of the game's pipelines (now from Adreno and Mali devices), the
+  game's own shader compiles go before the background ones.
+- Shadows on GPUs without depth clamping (Mali-G52): no longer come and go with the camera
+  (issue #45).
+- The GamePad is the only controller: every controller and the on-screen controls act as the Wii U
+  GamePad; on a single screen + shows the GamePad screen and pauses the game. With a controller, a
+  highlight moves over the GamePad screen (A taps, Y / X / R assign items, B goes back). No − button
+  on screen; the menu button moved to the top left. The title screen's controller question is
+  answered by itself (from the original project, ZeldaWWHDRecomp/ZeldaWWHDRecomp#189); a touch on
+  the title screen presses A; the file select has a Back button.
+- Frame generation on Mali GPUs: asks first (it can hang the GPU there); a crash with frame
+  generation on offers Start without frame generation; a GPU that stops responding for 10 seconds
+  now ends in a crash log instead of a frozen game.
+- The game code is prepared once more after the update.
 
 **0.9.4**
 
@@ -277,18 +321,19 @@ None of these are included or provided here.
    folder.
 3. The app extracts the game files (a few seconds to minutes), then prepares the game code for
    your device (once; how long depends on the processor: about 6 minutes on a Snapdragon 7+ Gen 3,
-   9 minutes on a Snapdragon 855, 16 minutes on a Helio G99, 21 minutes on a Helio G85). You can leave the app meanwhile and read a Wind Waker walkthrough guide. A notification shows the progress and keeps the process alive.
+   9 minutes on a Snapdragon 855, 16 minutes on a Helio G99, 18 minutes on a Helio G85). You can leave the app meanwhile and read a Wind Waker walkthrough guide. A notification shows the progress and keeps the process alive.
 4. The game starts. In the background the app prepares the shaders it knows the game uses, so the
    first visits to places stutter much less; the rest compile on their first use and are cached.
 
 ## Controls
 
 The **on-screen controls** cover the Wii U GamePad: both sticks, the D-pad, A/B/X/Y, L/R/ZL/ZR,
-−/+ and the stick clicks (L3/R3). The
-controls hide while a game controller is in use and come back on the next touch.
++ and the stick clicks (L3/R3). − is left out: the game uses it only to swap the TV and GamePad
+pictures, which + does here. The controls hide while a game controller is in use and come back on
+the next touch. On the title screen a touch anywhere presses A.
 
 **Game controllers** map by button position, as the game uses them: the bottom face button is the
-Wii U's B, the right one A, the left one Y and the top one X; Select is −, Start is +. Under
+Wii U's B, the right one A, the left one Y and the top one X; Start is +. Under
 Controls › **Controller buttons** you can assign each Wii U button to another controller button:
 choose the Wii U button, then press the controller button (analog triggers and a D-pad that reports
 as a hat count too). A controller button already in use swaps places, so no Wii U button is lost.
@@ -296,7 +341,7 @@ Home / Guide and holding Select always open the menu, and the menu itself keeps 
 position.
 
 **Keyboards**: WASD move, the arrow keys turn the camera, K or Space = A, J = B, L = X, I = Y, Q/E =
-L/R, Left Shift = ZL, C = ZR, Enter = +, Tab = −, H = HOME, 1–4 = D-pad, X/V = stick clicks.
+L/R, Left Shift = ZL, C = ZR, Enter = +, H = HOME, 1–4 = D-pad, X/V = stick clicks.
 
 ## The options menu
 
@@ -304,10 +349,10 @@ The game keeps running while the menu is open, and changes apply at once.
 
 **How to open it**
 
-- touch: the ≡ button at the bottom of the screen, or Android's Back.
+- touch: the ≡ button at the top left of the screen, or Android's Back.
 - controller: **hold Select** (View, Share, −: whatever the controller calls it) for a moment, or
-  press **Home / Guide** (the logo button, where the controller passes it to apps). A short press
-  of Select is still the game's − button. The same buttons close the menu again.
+  press **Home / Guide** (the logo button, where the controller passes it to apps). The same
+  buttons close the menu again.
 
 **With a controller**: L / R switch tabs, the D-pad moves and changes values, and as in the game
 the **right** face button selects and the **bottom** one goes back. (On an Xbox-style controller
@@ -318,15 +363,18 @@ back.)
 
 - **Saves**: five save state slots with Save and Load (a state can only be loaded during
   gameplay, for example the save select screen or anywhere in the game, and only with the build that saved it).
-  A state also keeps whether the controls acted as GamePad or Pro Controller; loading it switches
-  back to that, since the game only listens to the controller it was saved with. The auto save (every
+  A state saved with an older version while the controls acted as a Pro Controller loads with the
+  GamePad; choose the GamePad if the game asks for a controller. The auto save (every
   2, 5 or 10 minutes, two slots), the "Last session" state, and what happens at start (the intro, the
   save states to choose from, or the last session at once). Exporting saves as one backup file and
   importing it, or a GameCube save (`.gci`). An imported game save restarts the game.
 - **Game**: the game language (the languages of your copy; applies after a restart).
-- **Graphics**: rendering resolution, frame rate (30 fps, or 60/120 fps by frame interpolation), frame generation, widescreen, aspect ratio, the GamePad screen and its
+- **Graphics**: rendering resolution, dynamic resolution (off, or down to 0.75×, 0.6×, 0.5× or
+  0.4× while the GPU can't keep up), frame rate (30 fps, or 60/120 fps by frame interpolation), frame generation, widescreen, aspect ratio, the GamePad screen and its
   picture (with a second display), screen layout, ambient
-  occlusion, full-size occlusion depth, 16× anisotropic filtering, the performance overlay, the GPU
+  occlusion, full-size occlusion depth, 16× anisotropic filtering, upscaling (sharp or bilinear),
+  display resolution (Auto: drawn at the size the picture needs and enlarged by the display hardware;
+  Full: always at the screen's resolution), the performance overlay, the GPU
   driver (Adreno only), the command recording thread (a second CPU thread for the GPU work; on by
   default, "Off" can be faster on some devices such as the Snapdragon 855; applies after a restart),
   and deleting the shader cache (restarts the game as on its first start).
@@ -341,8 +389,7 @@ back.)
   magic, ammunition, rupees, bait and spoils, and swimming, and story cheats (save to a spare file
   first; they can change story events). **Mod packs**: import, turn on and off, choose a pack's
   presets; changes apply after a restart, which the menu offers when you leave it.
-- **Controls**: on-screen controls on or off, their size, whether the controls act as a Wii U
-  Pro Controller (the default) or a GamePad, inverted camera up/down, motion controls (gyro aiming),
+- **Controls**: on-screen controls on or off, their size, inverted camera up/down, motion controls (gyro aiming),
   rumble (on the phone when the controller has none), and which controller button
   presses which Wii U button.
 
@@ -374,6 +421,10 @@ Options: multiplier, network (performance, or quality at about 40% more GPU time
 menus and text from warping). Generated frames show the game about one frame later. On the tested Snapdragon
 7+ Gen 3 (2560×1600, performance network, 50% flow scale): about 7 ms of GPU time per game
 frame for ×2, 9 ms for ×3; ×4 needs a 25% flow scale.
+
+On Mali GPUs frame generation can make the GPU hang (seen on a Mali-G52 and a Mali-G57), so
+switching it on there asks first. If the game crashes while frame generation is on, the crash
+dialog at the next start offers **Start without frame generation**.
 
 `runtime/src/vk/lsfg.cpp` is an independent implementation that runs the DLL's shaders; how they
 connect was worked out from the DLL itself. It contains no code from other LSFG projects.

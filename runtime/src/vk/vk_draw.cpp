@@ -34,6 +34,10 @@ extern "C" uint64_t g_draw_state_gen;    // gx2_core.cpp: bumped by any non-data
 #include <unordered_set>
 #include <unistd.h>
 #include <zlib.h>
+#if defined(__aarch64__) && defined(__linux__)
+#include <arm_acle.h>
+#include <sys/auxv.h>
+#endif
 
 LatteDecompilerShader* FinishDecompiledShader(LatteDecompilerOutput_t& decompilerOutput);
 LatteFetchShader* LatteShaderRecompiler_createFetchShader(LatteFetchShader::CacheHash fsHash, uint32* contextRegister,
@@ -109,6 +113,7 @@ static uint64_t hash_bytes(const void* data, size_t n, uint64_t h = 0x9E3779B97F
 // bytes copied to the GPU per category since the last report (vertex data, uniform blocks, uniform variables)
 static uint64_t g_bytes_vtx, g_bytes_vtx_shared, g_bytes_ubo, g_bytes_vars, g_bytes_vtx_reused, g_bytes_ubo_reused;
 static uint64_t g_stale_reuses;  // tracked reuses a comparison found outdated (copy_tracked)
+static uint64_t g_keep_bytes = 0, g_keep_count = 0, g_keep_reused = 0;  // kept vertex copies (kept_vertex_buffer)
 static uint64_t g_fast_draws, g_slow_draws;  // draws through the fast path (state reused) and the full one
 
 // Guest data copied for draws, per submission by address and size: a draw whose data is
@@ -146,6 +151,7 @@ static Upload copy_deduped(SubmissionCopies& c, const void* src, uint32_t addr, 
 // render thread ~10% in busy views (tens of MB a frame). Each copy is still compared on one frame
 // in 16 (spread by address), counting what the tracking missed. WWHD_TRACK_WRITES=0: compare always.
 static const bool g_track_writes = [] { const char* e = getenv("WWHD_TRACK_WRITES"); return !e || atoi(e) != 0; }();
+static const bool g_track_ubo_writes = g_track_writes && getenv("WWHD_TRACK_UBO_WRITES") != nullptr;
 static Upload copy_tracked(SubmissionCopies& c, uint32_t addr, uint32_t size, VkDeviceSize align, uint64_t& copied, uint64_t& reused) {
     command_buffer();
     if (R.cmdSerial != c.serial) {  // transient memory is only valid within one submission
@@ -252,14 +258,31 @@ static void compile_done() {
 // ---------------------------------------------------------------- background compiles
 // Shader modules and pipelines are created on worker threads (WWHD_SYNC_SHADERS=1 creates them
 // inline instead); draws that need one still compiling wait a bounded time, then are skipped.
+// The game's own compiles (a draw needs them now) go to the front of the queue, and the background
+// work (cache replay, head start) leaves one thread free for them (cache_warm_step): before, it could
+// fill every thread and a new shader of the game waited for a background compile to end.
+static bool g_cache_replaying = false;  // translating cache or head-start records, not the game's draws
+static unsigned compile_threads() {
+    static const unsigned n = [] {
+        unsigned v = std::clamp(std::thread::hardware_concurrency() / 2, 2u, 4u);
+        if (const char* e = getenv("WWHD_COMPILE_THREADS")) v = std::clamp(atoi(e), 1, 8);  // debug
+        return v;
+    }();
+    return n;
+}
+// the game's compiles over the report window (report_skips): count, time in the queue, time compiling
+static std::atomic<uint64_t> g_game_jobs{0}, g_game_wait_us{0}, g_game_wait_max_us{0}, g_game_run_us{0}, g_game_run_max_us{0};
+static void atomic_max(std::atomic<uint64_t>& a, uint64_t v) {
+    for (uint64_t cur = a.load(std::memory_order_relaxed); v > cur && !a.compare_exchange_weak(cur, v);) {}
+}
 namespace {
 class Workers {
 public:
-    void push(std::function<void()> fn) {
+    // urgent: the game's own compile (front of the queue, timed); else background work
+    void push(std::function<void()> fn, bool urgent = false) {
         static std::once_flag once;
         std::call_once(once, [this] {
-            unsigned n = std::clamp(std::thread::hardware_concurrency() / 2, 2u, 4u);
-            if (const char* e = getenv("WWHD_COMPILE_THREADS")) n = std::clamp(atoi(e), 1, 8);  // debug
+            unsigned n = compile_threads();
             for (unsigned i = 0; i < n; i++)
                 std::thread([this] {
                     platform::set_thread_name("shader compile");
@@ -275,8 +298,24 @@ public:
                     }
                 }).detach();
         });
+        if (urgent) {
+            auto queued = std::chrono::steady_clock::now();
+            fn = [fn = std::move(fn), queued] {
+                using namespace std::chrono;
+                auto t0 = steady_clock::now();
+                fn();
+                uint64_t wait = (uint64_t)duration_cast<microseconds>(t0 - queued).count();
+                uint64_t run = (uint64_t)duration_cast<microseconds>(steady_clock::now() - t0).count();
+                g_game_jobs++;
+                g_game_wait_us += wait;
+                g_game_run_us += run;
+                atomic_max(g_game_wait_max_us, wait);
+                atomic_max(g_game_run_max_us, run);
+            };
+        }
         std::lock_guard<std::mutex> lk(m_);
-        q_.push_back(std::move(fn));
+        if (urgent) q_.push_front(std::move(fn));
+        else q_.push_back(std::move(fn));
         cv_.notify_one();
     }
 
@@ -446,6 +485,11 @@ struct Shader {
     uint32_t varsRange = 0;                       // size of the uniform-variable block
     uint32_t blockRange[LATTE_NUM_MAX_UNIFORM_BUFFERS] = {};  // size bound for each uniform block
     std::atomic<int> state{CS_PENDING};       // translation: CS_FAILED, CS_DEFERRED, else see mod
+    // depth clamp emulated (devices without the feature, compile_shader): translated for a draw that
+    // wants depth clamp, the shader also gets this variant
+    bool clampWanted = false;
+    Module* clampMod = nullptr;
+    uint64_t srcHash = 0;  // the translation's source (WWHD_NARROW_KEYS=2 compares it)
 };
 // compile state of a shader (translation failure, or its module's compile)
 static const std::atomic<int>& shader_state(const Shader* s) { return s->mod ? s->mod->state : s->state; }
@@ -473,6 +517,7 @@ static std::atomic<size_t> g_pipelines_created{0};
 size_t pipelines_created() { return g_pipelines_created; }
 // time spent per stage, reported with the skip statistics
 static double g_t_decompile;
+static double g_t_warm;  // the render thread's background warm-up steps (cache_warm_step)
 static std::atomic<uint64_t> g_t_spirv_us{0}, g_t_pipeline_us{0};
 static double now_ms() { return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now().time_since_epoch()).count(); }
 
@@ -486,17 +531,18 @@ static void report_compile_error(const std::string& src, uint64_t key, const std
     }
 }
 
-// ---- SPIR-V cache on disk (spirv2.bin next to shaders.bin): translations seen in earlier sessions
+// ---- SPIR-V cache on disk (spirv3.bin next to shaders.bin): translations seen in earlier sessions
 // skip glslang. Records: uint64 source hash, uint32 word count, words. The file only grows: when
-// every translation changes (strictMul), a new name starts it over and the old file is deleted.
+// every translation changes (strictMul, mul_nonIEEE's form), a new name starts it over and the old file is deleted.
 static std::mutex g_spv_mutex;
 static std::unordered_map<uint64_t, std::vector<uint32_t>> g_spv_disk;
 static FILE* g_spv_out = nullptr;
 static size_t g_spv_disk_hits;
 
 static void spirv_cache_open(const std::string& dir) {
-    remove((dir + "/spirv.bin").c_str());  // translations before strictMul
-    std::string path = dir + "/spirv2.bin";
+    remove((dir + "/spirv.bin").c_str());   // translations before strictMul
+    remove((dir + "/spirv2.bin").c_str());  // before the select form of mul_nonIEEE
+    std::string path = dir + "/spirv3.bin";
     if (FILE* f = fopen(path.c_str(), "rb")) {
         uint64_t h;
         uint32_t n;
@@ -555,7 +601,7 @@ static void compile_now(Module* m, uint64_t hash, uint64_t key, bool vertex, con
 
 // The translation's source is only needed until the shader has its module (hash, module lookup, the
 // compile's own copy): freed then. The cache replay translates tens of thousands of variants sharing
-// ~1000 modules, and each kept its tens of KB of GLSL: about 2 GB of native heap on a Mi 9, which
+// ~1000 modules, and each kept its tens of KB of GLSL: about 2 GB of native heap on a Snapdragon 855, which
 // Android ended for low memory (in Dragon Roost, and after save state loads).
 static void free_source(Shader* sh) {
     delete sh->dec->strBuf_shaderSource;
@@ -572,6 +618,9 @@ static void start_module(Module* m) {
     compile_module(m, m->hash, m->key, m->vertex, std::move(m->pending));
     m->pending = std::string();
 }
+
+static Module* module_for(std::string src, uint64_t key, bool vertex, bool defer);
+static bool depth_clamp_variant(const std::string& src, bool vertex, std::string& out);
 
 // attach the shader to the module for its translation, compiling that module if it is new; with
 // defer (the cache replay) a new module is only created, keeping the source, and compiled later
@@ -598,28 +647,55 @@ static void compile_shader(Shader* sh, bool defer = false) {
             LOG("[gfx] shader %s written to %s", k, name);
         }
     }
-    uint64_t hash = hash_bytes(src.data(), src.size(), sh->vertex ? 0x5653ull : 0x5053ull) ^ src.size();
-    auto it = g_modules.find(hash);
     free_source(sh);
+    std::string clampSrc;
+    if (sh->clampWanted && !R.features.depthClamp && depth_clamp_variant(src, sh->vertex, clampSrc))
+        sh->clampMod = module_for(std::move(clampSrc), sh->key, sh->vertex, defer);
+    sh->mod = module_for(std::move(src), sh->key, sh->vertex, defer);
+}
+
+// the module of a translation: shared by identical sources; compiled now, or with defer only created
+// (the cache replay) and compiled on first use
+static Module* module_for(std::string src, uint64_t key, bool vertex, bool defer) {
+    uint64_t hash = hash_bytes(src.data(), src.size(), vertex ? 0x5653ull : 0x5053ull) ^ src.size();
+    auto it = g_modules.find(hash);
     if (it != g_modules.end()) {
-        sh->mod = it->second;
         g_module_cache_hits++;
-        if (!defer) start_module(sh->mod);
-        return;
+        if (!defer) start_module(it->second);
+        return it->second;
     }
     auto* m = new Module();
     g_modules[hash] = m;
-    sh->mod = m;
     if (defer) {
         m->state = CS_DEFERRED;
         m->pending = std::move(src);
         m->hash = hash;
-        m->key = sh->key;
-        m->vertex = sh->vertex;
+        m->key = key;
+        m->vertex = vertex;
         g_deferred_modules.push_back(m);
-        return;
+        return m;
     }
-    compile_module(m, hash, sh->key, sh->vertex, std::move(src));
+    compile_module(m, hash, key, vertex, std::move(src));
+    return m;
+}
+
+// Depth clamp where the device has none (Mali-G52): the game draws its shadow cascades with depth
+// clipping off (PA_CL_CLIP_CNTL), so casters in front of a cascade's near plane (palm crowns, rocks)
+// still land in the shadow map, at its nearest depth. Without the feature they were clipped and those
+// shadows came and went with the camera (issue #45). The vertex shader variant clamps the position's
+// depth at the near plane, per vertex: exact for casters wholly in front; a triangle crossing the plane
+// gets a little too deep (at worst a little less shadow). The far side is still clipped: nothing there
+// can shadow anything in range, and clamped per vertex big ground triangles reaching past it came out
+// too near (wrong shadows on the grass). Per pixel (gl_FragDepth) it was exact but cost the Mali-G52's
+// shadow pass 2.4 -> 3.9 ms (no early depth test). Only for pipelines that want depth clamp (get_pipeline).
+static bool depth_clamp_variant(const std::string& src, bool vertex, std::string& out) {
+    if (!vertex) return false;
+    const std::string def = "#define SET_POSITION(_v) ";
+    size_t d = src.find(def), eol = d == std::string::npos ? d : src.find_first_of("\r\n", d);
+    if (eol == std::string::npos) return false;
+    out = src;
+    out.insert(eol, "; if (gl_Position.w > 0.0) gl_Position.z = max(gl_Position.z, 0.0)");
+    return true;
 }
 
 static void compile_module(Module* m, uint64_t hash, uint64_t key, bool vertex, std::string src) {
@@ -631,7 +707,7 @@ static void compile_module(Module* m, uint64_t hash, uint64_t key, bool vertex, 
     g_workers.push([m, hash, key, vertex, src = std::move(src)] {
         compile_now(m, hash, key, vertex, src);
         g_compiles_in_flight--;
-    });
+    }, !g_cache_replaying);
 }
 
 // descriptor set layout from the decompiler's Vulkan binding assignment
@@ -691,8 +767,7 @@ static const struct { uint32_t first, count; } kKeyRegs[] = {
     {REGADDR::PA_CL_VTE_CNTL, 1}, {REGADDR::PA_CL_CLIP_CNTL, 1}, {REGADDR::CB_COLOR_CONTROL, 1}, {REGADDR::CB_TARGET_MASK, 1},
     {mmCB_COLOR0_INFO, 8}};
 
-static uint64_t stage_state_hash(const uint32_t* regs, uint64_t h, uint32_t texBase) {
-    uint32_t buf[400];
+static uint32_t stage_state_words(const uint32_t* regs, uint32_t texBase, uint32_t* buf) {
     uint32_t n = 0;
     for (auto& k : kKeyRegs) {
         memcpy(&buf[n], &regs[k.first], k.count * 4);
@@ -717,20 +792,85 @@ static uint64_t stage_state_hash(const uint32_t* regs, uint64_t h, uint32_t texB
     }
     // depth-compare samplers
     for (int i = 0; i < 18 * 3; i++) buf[n++] = regs[REGADDR::SQ_TEX_SAMPLER_WORD0_0 + i * 3] & 0xF8000000;
-    return hash_bytes(buf, n * 4, h);
+    return n;
+}
+// The same value, remembered by a digest of the state: hash_bytes is one serial multiply chain over
+// ~850 bytes, for both stages of every draw whose shader state changed (~10% of the GX2 render thread
+// at Windfall on a Helio G85). The digest runs four independent lanes; a state seen before gets its
+// key from the table. (The key's value must not change: pipeline records and the head start name
+// shaders by it.)
+static uint64_t state_digest_mul(const uint32_t* buf, uint32_t n, uint64_t h, uint32_t texBase) {
+    uint64_t a = h ^ 0x243F6A8885A308D3ull, b = texBase ^ 0x13198A2E03707344ull, c = 0xA4093822299F31D0ull, d = 0x082EFA98EC4E6C89ull;
+    uint32_t i = 0;
+    for (; i + 8 <= n; i += 8) {
+        uint64_t w[4];
+        memcpy(w, &buf[i], 32);
+        a = (a ^ w[0]) * 0xFF51AFD7ED558CCDull; a ^= a >> 32;
+        b = (b ^ w[1]) * 0xC4CEB9FE1A85EC53ull; b ^= b >> 32;
+        c = (c ^ w[2]) * 0x9E3779B97F4A7C15ull; c ^= c >> 32;
+        d = (d ^ w[3]) * 0xD6E8FEB86659FD93ull; d ^= d >> 32;
+    }
+    for (; i < n; i++) a = (a ^ buf[i]) * 0x100000001B3ull;
+    uint64_t digest = (a ^ (b << 21 | b >> 43)) * 0x9E3779B97F4A7C15ull ^ (c ^ (d << 42 | d >> 22)) * 0xFF51AFD7ED558CCDull ^ n;
+    return digest ^ digest >> 31;
+}
+#if defined(__aarch64__) && defined(__linux__)
+// the same with the CRC32 instructions (four lanes, 128 bits folded to 64): about a third of the
+// multiply chain's time (the digest only finds the memo entry; it is never stored anywhere)
+__attribute__((target("crc"))) static uint64_t state_digest_crc(const uint32_t* buf, uint32_t n, uint64_t h, uint32_t texBase) {
+    uint32_t a = (uint32_t)h, b = (uint32_t)(h >> 32), c = texBase, d = 0x9E3779B9u ^ n;
+    uint32_t i = 0;
+    for (; i + 8 <= n; i += 8) {
+        uint64_t w[4];
+        memcpy(w, &buf[i], 32);
+        a = __crc32cd(a, w[0]);
+        b = __crc32cd(b, w[1]);
+        c = __crc32cd(c, w[2]);
+        d = __crc32cd(d, w[3]);
+    }
+    for (; i < n; i++) a = __crc32cw(a, buf[i]);
+    uint64_t lo = (uint64_t)a << 32 | b, hi = (uint64_t)c << 32 | d;
+    uint64_t digest = lo * 0x9E3779B97F4A7C15ull ^ (hi << 29 | hi >> 35) * 0xFF51AFD7ED558CCDull;
+    return digest ^ digest >> 31;
+}
+static const bool g_has_crc = (getauxval(AT_HWCAP) & (1UL << 7)) != 0;  // HWCAP_CRC32
+#endif
+static uint64_t stage_state_hash(const uint32_t* regs, uint64_t h, uint32_t texBase) {
+    uint32_t buf[400];
+    const uint32_t n = stage_state_words(regs, texBase, buf);
+#if defined(__aarch64__) && defined(__linux__)
+    const uint64_t digest = g_has_crc ? state_digest_crc(buf, n, h, texBase) : state_digest_mul(buf, n, h, texBase);
+#else
+    const uint64_t digest = state_digest_mul(buf, n, h, texBase);
+#endif
+    struct Memo { uint64_t h; uint32_t texBase; uint64_t key; };
+    static FlatTable<Memo> memo;
+    static size_t entries = 0;
+    if (Memo* m = memo.find(digest); m && m->h == h && m->texBase == texBase) return m->key;
+    if (entries >= 65536) {
+        memo.clear();
+        entries = 0;
+    }
+    uint64_t key = hash_bytes(buf, n * 4, h);
+    memo[digest] = Memo{h, texBase, key};
+    entries++;
+    return key;
 }
 
 // Does a register change alter the shader key? gx2_core.cpp counts only those in g_shader_state_gen
 // (plugged in below). The programs' addresses aren't counted: get_shader compares them itself.
 extern "C" bool (*g_shader_reg_filter)(uint32_t reg, uint32_t oldv, uint32_t newv);
+// (filled at load: a function-local static's guard is checked on every call)
+static uint8_t g_whole_key_reg[0x10000];  // (bytes: no bit extraction per call)
+static const bool g_whole_key_reg_filled = [] {
+    for (auto& k : kKeyRegs)
+        for (uint32_t i = 0; i < k.count; i++) g_whole_key_reg[k.first + i] = 1;
+    return true;
+}();
 static bool shader_reg_relevant(uint32_t reg, uint32_t oldv, uint32_t newv) {
-    static const std::vector<bool> whole = [] {
-        std::vector<bool> m(0x10000);
-        for (auto& k : kKeyRegs)
-            for (uint32_t i = 0; i < k.count; i++) m[k.first + i] = true;
-        return m;
-    }();
-    if (reg < whole.size() && whole[reg]) return true;
+    const uint8_t* whole = g_whole_key_reg;
+    constexpr size_t kWhole = sizeof g_whole_key_reg;
+    if (reg < kWhole && whole[reg]) return true;
     const uint32_t* regs = gx2::regs();
     auto isColorBuffer = [&](uint32_t base) {
         if (!base) return false;
@@ -765,7 +905,165 @@ static bool shader_reg_relevant(uint32_t reg, uint32_t oldv, uint32_t newv) {
     if (reg == REGADDR::DB_DEPTH_CONTROL) return (d & 0x83) != 0;
     return false;
 }
-static bool g_reg_filter_set = (g_shader_reg_filter = &shader_reg_relevant, true);
+// the registers shader_reg_relevant looks at: always (the whole ones), or depending on the change
+extern "C" const uint8_t* g_shader_reg_kind;
+static const uint8_t* shader_reg_kinds() {
+    static uint8_t kind[0x10000];
+    for (auto& k : kKeyRegs)
+        for (uint32_t i = 0; i < k.count; i++) kind[k.first + i] = kShaderRegAlways;
+    auto check = [](uint32_t first, uint32_t count) {
+        for (uint32_t r = first; r < first + count; r++)
+            if (kind[r] == kShaderRegNever) kind[r] = kShaderRegCheck;
+    };
+    for (uint32_t tb : {(uint32_t)REGADDR::SQ_TEX_RESOURCE_WORD0_N_PS, (uint32_t)REGADDR::SQ_TEX_RESOURCE_WORD0_N_VS,
+                        (uint32_t)REGADDR::SQ_TEX_RESOURCE_WORD0_N_GS})
+        check(tb, 18 * 7);
+    check(REGADDR::SQ_TEX_SAMPLER_WORD0_0, 18 * 3 * 3);
+    check(mmCB_COLOR0_BASE, 8);
+    check(REGADDR::DB_DEPTH_CONTROL, 1);
+    return kind;
+}
+static bool g_reg_filter_set = (g_shader_reg_filter = &shader_reg_relevant, g_shader_reg_kind = shader_reg_kinds(), true);
+
+// ---------------------------------------------------------------- shader-state digest
+// What stage_state_words gathers, kept up to date as registers change instead of gathered and hashed
+// for every lookup: a slot per gathered value (masked as there), the digest the sum of the slots'
+// terms. gx2_core reports each register command that changed a shader-relevant register
+// (g_shader_regs_changed) and bumps g_shader_bulk_gen when registers changed otherwise (contexts,
+// save states). Draws alternate between a few states (alpha test on and off, ...), each change
+// invalidating the shader lookup: get_shader finds the shader of a digest seen this frame without
+// the gather, the program hash and the big tables behind them (~2000 cycles a lookup on a Helio G85,
+// most of it cache misses). WWHD_KD_CHECK=1: every digest checked against one computed from scratch.
+extern "C" void (*g_shader_regs_changed)(uint32_t first, uint32_t n);
+extern "C" uint64_t g_shader_bulk_gen;
+namespace kd {
+constexpr uint32_t kTexSlots = 18 * 3;  // per stage: per texture unit (w0 & 7 | w4 & 0x300), w1 & 0x3F00000, color buffer index
+struct Digest {
+    uint64_t bulk = 0;                   // g_shader_bulk_gen it was built at (0: never)
+    uint64_t common = 0, tex[2] = {};    // tex: 0 vertex, 1 pixel
+    uint32_t keyVal[0x100] = {};         // values of the kKeyRegs words (by their order)
+    uint32_t cbVal[8] = {}, depthVal = 0, samplerVal[54] = {}, texVal[2][kTexSlots] = {};
+};
+Digest g;
+uint16_t g_key_slot[0x10000];  // kKeyRegs word -> its index + 1
+const bool g_key_slots = [] {
+    uint32_t n = 0;
+    for (auto& k : kKeyRegs)
+        for (uint32_t i = 0; i < k.count; i++) g_key_slot[k.first + i] = (uint16_t)++n;
+    return true;
+}();
+inline uint64_t term(uint32_t slot, uint32_t v) {
+    uint64_t x = ((uint64_t)slot << 32 | v) ^ 0x2545F4914F6CDD1Dull;
+    x *= 0x9E3779B97F4A7C15ull;
+    x ^= x >> 31;
+    x *= 0xBF58476D1CE4E5B9ull;
+    return x ^ (x >> 29);
+}
+inline void set(uint64_t& sum, uint32_t& stored, uint32_t slot, uint32_t v) {
+    if (v == stored) return;
+    sum += term(slot, v) - term(slot, stored);
+    stored = v;
+}
+inline uint32_t tex_base_reg(int stage) {
+    return stage ? REGADDR::SQ_TEX_RESOURCE_WORD0_N_PS : REGADDR::SQ_TEX_RESOURCE_WORD0_N_VS;
+}
+// the color buffer a texture is (stage_state_words' fb: the last matching one + 1, 0 for none)
+inline uint32_t fb_index(const uint32_t* regs, uint32_t word2) {
+    uint32_t fb = 0, base = word2 << 8;
+    if (base)
+        for (int i = 0; i < 8; i++)
+            if (base == (regs[mmCB_COLOR0_BASE + i] & ~0xFFu)) fb = 1 + i;
+    return fb;
+}
+void update_unit(const uint32_t* regs, int stage, uint32_t t) {
+    const uint32_t* w = &regs[tex_base_reg(stage) + t * 7];
+    const uint32_t slot = 0x20000 + stage * 0x100 + t * 3;
+    set(g.tex[stage], g.texVal[stage][t * 3 + 0], slot + 0, (w[0] & 7) | (w[4] & 0x300));
+    set(g.tex[stage], g.texVal[stage][t * 3 + 1], slot + 1, w[1] & 0x3F00000);
+    set(g.tex[stage], g.texVal[stage][t * 3 + 2], slot + 2, fb_index(regs, w[2]));
+}
+void update_reg(const uint32_t* regs, uint32_t r) {
+    if (uint16_t k = g_key_slot[r]) {
+        set(g.common, g.keyVal[k - 1], r, regs[r]);
+        return;
+    }
+    if (r >= mmCB_COLOR0_BASE && r < mmCB_COLOR0_BASE + 8) {  // its flag, and which textures are color buffers
+        set(g.common, g.cbVal[r - mmCB_COLOR0_BASE], 0x10000 + (r - mmCB_COLOR0_BASE), (regs[r] & ~0xFFu) != 0);
+        for (int stage = 0; stage < 2; stage++)
+            for (uint32_t t = 0; t < 18; t++) update_unit(regs, stage, t);
+        return;
+    }
+    if (r == REGADDR::DB_DEPTH_CONTROL) {
+        set(g.common, g.depthVal, 0x10010, regs[r] & 0x83);
+        return;
+    }
+    const uint32_t sb = REGADDR::SQ_TEX_SAMPLER_WORD0_0;
+    if (r >= sb && r < sb + 54 * 3) {
+        if ((r - sb) % 3 == 0) set(g.common, g.samplerVal[(r - sb) / 3], r, regs[r] & 0xF8000000);
+        return;
+    }
+    for (int stage = 0; stage < 2; stage++) {
+        const uint32_t tb = tex_base_reg(stage);
+        if (r >= tb && r < tb + 18 * 7) {
+            uint32_t k = (r - tb) % 7;
+            if (k == 0 || k == 1 || k == 2 || k == 4) update_unit(regs, stage, (r - tb) / 7);
+            return;
+        }
+    }
+}
+void rebuild(const uint32_t* regs) {
+    g = Digest{};
+    // every slot starts at value 0 with its term counted, then moves to the register's value
+    auto zero = [](uint64_t& sum, uint32_t slot) { sum += term(slot, 0); };
+    uint32_t n = 0;
+    for (auto& k : kKeyRegs)
+        for (uint32_t i = 0; i < k.count; i++, n++) {
+            zero(g.common, k.first + i);
+            set(g.common, g.keyVal[n], k.first + i, regs[k.first + i]);
+        }
+    for (int i = 0; i < 8; i++) {
+        zero(g.common, 0x10000 + i);
+        set(g.common, g.cbVal[i], 0x10000 + i, (regs[mmCB_COLOR0_BASE + i] & ~0xFFu) != 0);
+    }
+    zero(g.common, 0x10010);
+    set(g.common, g.depthVal, 0x10010, regs[REGADDR::DB_DEPTH_CONTROL] & 0x83);
+    const uint32_t sb = REGADDR::SQ_TEX_SAMPLER_WORD0_0;
+    for (uint32_t i = 0; i < 54; i++) {
+        zero(g.common, sb + i * 3);
+        set(g.common, g.samplerVal[i], sb + i * 3, regs[sb + i * 3] & 0xF8000000);
+    }
+    for (int stage = 0; stage < 2; stage++)
+        for (uint32_t t = 0; t < 18; t++) {
+            for (uint32_t p = 0; p < 3; p++) zero(g.tex[stage], 0x20000 + stage * 0x100 + t * 3 + p);
+            update_unit(regs, stage, t);
+        }
+    g.bulk = g_shader_bulk_gen;
+}
+void regs_changed(uint32_t first, uint32_t n) {
+    if (g.bulk != g_shader_bulk_gen) return;  // rebuilt at the next lookup anyway
+    const uint32_t* regs = gx2::regs();
+    for (uint32_t r = first; r < first + n; r++)
+        if (g_shader_reg_kind[r] != kShaderRegNever) update_reg(regs, r);
+}
+const bool g_hooked = (g_shader_regs_changed = &regs_changed, true);
+// the digest of a stage's state (current registers)
+const bool g_check = getenv("WWHD_KD_CHECK") != nullptr;
+uint64_t stage_digest(bool vertex) {
+    const uint32_t* regs = gx2::regs();
+    if (g.bulk != g_shader_bulk_gen) rebuild(regs);
+    const bool check = g_check;
+    if (check) {
+        static int bad = 0;
+        Digest saved = g;
+        rebuild(regs);
+        if ((saved.common != g.common || saved.tex[0] != g.tex[0] || saved.tex[1] != g.tex[1]) && bad++ < 20)
+            LOG("[gfx] shader-state digest out of date (common %d, vertex textures %d, pixel textures %d)", saved.common != g.common,
+                saved.tex[0] != g.tex[0], saved.tex[1] != g.tex[1]);
+    }
+    uint64_t d = g.common * 0x9E3779B97F4A7C15ull + g.tex[vertex ? 0 : 1];
+    return d ^ (vertex ? 0x5653ull : 0x5053ull);
+}
+}  // namespace kd
 
 // A pixel shader translated for the draw's vertex shader: the semantic ids that vertex shader
 // exports (its output parameters through SPI_VS_OUT_ID) and the PS inputs none of them feeds. Those
@@ -809,6 +1107,7 @@ static Shader* get_shader_uncached(const uint32_t* regs, bool vertex, LatteFetch
                                    const PsLink& link = PsLink{});
 
 // vs: for a pixel shader, the draw's vertex shader (its inputs are linked to that one's outputs)
+static const bool g_use_key_digest = !getenv("WWHD_KEY_DIGEST") || atoi(getenv("WWHD_KEY_DIGEST")) != 0;
 static Shader* get_shader(const uint32_t* regs, bool vertex, LatteFetchShader* fs, uint64_t fsKey, const Shader* vs = nullptr) {
     const uint32_t start = vertex ? mmSQ_PGM_START_VS : mmSQ_PGM_START_PS;
     const uint32_t addr = regs[start], size = regs[start + 1];
@@ -819,6 +1118,29 @@ static Shader* get_shader(const uint32_t* regs, bool vertex, LatteFetchShader* f
     if (L.gen == g_shader_state_gen && L.frame == R.frame && L.addr == addr && L.size == size && (!vertex || L.fsKey == fsKey) &&
         (vertex || L.vs == vs))
         return L.s;
+    // a state seen before (by its digest, kd above) with this program: its shader without the gather.
+    // In a later frame the program's hash (program_hash: per frame, as the shader key takes it) must
+    // still be the one it had, so a program rewritten in place is translated again as before.
+    struct DigestHit { Shader* s; uint64_t prog; uint64_t frame; };
+    struct DigestMemo { FlatTable<DigestHit> m; size_t entries = 0; };
+    static DigestMemo dmemo[2];
+    const bool useDigest = g_use_key_digest;
+    DigestMemo& D = dmemo[vertex ? 0 : 1];
+    uint64_t dk = 0;
+    if (useDigest && regs == gx2::regs()) {
+        dk = kd::stage_digest(vertex);
+        dk = FlatTable<DigestHit>::mix(dk ^ ((uint64_t)addr << 32 | size)) ^
+             (vertex ? fsKey * 0xC2B2AE3D27D4EB4Full : (uint64_t)(uintptr_t)vs * 0x165667B19E3779F9ull);
+        if (DigestHit* hit = D.m.find(dk)) {
+            if (hit->frame != R.frame && (!addr || !size || program_hash(addr << 8, size << 3) != hit->prog)) {
+                hit = nullptr;  // (looked up again below)
+            } else {
+                hit->frame = R.frame;
+                L = Last{g_shader_state_gen, R.frame, fsKey, addr, size, vs, hit->s};
+                return hit->s;
+            }
+        }
+    }
     // the same state with another program (the game switches between a few): remembered per program
     struct Memo { uint64_t gen = 0, frame = ~0ull; FlatTable<Shader*> m; };
     static Memo memo[2];
@@ -833,6 +1155,15 @@ static Shader* get_shader(const uint32_t* regs, bool vertex, LatteFetchShader* f
     Shader* s = it ? *it
                    : (M.m[mk] = get_shader_uncached(regs, vertex, fs, fsKey, vertex ? PsLink{} : ps_link(regs, vs)));
     L = Last{g_shader_state_gen, R.frame, fsKey, addr, size, vs, s};
+    if (dk && s && addr && size) {
+        if (D.entries >= 16384) {  // (states and programs of other places: start over)
+            D.m.clear();
+            D.entries = 0;
+        }
+        DigestHit& h = D.m[dk];
+        if (!h.s) D.entries++;
+        h = DigestHit{s, program_hash(addr << 8, size << 3), R.frame};
+    }
     return s;
 }
 
@@ -841,6 +1172,7 @@ static bool g_defer_compiles = false;
 
 static void compile_deferred(Shader* s) {
     if (s && s->mod) start_module(s->mod);
+    if (s && s->clampMod) start_module(s->clampMod);
 }
 
 // the shader key of a state; base gets the program's part (the decompiler's shader id). 0: no program
@@ -859,7 +1191,6 @@ static uint64_t shader_key(const uint32_t* regs, bool vertex, uint64_t fsKey, co
 // Shader variants the game used this session (not the cache's or the head start's replays): the
 // cache keeps the records of those used in its last few sessions (shader_use_save, cache_load)
 static std::vector<uint64_t> g_used_keys;
-static bool g_cache_replaying = false;  // translating cache or head-start records, not the game's draws
 static inline void mark_used(Shader* s) {
     if (s->used || g_cache_replaying) return;
     s->used = true;
@@ -948,6 +1279,170 @@ static void pack_pixel_shader(Shader* s, const uint32_t* regs, uint32_t addr, ui
     use_pack_shader(s, base, aux, 'p', addr);
 }
 
+// Narrow keys: the shader key takes the state both stages could read, for both, and much of it
+// stale: all 18 texture units and 54 samplers, all 32 vertex semantics and PS input controls, the
+// other stage's registers. Thousands of keys a minute (the game leaves old values in what a draw
+// doesn't use) whose translation (~1 ms each on the render thread: the new-shader stutter) came out
+// the same. The narrow key takes what the translation reads (Cemu's decompiler):
+//   vertex: the fetch shader, the slot each fetched attribute's semantic resolves to (first match in
+//     SQ_VTX_SEMANTIC), each exported parameter's semantic if a PS input takes it, with that input's
+//     index (the output's location) and interpolation (SPI_VS_OUT_ID, the PS input table), its own
+//     output and clip registers
+//   pixel: the PS input table's registers (SPI_PS_IN_CONTROL, the first n SPI_PS_INPUT_CNTL), the
+//     link to the vertex shader, the target, alpha and depth registers
+//   both: only the program's own texture units and their samplers
+// What a program uses (units, samplers, exported parameters) comes from its instructions: learnt from
+// its first translation. A new full key whose narrow key is known gets a shader of its own that shares
+// that translation (and so its modules and pipelines); keys and records stay as they were (cache,
+// pipeline records, template exports and the head start name shaders by them).
+// WWHD_NARROW_KEYS=0 off, =2 check: translate anyway, count translations that differ, and report
+// which parts still tell same-translation variants apart.
+static const int g_narrow_mode = getenv("WWHD_NARROW_KEYS") ? atoi(getenv("WWHD_NARROW_KEYS")) : 1;
+struct ProgramUnits {
+    uint32_t count = 0;
+    uint8_t unit[LATTE_NUM_MAX_TEX_UNITS];
+    uint16_t sampler[LATTE_NUM_MAX_TEX_UNITS];
+    uint32_t outputs = 0;  // vertex: exported parameters (outputParameterMask)
+};
+static std::unordered_map<uint64_t, ProgramUnits> g_program_units;  // by the key's program part
+static std::unordered_map<uint64_t, Shader*> g_narrow;               // by narrow key: the first translation
+static uint64_t g_narrow_reused = 0, g_narrow_checked = 0, g_narrow_differ = 0, g_translations = 0;
+
+struct NarrowParts {
+    uint32_t n = 0, count = 0;
+    uint32_t end[24];
+    const char* name[24];
+    void mark(const char* nm) { name[count] = nm; end[count++] = n; }
+};
+static uint32_t narrow_words(const uint32_t* regs, bool vertex, const ProgramUnits& u, const LatteFetchShader* fs, uint32_t* buf,
+                             NarrowParts& P) {
+    uint32_t& n = P.n;
+    n = 0;
+    auto put = [&](uint32_t reg, uint32_t count) {
+        memcpy(&buf[n], &regs[reg], count * 4);
+        n += count;
+    };
+    // the PS input table (both stages: the vertex shader exports what it takes)
+    const uint32_t numInputs = std::min<uint32_t>(regs[mmSPI_PS_IN_CONTROL_0] & 0x3F, 32);
+    const uint32_t posInput = (regs[mmSPI_PS_IN_CONTROL_0] >> 8) & 1 ? (regs[mmSPI_PS_IN_CONTROL_0] >> 10) & 0x1F : ~0u;  // gl_FragCoord
+    if (vertex) {
+        buf[n++] = fs ? (uint32_t)fs->key : 0;
+        buf[n++] = fs ? (uint32_t)(fs->key >> 32) : 0;
+        P.mark("fetch shader");
+        if (fs)
+            for (const auto* groups : {&fs->bufferGroups, &fs->bufferGroupsInvalid})
+                for (const auto& g : *groups)
+                    for (sint32 a = 0; a < g.attribCount; a++) {
+                        uint32_t slot = 0xFF;
+                        for (uint32_t f = 0; f < 32; f++)
+                            if (regs[mmSQ_VTX_SEMANTIC_0 + f] == g.attrib[a].semanticId) { slot = f; break; }
+                        buf[n++] = slot;
+                    }
+        P.mark("attribute slots");
+        for (uint32_t i = 0; i < 32; i++) {
+            if (!(u.outputs & (1u << i))) continue;
+            uint32_t sid = (regs[mmSPI_VS_OUT_ID_0 + i / 4] >> (8 * (i % 4))) & 0xFF, taken = 0xFF;
+            for (uint32_t f = 0; f < numInputs; f++)
+                if (f != posInput && (regs[mmSPI_PS_INPUT_CNTL_0 + f] & 0xFF) == sid) {
+                    // with its location (the PS input's index) and flat / no-perspective
+                    taken = sid | (regs[mmSPI_PS_INPUT_CNTL_0 + f] & 0x1400) << 8 | f << 24;
+                    break;
+                }
+            buf[n++] = taken;
+        }
+        buf[n++] = regs[mmSPI_PS_IN_CONTROL_0] & 0x7FFF00;  // position input, parameter generation
+        P.mark("exported semantics");
+        put(mmSPI_VS_OUT_CONFIG, 1);
+        put(mmPA_CL_VS_OUT_CNTL, 1);
+        put(REGADDR::PA_CL_VTE_CNTL, 1);
+        put(REGADDR::PA_CL_CLIP_CNTL, 1);
+        put(REGADDR::SQ_CONFIG, 1);
+        P.mark("vs registers");
+    } else {
+        put(mmSPI_PS_IN_CONTROL_0, 2);
+        put(mmSPI_PS_INPUT_CNTL_0, numInputs);
+        P.mark("PS input table");
+        put(mmCB_SHADER_MASK, 1);
+        put(mmCB_SHADER_CONTROL, 1);
+        put(REGADDR::CB_COLOR_CONTROL, 1);
+        P.mark("CB shader/color control");
+        put(REGADDR::CB_TARGET_MASK, 1);
+        P.mark("CB_TARGET_MASK");
+        put(mmCB_COLOR0_INFO, 8);
+        P.mark("CB_COLOR_INFO");
+        for (int i = 0; i < 8; i++) buf[n++] = (regs[mmCB_COLOR0_BASE + i] & ~0xFFu) != 0;
+        P.mark("CB bases set");
+        put(mmDB_SHADER_CONTROL, 1);
+        put(mmSPI_INPUT_Z, 1);
+        buf[n++] = regs[REGADDR::DB_DEPTH_CONTROL] & 0x83;
+        P.mark("depth registers");
+        put(REGADDR::SX_ALPHA_TEST_CONTROL, 1);
+        P.mark("alpha test");
+        put(REGADDR::PA_CL_VTE_CNTL, 1);
+        put(REGADDR::PA_CL_CLIP_CNTL, 1);
+        put(REGADDR::SQ_CONFIG, 1);
+        P.mark("ps other registers");
+    }
+    uint32_t cbBase[8];
+    for (int i = 0; i < 8; i++) cbBase[i] = regs[mmCB_COLOR0_BASE + i] & ~0xFFu;
+    const uint32_t texBase = vertex ? REGADDR::SQ_TEX_RESOURCE_WORD0_N_VS : REGADDR::SQ_TEX_RESOURCE_WORD0_N_PS;
+    const uint32_t samplerBase = vertex ? SAMPLER_BASE_INDEX_VERTEX : SAMPLER_BASE_INDEX_PIXEL;
+    for (uint32_t j = 0; j < u.count; j++) {  // as stage_state_words, for the program's units only
+        const uint32_t t = u.unit[j];
+        const uint32_t* w = &regs[texBase + t * 7];
+        buf[n++] = t;
+        buf[n++] = (w[0] & 7) | (w[4] & 0x300);
+        buf[n++] = w[1] & 0x3F00000;
+        uint32_t fb = 0, tb = w[2] << 8;
+        if (tb)
+            for (int i = 0; i < 8; i++)
+                if (tb == cbBase[i]) fb = 1 + i;
+        buf[n++] = fb;
+        if (u.sampler[j] < LATTE_NUM_MAX_TEX_UNITS)
+            buf[n++] = regs[REGADDR::SQ_TEX_SAMPLER_WORD0_0 + (u.sampler[j] + samplerBase) * 3] & 0xF8000000;
+    }
+    P.mark("used textures/samplers");
+    return n;
+}
+static uint64_t narrow_key(const uint32_t* regs, bool vertex, const ProgramUnits& u, const LatteFetchShader* fs, uint64_t base,
+                           const PsLink& link) {
+    uint32_t buf[512];
+    NarrowParts P;
+    const uint32_t n = narrow_words(regs, vertex, u, fs, buf, P);
+    uint64_t key = hash_bytes(buf, n * 4, base ^ 0x6E6172726F77ull);
+    return vertex ? key : key ^ link.key * 37;
+}
+
+// WWHD_NARROW_KEYS=2: per program its first variant's narrow words; a later one with the same
+// translation counts each part that still differs (reported with the skip statistics)
+struct NarrowRef { std::vector<uint32_t> words; uint64_t linkKey, srcHash; };
+static std::unordered_map<uint64_t, NarrowRef> g_narrow_ref;
+static std::map<std::string, uint64_t> g_narrow_diff;
+static void narrow_diagnose(const uint32_t* regs, bool vertex, const ProgramUnits& u, const LatteFetchShader* fs, uint64_t base,
+                            uint64_t linkKey, uint64_t srcHash) {
+    uint32_t buf[512];
+    NarrowParts P;
+    const uint32_t n = narrow_words(regs, vertex, u, fs, buf, P);
+    auto it = g_narrow_ref.find(base);
+    if (it == g_narrow_ref.end()) {
+        g_narrow_ref.emplace(base, NarrowRef{std::vector<uint32_t>(buf, buf + n), linkKey, srcHash});
+        return;
+    }
+    const NarrowRef& r = it->second;
+    if (r.srcHash != srcHash) return;  // a different translation: rightly a different variant
+    const std::string stage = vertex ? "vs " : "ps ";
+    if (!vertex && r.linkKey != linkKey) g_narrow_diff[stage + "PS link"]++;
+    if (r.words.size() != n) {
+        g_narrow_diff[stage + "length"]++;
+        return;
+    }
+    for (uint32_t p = 0, i = 0; p < P.count; p++) {
+        bool d = false;
+        for (; i < P.end[p]; i++) d |= r.words[i] != buf[i];
+        if (d) g_narrow_diff[stage + P.name[p]]++;
+    }
+}
+
 static Shader* get_shader_uncached(const uint32_t* regs, bool vertex, LatteFetchShader* fs, uint64_t fsKey, const PsLink& link) {
     uint32_t addr = regs[vertex ? mmSQ_PGM_START_VS : mmSQ_PGM_START_PS] << 8;
     uint32_t size = regs[(vertex ? mmSQ_PGM_START_VS : mmSQ_PGM_START_PS) + 1] << 3;
@@ -963,6 +1458,39 @@ static Shader* get_shader_uncached(const uint32_t* regs, bool vertex, LatteFetch
         hot = {key, it->second};
         mark_used(it->second);
         return it->second;
+    }
+    uint64_t nkey = 0;
+    Shader* twin = nullptr;  // the translation for the same narrow key
+    if (g_narrow_mode) {
+        if (auto pu = g_program_units.find(base); pu != g_program_units.end()) {
+            nkey = narrow_key(regs, vertex, pu->second, fs, base, link);
+            if (auto ni = g_narrow.find(nkey); ni != g_narrow.end()) twin = ni->second;
+        }
+        if (twin && g_narrow_mode == 1) {
+            // a shader of its own (its key in records, pipelines and exports as before) sharing the
+            // twin's translation, modules and layout (pipelines are keyed by modules: shared too)
+            double t0 = now_ms();
+            auto* a = new Shader();
+            a->key = key;
+            a->vertex = vertex;
+            a->dec = twin->dec;
+            a->mod = twin->mod;
+            a->dsl = twin->dsl;
+            a->bindings = twin->bindings;
+            a->dynamicUbos = twin->dynamicUbos;
+            a->varsRange = twin->varsRange;
+            memcpy(a->blockRange, twin->blockRange, sizeof a->blockRange);
+            a->state.store(twin->state.load());
+            a->clampWanted = twin->clampWanted;
+            a->clampMod = twin->clampMod;
+            g_shaders[key] = a;
+            hot = {key, a};
+            mark_used(a);
+            cache_record_shader(regs, vertex, link);
+            g_narrow_reused++;
+            g_t_decompile += now_ms() - t0;
+            return a;
+        }
     }
 
     auto* s = new Shader();
@@ -993,8 +1521,43 @@ static Shader* get_shader_uncached(const uint32_t* regs, bool vertex, LatteFetch
         return s;
     }
     s->dec = FinishDecompiledShader(out);
+    {
+        LATTE_PA_CL_CLIP_CNTL clip;
+        uint32_t raw = regs[REGADDR::PA_CL_CLIP_CNTL];
+        memcpy(&clip, &raw, 4);
+        s->clampWanted = clip.get_ZCLIP_FAR_DISABLE() && !R.features.depthClamp;
+    }
     if (vertex) pack_vertex_shader(s, regs, addr, size, fs);
     else pack_pixel_shader(s, regs, addr, size);
+    g_translations++;
+    if (g_narrow_mode) {
+        auto pu = g_program_units.find(base);
+        if (pu == g_program_units.end()) {
+            ProgramUnits u;
+            u.count = s->dec->textureUnitListCount;
+            for (uint32_t j = 0; j < u.count; j++) {
+                u.unit[j] = s->dec->textureUnitList[j];
+                u.sampler[j] = s->dec->textureUnitSamplerAssignment[u.unit[j]];
+            }
+            u.outputs = s->dec->outputParameterMask;
+            pu = g_program_units.emplace(base, u).first;
+        }
+        if (!nkey) nkey = narrow_key(regs, vertex, pu->second, fs, base, link);
+        if (g_narrow_mode == 2) {
+            const StringBuf* src = s->dec->strBuf_shaderSource;
+            s->srcHash = hash_bytes(src->c_str(), src->getLen());
+            narrow_diagnose(regs, vertex, pu->second, fs, base, link.key, s->srcHash);
+            if (twin) {
+                g_narrow_checked++;
+                if (twin->srcHash != s->srcHash || twin->clampWanted != s->clampWanted) {
+                    if (g_narrow_differ++ < 10)
+                        LOG("[gfx] narrow key check: %s shader %08X key %016llx translates differently from %016llx",
+                            vertex ? "vertex" : "pixel", addr, (unsigned long long)key, (unsigned long long)twin->key);
+                }
+            }
+        }
+        g_narrow.emplace(nkey, s);  // (the first translation stays)
+    }
     create_set_layout(s);
     cache_record_shader(regs, vertex, link);
     g_t_decompile += now_ms() - t0;
@@ -1069,9 +1632,14 @@ struct PassFormats {  // only uint32 members: hashed as raw bytes
     uint32_t stencil = 0;
 };
 
-static VkRenderPass get_render_pass(const PassFormats& pf) {
+// clears: bit i = color attachment i, kClearDepth / kClearStencil = depth buffer (the load op
+// clears instead of loading; render passes that differ only in that stay compatible)
+constexpr uint32_t kClearDepth = 1u << 8, kClearStencil = 1u << 9;
+// debug: WWHD_DISCARD_LOADS=1 (color) / 2 (depth) / 3: no attachment loads at all (wrong picture: what loads cost)
+static const int g_discard_loads = getenv("WWHD_DISCARD_LOADS") ? atoi(getenv("WWHD_DISCARD_LOADS")) : 0;
+static VkRenderPass get_render_pass(const PassFormats& pf, uint32_t clears = 0) {
     static std::unordered_map<uint64_t, VkRenderPass> cache;
-    uint64_t h = hash_bytes(&pf, sizeof pf);
+    uint64_t h = hash_bytes(&pf, sizeof pf, clears);
     auto it = cache.find(h);
     if (it != cache.end()) return it->second;
     std::vector<VkAttachmentDescription> atts;
@@ -1084,7 +1652,7 @@ static VkRenderPass get_render_pass(const PassFormats& pf) {
         VkAttachmentDescription a{};
         a.format = (VkFormat)pf.color[i];
         a.samples = VK_SAMPLE_COUNT_1_BIT;
-        a.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+        a.loadOp = clears & (1u << i) ? VK_ATTACHMENT_LOAD_OP_CLEAR : (g_discard_loads & 1) ? VK_ATTACHMENT_LOAD_OP_DONT_CARE : VK_ATTACHMENT_LOAD_OP_LOAD;
         a.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
         a.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
         a.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
@@ -1097,9 +1665,10 @@ static VkRenderPass get_render_pass(const PassFormats& pf) {
         VkAttachmentDescription a{};
         a.format = (VkFormat)pf.depth;
         a.samples = VK_SAMPLE_COUNT_1_BIT;
-        a.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+        a.loadOp = clears & kClearDepth ? VK_ATTACHMENT_LOAD_OP_CLEAR : (g_discard_loads & 2) ? VK_ATTACHMENT_LOAD_OP_DONT_CARE : VK_ATTACHMENT_LOAD_OP_LOAD;
         a.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
-        a.stencilLoadOp = pf.stencil ? VK_ATTACHMENT_LOAD_OP_LOAD : VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+        a.stencilLoadOp = !pf.stencil ? VK_ATTACHMENT_LOAD_OP_DONT_CARE
+                          : clears & kClearStencil ? VK_ATTACHMENT_LOAD_OP_CLEAR : VK_ATTACHMENT_LOAD_OP_LOAD;
         a.stencilStoreOp = pf.stencil ? VK_ATTACHMENT_STORE_OP_STORE : VK_ATTACHMENT_STORE_OP_DONT_CARE;
         a.initialLayout = a.finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
         depthRef = {(uint32_t)atts.size(), VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL};
@@ -1281,8 +1850,18 @@ struct PipelineDesc {
 static VkPrimitiveTopology topology_of(uint32_t t) { return (VkPrimitiveTopology)t; }
 
 static Pipeline* get_pipeline(const uint32_t* regs, Shader* vs, Shader* ps, LatteFetchShader* fs, uint64_t fsKey, const PipelineState& st) {
+    // depth clamp emulated (depth_clamp_variant): the variant pair, once compiled; else as before
+    Module* vm = vs->mod;
+    Module* pm = ps->mod;
+    if (st.depthClamp && !R.features.depthClamp && vs->clampMod) {
+        start_module(vs->clampMod);
+        if (vs->clampMod->state != CS_FAILED) {
+            if (!wait_compiled(vs->clampMod->state)) return nullptr;
+            vm = vs->clampMod;
+        }
+    }
     // shaders with identical translations share pipelines
-    Module* mods[2] = {vs->mod, ps->mod};
+    Module* mods[2] = {vm, pm};
     uint64_t h = hash_bytes(mods, sizeof mods);
     h = hash_bytes(&vs->dsl, sizeof(vs->dsl), h);
     h = hash_bytes(&ps->dsl, sizeof(ps->dsl), h);
@@ -1303,8 +1882,8 @@ static Pipeline* get_pipeline(const uint32_t* regs, Shader* vs, Shader* ps, Latt
     pl->layout = get_pipeline_layout(vs, ps);
 
     auto d = std::make_shared<PipelineDesc>();
-    d->stages[0] = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0, VK_SHADER_STAGE_VERTEX_BIT, vs->mod->module, "main", nullptr};
-    d->stages[1] = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0, VK_SHADER_STAGE_FRAGMENT_BIT, ps->mod->module, "main", nullptr};
+    d->stages[0] = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0, VK_SHADER_STAGE_VERTEX_BIT, vm->module, "main", nullptr};
+    d->stages[1] = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0, VK_SHADER_STAGE_FRAGMENT_BIT, pm->module, "main", nullptr};
     // vertex input: attributes fetched as uint and decoded (byte-swapped) in the shader
     for (auto& g : fs->bufferGroups) {
         bool instanced = false, any = false;
@@ -1440,7 +2019,7 @@ static Pipeline* get_pipeline(const uint32_t* regs, Shader* vs, Shader* ps, Latt
     g_workers.push([build] {
         build();
         g_compiles_in_flight--;
-    });
+    }, !g_cache_replaying);
     return wait_compiled(pl->status) ? pl : nullptr;
 }
 
@@ -1686,7 +2265,7 @@ static Surface* feedback_copy(Surface* s) {
         c->width = s->width;
         c->height = s->height;
         c->slices = s->slices;
-        c->mips = 1;
+        c->mips = s->img.mips;  // (a picture with its mip chain in place: all of it)
         c->format = s->format;
         c->dim = s->dim;
         c->isDepth = s->isDepth;
@@ -1698,12 +2277,15 @@ static Surface* feedback_copy(Surface* s) {
     Surface* c = s->feedbackCopy;
     prepare(s->img, Use::COPY_SRC);
     prepare(c->img, Use::COPY_DST);
-    VkImageCopy r{};
-    r.srcSubresource = {s->img.aspect, 0, 0, std::min(s->img.layers, c->img.layers)};
-    r.dstSubresource = {c->img.aspect, 0, 0, std::min(s->img.layers, c->img.layers)};
-    r.extent = {std::min(s->img.width, c->img.width), std::min(s->img.height, c->img.height), 1};
+    VkImageCopy r[16]{};
+    const uint32_t levels = std::min({s->img.mips, c->img.mips, 16u});
+    for (uint32_t l = 0; l < levels; l++) {
+        r[l].srcSubresource = {s->img.aspect, l, 0, std::min(s->img.layers, c->img.layers)};
+        r[l].dstSubresource = {c->img.aspect, l, 0, std::min(s->img.layers, c->img.layers)};
+        r[l].extent = {std::max(std::min(s->img.width, c->img.width) >> l, 1u), std::max(std::min(s->img.height, c->img.height) >> l, 1u), 1};
+    }
     vkCmdCopyImage(command_buffer(), s->img.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, c->img.image,
-                   VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &r);
+                   VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, levels, r);
     return c;
 }
 
@@ -1722,9 +2304,9 @@ struct StageTextures {
 // resolving one texture can copy from another one already resolved (a surface at the same address
 // in another format, a feedback copy), which leaves that one in TRANSFER_SRC while its descriptor
 // says SHADER_READ_ONLY (found by the validation layer).
-static void prepare_sampled(StageTextures& t) {
+static void prepare_sampled(StageTextures& t, bool vertex) {
     for (int i = 0; i < t.count; i++)
-        if (t.sampled[i]) prepare(*t.sampled[i], Use::SAMPLED);
+        if (t.sampled[i]) prepare_read(*t.sampled[i], vertex ? VK_PIPELINE_STAGE_VERTEX_SHADER_BIT : VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT);
 }
 
 // Linear filtering where the format supports it (depth formats often don't: D32_SFLOAT on the Adreno
@@ -1756,7 +2338,18 @@ static void resolve_textures(const uint32_t* regs, Shader* sh, bool vertex, Surf
         if (unit < 0) continue;
         VkImageViewType type = shader_view_type(dec->textureUnitDim[unit]);
         const uint32_t* tw = &regs[texBase + unit * 7];
-        Surface* s = sampled_texture(tw, dec->textureUsesDepthCompare[unit]);
+        // the levels its sampler reaches (get_sampler: no mips -> the base level; else up to MAX_LOD)
+        uint32_t reach = 16;
+        if (uint32_t si = dec->textureUnitSamplerAssignment[unit]; si < LATTE_NUM_MAX_TEX_UNITS) {
+            const uint32_t* smp = &regs[REGADDR::SQ_TEX_SAMPLER_WORD0_0 + (si + samplerBase) * 3];
+            LATTE_SQ_TEX_SAMPLER_WORD0_0 s0;
+            LATTE_SQ_TEX_SAMPLER_WORD1_0 s1;
+            memcpy(&s0, &smp[0], 4);
+            memcpy(&s1, &smp[1], 4);
+            if ((uint32_t)s0.get_MIP_FILTER() == 0) reach = 1;
+            else reach = std::max((uint32_t)s1.get_MIN_LOD(), (uint32_t)s1.get_MAX_LOD()) / 64 + 2;
+        }
+        Surface* s = sampled_texture(tw, dec->textureUsesDepthCompare[unit], reach);
         if (!vertex && s && g_hires_src && s->addr == g_hires_src && g_hires_frame == R.frame && ao_hires_enabled() &&
             (regs[mmSQ_PGM_START_PS] << 8) == kOcclusionPS && g_hires_color.img.image)
             s = &g_hires_color;
@@ -1927,9 +2520,16 @@ static void bind_stage(VkCommandBuffer cmd, VkPipelineLayout layout, const uint3
         g_bytes_vars += size;
         // assembled in cached memory, then copied in one go: clearing the upload memory (uncached on
         // some GPUs, e.g. Adreno) and writing it in scattered 16-byte pieces cost ~4% of the render thread
-        static thread_local std::vector<uint8_t> vars;
+        static std::vector<uint8_t> vars;  // (draws run one at a time, under gx2's execution lock: no TLS lookup)
         if (vars.size() < size) vars.resize(size);
-        memset(vars.data(), 0, size);
+        // cleared except the uniform registers' range, copied whole below
+        uint32_t regAt = size, regEnd = size;
+        if (dec->uniform.loc_uniformRegister >= 0) {
+            regAt = std::min<uint32_t>((uint32_t)dec->uniform.loc_uniformRegister & ~3u, size);
+            regEnd = std::min<uint32_t>(regAt + dec->uniform.count_uniformRegister * 16, size);
+        }
+        memset(vars.data(), 0, regAt);
+        memset(vars.data() + regEnd, 0, size - regEnd);
         float* f = (float*)vars.data();
         auto at = [&](sint32 loc) { return f + loc / 4; };
         if (dec->uniform.loc_alphaTestRef >= 0) {
@@ -1959,8 +2559,7 @@ static void bind_stage(VkCommandBuffer cmd, VkPipelineLayout layout, const uint3
             if (vertex && ao_mode() == 2 && (regs[mmSQ_PGM_START_VS] << 8) == 0x44BDF900)
                 ((float*)dst)[3] *= 1.5f;
         }
-        if (dec->uniform.loc_uniformRegister >= 0)
-            memcpy(at(dec->uniform.loc_uniformRegister), &regs[aluBase], dec->uniform.count_uniformRegister * 16);
+        if (dec->uniform.loc_uniformRegister >= 0) memcpy(vars.data() + regAt, &regs[aluBase], regEnd - regAt);
         if (dec->uniform.loc_windowSpaceToClipSpaceTransform >= 0) {
             float vw = 2.0f * gx2::bitsf(regs[REGADDR::PA_CL_VPORT_XSCALE]);
             // same clip coordinates as the Metal renderer: both APIs map clip to window space identically
@@ -2011,7 +2610,7 @@ static void bind_stage(VkCommandBuffer cmd, VkPipelineLayout layout, const uint3
             // uniform snapshots do): the game rewrites some (0x800-byte light/shadow blocks) without the
             // flush the tracking relies on, and a stale copy drew the shadows with another frame's
             // matrices (fix from the PR's commit 4832d83). WWHD_TRACK_UBO_WRITES=1: the tracking again.
-            static const bool trackUbo = g_track_writes && getenv("WWHD_TRACK_UBO_WRITES") != nullptr;
+            const bool trackUbo = g_track_ubo_writes;
             u = trackUbo ? copy_tracked(blocks, addr, size, uboAlign, g_bytes_ubo, g_bytes_ubo_reused)
                                : copy_deduped(blocks, mem::ptr(addr), addr, size, uboAlign, g_bytes_ubo, g_bytes_ubo_reused);
         } else {
@@ -2093,6 +2692,22 @@ static bool ensure_pass(Surface* const* colors, const uint32_t* colorSlices, Sur
         if (same) return true;
     }
     end_pass();
+    // clears the game asked for that wait for this pass (Image::pendingClear) become its load ops
+    VkClearValue clearValues[9] = {};
+    uint32_t clears = 0;
+    {
+        uint32_t k = 0;
+        VkImageAspectFlags aspects;
+        for (int i = 0; i < 8; i++)
+            if (colors[i]) {
+                if (take_pending_clear(colors[i]->img, colorSlices[i], w, h, aspects, clearValues[k])) clears |= 1u << i;
+                k++;
+            }
+        if (depth && take_pending_clear(depth->img, depthSlice, w, h, aspects, clearValues[k])) {
+            if (aspects & VK_IMAGE_ASPECT_DEPTH_BIT) clears |= kClearDepth;
+            if (aspects & VK_IMAGE_ASPECT_STENCIL_BIT) clears |= kClearStencil;
+        }
+    }
     for (int i = 0; i < 8; i++)
         if (colors[i]) prepare(colors[i]->img, Use::COLOR);
     if (depth) prepare(depth->img, Use::DEPTH);
@@ -2112,11 +2727,23 @@ static bool ensure_pass(Surface* const* colors, const uint32_t* colorSlices, Sur
         mark_gpu_written(depth);
     }
     if (!n) return false;
-    VkRenderPass rp = get_render_pass(pf);
+    if (log_this_frame()) {  // pass boundaries in the capture log: what each pass loads, and whether it continues the previous one
+        static const Surface* lastColor0 = nullptr;
+        static const Surface* lastDepth = nullptr;
+        DLOG("[pass] begin %ux%u color0 %08X depth %08X (slice %u) clears %03X%s", w, h, colors[0] ? colors[0]->addr : 0,
+             depth ? depth->addr : 0, depthSlice, clears, (colors[0] == lastColor0 && depth == lastDepth) ? " CONTINUES the previous pass" : "");
+        lastColor0 = colors[0];
+        lastDepth = depth;
+    }
+    VkRenderPass rp = get_render_pass(pf, clears);
     VkRenderPassBeginInfo bi{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
     bi.renderPass = rp;
     bi.framebuffer = get_framebuffer(rp, views, n, w, h);
     bi.renderArea = {{0, 0}, {w, h}};
+    if (clears) {
+        bi.clearValueCount = n;
+        bi.pClearValues = clearValues;
+    }
     VkCommandBuffer cb = command_buffer();
     {
         VkFormat cf[8];
@@ -2211,7 +2838,72 @@ struct DrawIndices {
     uint32_t n = 0;
     VkPrimitiveTopology type = VK_PRIMITIVE_TOPOLOGY_POINT_LIST;
 };
-static uint64_t g_index_reused, g_index_built;
+static uint64_t g_index_reused, g_index_built, g_index_kept;
+
+// Kept indices: indices the game left unchanged from one submission to the next (static meshes; ~430
+// conversions a frame at Windfall on a Helio G85, each copied into uncached upload memory) stay
+// converted across submissions and frames while the game hasn't written their pages, as kept vertex
+// buffers, and are compared again on one frame in 16. They share one persistent buffer (power-of-two
+// blocks), so draws keep binding the same index buffer instead of one per mesh (a bind costs the
+// driver). A rewritten one is freed once the GPU is done with it; one rewritten twice after being
+// kept stays transient. Unused ones go after ~20 s. WWHD_KEEP_INDICES=0: as before.
+namespace keepidx {
+constexpr uint32_t kArenaBytes = 16u << 20, kMinClass = 8;  // 256-byte blocks at least
+struct Arena {
+    VkBuffer buf = VK_NULL_HANDLE;
+    VmaAllocation alloc = nullptr;
+    uint8_t* ptr = nullptr;
+    uint32_t top = 0;
+    std::vector<uint32_t> free[32];  // free blocks by size class (log2 of their size)
+    bool tried = false;
+};
+Arena A;
+struct Kept { uint32_t off, cls, n, gen, prim, indexType; VkPrimitiveTopology type; uint64_t used; };
+struct Seen { uint32_t gen; uint64_t frame; uint8_t drops; };
+std::unordered_map<uint64_t, Kept> kept;
+std::unordered_map<uint64_t, Seen> seen;
+uint64_t lastSweep = 0;
+const bool g_on = [] { const char* e = getenv("WWHD_KEEP_INDICES"); return !e || atoi(e) != 0; }();
+bool arena() {
+    if (A.buf) return true;
+    if (A.tried) return false;
+    A.tried = true;
+    VkBufferCreateInfo bi{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
+    bi.size = kArenaBytes;
+    bi.usage = VK_BUFFER_USAGE_INDEX_BUFFER_BIT;
+    VmaAllocationCreateInfo ai{};
+    ai.usage = VMA_MEMORY_USAGE_AUTO;
+    ai.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT;
+    ai.requiredFlags = VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
+    ai.preferredFlags = VK_MEMORY_PROPERTY_HOST_CACHED_BIT;
+    VmaAllocationInfo info{};
+    if (vmaCreateBuffer(R.vma, &bi, &ai, &A.buf, &A.alloc, &info) != VK_SUCCESS) {
+        A.buf = VK_NULL_HANDLE;
+        LOG("[gfx] kept indices: no buffer");
+        return false;
+    }
+    A.ptr = (uint8_t*)info.pMappedData;
+    return true;
+}
+bool alloc(uint32_t bytes, uint32_t& off, uint32_t& cls) {
+    cls = kMinClass;
+    while ((1u << cls) < bytes) cls++;
+    if (!A.free[cls].empty()) {
+        off = A.free[cls].back();
+        A.free[cls].pop_back();
+        return true;
+    }
+    if (A.top + (1u << cls) > kArenaBytes) return false;
+    off = A.top;
+    A.top += 1u << cls;
+    return true;
+}
+void release(const Kept& k) {  // once the GPU is done with the submissions that may still read it
+    uint32_t off = k.off, cls = k.cls;
+    on_complete([off, cls] { A.free[cls].push_back(off); });
+}
+}  // namespace keepidx
+
 static bool draw_indices(uint32_t prim, uint32_t count, uint32_t indexType, uint32_t indexAddr, DrawIndices& out) {
     struct Entry { DrawIndices d; uint32_t prim, indexType, gen; };
     static FlatTable<Entry> cache;
@@ -2233,10 +2925,73 @@ static bool draw_indices(uint32_t prim, uint32_t count, uint32_t indexType, uint
             return true;
         }
     }
+    using namespace keepidx;
+    if (cacheable && g_on) {
+        if (R.frame - lastSweep >= 256) {  // unused for ~20 s: freed; old candidates forgotten
+            lastSweep = R.frame;
+            for (auto it = kept.begin(); it != kept.end();)
+                if (R.frame - it->second.used > 600) {
+                    release(it->second);
+                    it = kept.erase(it);
+                } else {
+                    ++it;
+                }
+            for (auto it = seen.begin(); it != seen.end();)
+                it = R.frame - it->second.frame > 600 && it->second.drops < 2 ? seen.erase(it) : std::next(it);
+        }
+        auto k = kept.find(key);
+        if (k != kept.end() && k->second.prim == prim && k->second.indexType == indexType) {
+            Kept& e = k->second;
+            bool same = memw::unchanged_since(indexAddr, bytes, e.gen);
+            if (same && ((indexAddr >> 6) + R.frame) % 16 == 0) {  // compared now and then, as kept vertices
+                const uint32_t gen = memw::now();
+                VkPrimitiveTopology t;
+                same = build_indices(prim, count, indexType, indexAddr, tmp, t) && tmp.size() == e.n &&
+                       memcmp(A.ptr + e.off, tmp.data(), (size_t)e.n * 4) == 0;
+                if (!same) g_stale_reuses++;
+                else e.gen = gen;
+            }
+            if (same) {
+                e.used = R.frame;
+                g_index_kept++;
+                out = DrawIndices{Upload{A.buf, e.off, A.ptr + e.off}, e.n, e.type};
+                cache[key] = {out, prim, indexType, e.gen};
+                return true;
+            }
+            release(e);  // rewritten: converted per submission again until it proves stable
+            kept.erase(k);
+            Seen& sn = seen[key];
+            sn = {memw::now(), R.frame, (uint8_t)std::min(255, sn.drops + 1)};
+        }
+    }
     uint32_t gen = memw::now();  // before reading: a write during it makes the next use convert again
     if (!build_indices(prim, count, indexType, indexAddr, tmp, out.type)) return false;
     g_index_built++;
     out.n = (uint32_t)tmp.size();
+    // unchanged since an earlier conversion: kept from now on
+    if (cacheable && g_on && out.n) {
+        auto sn = seen.find(key);
+        if (sn == seen.end()) {
+            seen[key] = {gen, R.frame, 0};
+        } else if (sn->second.drops < 2 && memw::unchanged_since(indexAddr, bytes, sn->second.gen) && arena()) {
+            uint32_t off, cls;
+            if (auto old = kept.find(key); old != kept.end()) {  // (kept for another primitive type)
+                release(old->second);
+                kept.erase(old);
+            }
+            if (alloc(out.n * 4, off, cls)) {
+                memcpy(A.ptr + off, tmp.data(), (size_t)out.n * 4);
+                kept[key] = Kept{off, cls, out.n, gen, prim, indexType, out.type, R.frame};
+                seen.erase(sn);
+                out.u = Upload{A.buf, off, A.ptr + off};
+                cache[key] = {out, prim, indexType, gen};
+                return true;
+            }
+        } else {
+            sn->second.gen = gen;
+            sn->second.frame = R.frame;
+        }
+    }
     out.u = out.n ? upload(tmp.data(), tmp.size() * 4, 16) : Upload{};
     if (cacheable) cache[key] = {out, prim, indexType, gen};
     return true;
@@ -2406,7 +3161,7 @@ static Shader* replay_state(uint32_t* regs, bool vertex, const uint8_t* code, ui
 }
 
 // ---- template export (WWHD_TEMPLATE_EXPORT=1): the replayed cache as a code-free head-start
-// template, template.bin next to the cache. It holds no shader code: per shader state the program's
+// template, template.bin next to the cache (or WWHD_TEMPLATE_EXPORT=<path>). It holds no shader code: per shader state the program's
 // hash and size, the registers, the fetch shader in our own or the code-free encoding and the key
 // the state gave here; then the pipeline recipes whose shaders all resolved. A device rebuilds the
 // records from the programs in its own game files.
@@ -2474,6 +3229,15 @@ static bool same_fetch(const LatteFetchShader& a, const LatteFetchShader& b) {
         return true;
     };
     return same_groups(a.bufferGroups, b.bufferGroups) && same_groups(a.bufferGroupsInvalid, b.bufferGroupsInvalid);
+}
+
+// the export request; published releases (WWHD_PUBLIC_RELEASE) ignore it, every test build takes it
+static const char* template_export_request() {
+#ifdef WWHD_PUBLIC_RELEASE
+    return nullptr;
+#else
+    return getenv("WWHD_TEMPLATE_EXPORT");
+#endif
 }
 
 static void template_export(const std::string& cachePath) {
@@ -2622,8 +3386,11 @@ static void template_export(const std::string& cachePath) {
     uLongf csize = compressBound(out.size());
     std::vector<uint8_t> comp(csize);
     if (compress2(comp.data(), &csize, out.data(), out.size(), 9) != Z_OK) return;
-    std::string dir = cachePath.substr(0, cachePath.find_last_of('/') + 1);
-    std::string path = dir + "template.bin";
+    // WWHD_TEMPLATE_EXPORT=<path>: written there instead (release builds: a file in the app's external
+    // files dir, where adb reads it)
+    const char* to = template_export_request();
+    std::string path = to && strcmp(to, "1") ? std::string(to)
+                                             : cachePath.substr(0, cachePath.find_last_of('/') + 1) + "template.bin";
     if (FILE* o = fopen(path.c_str(), "wb")) {
         fwrite("WWHV", 4, 1, o);
         uint32_t hdr[2] = {1, (uint32_t)out.size()};
@@ -2734,7 +3501,7 @@ static void cache_load() {
     g_use_session = sessions + 1;
     size_t shaders = 0, pipelines = 0;
     // compaction: the records to keep (offset, bytes), the variants they give, what was dropped
-    const bool compact = cache_keep_sessions() && sessions >= cache_keep_sessions() && !getenv("WWHD_TEMPLATE_EXPORT");
+    const bool compact = cache_keep_sessions() && sessions >= cache_keep_sessions() && !template_export_request();
     struct Kept { long at; uint32_t bytes; };
     std::vector<Kept> kept;
     std::vector<std::pair<PipelineRecipe, Kept>> pipeRecs;
@@ -2751,7 +3518,7 @@ static void cache_load() {
         g_cache_replaying = true;
         g_defer_compiles = true;
         static Exporter exporter;
-        if (getenv("WWHD_TEMPLATE_EXPORT")) g_export = &exporter;
+        if (template_export_request()) g_export = &exporter;
         uint32_t hdr[3];
         for (long recAt = 0; fread(hdr, sizeof hdr, 1, f) == 1; recAt = ftell(f)) {
             std::vector<uint8_t> comp(hdr[2]), raw(hdr[1]);
@@ -2923,11 +3690,13 @@ static void build_pending_pipelines(int budget, int maxInFlight) {
 // every compile thread busy, nothing of the game's to keep smooth
 void cache_warm_held() {
     static const int maxInFlight = 16;
+    g_cache_replaying = true;
     for (int n = 0; n < 16 && !g_deferred_modules.empty() && g_compiles_in_flight < maxInFlight;) {
         Module* m = g_deferred_modules.back();
         g_deferred_modules.pop_back();
         if (m->state == CS_DEFERRED) { start_module(m); n++; }
     }
+    g_cache_replaying = false;
     build_pending_pipelines(16, maxInFlight);
     static double t0 = now_ms();
     static bool logged = false;
@@ -2941,16 +3710,22 @@ void cache_warm_held() {
 // build cached pipelines whose shaders have finished compiling; a few per frame
 void cache_warm_step() {
     // a few background compiles per frame keep the startup burst from starving the game, and none
-    // start while the game's own compiles keep the compiler busy (WWHD_BG_COMPILES, default 4 in flight)
-    static const int maxInFlight = getenv("WWHD_BG_COMPILES") ? atoi(getenv("WWHD_BG_COMPILES")) : 4;
+    // start while the game's own compiles keep the compiler busy (WWHD_BG_COMPILES in flight, default
+    // one less than the compile threads: one is always free for a shader the game needs now)
+    static const int maxInFlight = getenv("WWHD_BG_COMPILES") ? atoi(getenv("WWHD_BG_COMPILES"))
+                                                              : std::max(1, (int)compile_threads() - 1);
+    const double t0 = now_ms();
+    g_cache_replaying = true;
     for (int n = 0; n < 8 && !g_deferred_modules.empty() && g_compiles_in_flight < maxInFlight;) {
         Module* m = g_deferred_modules.back();
         g_deferred_modules.pop_back();
         if (m->state == CS_DEFERRED) { start_module(m); n++; }
     }
+    g_cache_replaying = false;
     static bool queued = false;
     if (!g_pending_pipelines.empty()) queued = true;
     build_pending_pipelines(8, maxInFlight);
+    g_t_warm += now_ms() - t0;
     if ((R.frame & 255) == 0) shader_use_save();
     if (queued && g_pending_pipelines.empty()) {
         queued = false;
@@ -2978,6 +3753,30 @@ void report_skips() {
     LOG("[gfx] %zu shaders (%zu distinct modules, %zu SPIR-V from disk), %zu pipelines; ms decompile %.0f, spirv %.0f, pipeline %.0f",
         g_shaders.size(), g_modules.size(), g_spv_disk_hits, g_pipelines.size(), g_t_decompile, g_t_spirv_us / 1000.0,
         g_t_pipeline_us / 1000.0);
+    {  // where compile stutter comes from: the game's compiles waiting in the queue, or render thread time
+        static double lastDecompile = 0, lastWarm = 0;
+        static uint64_t lastTranslations = 0;
+        uint64_t jobs = g_game_jobs.exchange(0), wait = g_game_wait_us.exchange(0), run = g_game_run_us.exchange(0);
+        uint64_t waitMax = g_game_wait_max_us.exchange(0), runMax = g_game_run_max_us.exchange(0);
+        LOG("[gfx] last 300 frames, game compiles: %llu (queue wait avg %.1f max %.1f ms, compile avg %.1f max %.1f ms); render "
+            "thread: translating %llu shaders %.2f ms/frame, background warm-up %.2f ms/frame; narrow keys (mode %d): %llu "
+            "translations reused, %llu checked, %llu differ",
+            (unsigned long long)jobs, jobs ? wait / 1000.0 / jobs : 0.0, waitMax / 1000.0, jobs ? run / 1000.0 / jobs : 0.0,
+            runMax / 1000.0, (unsigned long long)(g_translations - lastTranslations), (g_t_decompile - lastDecompile) / 300.0,
+            (g_t_warm - lastWarm) / 300.0, g_narrow_mode, (unsigned long long)g_narrow_reused, (unsigned long long)g_narrow_checked,
+            (unsigned long long)g_narrow_differ);
+        lastDecompile = g_t_decompile;
+        lastWarm = g_t_warm;
+        lastTranslations = g_translations;
+        if (!g_narrow_diff.empty()) {  // (cumulative) parts that tell same-translation variants apart
+            std::vector<std::pair<uint64_t, std::string>> v;
+            for (auto& [name, count] : g_narrow_diff) v.push_back({count, name});
+            std::sort(v.rbegin(), v.rend());
+            std::string line;
+            for (size_t i = 0; i < v.size() && i < 12; i++) line += " " + v[i].second + "=" + std::to_string(v[i].first);
+            LOG("[gfx] narrow key check, same translation but differing:%s", line.c_str());
+        }
+    }
     extern uint64_t g_stat_full_checks, g_stat_uploads, g_stat_invalidates, g_stat_invalidated_surfaces, g_stat_texture_stale;
     LOG("[gfx] last 300 frames: %llu full texture checks, %llu uploads, %llu invalidates marking %llu surfaces; %llu texture "
         "changes the write tracking missed",
@@ -2989,14 +3788,19 @@ void report_skips() {
         g_bytes_vtx / 300.0 / 1024, g_bytes_vtx_shared / 300.0 / 1024, g_bytes_vtx_reused / 300.0 / 1024, g_bytes_ubo / 300.0 / 1024,
         g_bytes_ubo_reused / 300.0 / 1024, g_bytes_vars / 300.0 / 1024);
     g_bytes_vtx = g_bytes_vtx_shared = g_bytes_ubo = g_bytes_vars = g_bytes_vtx_reused = g_bytes_ubo_reused = 0;
-    LOG("[gfx] last 300 frames, draws/frame: %.0f with state reused, %.0f resolved; indices %.0f reused, %.0f built",
-        g_fast_draws / 300.0, g_slow_draws / 300.0, g_index_reused / 300.0, g_index_built / 300.0);
-    g_index_reused = g_index_built = 0;
+    LOG("[gfx] last 300 frames, draws/frame: %.0f with state reused, %.0f resolved; indices %.0f reused, %.0f kept, %.0f built "
+        "(%zu kept, %u KiB of the buffer)",
+        g_fast_draws / 300.0, g_slow_draws / 300.0, g_index_reused / 300.0, g_index_kept / 300.0, g_index_built / 300.0,
+        keepidx::kept.size(), keepidx::A.top / 1024);
+    g_index_reused = g_index_built = g_index_kept = 0;
     LOG("[gfx] last 300 frames, program hashes/frame: %.0f looked up, %.0f from the map (%zu addresses); %llu changed unannounced",
         g_program_lookups / 300.0, g_program_map_lookups / 300.0, g_program_hashes.size(), (unsigned long long)g_program_stale);
     g_program_lookups = g_program_map_lookups = g_program_stale = 0;
     LOG("[gfx] last 300 frames, shader keys/frame: %.0f looked up, %.0f from the map", g_shader_lookups / 300.0, g_shader_map_lookups / 300.0);
     g_shader_lookups = g_shader_map_lookups = 0;
+    LOG("[gfx] kept vertex buffers: %llu (%.1f MiB), %.0f KiB/frame reused", (unsigned long long)g_keep_count, g_keep_bytes / 1048576.0,
+        g_keep_reused / 300.0 / 1024);
+    g_keep_reused = 0;
     if (g_stale_reuses) LOG("[gfx] write tracking: %llu reuses were outdated (written without a flush)", (unsigned long long)g_stale_reuses);
     g_stale_reuses = 0;
     g_fast_draws = g_slow_draws = 0;
@@ -3008,10 +3812,107 @@ void report_skips() {
 // pages since (mem_writes.h; WWHD_TRACK_WRITES=0: compared instead), as the original project's
 // renderer never reuses a copy on its address alone: a mesh rewritten within a submission (cloth,
 // morphs, a buffer reused for another mesh) drew its old vertices (fix from the PR's 65f0189).
+// Kept copies: a vertex buffer the game left unchanged from one submission to the next (static meshes,
+// most of the 7 MB a frame the render thread copied at Windfall on a Helio G85) gets a buffer of its own
+// that stays across submissions and frames while the game hasn't written its pages (and on one frame in
+// 16 the bytes are compared, as copy_tracked). A rewritten one is freed once the GPU is done with it;
+// one rewritten twice after being kept stays transient. Unused ones go after ~20 s, at most 96 MiB.
+// WWHD_KEEP_VERTICES=0: as before.
+static const bool g_keep_vertices = g_track_writes && (!getenv("WWHD_KEEP_VERTICES") || atoi(getenv("WWHD_KEEP_VERTICES")) != 0);
+static Upload kept_vertex_buffer(uint32_t addr, uint32_t size, bool& handled) {
+    handled = false;
+    const bool on = g_keep_vertices;
+    if (!on || size < 1024) return {};
+    struct Kept { VkBuffer buf; VmaAllocation alloc; uint8_t* ptr; uint32_t gen; uint64_t used; };
+    struct Seen { uint32_t gen; uint64_t frame; uint8_t drops; };
+    static std::unordered_map<uint64_t, Kept> kept;
+    static std::unordered_map<uint64_t, Seen> seen;
+    static uint64_t lastSweep = 0;
+    constexpr uint64_t kMaxBytes = 96ull << 20;
+    auto drop = [](const Kept& k) {  // (the caller updates the counts)
+        VkBuffer b = k.buf;
+        VmaAllocation a = k.alloc;
+        on_complete([b, a] { vmaDestroyBuffer(R.vma, b, a); });
+    };
+    if (R.frame - lastSweep >= 256) {  // unused for ~20 s: freed; old candidates forgotten
+        lastSweep = R.frame;
+        for (auto it = kept.begin(); it != kept.end();) {
+            if (R.frame - it->second.used > 600) {
+                g_keep_bytes -= (uint32_t)it->first;
+                g_keep_count--;
+                drop(it->second);
+                it = kept.erase(it);
+            } else {
+                ++it;
+            }
+        }
+        for (auto it = seen.begin(); it != seen.end();)
+            it = R.frame - it->second.frame > 600 && it->second.drops < 2 ? seen.erase(it) : std::next(it);
+    }
+    const uint64_t key = (uint64_t)addr << 32 | size;
+    auto k = kept.find(key);
+    if (k != kept.end()) {
+        bool same = memw::unchanged_since(addr, size, k->second.gen);
+        if (same && R.uploadCached && ((addr >> 6) + R.frame) % 16 == 0 && memcmp(k->second.ptr, mem::ptr(addr), size) != 0) {
+            g_stale_reuses++;
+            same = false;
+        }
+        if (same) {
+            k->second.used = R.frame;
+            g_keep_reused += size;
+            handled = true;
+            return Upload{k->second.buf, 0, k->second.ptr};
+        }
+        drop(k->second);  // rewritten: transient copies again until it proves stable
+        g_keep_bytes -= size;
+        g_keep_count--;
+        kept.erase(k);
+        Seen& s = seen[key];
+        s = {memw::now(), R.frame, (uint8_t)std::min(255, s.drops + 1)};
+        return {};
+    }
+    auto s = seen.find(key);
+    if (s == seen.end()) {
+        seen[key] = {memw::now(), R.frame, 0};
+        return {};
+    }
+    if (s->second.drops >= 2 || !memw::unchanged_since(addr, size, s->second.gen) || g_keep_bytes + size > kMaxBytes) {
+        s->second.gen = memw::now();
+        s->second.frame = R.frame;
+        return {};
+    }
+    // unchanged since an earlier copy: keep this one
+    Kept n{};
+    VkBufferCreateInfo bi{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
+    bi.size = size;
+    bi.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
+    VmaAllocationCreateInfo ai{};
+    ai.usage = VMA_MEMORY_USAGE_AUTO;
+    ai.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT;
+    ai.requiredFlags = VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
+    ai.preferredFlags = VK_MEMORY_PROPERTY_HOST_CACHED_BIT;
+    VmaAllocationInfo info{};
+    if (vmaCreateBuffer(R.vma, &bi, &ai, &n.buf, &n.alloc, &info) != VK_SUCCESS) return {};
+    n.ptr = (uint8_t*)info.pMappedData;
+    n.gen = memw::now();  // before the copy: a write during it makes the next use copy again
+    memcpy(n.ptr, mem::ptr(addr), size);
+    n.used = R.frame;
+    g_bytes_vtx += size;
+    g_keep_bytes += size;
+    g_keep_count++;
+    kept[key] = n;
+    seen.erase(s);
+    handled = true;
+    return Upload{n.buf, 0, n.ptr};
+}
+
 static Upload vertex_buffer(uint32_t addr, uint32_t size) {
     struct Shared { Upload u; uint32_t gen; };
     static std::unordered_map<uint64_t, Shared> shared;
     static uint64_t sharedSerial = ~0ull;
+    bool kept;
+    Upload ku = kept_vertex_buffer(addr, size, kept);
+    if (kept) return ku;
     if (size < 64 * 1024) {
         static SubmissionCopies small;
         if (g_track_writes) return copy_tracked(small, addr, size, 16, g_bytes_vtx, g_bytes_vtx_reused);
@@ -3266,6 +4167,7 @@ void draw(const uint32_t* regs, uint32_t prim, uint32_t count, uint32_t indexTyp
          regs[mmCB_COLOR0_INFO], regs[mmDB_DEPTH_BASE], regs[REGADDR::DB_DEPTH_CONTROL], regs[REGADDR::CB_COLOR_CONTROL],
          regs[REGADDR::CB_TARGET_MASK]);
     if (!count || !instances) return;
+    prof_draw(regs[mmSQ_PGM_START_PS] << 8);
     ((uint32_t*)regs)[REGADDR::VGT_PRIMITIVE_TYPE] = prim;
     if (regs[REGADDR::VGT_GS_MODE] & 3) { g_skip[SK_GS]++; return; }  // geometry shaders: not supported yet
     if (regs[REGADDR::PA_CL_CLIP_CNTL] & (1 << 22)) { g_skip[SK_RASTER_KILL]++; return; }  // rasterization disabled
@@ -3321,6 +4223,31 @@ void draw(const uint32_t* regs, uint32_t prim, uint32_t count, uint32_t indexTyp
     for (auto& c : colors)
         if (c && !renderable(c)) c = nullptr;
     if (depth && !renderable(depth)) depth = nullptr;
+    // A draw without a depth buffer into the color targets of the open render pass, which has one: it
+    // continues that pass with depth and stencil tests off instead of ending it. Each pass end stores
+    // the 960x540 color and depth targets and the next pass loads them again (on tiled GPUs a full
+    // read and write each): the game switches between draws with and without depth into the same
+    // targets (Windfall: 8 passes -> 2). Not when the draw samples that depth buffer (it would need a
+    // copy of it instead). WWHD_SPLIT_DEPTHLESS=1: a pass of its own, as before.
+    bool borrowedDepth = false;
+    static const bool splitDepthless = getenv("WWHD_SPLIT_DEPTHLESS") != nullptr;
+    if (!depth && !g_hires_redraw && !splitDepthless && R.pass && R.passDepth) {
+        bool same = false;
+        for (int i = 0; i < 8; i++) {
+            if (R.passColor[i] != colors[i] || (colors[i] && R.passColorSlice[i] != colorSlices[i])) { same = false; break; }
+            same |= colors[i] != nullptr;
+        }
+        if (same) {
+            const uint32_t base = R.passDepth->addr >> 8;
+            for (uint32_t tb : {(uint32_t)REGADDR::SQ_TEX_RESOURCE_WORD0_N_PS, (uint32_t)REGADDR::SQ_TEX_RESOURCE_WORD0_N_VS})
+                for (int t = 0; t < 18 && same; t++) same = regs[tb + t * 7 + 2] != base;
+        }
+        if (same) {
+            depth = R.passDepth;
+            depthSlice = R.passDepthSlice;
+            borrowedDepth = true;
+        }
+    }
     // one framebuffer size (image size, which includes the resolution scale) for all attachments;
     // drop mismatching ones (as the Metal renderer does)
     uint32_t w = 0, h = 0;
@@ -3374,16 +4301,23 @@ void draw(const uint32_t* regs, uint32_t prim, uint32_t count, uint32_t indexTyp
     // guest units -> image pixels: the resolution scale, times 1.5 for the private AO depth copy
     float k = (g_hires_redraw ? 1.5f : 1.0f) * targetScale, ky = (g_hires_redraw ? 1.5f : 1.0f) * targetScaleY;
     uint32_t tl = regs[REGADDR::PA_SC_GENERIC_SCISSOR_TL], br = regs[REGADDR::PA_SC_GENERIC_SCISSOR_BR];
-    uint32_t sx = std::min<uint32_t>((uint32_t)((tl & 0x7FFF) * k), w), sy = std::min<uint32_t>((uint32_t)(((tl >> 16) & 0x7FFF) * ky), h);
-    uint32_t ex = std::min<uint32_t>((uint32_t)((br & 0x7FFF) * k), w), ey = std::min<uint32_t>((uint32_t)(((br >> 16) & 0x7FFF) * ky), h);
+    // rounded as the image sizes are (lroundf in create_surface_image): truncating left the last row or
+    // column of a full-target scissor out where the scaled size rounds up (120x67 at 0.8x: 53.6 -> 53 of
+    // 54 rows), and that row kept old contents (after a resolution change: the blue haze along the bottom)
+    uint32_t sx = std::min<uint32_t>((uint32_t)lroundf((tl & 0x7FFF) * k), w), sy = std::min<uint32_t>((uint32_t)lroundf(((tl >> 16) & 0x7FFF) * ky), h);
+    uint32_t ex = std::min<uint32_t>((uint32_t)lroundf((br & 0x7FFF) * k), w), ey = std::min<uint32_t>((uint32_t)lroundf(((br >> 16) & 0x7FFF) * ky), h);
     if (ex <= sx || ey <= sy) { g_skip[SK_SCISSOR]++; return; }
 
     // textures: uploads, layout changes and copies happen before the render pass begins
-    StageTextures vtex, ptex;
+    // (resolved in place: the prepared state is only used once g_prep_key says so again)
+    Prepared hiresPrep;  // the AO redraw (called from record_draw) must not replace the fast path's state
+    Prepared& P = g_hires_redraw ? hiresPrep : g_prep;
+    StageTextures& vtex = P.vtex;
+    StageTextures& ptex = P.ptex;
     resolve_textures(regs, vs, true, colors, depth, vtex);
     resolve_textures(regs, ps, false, colors, depth, ptex);
-    prepare_sampled(vtex);
-    prepare_sampled(ptex);
+    prepare_sampled(vtex, true);
+    prepare_sampled(ptex, false);
     // the TV picture drawn into a GamePad target of another shape (the game mirrors the TV on the
     // GamePad: title, cutscenes): 16:9 in the middle, black around it (aspect.cpp "GamePad picture")
     float ox = 0, oy = 0;
@@ -3416,7 +4350,7 @@ void draw(const uint32_t* regs, uint32_t prim, uint32_t count, uint32_t indexTyp
     st.topology = (uint32_t)ptype;
     st.cull = (cf ? 1 : 0) | (cb ? 2 : 0);
     st.frontCCW = pm.get_FRONT_FACE() == LATTE_PA_SU_SC_MODE_CNTL::E_FRONTFACE::CCW;
-    st.depthControl = depth ? regs[REGADDR::DB_DEPTH_CONTROL] : 0;
+    st.depthControl = depth && !borrowedDepth ? regs[REGADDR::DB_DEPTH_CONTROL] : 0;
     LATTE_PA_CL_CLIP_CNTL clipCntl;
     uint32_t clipRaw = regs[REGADDR::PA_CL_CLIP_CNTL];
     memcpy(&clipCntl, &clipRaw, 4);
@@ -3426,9 +4360,39 @@ void draw(const uint32_t* regs, uint32_t prim, uint32_t count, uint32_t indexTyp
     g_wait_whole = false;
     if (!pipe) { g_skip[SK_PIPE_COMPILING]++; return; }
 
+    // debug: WWHD_SKIP_TARGET=WxH[,WxH...] drops the draws into render targets of that guest size (cost measurements)
+    static const std::vector<std::pair<uint32_t, uint32_t>> skipTargets = [] {
+        std::vector<std::pair<uint32_t, uint32_t>> v;
+        const char* e = getenv("WWHD_SKIP_TARGET");
+        unsigned a, b;
+        int n;
+        while (e && sscanf(e, "%ux%u%n", &a, &b, &n) == 2) {
+            v.push_back({a, b});
+            e += n;
+            if (*e != ',') break;
+            e++;
+        }
+        return v;
+    }();
+    if (!skipTargets.empty()) {
+        const Surface* t = colors[0] ? colors[0] : depth;
+        for (auto& [sw, sh] : skipTargets)
+            if (t && t->width == sw && t->height == sh) return;
+    }
+    // debug: WWHD_SKIP_PS=ADDR[,ADDR...] (hex, as the profiler prints them) drops the draws with that pixel shader
+    static const std::vector<uint32_t> skipPS = [] {
+        std::vector<uint32_t> v;
+        for (const char* e = getenv("WWHD_SKIP_PS"); e && *e;) {
+            char* end;
+            v.push_back((uint32_t)strtoul(e, &end, 16));
+            if (*end != ',') break;
+            e = end + 1;
+        }
+        return v;
+    }();
+    for (uint32_t a : skipPS)
+        if ((regs[mmSQ_PGM_START_PS] << 8) == a) return;
     if (!ensure_pass(colors, colorSlices, depth, depthSlice, w, h, st.pass)) { g_skip[SK_PASS]++; return; }
-    Prepared hiresPrep;  // the AO redraw (called from record_draw) must not replace the fast path's state
-    Prepared& P = g_hires_redraw ? hiresPrep : g_prep;
     P.fs = fs;
     P.vs = vs;
     P.ps = ps;
@@ -3445,8 +4409,6 @@ void draw(const uint32_t* regs, uint32_t prim, uint32_t count, uint32_t indexTyp
     P.oy = oy;
     P.bars = bars;
     P.sx = sx; P.sy = sy; P.ex = ex; P.ey = ey;
-    P.vtex = vtex;
-    P.ptex = ptex;
     P.pipe = pipe;
     P.depthControl = st.depthControl;
     if (!g_hires_redraw) {  // state after ensure_pass: it may have begun the render pass and marked targets written

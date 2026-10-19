@@ -125,14 +125,16 @@ If the picker doesn\'t show your files, put them directly into Download and open
     <string name="fg_dll_tested_hint">Installed: a tested version</string>
     <string name="fg_dll_untested_hint">Installed: an untested version (frames may look wrong)</string>
     <string name="fg_not_working">not working</string>
+    <string name="fg_risk_title">Frame generation on this GPU</string>
+    <string name="fg_risk_text">On this GPU (%1$s), frame generation can make the GPU hang. The game may crash, and in rare cases the whole device may freeze or restart.\n\nIf the game crashes, the dialog at its next start offers to start without frame generation.</string>
+    <string name="fg_risk_accept">Turn on anyway</string>
+    <string name="fg_risk_keep_off">Keep it off</string>
     <string name="fg_error">Frame generation isn\'t working: %1$s</string>
     <string name="fg_dll_ok">Lossless.dll is ready and frame generation is on.</string>
     <string name="menu_layout">Screen layout: %1$s</string>
     <string name="menu_controls_hide">Hide on-screen controls</string>
     <string name="menu_controls_show">Show on-screen controls</string>
     <string name="menu_controls_size">On-screen controls size</string>
-    <string name="menu_controller">Controls act as: %1$s</string>
-    <string name="controller_gamepad">Wii U GamePad</string>
     <string name="controller_pro">Wii U Pro Controller</string>
     <string name="menu_ao">Ambient occlusion: %1$s</string>
     <string name="menu_ao_hires">Full-size occlusion depth: %1$s</string>
@@ -187,6 +189,9 @@ If the picker doesn\'t show your files, put them directly into Download and open
     <string name="opt_off">OFF</string>
     <string name="opt_pad_hint">Controller: hold Select or press Home to open and close · L / R switch tabs · D-pad moves and changes values · right button selects · bottom button goes back</string>
     <string name="opt_resolution">Rendering resolution</string>
+    <string name="opt_dyn_res">Dynamic resolution</string>
+    <string name="opt_dyn_res_hint">Lowers the rendering resolution while the GPU keeps the game below its frame rate (the game slows down then), and raises it back up to the setting above when there is room. The performance overlay shows the current value</string>
+    <string name="dyn_res_down_to">Down to %1$s× (%2$s)</string>
     <string name="opt_framegen">Frame generation</string>
     <string name="opt_aspect">Aspect ratio</string>
     <string name="opt_render_aspect">Widescreen</string>
@@ -199,6 +204,18 @@ If the picker doesn\'t show your files, put them directly into Download and open
     <string name="opt_ao">Ambient occlusion</string>
     <string name="opt_ao_hires">Full-size occlusion depth</string>
     <string name="opt_aniso">16× anisotropic filtering</string>
+    <string name="opt_upscale">Upscaling</string>
+    <string name="opt_upscale_hint">How the picture is enlarged to the screen: Sharp keeps edges crisp at lower rendering resolutions</string>
+    <string-array name="upscale_modes">
+        <item>Bilinear (classic)</item>
+        <item>Sharp</item>
+    </string-array>
+    <string name="opt_display_res">Display resolution</string>
+    <string name="opt_display_res_hint">Auto: the picture is drawn at the size it needs and the screen enlarges it, which is faster on high-resolution screens; Full: always at the screen\'s own resolution</string>
+    <string-array name="display_res_modes">
+        <item>Auto</item>
+        <item>Full (classic)</item>
+    </string-array>
     <string name="opt_perf">Performance overlay</string>
     <string name="opt_perf_hint">FPS, load and temperatures</string>
     <string name="opt_fg_choose_dll">Select Lossless.dll</string>
@@ -315,7 +332,6 @@ If the picker doesn\'t show your files, put them directly into Download and open
     <string name="touch_camera_stick">Stick</string>
     <string name="opt_swipe_speed">Swipe speed</string>
     <string name="touch_camera_swipe">Swipe</string>
-    <string name="opt_controller">Controls act as</string>
     <string name="opt_states">Save states</string>
     <string name="opt_backup">Import / export saves</string>
     <string name="opt_game">Game</string>
@@ -510,6 +526,7 @@ If the picker doesn\'t show your files, put them directly into Download and open
     <string name="crash_title">The game closed unexpectedly</string>
     <string name="crash_text">A crash log was saved. If you report the problem (for example as an issue on GitHub), please attach it. It shows where the game crashed, the app version, the game version, your device model and the settings in use. It contains no personal data.</string>
     <string name="crash_share">Share crash log</string>
+    <string name="crash_without_fg">Start without frame generation</string>
     <string name="crash_share_all">Share crash logs</string>
     <string name="crash_not_now">Not now</string>
     <string name="crash_start_game">Start game</string>
@@ -531,7 +548,7 @@ If the picker doesn\'t show your files, put them directly into Download and open
     <string-array name="layouts">
         <item>TV with GamePad inset</item>
         <item>TV and GamePad side by side</item>
-        <item>TV only</item>
+        <item>TV, GamePad on +</item>
         <item>GamePad with TV inset</item>
         <item>TV, GamePad on demand</item>
     </string-array>

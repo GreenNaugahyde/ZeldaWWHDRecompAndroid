@@ -127,13 +127,13 @@ template <class T> void clear_pnext(T* v, uint32_t n) {
 
 }  // namespace
 
-// On with every driver. With Qualcomm's own driver on a tablet (Adreno 732, driver v762) the render
+// On with every driver. With Qualcomm's own driver on a Snapdragon 7+ Gen 3 (Adreno 732, driver v762) the render
 // thread went from 21.5 to 14.6 ms a frame (the record thread taking 6.4 ms beside it). Without it
 // the render thread lags further behind the game, and the light in Beetle's shop flashed for single
-// frames with Turnip (issue #16: 3-8 per 15 s on the tablet, 0 in 35 s with the thread), most likely
+// frames with Turnip (issue #16: 3-8 per 15 s on the Adreno 732, 0 in 35 s with the thread), most likely
 // uniform blocks the game rewrites without a flush being read too late; that race doesn't depend on
-// the GPU. To be measured again: the Mi 9 (Adreno 640, Turnip; an earlier test, before several
-// fixes, had it slower with black flicker now and then) and Mali (Moto G24). WWHD_RECORD_THREAD=0
+// the GPU. To be measured again: the Snapdragon 855 (Adreno 640, Turnip; an earlier test, before several
+// fixes, had it slower with black flicker now and then) and Mali (Helio G85 / Mali-G52 MC2). WWHD_RECORD_THREAD=0
 // turns it off. Decided once the device exists.
 bool enabled() {
     static int on = -1;
@@ -236,8 +236,13 @@ void CmdDrawIndexed(VkCommandBuffer cmd, uint32_t indices, uint32_t instances, u
     Writer w(Op::DrawIndexed, sizeof(DrawIndexed)); w.put(DrawIndexed{indices, instances, firstIndex, vertexOffset, firstInstance});
 }
 void CmdDispatch(VkCommandBuffer cmd, uint32_t x, uint32_t y, uint32_t z) {
-    if (!deferred(cmd)) return vkCmdDispatch(cmd, x, y, z);
-    Writer w(Op::Dispatch, sizeof(Dispatch)); w.put(Dispatch{x, y, z});
+    prof_op_begin(cmd, "dispatch", x * 8, y * 8);
+    if (!deferred(cmd)) {
+        vkCmdDispatch(cmd, x, y, z);
+    } else {
+        Writer w(Op::Dispatch, sizeof(Dispatch)); w.put(Dispatch{x, y, z});
+    }
+    prof_op_end(cmd);
 }
 void CmdPipelineBarrier(VkCommandBuffer cmd, VkPipelineStageFlags src, VkPipelineStageFlags dst, VkDependencyFlags deps,
                         uint32_t memCount, const VkMemoryBarrier* mem, uint32_t bufCount, const VkBufferMemoryBarrier* buf,
@@ -250,38 +255,68 @@ void CmdPipelineBarrier(VkCommandBuffer cmd, VkPipelineStageFlags src, VkPipelin
 }
 void CmdCopyImage(VkCommandBuffer cmd, VkImage src, VkImageLayout srcLayout, VkImage dst, VkImageLayout dstLayout,
                   uint32_t count, const VkImageCopy* regions) {
-    if (!deferred(cmd)) return vkCmdCopyImage(cmd, src, srcLayout, dst, dstLayout, count, regions);
-    Writer w(Op::CopyImage, sizeof(CopyImage) + sizeof(VkImageCopy) * count);
-    w.put(CopyImage{src, srcLayout, dst, dstLayout, count}); w.array(regions, count);
+    prof_op_begin(cmd, "copy", count ? regions[0].extent.width : 0, count ? regions[0].extent.height : 0);
+    if (!deferred(cmd)) {
+        vkCmdCopyImage(cmd, src, srcLayout, dst, dstLayout, count, regions);
+    } else {
+        Writer w(Op::CopyImage, sizeof(CopyImage) + sizeof(VkImageCopy) * count);
+        w.put(CopyImage{src, srcLayout, dst, dstLayout, count}); w.array(regions, count);
+    }
+    prof_op_end(cmd);
 }
 void CmdCopyImage2(VkCommandBuffer cmd, const VkCopyImageInfo2* info) {
-    if (!deferred(cmd)) return vkCmdCopyImage2(cmd, info);
-    VkCopyImageInfo2 copy = *info; copy.pNext = nullptr; copy.pRegions = nullptr;
-    Writer w(Op::CopyImage2, sizeof(copy) + sizeof(VkImageCopy2) * info->regionCount); w.put(copy); w.array(info->pRegions, info->regionCount);
+    prof_op_begin(cmd, "copy", info->regionCount ? info->pRegions[0].extent.width : 0, info->regionCount ? info->pRegions[0].extent.height : 0);
+    if (!deferred(cmd)) {
+        vkCmdCopyImage2(cmd, info);
+    } else {
+        VkCopyImageInfo2 copy = *info; copy.pNext = nullptr; copy.pRegions = nullptr;
+        Writer w(Op::CopyImage2, sizeof(copy) + sizeof(VkImageCopy2) * info->regionCount); w.put(copy); w.array(info->pRegions, info->regionCount);
+    }
+    prof_op_end(cmd);
 }
 void CmdBlitImage(VkCommandBuffer cmd, VkImage src, VkImageLayout srcLayout, VkImage dst, VkImageLayout dstLayout,
                   uint32_t count, const VkImageBlit* regions, VkFilter filter) {
-    if (!deferred(cmd)) return vkCmdBlitImage(cmd, src, srcLayout, dst, dstLayout, count, regions, filter);
-    Writer w(Op::BlitImage, sizeof(BlitImage) + sizeof(VkImageBlit) * count);
-    w.put(BlitImage{src, srcLayout, dst, dstLayout, count, filter}); w.array(regions, count);
+    prof_op_begin(cmd, "blit", count ? (uint32_t)regions[0].dstOffsets[1].x : 0, count ? (uint32_t)regions[0].dstOffsets[1].y : 0);
+    if (!deferred(cmd)) {
+        vkCmdBlitImage(cmd, src, srcLayout, dst, dstLayout, count, regions, filter);
+    } else {
+        Writer w(Op::BlitImage, sizeof(BlitImage) + sizeof(VkImageBlit) * count);
+        w.put(BlitImage{src, srcLayout, dst, dstLayout, count, filter}); w.array(regions, count);
+    }
+    prof_op_end(cmd);
 }
 void CmdCopyBufferToImage(VkCommandBuffer cmd, VkBuffer buffer, VkImage image, VkImageLayout layout,
                           uint32_t count, const VkBufferImageCopy* regions) {
-    if (!deferred(cmd)) return vkCmdCopyBufferToImage(cmd, buffer, image, layout, count, regions);
-    Writer w(Op::CopyBufferToImage, sizeof(CopyBufferImage) + sizeof(VkBufferImageCopy) * count);
-    w.put(CopyBufferImage{buffer, image, layout, count}); w.array(regions, count);
+    prof_op_begin(cmd, "upload", count ? regions[0].imageExtent.width : 0, count ? regions[0].imageExtent.height : 0);
+    if (!deferred(cmd)) {
+        vkCmdCopyBufferToImage(cmd, buffer, image, layout, count, regions);
+    } else {
+        Writer w(Op::CopyBufferToImage, sizeof(CopyBufferImage) + sizeof(VkBufferImageCopy) * count);
+        w.put(CopyBufferImage{buffer, image, layout, count}); w.array(regions, count);
+    }
+    prof_op_end(cmd);
 }
 void CmdCopyImageToBuffer(VkCommandBuffer cmd, VkImage image, VkImageLayout layout, VkBuffer buffer,
                           uint32_t count, const VkBufferImageCopy* regions) {
-    if (!deferred(cmd)) return vkCmdCopyImageToBuffer(cmd, image, layout, buffer, count, regions);
-    Writer w(Op::CopyImageToBuffer, sizeof(CopyImageBuffer) + sizeof(VkBufferImageCopy) * count);
-    w.put(CopyImageBuffer{image, layout, buffer, count}); w.array(regions, count);
+    prof_op_begin(cmd, "readback", count ? regions[0].imageExtent.width : 0, count ? regions[0].imageExtent.height : 0);
+    if (!deferred(cmd)) {
+        vkCmdCopyImageToBuffer(cmd, image, layout, buffer, count, regions);
+    } else {
+        Writer w(Op::CopyImageToBuffer, sizeof(CopyImageBuffer) + sizeof(VkBufferImageCopy) * count);
+        w.put(CopyImageBuffer{image, layout, buffer, count}); w.array(regions, count);
+    }
+    prof_op_end(cmd);
 }
 void CmdClearColorImage(VkCommandBuffer cmd, VkImage image, VkImageLayout layout, const VkClearColorValue* color,
                         uint32_t count, const VkImageSubresourceRange* ranges) {
-    if (!deferred(cmd)) return vkCmdClearColorImage(cmd, image, layout, color, count, ranges);
-    Writer w(Op::ClearColorImage, sizeof(ClearColor) + sizeof(VkImageSubresourceRange) * count);
-    w.put(ClearColor{image, layout, *color, count}); w.array(ranges, count);
+    prof_op_begin(cmd, "clear color");
+    if (!deferred(cmd)) {
+        vkCmdClearColorImage(cmd, image, layout, color, count, ranges);
+    } else {
+        Writer w(Op::ClearColorImage, sizeof(ClearColor) + sizeof(VkImageSubresourceRange) * count);
+        w.put(ClearColor{image, layout, *color, count}); w.array(ranges, count);
+    }
+    prof_op_end(cmd);
 }
 void CmdClearAttachments(VkCommandBuffer cmd, uint32_t count, const VkClearAttachment* atts, uint32_t rectCount,
                          const VkClearRect* rects) {
@@ -291,9 +326,14 @@ void CmdClearAttachments(VkCommandBuffer cmd, uint32_t count, const VkClearAttac
 }
 void CmdClearDepthStencilImage(VkCommandBuffer cmd, VkImage image, VkImageLayout layout,
                                const VkClearDepthStencilValue* value, uint32_t count, const VkImageSubresourceRange* ranges) {
-    if (!deferred(cmd)) return vkCmdClearDepthStencilImage(cmd, image, layout, value, count, ranges);
-    Writer w(Op::ClearDepthStencilImage, sizeof(ClearDepth) + sizeof(VkImageSubresourceRange) * count);
-    w.put(ClearDepth{image, layout, *value, count}); w.array(ranges, count);
+    prof_op_begin(cmd, "clear depth");
+    if (!deferred(cmd)) {
+        vkCmdClearDepthStencilImage(cmd, image, layout, value, count, ranges);
+    } else {
+        Writer w(Op::ClearDepthStencilImage, sizeof(ClearDepth) + sizeof(VkImageSubresourceRange) * count);
+        w.put(ClearDepth{image, layout, *value, count}); w.array(ranges, count);
+    }
+    prof_op_end(cmd);
 }
 void CmdResetQueryPool(VkCommandBuffer cmd, VkQueryPool pool, uint32_t first, uint32_t count) {
     if (!deferred(cmd)) return vkCmdResetQueryPool(cmd, pool, first, count);

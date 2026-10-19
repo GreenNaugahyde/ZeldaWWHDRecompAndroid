@@ -219,6 +219,9 @@ std::chrono::steady_clock::time_point g_message_time;
 std::atomic<int> g_save_req{0};
 std::shared_ptr<Snapshot> g_load_ready;   // decompressed, waiting for the frame boundary
 std::atomic<bool> g_loading{false};       // a slot file is being read
+// a state saved with the Pro Controller was loaded while the controls act as the GamePad: the game is put
+// into GamePad mode on the next frame (service), as the title's controller question does
+std::atomic<bool> g_to_gamepad{false};
 std::condition_variable g_hold_cv;        // (g_mu) the start hold ends, or a state is ready to load
 std::atomic<int> g_hold{0};               // start_hold_state()
 std::atomic<int> g_writes{0};             // saves still being compressed / written (writes_pending)
@@ -378,7 +381,8 @@ uint64_t game_id() {
 
 // current stage (dComIfG_gameInfo.play: the start stage, 8 chars)
 const release::Data kStageInfo{0x1046F0B0};
-constexpr uint32_t kStageNameOff = 0x5134;  // dStage_startStage_c (next stage at +0x5140)
+constexpr uint32_t kStageNameOff = 0x5134;  // dStage_startStage_c
+constexpr uint32_t kNextStageOff = 0x5140;  // dStage_nextStage_c
 std::string stage_name() {
     if (const char* e = getenv("WWHD_STATE_STAGE_ADDR")) {
         uint32_t a = (uint32_t)strtoul(e, nullptr, 16);
@@ -603,7 +607,7 @@ void on_fault(int sig, siginfo_t* si, void* uc) {
     Job* j = g_job.load(std::memory_order_acquire);
     uintptr_t a = (uintptr_t)si->si_addr, base = (uintptr_t)mem::ptr(0);
     long i = -1;
-    // SEGV_ACCERR, or SEGV_MAPERR for a page never touched yet (older kernels, Moto G24 Android 14):
+    // SEGV_ACCERR, or SEGV_MAPERR for a page never touched yet (older kernels, Helio G85 with Android 14):
     // inside the captured regions, which are mapped and readable, a fault can only be the protection
     if (j && (si->si_code == SEGV_ACCERR || si->si_code == SEGV_MAPERR) && a - base < 0x100000000ull) {
         i = j->index((uint32_t)(a - base));
@@ -1326,11 +1330,11 @@ bool do_load(const std::shared_ptr<Snapshot>& s) {
     threads::thaw();
     double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
     std::string area = s->h.area[0] ? " (" + area_label(s->h.area) + ")" : "";
-    // the controls the state was saved with: the game expects input from that controller
-    bool pro = s->h.controller == 2;
-    if (s->h.controller && pro != input::pro_controller()) {
-        input::set_pro_controller(pro);
-        message("Loaded %s%s; controls act as %s again", slot_label(s->slot).c_str(), area.c_str(), pro ? "Wii U Pro Controller" : "Wii U GamePad");
+    // a state saved while the controls acted as a Pro Controller (older builds): the controls stay
+    // the GamePad, and the game switches to it (service; else it waits for a Pro Controller)
+    if (s->h.controller == 2 && !input::pro_controller()) {
+        g_to_gamepad = true;
+        message("Loaded %s%s (saved with the Pro Controller: switched to the GamePad)", slot_label(s->slot).c_str(), area.c_str());
     } else {
         message("Loaded %s%s", slot_label(s->slot).c_str(), area.c_str());
     }
@@ -1374,6 +1378,18 @@ int older_auto_slot() {
 }
 
 }  // namespace
+
+int front_screen() {
+    if (gfx::frame_count() == 0) return 4;  // (the game has drawn: its memory is set up)
+    std::string st = stage_name();
+    if (st.empty()) return 4;  // the logos (the title is the first stage)
+    if (st == "sea_T") return 1;
+    if (st != "Name") return 0;
+    // the file select sets the next stage to itself; leaving it (dComIfGs_gameStart) sets the save's:
+    // then the new game's opening (the start stage stays "Name" until the game's first stage loads)
+    const char* next = (const char*)mem::ptr(kStageInfo + kNextStageOff);
+    return strncmp(next, "Name", 8) == 0 ? 2 : 3;
+}
 
 uint32_t snap_ld32(uint32_t ea) {
     if (!g_check) return ld32(ea);
@@ -1519,8 +1535,20 @@ std::string last_message() {
     return g_message;
 }
 
+// the game's controller manager (101F5088): +0x1D0 its mode (0 Pro Controller, 1 GamePad; 3 / 4 while
+// starting); 02618094(manager, mode) switches it (the title's controller question calls it with 1)
+const release::Data kControllerMgr{0x101F5088};
+const release::Code kSetControllerMode{0x02618094};
+
 void service(Cpu* c) {
-    (void)c;
+    if (g_to_gamepad && !g_loading) {
+        g_to_gamepad = false;
+        uint32_t mgr = ld32(kControllerMgr);
+        if (mgr && ld32(mgr + 0x1D0) == 0) {
+            uint32_t ok = guest_call(c, kSetControllerMode, {mgr, 1});
+            LOG("[savestate] Pro Controller state: game switched to the GamePad (%u, mode now %u)", ok, ld32(mgr + 0x1D0));
+        }
+    }
     static const std::vector<Timed> save_at = parse_timed("WWHD_STATE_SAVE_AT"), load_at = parse_timed("WWHD_STATE_LOAD_AT");
     if (!save_at.empty() || !load_at.empty()) {
         static uint64_t last = 0;

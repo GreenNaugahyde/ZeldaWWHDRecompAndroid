@@ -196,10 +196,10 @@ uint64_t tid_cpu_ns(int32_t tid) {
 }  // namespace
 
 // Frame interpolation needs the game thread's logic pass within one vsync tick. The scheduler places it
-// by load, which is lower at 30 fps: on the tablet it then stayed on the 2.6 GHz cores (logic pass 15
+// by load, which is lower at 30 fps: on a Snapdragon 7+ Gen 3 it then stayed on the 2.6 GHz cores (logic pass 15
 // ms CPU) instead of the 2.8 GHz prime core (11 ms), and paced interpolation left out every in-between
-// frame for good. So while interpolation is on, the game thread is kept on the fastest cores (tablet
-// and Mi 9: the prime core; Moto G24: the two big ones): tablet 60 fps, 100% of the in-between frames.
+// frame for good. So while interpolation is on, the game thread is kept on the fastest cores (Snapdragon
+// 7+ Gen 3 and 855: the prime core; Helio G85: the two big ones): Snapdragon 7+ Gen 3 60 fps, 100% of the in-between frames.
 void game_fast_cores(bool on) {
     static const bool allowed = !getenv("WWHD_FAST_CORE") || atoi(getenv("WWHD_FAST_CORE")) != 0;
     if (!allowed || !g_game_tid || on == g_game_fast) return;
@@ -265,7 +265,7 @@ void perf_hint_frame(int framesPerStep) {
     }
     if (g_hint_changed && g_adpf.setThreads) g_adpf.setThreads(g_adpf.session, g_hint_tids.data(), g_hint_tids.size());
     // Frame interpolation shows framesPerStep frames per 30 Hz step: the target per frame is that much
-    // shorter. With the 30 fps target, the tablet lowered its clocks once paced interpolation left out
+    // shorter. With the 30 fps target, a Snapdragon 7+ Gen 3 lowered its clocks once paced interpolation left out
     // the in-between frames, and they never fit again (logic pass 11 -> 15 ms CPU).
     const int64_t target = g_adpf.targetNs / std::max(1, framesPerStep);
     if (target != g_adpf.currentNs) {

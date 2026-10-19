@@ -82,6 +82,9 @@ std::string last_message();             // short status for the title bar ("" wh
 // (or failed to) or the hold is released; start_hold_state: 0 off, 1 armed, 2 the game is waiting
 void set_start_hold(bool on);
 int start_hold_state();
+// the stage loaded: 1 the title screen (sea_T), 2 the file select (Name), 3 on from the file select
+// (a new game's opening, or loading), 4 none yet (booting), 0 another
+int front_screen();
 
 // ---- game thread: call at the frame boundary (top of the per-frame function) ----
 void service(Cpu* c);
