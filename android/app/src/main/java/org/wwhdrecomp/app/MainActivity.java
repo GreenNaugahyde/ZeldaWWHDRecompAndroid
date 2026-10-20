@@ -124,6 +124,8 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
             // command recording thread: automatic (the renderer decides), on or off (wwhd.env still wins)
             int recordThread = prefs.getInt("record_thread", 0);
             if (recordThread != 0) setenv("WWHD_RECORD_THREAD", recordThread == 1 ? "1" : "0");
+            // form of the 32-bit vertex byte swap in the shaders (PowerVR test, issue #17; wwhd.env still wins)
+            setenv("WWHD_VTX_SWAP32", String.valueOf(prefs.getInt("vtx_swap32", 0)));
             // frame interpolation (Graphics > Frame rate): 0 off, 60 or 120 fps
             int interp = prefs.getInt("interp_fps", 0);
             if (interp != 0) setenv("WWHD_INTERP_FPS", String.valueOf(interp));
@@ -179,6 +181,15 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         if (mode == prefs.getInt("record_thread", 0)) return;
         prefs.edit().putInt("record_thread", mode).commit();
         new GameDialog(this).title(R.string.opt_record_thread).message(R.string.record_thread_restart)
+                .button(R.string.gpu_driver_later, null)
+                .button(R.string.res_restart_now, this::restartApp).show();
+    }
+
+    // the vertex byte swap form applies from the next start (its shaders are built again then)
+    void setVertexSwap(int form) {
+        if (form == prefs.getInt("vtx_swap32", 0)) return;
+        prefs.edit().putInt("vtx_swap32", form).commit();
+        new GameDialog(this).title(R.string.opt_vtx_swap).message(R.string.vtx_swap_restart)
                 .button(R.string.gpu_driver_later, null)
                 .button(R.string.res_restart_now, this::restartApp).show();
     }

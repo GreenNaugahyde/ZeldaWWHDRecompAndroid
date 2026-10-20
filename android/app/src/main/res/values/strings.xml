@@ -448,6 +448,15 @@ If the picker doesn\'t show your files, put them directly into Download and open
         <item>Off</item>
     </string-array>
     <string name="record_thread_restart">The setting applies after a restart.</string>
+    <string name="opt_vtx_swap">Vertex byte order (PowerVR test)</string>
+    <string name="opt_vtx_swap_hint">How the shaders turn the console\'s byte order around. Each way gives the same result; one may avoid broken 3D on PowerVR GPUs</string>
+    <string-array name="vtx_swap_forms">
+        <item>Original</item>
+        <item>Test A (rotations)</item>
+        <item>Test B (bit fields)</item>
+        <item>Test C (bytes)</item>
+    </string-array>
+    <string name="vtx_swap_restart">The setting applies after a restart. The first start after it builds the game\'s shaders again, so expect stutter for a while.</string>
     <string name="opt_invert_camera_y">Invert camera up/down</string>
     <string name="opt_invert_camera_y_hint">Push the right stick (or swipe) up to look down. First person and aiming leaves the normal camera and menus as they are</string>
     <string-array name="invert_camera_y_modes">

@@ -650,6 +650,8 @@ final class OptionsMenu extends Dialog {
             submenu(R.string.opt_gpu_driver, R.string.opt_gpu_driver_hint, a.gpuDriverLabel(), () -> openPage(this::gpuDriverPage));
         choice(R.string.opt_record_thread, R.string.opt_record_thread_hint, a.getResources().getStringArray(R.array.record_thread_modes),
                 a.prefs.getInt("record_thread", 0), a::setRecordThread);
+        choice(R.string.opt_vtx_swap, R.string.opt_vtx_swap_hint, a.getResources().getStringArray(R.array.vtx_swap_forms),
+                a.prefs.getInt("vtx_swap32", 0), a::setVertexSwap);
         submenu(R.string.opt_shaders, R.string.opt_shaders_hint, "", a::askClearShaders);
         if (a.debuggable())  // a debugging aid: debug builds only
             submenu(R.string.opt_capture, R.string.opt_capture_hint, "", () -> Native.setOption("capture", 1));

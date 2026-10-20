@@ -1506,6 +1506,14 @@ static Shader* get_shader_uncached(const uint32_t* regs, bool vertex, LatteFetch
     // Rito mail sorting game); Cemu's default too (original project 0dfd3c3). WWHD_STRICT_MUL=0: off
     static const bool strictMul = !getenv("WWHD_STRICT_MUL") || strcmp(getenv("WWHD_STRICT_MUL"), "0");
     opt.strictMul = strictMul;
+    // form of the 32-bit vertex byte swap, a PowerVR test (issue #17): WWHD_VTX_SWAP32=0..3, 0 = Cemu's
+    static const int swap32Form = [] {
+        const char* e = getenv("WWHD_VTX_SWAP32");
+        g_latteSwap32Form = e && *e >= '0' && *e <= '3' ? *e - '0' : 0;
+        LOG("[gfx] 32-bit vertex byte swap: form %d", g_latteSwap32Form);
+        return g_latteSwap32Form;
+    }();
+    (void)swap32Form;
     if (!vertex && link.linked) {
         opt.linkPSInputsToVS = true;
         opt.vsOutputSemantics = link.exports;

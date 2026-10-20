@@ -40,23 +40,55 @@ void _readLittleEndianAttributeU16x4(LatteDecompilerShader* shaderContext, Strin
 	src->addFmt("attrDecoder = attrDataSem{};" _CRLF, attributeInputIndex);
 }
 
+// WWHD (issue #17, PowerVR): the form of the 32-bit byte swap above, WWHD_VTX_SWAP32 (set once before
+// the first translation). PowerVR D-Series drivers decode Cemu's shift-and-mask form wrongly
+// (upstream ZeldaWWHDRecomp/ZeldaWWHDRecomp#207: right when the CPU swaps these attributes); these test
+// other forms of the same swap. 0 Cemu's, 1 two rotations, 2 bitfieldExtract/bitfieldInsert,
+// 3 bytes unpacked to floats, reversed and packed again (no integer shifts)
+int g_latteSwap32Form = 0;
+
+// v: attrDecoder or attrDecoder.<components>
+static void _emitSwap32(StringBuf* src, const char* v)
+{
+	switch (g_latteSwap32Form)
+	{
+	case 1:
+		src->addFmt("{0} = ({0}<<16u)|({0}>>16u);" _CRLF, v);
+		src->addFmt("{0} = (({0}&0x00FF00FFu)<<8u)|(({0}>>8u)&0x00FF00FFu);" _CRLF, v);
+		break;
+	case 2:
+		src->addFmt("{0} = bitfieldInsert(bitfieldInsert(bitfieldInsert(bitfieldExtract({0},24,8),"
+			"bitfieldExtract({0},16,8),8,8),bitfieldExtract({0},8,8),16,8),{0},24,8);" _CRLF, v);
+		break;
+	case 3:
+	{
+		const char* dot = strchr(v, '.');
+		for (const char* p = dot ? dot + 1 : "xyzw"; *p; p++)
+			src->addFmt("attrDecoder.{0} = packUnorm4x8(unpackUnorm4x8(attrDecoder.{0}).wzyx);" _CRLF, *p);
+	}
+		break;
+	default:
+		src->addFmt("{0} = ({0}>>24)|(({0}>>8)&0xFF00)|(({0}<<8)&0xFF0000)|(({0}<<24));" _CRLF, v);
+	}
+}
+
 void _readBigEndianAttributeU32x4(LatteDecompilerShader* shaderContext, StringBuf* src, uint32 attributeInputIndex)
 {
 	src->addFmt("attrDecoder = attrDataSem{};" _CRLF, attributeInputIndex);
-	src->add("attrDecoder = (attrDecoder>>24)|((attrDecoder>>8)&0xFF00)|((attrDecoder<<8)&0xFF0000)|((attrDecoder<<24));" _CRLF);
+	_emitSwap32(src, "attrDecoder");
 }
 
 void _readBigEndianAttributeU32x3(LatteDecompilerShader* shaderContext, StringBuf* src, uint32 attributeInputIndex)
 {
 	src->addFmt("attrDecoder.xyz = attrDataSem{}.xyz;" _CRLF, attributeInputIndex);
-	src->add("attrDecoder.xyz = (attrDecoder.xyz>>24)|((attrDecoder.xyz>>8)&0xFF00)|((attrDecoder.xyz<<8)&0xFF0000)|((attrDecoder.xyz<<24));" _CRLF);
+	_emitSwap32(src, "attrDecoder.xyz");
 	src->add("attrDecoder.w = 0;" _CRLF);
 }
 
 void _readBigEndianAttributeU32x2(LatteDecompilerShader* shaderContext, StringBuf* src, uint32 attributeInputIndex)
 {
 	src->addFmt("attrDecoder.xy = attrDataSem{}.xy;" _CRLF, attributeInputIndex);
-	src->add("attrDecoder.xy = (attrDecoder.xy>>24)|((attrDecoder.xy>>8)&0xFF00)|((attrDecoder.xy<<8)&0xFF0000)|((attrDecoder.xy<<24));" _CRLF);
+	_emitSwap32(src, "attrDecoder.xy");
 	src->add("attrDecoder.z = 0;" _CRLF);
 	src->add("attrDecoder.w = 0;" _CRLF);
 }
@@ -64,7 +96,7 @@ void _readBigEndianAttributeU32x2(LatteDecompilerShader* shaderContext, StringBu
 void _readBigEndianAttributeU32x1(LatteDecompilerShader* shaderContext, StringBuf* src, uint32 attributeInputIndex)
 {
 	src->addFmt("attrDecoder.x = attrDataSem{}.x;" _CRLF, attributeInputIndex);
-	src->add("attrDecoder.x = (attrDecoder.x>>24)|((attrDecoder.x>>8)&0xFF00)|((attrDecoder.x<<8)&0xFF0000)|((attrDecoder.x<<24));" _CRLF);
+	_emitSwap32(src, "attrDecoder.x");
 	src->add("attrDecoder.y = 0;" _CRLF);
 	src->add("attrDecoder.z = 0;" _CRLF);
 	src->add("attrDecoder.w = 0;" _CRLF);
