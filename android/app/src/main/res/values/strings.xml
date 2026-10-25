@@ -1,21 +1,658 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- English, the app's source texts: the same texts in the same order as the translations (res/values-de, -fr,
+     -it, -es, -ja/strings.xml), to compare them side by side. The texts nothing translates yet are in
+     strings_more.xml. Corrections are welcome. -->
 <resources>
-    <string name="app_name">TLoZ:TWW HD Recompiled</string>
-
+    <!-- touch hints (GameHint): *...* shows in orange -->
+    <string name="hint_ok">Got it!</string>
+    <string name="hint_never">Don\'t show these again</string>
+    <string name="hint_mg_board">*Touch a square* on the board to aim there.\nYou can slide your finger to another one.\n*Lift your finger* to fire!</string>
+    <string name="hint_mg_puzzle">*Touch a piece* in line with the gap\nto slide it over, or *drag it* toward the gap.\nWhole rows move along!</string>
+    <string name="hint_mg_mail">*Touch the slot* with the letter\'s sign\nto sort it there!</string>
+    <string name="hint_mg_cannon">*Drag* across the screen to aim the cannon.\n*Tap* to fire!</string>
+    <string name="hint_mg_auction">*Tap anywhere* on the screen\nto raise your bid!</string>
+    <string name="hint_mg_choice">To answer, just *touch the line*\nyou want to say.</string>
+    <string name="hint_mg_number">*Swipe up or down* to change a digit,\n*left or right* to pick another one.\n*Tap* when the number is right!</string>
+    <string name="hint_mg_shop">*Touch an item* to take a closer look.\n*Touch it again* to buy it!</string>
+    <string name="hint_mg_figure">*Drag* to turn the figure around.\n*Pinch* with two fingers to look closer!</string>
+    <string name="hint_mg_conduct">Hold a finger on the *left half* for the beat:\nleft for 4/4, right for 6/4, none for 3/4.\n*Drag on the right half* to conduct!</string>
+    <string name="hint_mg_conduct_pad">*Right pad*: tap or slide to a note sign\nto swing the baton that way.\n*Left pad*: tap the time (4/4, 3/4, 6/4)!</string>
+    <string name="hint_mg_wind">*Drag the blue arrow* around the compass\nto choose where the wind blows.\nThen tap the *green button*!</string>
+    <string name="hint_leaf_glide">Gliding: *tap the leaf\'s button*\nto close the leaf and drop; tap it again\nwhile falling to glide on.\n*Hold it* to wave the leaf in the air!</string>
+    <string name="hint_ring">*Hold an item button* to choose its item\nfrom a ring: *slide* to an item and *let go*.\nA short tap uses the item as before.\nBags open as rings of their own!</string>
+    <string name="hint_songs_button">Hold the *mic button* (or *L*) and sing, hum\nor whistle a song you\'ve learned.\n*Let go* when you\'re done: Link plays it!</string>
+    <string name="hint_songs_auto">Sing, hum or whistle a song you\'ve learned:\nthe *microphone* is listening!\nPause briefly after the *last note*.</string>
+    <string name="hint_songs_try">Want to *try it* first? Hold the mic button\nand sing: you\'ll see each *note* you hit.\nLink won\'t play anything while you practise.</string>
+    <string name="hint_try_yes">Let\'s try!</string>
+    <string name="hint_try_no">Not now</string>
+    <string name="song_play_now">*%1$s* recognised!\nPlay it for real now? Then sing it\nonce more: Link plays it.</string>
+    <string name="song_play_yes">Play it!</string>
+    <string name="song_play_no">Keep practising</string>
+    <!-- options menu -->
+    <string name="cheat_apply">Apply</string>
+    <string name="cheat_bags">Fill the bags</string>
+    <string name="cheat_bags_done">Spoils Bag and Bait Bag filled.</string>
+    <string name="cheat_bags_hint">The Spoils Bag and Bait Bag (if missing), every kind of spoils ×99, bait and Hyoi Pears</string>
+    <string name="cheat_dungeon">Map, compass and boss key (this dungeon)</string>
+    <string name="cheat_dungeon_done">Map, compass and boss key for this dungeon.</string>
+    <string name="cheat_inf_ammo">Infinite arrows and bombs</string>
+    <string name="cheat_inf_bags">Infinite bait and spoils</string>
+    <string name="cheat_inf_bags_hint">Used bait and Hyoi Pears come back, spoils stay at 99</string>
+    <string name="cheat_inf_breath">Infinite swimming</string>
+    <string name="cheat_inf_breath_hint">The swim meter stays full: Link never tires or sinks in deep water</string>
+    <string name="cheat_one_hit">One hit kills</string>
+    <string name="cheat_one_hit_hint">Enemies fall to a single hit (bosses with their own counters excepted)</string>
+    <string name="cheat_inf_health">Infinite health</string>
+    <string name="cheat_inf_magic">Infinite magic</string>
+    <string name="cheat_inf_rupees">Infinite rupees</string>
+    <string name="cheat_items">Give all items</string>
+    <string name="cheat_items_done">All items given.</string>
+    <string name="cheat_items_hint">Every inventory item, light arrows, Deluxe Picto Box, power bracelets, 4 bottles, 99 arrows and bombs</string>
+    <string name="cheat_key">Add a small key (this dungeon)</string>
+    <string name="cheat_key_done">One small key added.</string>
+    <string name="cheat_moon_anims">Random lift-off animations</string>
+    <string name="cheat_moon_anims_hint">Each lift-off picks one of 14 poses instead of the two jump poses</string>
+    <string name="cheat_moon_fly">Flight speed</string>
+    <string name="cheat_moon_jump">Moon jump</string>
+    <string name="cheat_moon_jump_hint">Hold its button to rise, steer with the left stick. On the same controller button as Jump anywhere the moon jump wins</string>
+    <string name="opt_jump_button">Controller button</string>
+    <string name="opt_jump_button_hint">On touch it has a button of its own. A controller button the game uses while playing hands that over to another one, or an item button is taken off</string>
+    <string name="opt_jump_clash">%1$s presses %2$s in the game. With %3$s on it as well, it would do both.</string>
+    <string name="opt_jump_clash_move">Move: %1$s goes to %2$s.</string>
+    <string name="opt_jump_clash_nofree">No free controller button is left for %1$s.</string>
+    <string name="opt_jump_clash_remove">Take off: no controller button presses %1$s any more; its item can\'t be used from the controller (the other item buttons stay).</string>
+    <string name="opt_jump_clash_remove_ring">Take off: no controller button presses %1$s any more; the item ring still has what it did (Wind Waker, cannon, salvage arm).</string>
+    <string name="opt_jump_move">Move</string>
+    <string name="opt_jump_remove">Take off</string>
+    <string name="opt_jump_move_l1">Move to L1</string>
+    <string name="opt_jump_move_down">Move to D-pad down</string>
+    <string name="opt_jump_clash_extra">Move to L1 / D-pad down: %1$s goes onto that button instead and keeps its item, its slot on the item page shows the new button. L1 then no longer presses the Wii U\'s L (no page turns there, no mic button for the songs); d-pad down stays d-pad down outside play.</string>
+    <string name="cheat_moon_nofall">No fall damage</string>
+    <string name="cheat_moon_nofall_hint">Landing after a flight never hurts</string>
+    <string name="cheat_moon_rise">Rise speed</string>
+    <string name="cheat_songs">All songs</string>
+    <string name="cheat_songs_done">All songs learned.</string>
+    <string name="cheat_stats">20 hearts, double magic, 5000 rupees</string>
+    <string name="cheat_stats_done">20 hearts, double magic and 5000 rupees.</string>
+    <string name="cheat_stats_hint">Also refills hearts and magic</string>
+    <string name="cheat_sword">Equip Master Sword and Mirror Shield</string>
+    <string name="cheat_sword_done">Master Sword and Mirror Shield equipped until the save file is loaded again.</string>
+    <string name="cheat_sword_hint">Until the save file is loaded again</string>
+    <string name="cheat_triforce">All Triforce shards</string>
+    <string name="cheat_triforce_done">All Triforce shards collected.</string>
+    <string name="cheats_about">These change the save file you are playing (from the original project). They apply once a save file is loaded; save in the game to keep them.</string>
+    <string name="cheats_story_about">⚠️ Story cheats can change or break story events: the game may skip or repeat scenes that teach or check them. Save to a spare file first.</string>
+    <string name="cheats_story_confirm">This can change or break story events. Save to a spare file first. Apply it?</string>
+    <string name="controller_pro">Wii U Pro Controller</string>
+    <string name="controls_classic">Classic</string>
+    <string name="controls_flexible">Flexible</string>
+    <string name="dev_off">Developer options off</string>
+    <string name="dev_on">Developer options on (Mods tab: Warp)</string>
+    <string name="drc_in_layout">In the screen layout</string>
+    <string name="drc_second_display">Second display</string>
+    <string name="drc_shape_fill">Fill the screen</string>
+    <string name="drc_shape_original">Original 16:9</string>
+    <string name="dyn_res_down_to">Down to %1$s× (%2$s)</string>
+    <string name="fg_about">Adds interpolated frames between the game\'s 30 fps frames, using the frame generation of Lossless Scaling. It needs your own copy of Lossless.dll from your Lossless Scaling installation (Steam: steamapps/common/Lossless Scaling). Copy it to this device and choose it here. Generated frames show the game about one frame later.</string>
+    <string name="fg_dll_tested_hint">Installed: a tested version</string>
+    <string name="fg_dll_untested_hint">Installed: an untested version (frames may look wrong)</string>
+    <string name="fg_error">Frame generation isn\'t working: %1$s</string>
+    <string name="fg_multiplier_item">×%1$d (%2$d fps)</string>
+    <string name="fg_multiplier_item_over">×%1$d (%2$d fps: more than the display shows, no generated frames)</string>
+    <string name="fg_performance">Performance</string>
+    <string name="fg_quality">Quality (more GPU load)</string>
+    <string name="gpu_driver_about">On Adreno GPUs the game can run on another Vulkan driver than the system\'s, for example a Mesa Turnip build or a newer Qualcomm driver. Use driver packages in the AdrenoTools format (a .zip with meta.json and the driver), as other emulators use them. A new driver applies after a restart. If the game doesn\'t start with it, the next start goes back to the system driver.</string>
+    <string name="gpu_driver_fell_back">%1$s couldn\'t be loaded, so the system driver runs. The next start switches back to it.</string>
+    <string name="gpu_driver_install">Install driver package…</string>
+    <string name="gpu_driver_install_hint">A .zip with meta.json and the driver</string>
+    <string name="gpu_driver_remove">Remove</string>
+    <string name="gpu_driver_running">Running now: %1$s</string>
+    <string name="gpu_driver_system">System driver</string>
+    <string name="gpu_driver_system_hint">The driver that came with the device</string>
+    <string name="gpu_driver_use">Use</string>
+    <string name="interp_fps">%d fps (interpolated)</string>
+    <string name="interp_off">30 fps (original)</string>
+    <string name="opt_about">About</string>
+    <string name="opt_aniso">16× anisotropic filtering</string>
+    <string name="opt_ao">Ambient occlusion</string>
+    <string name="opt_ao_hires">Full-size occlusion depth</string>
+    <string name="opt_aspect">Aspect ratio</string>
+    <string name="opt_auto_slot">Auto save %1$d</string>
+    <string name="opt_auto_state">Auto save state</string>
+    <string name="opt_auto_state_hint">Saves a state as you play, without stopping the game, into two auto slots that take turns</string>
+    <string name="opt_back">Back</string>
+    <string name="opt_bench">Find the best settings</string>
+    <string name="opt_bench_hint">Runs a short test of this device and sets the preset from it (the game restarts)</string>
+    <string name="opt_buttons">Controller buttons</string>
+    <string name="opt_buttons_custom">Custom</string>
+    <string name="opt_buttons_default">Default</string>
+    <string name="opt_buttons_hint">Which controller button presses which Wii U button</string>
+    <string name="opt_buttons_note">Choose a Wii U button, then press the controller button for it. A button that is already in use swaps places, so every Wii U button keeps one. Jump anywhere and the moon jump ask first on a button the game uses while playing. Home / Guide and holding Select always open the menu, and the menu keeps using the buttons by position.</string>
+    <string name="opt_buttons_press">Press the controller button for %1$s (now: %2$s).\n\nHome / Guide or Cancel keeps it as it is.</string>
+    <string name="opt_buttons_reset">Reset to default</string>
+    <string name="opt_extra_l1">L1 as an item button</string>
+    <string name="opt_extra_l1_hint">Takes over item button X, Y or R from its controller button (a jump there swaps over), with its item, the item page\'s slot and the item ring. L1 then no longer presses the Wii U\'s L: no page turns on the item page, no mic button for the songs.</string>
+    <string name="opt_extra_down">D-pad down as an item button</string>
+    <string name="opt_extra_down_hint">As L1, but only while playing; in menus it stays d-pad down. On the item page: hold ZL and press d-pad down to put the item under the cursor onto it.</string>
+    <string name="opt_slot_labels">Item button names</string>
+    <string name="opt_slot_labels_hint">On the game\'s buttons and the item slots of the GamePad. Auto: A1, A2, A3 by touch, with a controller the button that presses it</string>
+    <string-array name="slot_labels">
+        <item>Auto</item>
+        <item>A1, A2, A3</item>
+        <item>X, Y, R (the game\'s)</item>
+    </string-array>
+    <!-- the controller setup (ControllerSetup) -->
+    <string name="cs_title">Set up controller</string>
+    <string name="cs_menu_hint">Step by step: what the buttons do, a suggested layout, trying it out</string>
+    <string name="cs_no_controller">No controller is connected. Connect one (or press one of its buttons) and try again.</string>
+    <string name="cs_buttons_for">For: %1$s</string>
+    <string name="cs_offer_title">New controller</string>
+    <string name="cs_offer_text">%1$s is connected.\n\nSet it up? A few steps show what its buttons do in the game and suggest a layout, also one for Jump anywhere. All of it can be changed later at Controls › Set up controller.</string>
+    <string name="cs_offer_never">Don\'t ask</string>
+    <string name="cs_offer_later">Later</string>
+    <string name="cs_offer_yes">Set up</string>
+    <string name="cs_intro">%1$s\n\nThe game knows only the Wii U GamePad. Each of its buttons is pressed by one button of your controller. Which one can be changed freely, and each controller keeps its own.\n\nWhile playing, the game uses every button but L and d-pad down. So Jump anywhere and the moon jump either share L (L1 / LB), or take a button from the game: what that button did then moves to L or, for an item button, is taken off.</string>
+    <string name="cs_next">Next</string>
+    <string name="cs_face_title">Face buttons</string>
+    <string name="cs_face_text">How should the four buttons on the right work?\n\nBy position: as on the Wii U GamePad. The bottom one is the sword (the Wii U\'s B), the right one the action button (A). The letters on your controller then differ from the game\'s.\n\nBy letters: your controller\'s A is the game\'s A (action), B the sword, X and Y the item buttons A2 and A1.</string>
+    <string name="cs_face_letters">By letters</string>
+    <string name="cs_face_position">By position</string>
+    <string name="cs_preset_title">Layout</string>
+    <string name="cs_preset_text">Choose a starting point. Single buttons can be changed afterwards.</string>
+    <string name="cs_preset_original">Original</string>
+    <string name="cs_preset_original_text">Every button as on the Wii U. Jump anywhere and the moon jump (when on) on L1 / LB, which the game doesn\'t use while playing.</string>
+    <string name="cs_preset_takeoff">Jump on an item button, the item off</string>
+    <string name="cs_preset_takeoff_text">Jump anywhere on the button of an item button (A1, A2 or A3). That item button is taken off: its item can\'t be used from the controller, the other two stay. Switches Jump anywhere on.</string>
+    <string name="cs_preset_tol">Jump on any button, its use to L</string>
+    <string name="cs_preset_tol_text">Jump anywhere on a button of your choice, a face button for example. What that button did in the game moves to L1 / LB, so nothing is lost. Switches Jump anywhere on. For an item button, L1 becomes that item button; the Wii U\'s L then has no controller button (page turns on the item page, the songs\' mic button).</string>
+    <string name="cs_jump_title">Button for jumping</string>
+    <string name="cs_jump_takeoff">Press the item button that should jump: %1$s (A1), %2$s (A2) or %3$s (A3).\n\nThe moon jump, while it is on, takes the same button.</string>
+    <string name="cs_jump_tol">Press the button that should jump, a face button for example. What it does in the game moves to L1 / LB.\n\nThe moon jump, while it is on, takes the same button.</string>
+    <string name="cs_jump_not_item">%1$s presses the game\'s %2$s, not an item button: it can\'t be taken off.</string>
+    <string name="cs_jump_not_menu">%1$s opens menus. Choose another button.</string>
+    <string name="cs_try_title">Try it</string>
+    <string name="cs_try_text">Press the controller\'s buttons: each one lights up with what it does in the game. Hold Start / Options to finish. Single buttons: Controls › Controller buttons.</string>
+    <string name="cs_change">Change</string>
+    <string name="cs_done">Done</string>
+    <string name="cs_nothing">nothing</string>
+    <string name="cs_select_hold">held: this app\'s menu</string>
+    <string name="cs_tag_jump">Jump</string>
+    <string name="cs_tag_moon">Moon</string>
+    <string name="cs_takeoff_ring">With the item ring on, a d-pad direction works too (not down, the game doesn\'t use it): the ring has the Wind Waker, the cannon and the salvage arm.</string>
+    <string name="cs_jump_not_item_ring">%1$s presses the game\'s %2$s, neither an item button nor a d-pad direction the item ring has: it can\'t be taken off.</string>
+    <string name="cs_in_ring">also in the item ring</string>
+    <string name="cs_taken_off">No button: %1$s</string>
+    <string name="cs_ring_off_warn">No controller button presses %1$s any more (taken off for a jump while the item ring had it). Without the ring, what it did can\'t be used from the controller: give it a button at Controls › Controller buttons, or run Controls › Set up controller.</string>
+    <string-array name="cs_wiiu_actions">
+        <item>Action (talk, open, lift)</item>
+        <item>Sword</item>
+        <item>Item button A2</item>
+        <item>Item button A1</item>
+        <item>Not used while playing</item>
+        <item>Item button A3</item>
+        <item>Target</item>
+        <item>Crouch, shield</item>
+        <item>Not used</item>
+        <item>Pause, GamePad screen</item>
+        <item>Faster moving (Mods, if set to L3)</item>
+        <item>First person</item>
+        <item>Wind Waker</item>
+        <item>Not used while playing</item>
+        <item>Cannon (boat)</item>
+        <item>Salvage arm (boat)</item>
+    </string-array>
+    <string name="opt_cancel">Cancel</string>
+    <string name="opt_capture">Capture a frame</string>
+    <string name="opt_capture_hint">For debugging: written to the app\'s folder</string>
+    <string name="opt_cheats">Cheats</string>
+    <string name="opt_cheats_hint">Items, hearts, infinite health… for the save file you play</string>
+    <string name="opt_context_buttons">Context buttons</string>
+    <string name="opt_context_buttons_hint">A, B, X, Y, R and ZR appear when there is something to do and say what; the game\'s own button display is hidden</string>
+    <string name="opt_controls">Controls</string>
+    <string name="opt_controls_edit">Edit on-screen layout</string>
+    <string name="opt_controls_edit_hint">Move, resize and hide each button; opacity and style (outline or filled)</string>
+    <string name="opt_controls_style">Touch controls</string>
+    <string name="opt_controls_style_hint">Flexible: the sticks appear where your thumb touches (left half: movement, right half: camera)</string>
+    <string name="opt_display_res">Display resolution</string>
+    <string name="opt_display_res_hint">Auto: the picture is drawn at the size it needs and the screen enlarges it, which is faster on high-resolution screens; Full: always at the screen\'s own resolution</string>
+    <string name="opt_drc_display">GamePad screen</string>
+    <string name="opt_drc_display_hint">A second display was found (e.g. the lower screen of a dual-screen device)</string>
+    <string name="opt_drc_shape">GamePad picture</string>
+    <string name="opt_drc_shape_hint">Fill: the GamePad screen takes the display\'s shape, its background reaches the edges</string>
+    <string name="opt_dyn_res">Dynamic resolution</string>
+    <string name="opt_dyn_res_hint">Lowers the rendering resolution while the GPU keeps the game below its frame rate (the game slows down then), and raises it back up to the setting above when there is room. The performance overlay shows the current value</string>
+    <string name="opt_export">Export saves</string>
+    <string name="opt_export_hint">Save your game save and save states into one backup file</string>
+    <string name="opt_fg_choose_dll">Select Lossless.dll</string>
+    <string name="opt_fg_flow">Flow scale</string>
+    <string name="opt_fg_flow_hint">Resolution of the motion estimate: lower is faster</string>
+    <string name="opt_fg_multiplier">Multiplier</string>
+    <string name="opt_fg_multiplier_hint">Frames shown per game frame</string>
+    <string name="opt_fg_network">Network</string>
+    <string name="opt_fg_remove_confirm">Remove Lossless.dll from the app? Frame generation is switched off until you choose it again.</string>
+    <string name="opt_fg_remove_dll">Remove Lossless.dll</string>
+    <string name="opt_fg_replace_dll">Select Lossless.dll</string>
+    <string name="opt_fg_ui">UI detection</string>
+    <string name="opt_fg_ui_hint">Keeps menus and text sharp</string>
+    <string name="opt_framegen">Frame generation</string>
+    <string name="opt_game">Game</string>
+    <string name="opt_gpu_driver">GPU driver</string>
+    <string name="opt_gpu_driver_hint">The system\'s, or an installed driver package</string>
+    <string name="opt_graphics">Graphics</string>
+    <string name="opt_hearts_combat">Hearts only in combat</string>
+    <string name="opt_hearts_combat_hint">The hearts fade out while the sword is put away and fade in when it is drawn, when Link takes damage or when he heals; the magic bar shows on its own while magic is used</string>
+    <string name="opt_import">Import saves</string>
+    <string name="opt_import_hint">Restore them from their files; an imported game save restarts the game</string>
+    <string name="opt_interp">Frame rate</string>
+    <string name="opt_interp_hint">Frame interpolation: in-between frames from the game\'s 30 fps. Needs a fast CPU; where a frame doesn\'t fit in time it is left out and the game keeps its speed</string>
+    <string name="opt_invert_camera_y">Invert camera up/down</string>
+    <string name="opt_invert_camera_y_hint">Push the right stick (or swipe) up to look down. First person and aiming leaves the normal camera and menus as they are</string>
+    <string name="opt_item_ring">Item ring</string>
+    <string name="opt_item_ring_hint">Hold X, Y or R (touch or controller) to pick the item for it; a tap uses the item as before</string>
+    <string name="opt_item_ring_pace">While the ring is open</string>
+    <string name="opt_language">Game language</string>
+    <string name="opt_language_hint">The languages of your copy of the game; applies after a restart</string>
+    <string name="opt_last_slot">Last session</string>
+    <string name="opt_layout">Screen layout</string>
+    <string name="opt_leave_state">Save state when leaving the app</string>
+    <string name="opt_leave_state_hint">Keeps where you were if Android closes the game while it\'s in the background</string>
+    <string name="opt_menu_overlay">Menu button in the game</string>
+    <string name="opt_menu_overlay_hint">Off: these options are a page of the + menu, behind the arrow left of the items. On: the ≡ button opens them over the game, as before</string>
+    <string name="opt_minigame_touch">Minigames by touch</string>
+    <string name="opt_minigame_touch_hint">Touch the game\'s picture: Sploosh Kaboom\'s squares, the picture puzzles\' pieces, mail slots, shop items, answers; aim the cannon, bid, turn figures and conduct by dragging. Off: the stick and buttons only, as in the original</string>
+    <string name="opt_conduct_pads">Note pads for conducting</string>
+    <string name="opt_conduct_pads_hint">Conducting shows two pads: the five note signs (the baton\'s directions, a d-pad) and the three times. Off: a finger on each half of the picture is a stick</string>
+    <string name="opt_mod_camera_speed">Direct camera speed</string>
+    <string name="opt_mod_climb">Climb any wall</string>
+    <string name="opt_mod_climb_fast">Faster climbing</string>
+    <string name="opt_mod_climb_fast_hint">Ladders, vines and moving along a ledge while hanging</string>
+    <string name="opt_mod_climb_hint">With a stamina wheel; B or A lets go</string>
+    <string name="opt_mod_direct_camera">Direct right-stick camera</string>
+    <string name="opt_mod_direct_camera_hint">No easing: the camera follows the stick at once</string>
+    <string name="opt_mod_fast_scenes">Fast scene changes</string>
+    <string name="opt_mod_ff_cutscenes">Fast forward cutscenes</string>
+    <string name="opt_mod_ff_dialogues">Fast forward dialogues</string>
+    <string name="opt_mod_picto_pages">Album pages</string>
+    <string name="opt_mod_picto_pages_hint">The Picto Box album gets any number of pages of 12 pictos: when it is full, a new picto starts a new page. In the album the bar at the top (or ZL / L) turns the pages. Your save keeps the page in play, the others are stored next to it</string>
+    <string name="picto_page">Page %1$d / %2$d</string>
+    <string name="opt_picto_subject">Picto subjects</string>
+    <string name="opt_picto_subject_hint">In the Picto Box album: who a picto caught, by the gallery figurine\'s name. A gold medal picto (★) is good enough for a figurine; else it says what is missing</string>
+    <string name="picto_mono">black and white</string>
+    <string name="picto_turned_away">turned away</string>
+    <string name="picto_hidden">partly hidden</string>
+    <string name="opt_postbox">Mail pictos at postboxes</string>
+    <string name="opt_postbox_hint">Show a postbox the Picto Box and choose a picto: it goes to Carlov, who makes the figurine as at the Nintendo Gallery. It is put in the gallery the next day, no visit needed</string>
+    <string name="opt_postbox_same_day">Same day delivery</string>
+    <string name="opt_postbox_same_day_hint">The mailed figurine is in the Nintendo Gallery at once</string>
+    <string name="postbox_mailed">Mailed to Carlov: %1$s. The figurine will be in the Nintendo Gallery tomorrow.</string>
+    <string name="postbox_delivered">The figurine of %1$s is now in the Nintendo Gallery.</string>
+    <string name="postbox_no_carlov">Meet Carlov at the Nintendo Gallery first.</string>
+    <string name="postbox_mono">Carlov needs a picto in colour.</string>
+    <string name="postbox_no_subject">Nothing in this picto can become a figurine.</string>
+    <string name="postbox_made">The figurine of %1$s is already in the gallery.</string>
+    <string name="postbox_queued">The figurine of %1$s is already on order.</string>
+    <string name="postbox_face">%1$s: the face doesn\'t show well enough.</string>
+    <string name="postbox_body">%1$s: not all of them is in the picto.</string>
+    <string name="postbox_full">Carlov has 12 figurines on order already.</string>
+    <string name="postbox_ask">Send a picto to Carlov at the Nintendo Gallery? He makes a figurine of it.</string>
+    <string name="postbox_ask_yes">Yes, choose a picto</string>
+    <string name="postbox_ask_no">No</string>
+    <string name="opt_link_clothes">Link\'s clothes</string>
+    <string name="opt_link_clothes_hint">Hero\'s clothes or his casual clothes (the lobster shirt) at any time; a change shows as a puff of smoke. As in the story: the game decides</string>
+    <string name="clothes_story">As in the story</string>
+    <string name="clothes_hero">Hero\'s clothes</string>
+    <string name="clothes_casual">Casual clothes</string>
+    <string name="opt_mod_song_replay">Replay conducted songs</string>
+    <string name="opt_mod_song_replay_hint">As on the GameCube: after a song you conduct, Link plays it once more before it takes effect (the Wii U version goes straight to the effect)</string>
+    <string name="opt_mod_ff_hint">Faster (up to 4×, as fast as this device draws) while ZR (R2) is held; text boxes still wait for your button</string>
+    <string name="opt_mod_first_person">First person on the mouse wheel</string>
+    <string name="opt_mod_jump">Jump anywhere</string>
+    <string name="opt_mod_jump_double">Double jump</string>
+    <string name="opt_mod_jump_double_hint">The jump button once more in the air</string>
+    <string name="opt_mod_jump_hint">Its button jumps from standing or running, as off a ledge</string>
+    <string name="opt_mod_jump_noauto">No automatic ledge jumps</string>
+    <string name="opt_mod_jump_noauto_hint">Running off an edge, Link drops instead of leaping: you jump with the jump button</string>
+    <string name="opt_mod_quick_doors">Quick doors</string>
+    <string name="opt_mod_run">Faster running</string>
+    <string name="opt_mod_run_always">Always</string>
+    <string name="opt_mod_run_hint">Link covers more ground while running; jumps and rolls stay as they are</string>
+    <string name="opt_mod_run_l3">L3</string>
+    <string name="opt_mod_run_l3_hold">Hold</string>
+    <string name="opt_mod_run_l3_switch">Press: on / off</string>
+    <string name="opt_mod_run_off">Off</string>
+    <string name="opt_mod_run_when">Applies</string>
+    <string name="opt_mod_run_with_l3">With L3</string>
+    <string name="opt_mod_sidle">Faster sidling</string>
+    <string name="opt_mod_sidle_hint">While Link moves with his back to a wall</string>
+    <string name="opt_mod_speed_hint">4× speed</string>
+    <string name="opt_mod_swim">Faster swimming</string>
+    <string name="opt_mod_swim_hint">The same while Link swims</string>
+    <string name="opt_mods">Mods</string>
+    <string name="opt_motion">Motion controls</string>
+    <string name="opt_motion_hint">Aim by tilting the device, or a controller with motion sensors</string>
+    <string name="opt_off">OFF</string>
+    <string name="opt_on">ON</string>
+    <string name="opt_page_touch">Touch</string>
+    <string name="opt_page_touch_hint">Size, sticks, item buttons, icons, menu button</string>
+    <string name="opt_page_ring_hint">Pick items on a ring; item button names</string>
+    <string name="opt_page_camera">Camera</string>
+    <string name="opt_page_camera_hint">Up/down, direct camera, walking direction, swipe camera</string>
+    <string name="opt_page_minigames">Minigames &amp; hints</string>
+    <string name="opt_page_minigames_hint">Minigames and conducting by touch, touch hints</string>
+    <string name="opt_page_hud">Screen (HUD)</string>
+    <string name="opt_page_hud_hint">Hearts, rupees, Picto Box view</string>
+    <string name="opt_page_controller">Controller</string>
+    <string name="opt_page_controller_hint">Set up, buttons, controller details</string>
+    <string name="cd_title">Controller details</string>
+    <string name="cd_hint">Name, IDs, battery, rumble, motion sensors, lights, buttons, axes</string>
+    <string name="cd_sec_general">Controller</string>
+    <string name="cd_sec_app">In this app</string>
+    <string name="cd_sec_battery">Battery</string>
+    <string name="cd_sec_rumble">Rumble</string>
+    <string name="cd_sec_motion">Motion sensors</string>
+    <string name="cd_sec_lights">Lights</string>
+    <string name="cd_sec_buttons">Buttons</string>
+    <string name="cd_sec_axes">Sticks and triggers (axes)</string>
+    <string name="cd_name">Name</string>
+    <string name="cd_vendor">Vendor ID</string>
+    <string name="cd_product">Product ID</string>
+    <string name="cd_device_id">Device ID</string>
+    <string name="cd_player">Player number</string>
+    <string name="cd_descriptor">Descriptor</string>
+    <string name="cd_connection">Connection</string>
+    <string name="cd_external">External</string>
+    <string name="cd_builtin">Built in</string>
+    <string name="cd_enabled">Enabled</string>
+    <string name="cd_mic">Microphone</string>
+    <string name="cd_keyboard">Keyboard</string>
+    <string name="cd_kb_alpha">Letters</string>
+    <string name="cd_kb_buttons">Buttons only</string>
+    <string name="cd_sources">Input sources</string>
+    <string name="cd_face">Face buttons</string>
+    <string name="cd_face_sony">PlayStation symbols</string>
+    <string name="cd_face_nintendo">Nintendo letters (read by position)</string>
+    <string name="cd_face_xbox">Xbox letters</string>
+    <string name="cd_in_use">In use now</string>
+    <string name="cd_set_up">Set up</string>
+    <string name="cd_motion_from">Gyro aiming from</string>
+    <string name="cd_rumble_on">Rumble on</string>
+    <string name="cd_this_controller">This controller</string>
+    <string name="cd_this_device">This device</string>
+    <string name="opt_src_auto">Automatic</string>
+    <string name="opt_src_device">This device</string>
+    <string name="opt_src_controller">Controller</string>
+    <string name="opt_src_both">Both</string>
+    <string name="opt_motion_from_hint">Automatic: the controller while you play with it (if it has motion sensors), this device while you play by touch</string>
+    <string name="opt_rumble_on_hint">Automatic: the controller while you play with it (if it rumbles), this device while you play by touch</string>
+    <string name="cd_both">This controller and this device</string>
+    <string name="cd_battery">Battery</string>
+    <string name="cd_charge">Charge</string>
+    <string name="cd_status">Status</string>
+    <string name="cd_bat_charging">Charging</string>
+    <string name="cd_bat_discharging">Discharging</string>
+    <string name="cd_bat_not_charging">Not charging</string>
+    <string name="cd_bat_full">Full</string>
+    <string name="cd_motors">Motors</string>
+    <string name="cd_motor">Motor %1$d</string>
+    <string name="cd_amplitude">Strength control</string>
+    <string name="cd_on_off_only">On / off only</string>
+    <string name="cd_resonance">Resonance %1$s Hz</string>
+    <string name="cd_effects">Effects: %1$s</string>
+    <string name="cd_sensors">Sensors</string>
+    <string name="cd_gyro">Gyroscope</string>
+    <string name="cd_accel">Accelerometer</string>
+    <string name="cd_range">Range ±%1$s, resolution %2$s</string>
+    <string name="cd_rate">up to %1$s Hz</string>
+    <string name="cd_lights">Lights</string>
+    <string name="cd_light">Light</string>
+    <string name="cd_light_mic">Microphone light</string>
+    <string name="cd_light_input">Input light</string>
+    <string name="cd_light_player">Player light</string>
+    <string name="cd_light_keyboard">Keyboard backlight</string>
+    <string name="cd_light_colour">colour</string>
+    <string name="cd_light_brightness">brightness</string>
+    <string name="cd_button_count">%1$d buttons</string>
+    <string name="cd_axes">Axes</string>
+    <string name="cd_axis_left">left stick</string>
+    <string name="cd_axis_right">right stick</string>
+    <string name="cd_axis_dpad">d-pad</string>
+    <string name="cd_axis_lt">left trigger</string>
+    <string name="cd_axis_rt">right trigger</string>
+    <string name="cd_resolution">resolution %1$s</string>
+    <string name="cd_yes">Yes</string>
+    <string name="cd_no">No</string>
+    <string name="cd_none">None</string>
+    <string name="cd_none_reported">None reported</string>
+    <string name="cd_unknown">Unknown</string>
+    <string name="opt_page_res">Resolution &amp; upscaling</string>
+    <string name="opt_page_res_hint">Dynamic resolution, upscaling, display resolution</string>
+    <string name="opt_page_quality">Picture quality</string>
+    <string name="opt_page_quality_hint">Ambient occlusion, texture filtering</string>
+    <string name="opt_page_screen">Screens</string>
+    <string name="opt_page_screen_hint">Widescreen, field of view, aspect ratio, TV and GamePad screens</string>
+    <string name="opt_page_advanced">Advanced</string>
+    <string name="opt_page_advanced_hint">GPU driver, VSync, recording thread, shader cache</string>
+    <string name="opt_page_songs">Songs</string>
+    <string name="opt_page_songs_hint">Replay, sing into the microphone, play buttons</string>
+    <string name="opt_onscreen_size">On-screen controls size</string>
+    <string name="opt_packs">Mod packs</string>
+    <string name="opt_packs_hint">Cemu graphic packs and game file mods, imported from .zip and .rar files</string>
+    <string name="opt_pad_hint">Controller: hold Select or press Home to open and close · L / R switch tabs · D-pad moves and changes values · right button selects · bottom button goes back</string>
+    <string name="opt_perf">Performance overlay</string>
+    <string name="opt_perf_hint">FPS, load and temperatures</string>
+    <string name="opt_perf_move">Move the overlay</string>
+    <string name="opt_perf_move_hint">Closes the menu: drag the overlay with a finger, tap elsewhere when done</string>
+    <string name="opt_perf_reset">Reset its position</string>
+    <string name="opt_picto_big">Large Picto Box view</string>
+    <string name="opt_picto_big_hint">With context buttons: the Picto Box\'s viewfinder fills the screen, pinch to zoom (also the telescope). Off: the game\'s original Picto Box and telescope screens</string>
+    <string name="opt_preset">Preset</string>
+    <string name="opt_preset_hint">Sets rendering resolution, dynamic resolution and frame rate together (with frame generation on: 30 fps doubled, higher resolutions). Changing one of them by hand makes it Custom</string>
+    <string name="opt_quit">Quit</string>
+    <string name="opt_record_thread">Command recording thread</string>
+    <string name="opt_record_thread_hint">A second CPU thread prepares the GPU work: faster on most devices, slower on some (e.g. Snapdragon 855)</string>
+    <string name="opt_vsync">VSync</string>
+    <string name="opt_vsync_hint">Each frame waits for the screen\'s refresh. Turn it on if the picture stutters badly or turns into a slideshow on your device; it may add a little input lag. Off: only with frame generation</string>
+    <string name="st_touch_title">New touch controls</string>
+    <string name="st_touch_text">Try the new touch controls?\n\nThe sticks appear where your thumbs land (on the right the camera turns by swiping), buttons show up only when they do something and say what, items are aimed and shot by tapping, and holding an item button opens a ring of all your items. Minigames are played by touching the picture.\n\nEverything can be changed later under Controls; Classic brings back the fixed on-screen GamePad.</string>
+    <string name="st_touch_yes">Use the new controls</string>
+    <string name="st_touch_no">Keep Classic</string>
+    <string name="st_jump_title">Jump anywhere</string>
+    <string name="st_jump_text">Jump whenever you like? A button of its own makes Link jump from standing or running, as off a ledge. (Mods › Jump anywhere)</string>
+    <string name="st_double_text">And a second jump in the air?</string>
+    <string name="st_sing_title">Sing the songs</string>
+    <string name="st_sing_text">Would you like to try playing the Wind Waker\'s songs by singing, humming or whistling them into the microphone? (experimental; the sound is only analysed on this device, never recorded)\n\nOtherwise you conduct with two note pads on the screen.</string>
+    <string name="st_sing_yes">Try singing</string>
+    <string name="st_sing_no">Note pads</string>
+    <string name="st_yes">Yes</string>
+    <string name="st_no">No</string>
+    <string name="opt_render_aspect">Widescreen</string>
+    <string name="opt_render_aspect_hint">Screen shape: the game renders at your screen\'s aspect ratio and shows more to the sides; the HUD keeps its proportions at the screen edges</string>
+    <string name="opt_view_zoom">Field of view</string>
+    <string name="opt_view_zoom_original">Original</string>
+    <string name="opt_view_zoom_hint">Zoom out to see more around Link. Pinching with two fingers on the picture changes it too</string>
+    <string name="opt_resolution">Rendering resolution</string>
+    <string name="opt_rumble">Rumble</string>
+    <string name="opt_rumble_hint">On the controller, or this device if the controller has no rumble or while playing by touch</string>
+    <string name="opt_rupees_change">Rupees only when they change</string>
+    <string name="opt_rupees_change_hint">The rupee count fades in when you collect or spend rupees, and out again after a few seconds</string>
+    <string name="opt_saves">Saves</string>
+    <string name="opt_shaders">Delete shader cache</string>
+    <string name="opt_shaders_hint">Restarts the game as on its first start</string>
+    <string name="opt_show_sticks">Show sticks</string>
+    <string name="opt_show_sticks_hint">Off: the sticks work from a blank screen</string>
+    <string name="opt_stick_follows">Left stick follows the thumb</string>
+    <string name="opt_stick_follows_hint">A thumb sliding past the left stick\'s edge pulls the stick along. Off: the stick keeps its place</string>
+    <string name="opt_slot">Save state %1$d</string>
+    <string name="opt_slot_empty">Empty</string>
+    <string name="opt_slot_incompatible">%1$s · from another build, can\'t be loaded</string>
+    <string name="opt_slot_load">Load</string>
+    <string name="opt_slot_save">Save</string>
+    <string name="opt_start_mode">At start</string>
+    <string name="opt_start_mode_hint">Before the intro: pick a save state, or go straight back to where you left the game</string>
+    <string name="opt_steer">Walking direction</string>
+    <string name="opt_steer_hint">Link keeps the direction he walks in when the camera turns. Move the stick (or let go) to walk relative to the camera again</string>
+    <string name="opt_steer_resync">Stick re-syncs after</string>
+    <string name="opt_steer_resync_hint">How far the stick moves before Link walks relative to the camera again. Lower is snappier</string>
+    <string name="opt_steer_swing">Camera swings behind Link</string>
+    <string name="opt_steer_swing_delay">Swing starts after</string>
+    <string name="opt_steer_swing_delay_hint">Time without the right stick, or running towards the camera</string>
+    <string name="opt_steer_swing_hint">While he runs and the right stick is left alone</string>
+    <string name="opt_swipe_boat">Swipe speed on the boat</string>
+    <string name="opt_swipe_boat_hint">Swipes turn the camera this much faster while Link sails. The telescope and other first-person views stay as they are</string>
+    <string name="opt_swipe_speed">Swipe speed</string>
+    <string name="opt_to_inventory">Back to the items</string>
+    <string name="opt_touch_camera">Camera (right half)</string>
+    <string name="opt_touch_camera_hint">Stick: like the right analog stick. Swipe: the camera turns with your finger</string>
+    <string name="opt_touch_hints">Touch hints</string>
+    <string name="opt_touch_hints_hint">The first time a minigame or a menu of the game is played by touch, a message explains how. On again: every hint shows once more</string>
+    <string name="opt_link_poses">Link in the button icons</string>
+    <string name="opt_link_poses_hint">Jump, crouch, roll, sidle, lift, throw, put down, open, grab and pick up show Link himself doing it, drawn from the game\'s own model and animated. Off: the plain pictograms</string>
+    <string name="opt_zl_defeat">ZL when the target is defeated</string>
+    <string name="opt_zl_defeat_hint">With a tapped ZL (targeting held): when the enemy it locks on is defeated, ZL lets go. Next target: ZL stays and locks the next enemy in reach (lets go if there is none)</string>
+    <string name="opt_zl_defeat_release">Let go</string>
+    <string name="opt_zl_defeat_next">Next target</string>
+    <string name="opt_upscale">Upscaling</string>
+    <string name="opt_upscale_hint">How the picture is enlarged to the screen: Sharp keeps edges crisp at lower rendering resolutions</string>
+    <string name="opt_warp">Warp (developer)</string>
+    <string name="opt_warp_hint">Go to any place, room and spawn point of the game</string>
+    <string name="packs_about">Imports mods from .zip and .rar files: Cemu graphic packs (for example from GameBanana or GitHub) and plain game file mods (a content folder). Code patches (patch_*.asm), game file replacements, pixel shader replacements and texture filtering rules work; vertex shaders and texture resolution rules don\'t yet. A code patch only applies to the game version it was made for. Turning packs on or off, or changing their settings, takes effect after a restart.</string>
+    <string name="packs_delete">Delete pack</string>
+    <string name="packs_delete_confirm">Delete this pack from the device?</string>
+    <string name="packs_details">Details</string>
+    <string name="packs_folder">Folder: packs/%s</string>
+    <string name="packs_groups">Patch groups: %1$d for this game version, %2$d for others</string>
+    <string name="packs_import">Import packs</string>
+    <string name="packs_import_hint">Pick one or more .zip or .rar files</string>
+    <string name="packs_none">No packs imported yet.</string>
+    <string name="packs_on_count">%d on</string>
+    <string name="packs_preset">Setting</string>
+    <string name="packs_restart">Restart now</string>
+    <string name="packs_restart_note">Changes apply after a restart; changed code is then recompiled (a short compile, or none for a combination used before).</string>
+    <string name="packs_title_hint">After turning on a pack that patches code, start from the title screen once and load your quest log there: the pack sets itself up while the game loads. Save states made without the pack don\'t have it set up.</string>
+    <string name="packs_unsupported">Not supported yet: %s</string>
+    <string name="packs_versions">Made for: %s (not this game version)</string>
+    <string name="perf_show">Show the overlay</string>
+    <string name="preset_about">A preset is the story part of a save (items, hearts, songs, chart, each place\'s switches and chests, story flags) plus a place. Warping to it loads that story into the game you are playing; your save file only changes if you save in the game. Presets stay on this device.</string>
+    <string name="preset_ask">%1$s\n\nWarp there with this story? It replaces the story of the game you are playing until you load your save again.</string>
+    <string name="preset_custom">Custom</string>
+    <string name="preset_delete">Delete</string>
+    <string name="preset_guess_hint">Suggested for this device: %1$s</string>
+    <string name="preset_hint">Load the story of a save file or a saved moment and warp to its place</string>
+    <string name="preset_song_scenes">Song scenes</string>
+    <string name="preset_song_scenes_hint">The story just before a song is learned, Link right in front of its stone tablet or teacher</string>
+    <string name="preset_song_scenes_about">Each loads the built-in story preset from just before that song is learned and puts Link in front of where the game teaches it (a stone tablet, Tott). Read the tablet or talk to the teacher, then take out the Wind Waker when the game asks for the song.</string>
+    <string name="preset_import">Import a save file…</string>
+    <string name="preset_import_hint">Pick a WWHD cking.sav, GameCube .gci saves (USA, Europe, Japan) or presets (.wwp); several at once: each used slot becomes a preset</string>
+    <string name="preset_save">Save the current story as a preset</string>
+    <string name="preset_save_hint">Here and now: the story so far and the place you entered</string>
+    <string name="preset_title">Story presets</string>
+    <string name="preset_warp">Warp</string>
+    <string name="start_states_loading">Loading the save state…</string>
+    <string name="start_states_pad_hint">Controller: D-pad moves · right button selects · bottom button starts the game</string>
+    <string name="start_states_title">Continue</string>
+    <string name="start_states_title_hint">Start the game as usual</string>
+    <string name="state_overwrite">Replace the state in slot %1$d?</string>
+    <string name="touch_camera_stick">Stick</string>
+    <string name="touch_camera_swipe">Swipe</string>
+    <string name="warp_about">Takes Link to the place at once, as a door would. The story stays as in your save file: who and what is there depends on it (or pick a layer). Save in the game only if you want to keep the new place.</string>
+    <string name="warp_going">Warping to %1$s</string>
+    <string name="warp_layer">Layer</string>
+    <string name="warp_layer_auto">Story</string>
+    <string name="warp_layer_hint">Which version of the place loads; Story picks it from your progress</string>
+    <string name="warp_no_save">Load a save file first.</string>
+    <string name="warp_reading">Reading the places from your game files… (a few seconds, only this once)</string>
+    <string name="warp_spawn">Room %1$d · spawn %2$d</string>
+    <string name="warp_test">Test overlay</string>
+    <string name="warp_test_hint">A panel over the game: ✓ / ✗ rate the spot and warp to the next; results in warp_tests.tsv</string>
+    <string name="warp_where">Now: %1$s · room %2$s · spawn %3$s · layer %4$s</string>
+    <string-array name="ao_modes">
+        <item>Original (as on Wii U)</item>
+        <item>Centre fix</item>
+        <item>Centre + noise fix</item>
+    </string-array>
+    <string-array name="aspect_modes">
+        <item>Original 16:9 (bars)</item>
+        <item>Stretch to screen</item>
+        <item>Fill screen (cut edges)</item>
+    </string-array>
+    <string-array name="auto_state_modes">
+        <item>Off</item>
+        <item>Every 2 min</item>
+        <item>Every 5 min</item>
+        <item>Every 10 min</item>
+    </string-array>
+    <string-array name="display_res_modes">
+        <item>Auto</item>
+        <item>Full (classic)</item>
+    </string-array>
+    <string-array name="invert_camera_y_modes">
+        <item>Off</item>
+        <item>First person and aiming</item>
+        <item>Always</item>
+    </string-array>
+    <string-array name="item_ring_paces">
+        <item>Keep running</item>
+        <item>Slow motion</item>
+        <item>Pause</item>
+    </string-array>
+    <string-array name="layouts">
+        <item>TV with GamePad inset</item>
+        <item>TV and GamePad side by side</item>
+        <item>TV, GamePad on +</item>
+        <item>GamePad with TV inset</item>
+        <item>TV, GamePad on demand</item>
+    </string-array>
+    <string-array name="preset_steps">
+        <item>Lowest</item>
+        <item>Low</item>
+        <item>Medium</item>
+        <item>High</item>
+    </string-array>
+    <string-array name="record_thread_modes">
+        <item>Automatic</item>
+        <item>On</item>
+        <item>Off</item>
+    </string-array>
+    <string-array name="render_aspect_modes">
+        <item>Original 16:9</item>
+        <item>Screen shape</item>
+    </string-array>
+    <string-array name="start_modes">
+        <item>Intro</item>
+        <item>Offer save states</item>
+        <item>Load the last session</item>
+    </string-array>
+    <string-array name="steer_modes">
+        <item>Follows the camera (original)</item>
+        <item>Kept when you turn the camera</item>
+        <item>Kept while the stick is held</item>
+    </string-array>
+    <string-array name="upscale_modes">
+        <item>Bilinear (classic)</item>
+        <item>Sharp</item>
+    </string-array>
+    <string-array name="wiiu_buttons">
+        <item>A</item>
+        <item>B</item>
+        <item>X</item>
+        <item>Y</item>
+        <item>L</item>
+        <item>R</item>
+        <item>ZL</item>
+        <item>ZR</item>
+        <item>− (minus)</item>
+        <item>+ (plus)</item>
+        <item>Left stick click</item>
+        <item>Right stick click</item>
+        <item>D-pad up</item>
+        <item>D-pad down</item>
+        <item>D-pad left</item>
+        <item>D-pad right</item>
+    </string-array>
+    <!-- setup, dialogs and screens around the menu -->
     <string name="setup_text">The game files were not found or don\'t match this build.\n\nThis app contains only the recompiled code built from your own copy of the game; it needs the extracted game files from the same dump. Extract them on a computer (see README.md: tools/wudextract.py), then copy the resulting folder (with code/, content/ and meta/ inside) to:\n\n%1$s\n\nFor example: adb push game /sdcard/Android/data/org.wwhdrecomp.app/files/\n\nProblem: %2$s</string>
     <string name="setup_retry">Check again</string>
-    <string name="setup_welcome">Welcome!
-
-This app contains no game files. It plays your own copy of The Legend of Zelda: The Wind Waker HD for Wii U (USA, European or Japanese version).
-
-Put these three files on this device, then choose them together:
-•  your disc image (.wux or .wud)
-•  its disc key (the image\'s name with .key)
-•  the console\'s common key (common.key)
-
-Or choose a Cemu archive of your game (.wua); it needs no keys.
-
-The app then extracts the game files (about 1.7 GB) and prepares the game code for this device. That happens once and takes a while, depending on the device\'s processor.</string>
+    <string name="setup_welcome">Welcome!\n\nThis app contains no game files. It plays your own copy of The Legend of Zelda: The Wind Waker HD for Wii U (USA, European or Japanese version).\n\nPut these three files on this device, then choose them together:\n•  your disc image (.wux or .wud)\n•  its disc key (the image\'s name with .key)\n•  the console\'s common key (common.key)\n\nOr choose a Cemu archive of your game (.wua); it needs no keys.\n\nThe app then extracts the game files (about 1.7 GB) and prepares the game code for this device. That happens once and takes a while, depending on the device\'s processor.</string>
     <string name="setup_problem">The game files found don\'t work: %1$s</string>
     <string name="setup_extract">Extract from your disc image or .wua…</string>
     <string name="setup_extract_files">Choose your game files…</string>
@@ -45,33 +682,11 @@ If the picker doesn\'t show your files, put them directly into Download and open
     <string name="compile_continue">Continue</string>
     <string name="compile_stopping">Stopping…</string>
     <string name="compile_cancelled">Preparing the game code was cancelled. It continues where it stopped when you start again.</string>
-
-    <string name="menu_resolution">Resolution: %1$s</string>
-    <string name="res_title">Rendering resolution</string>
     <string name="res_original">Original (%1$s)</string>
     <string name="res_scaled_up">%1$s× (%2$s, more GPU load)</string>
     <string name="res_scaled_down">%1$s× (%2$s, less GPU load)</string>
-    <string name="res_restart">The new resolution takes effect when the game restarts. Progress since your last save is lost.</string>
     <string name="res_restart_now">Restart now</string>
     <string name="res_restart_later">Later</string>
-    <string name="menu_fg">Frame generation: %1$s</string>
-    <string name="menu_states">Save states…</string>
-    <string name="states_title">Save states</string>
-    <string name="state_slot">Slot %1$d %2$s</string>
-    <string name="state_empty">— empty</string>
-    <string name="state_incompatible">%1$s (from another build, can\'t be loaded)</string>
-    <string name="state_save">Save here</string>
-    <string name="state_load">Load</string>
-    <string name="state_overwrite">Replace the state in slot %1$d?</string>
-    <string name="menu_mods">Gameplay mods…</string>
-    <string name="menu_aspect">Aspect ratio: %1$s</string>
-    <string name="aspect_title">Aspect ratio of the picture</string>
-    <string-array name="aspect_modes">
-        <item>Original 16:9 (bars)</item>
-        <item>Stretch to screen</item>
-        <item>Fill screen (cut edges)</item>
-    </string-array>
-    <string name="menu_backup">Import / export saves…</string>
     <string name="backup_title">Import / export saves</string>
     <string name="backup_export_title">Export</string>
     <string name="backup_game_save">Game save</string>
@@ -93,55 +708,16 @@ If the picker doesn\'t show your files, put them directly into Download and open
     <string name="backup_imported_states">Save states imported. States from another build of the app can\'t be loaded.</string>
     <string name="backup_imported_save">Game save imported. The game restarts now to use it (the previous save is kept in save-before-import).</string>
     <string name="backup_failed">Failed: %1$s</string>
-    <string name="mods_title">Gameplay mods</string>
-    <string name="mod_direct_camera">Direct right-stick camera (no easing): %1$s</string>
-    <string name="mod_camera_speed">Direct camera speed: %1$.1f×</string>
-    <string name="mod_speed_title">Direct camera speed</string>
-    <string name="mod_speed_item">%1$.1f×</string>
-    <string name="mod_first_person">First person on R3: %1$s</string>
-    <string name="mod_climb">Climb any wall (stamina wheel; B or A lets go): %1$s</string>
-    <string name="mod_quick_doors">Quick doors (4× speed): %1$s</string>
-    <string name="mod_fast_scenes">Fast scene changes (4× speed): %1$s</string>
     <string name="fg_title">Frame generation (Lossless Scaling)</string>
-    <string name="fg_about">Adds interpolated frames between the game\'s 30 fps frames, using the frame generation of Lossless Scaling. It needs your own copy of Lossless.dll from your Lossless Scaling installation (Steam: steamapps/common/Lossless Scaling). Copy it to this device and choose it here. Generated frames show the game about one frame later.</string>
     <string name="fg_no_dll">needs Lossless.dll</string>
-    <string name="fg_choose_dll">Choose Lossless.dll…</string>
-    <string name="fg_replace_dll">Choose another Lossless.dll…</string>
-    <string name="fg_remove_dll">Remove Lossless.dll</string>
-    <string name="fg_enabled">Frame generation: %1$s</string>
-    <string name="fg_multiplier">Multiplier: ×%1$d (%2$d fps)</string>
-    <string name="fg_multiplier_title">Frames per game frame</string>
-    <string name="fg_multiplier_item">×%1$d (%2$d fps)</string>
-    <string name="fg_multiplier_item_over">×%1$d (%2$d fps: more than the display shows, no generated frames)</string>
-    <string name="fg_mode">Network: %1$s</string>
-    <string name="fg_performance">Performance</string>
-    <string name="fg_quality">Quality (more GPU load)</string>
-    <string name="fg_flow_scale">Flow scale: %1$d%%</string>
-    <string name="fg_flow_title">Motion estimate resolution</string>
-    <string name="fg_flow_item">%1$d%%</string>
-    <string name="fg_ui_detection">UI detection: %1$s</string>
     <string name="fg_bad_dll">This file can\'t be used: %1$s</string>
     <string name="fg_dll_untested">Lossless.dll is installed and frame generation is on, but this version of its shaders hasn\'t been tested with the app: generated frames may look wrong. If they do, select another Lossless.dll (the README names the tested one).</string>
-    <string name="fg_dll_tested_hint">Installed: a tested version</string>
-    <string name="fg_dll_untested_hint">Installed: an untested version (frames may look wrong)</string>
     <string name="fg_not_working">not working</string>
     <string name="fg_risk_title">Frame generation on this GPU</string>
     <string name="fg_risk_text">On this GPU (%1$s), frame generation can make the GPU hang. The game may crash, and in rare cases the whole device may freeze or restart.\n\nIf the game crashes, the dialog at its next start offers to start without frame generation.</string>
     <string name="fg_risk_accept">Turn on anyway</string>
     <string name="fg_risk_keep_off">Keep it off</string>
-    <string name="fg_error">Frame generation isn\'t working: %1$s</string>
     <string name="fg_dll_ok">Lossless.dll is ready and frame generation is on.</string>
-    <string name="menu_layout">Screen layout: %1$s</string>
-    <string name="menu_controls_hide">Hide on-screen controls</string>
-    <string name="menu_controls_show">Show on-screen controls</string>
-    <string name="menu_controls_size">On-screen controls size</string>
-    <string name="controller_pro">Wii U Pro Controller</string>
-    <string name="menu_ao">Ambient occlusion: %1$s</string>
-    <string name="menu_ao_hires">Full-size occlusion depth: %1$s</string>
-    <string name="menu_aniso">16x anisotropic filtering: %1$s</string>
-    <string name="menu_perf_hud">Performance overlay (FPS, load, temperatures): %1$s…</string>
-    <string name="perf_title">Performance overlay</string>
-    <string name="perf_show">Show the overlay</string>
     <string name="perf_fps">Frame rate</string>
     <string name="perf_frame">Frame time</string>
     <string name="perf_cpu">CPU load (this app)</string>
@@ -150,229 +726,56 @@ If the picker doesn\'t show your files, put them directly into Download and open
     <string name="perf_temp_gpu">GPU temperature</string>
     <string name="perf_temp_bat">Battery temperature</string>
     <string name="perf_settings">Settings (resolution, effects, GPU driver)</string>
-    <string name="perf_done">Done</string>
-    <string name="perf_move">Move overlay</string>
-    <string name="perf_reset">Reset position</string>
     <string name="perf_move_hint">Drag to move · tap elsewhere when done</string>
-    <!-- the in-game menu (OptionsMenu) -->
-    <string name="opt_saves">Saves</string>
-    <string name="opt_slot">Save state %1$d</string>
-    <string name="opt_slot_empty">Empty</string>
-    <string name="opt_slot_incompatible">%1$s · from another build, can\'t be loaded</string>
-    <string name="opt_slot_save">Save</string>
-    <string name="opt_slot_load">Load</string>
-    <string name="opt_auto_state">Auto save state</string>
-    <string name="opt_auto_state_hint">Saves a state as you play, without stopping the game, into two auto slots that take turns</string>
-    <string name="opt_auto_slot">Auto save %1$d</string>
-    <string name="opt_leave_state">Save state when leaving the app</string>
-    <string name="opt_leave_state_hint">Keeps where you were if Android closes the game while it\'s in the background</string>
-    <string name="opt_last_slot">Last session</string>
-    <string name="opt_start_mode">At start</string>
-    <string name="opt_start_mode_hint">Before the intro: pick a save state, or go straight back to where you left the game</string>
     <string name="start_last_loading">Loading the last session…</string>
-    <string name="start_states_title">Continue</string>
-    <string name="start_states_title_hint">Start the game as usual</string>
-    <string name="start_states_pad_hint">Controller: D-pad moves · right button selects · bottom button starts the game</string>
     <string name="quit_saving">Saving the last session…</string>
-    <string name="start_states_loading">Loading the save state…</string>
-    <string name="opt_export">Export saves</string>
-    <string name="opt_export_hint">Save your game save and save states into one backup file</string>
-    <string name="opt_import">Import saves</string>
-    <string name="opt_import_hint">Restore them from their files; an imported game save restarts the game</string>
-    <string name="opt_graphics">Graphics</string>
-    <string name="opt_mods">Mods</string>
-    <string name="opt_controls">Controls</string>
-    <string name="opt_back">Back</string>
     <string name="opt_ok">OK</string>
-    <string name="opt_cancel">Cancel</string>
-    <string name="opt_on">ON</string>
-    <string name="opt_off">OFF</string>
-    <string name="opt_pad_hint">Controller: hold Select or press Home to open and close · L / R switch tabs · D-pad moves and changes values · right button selects · bottom button goes back</string>
-    <string name="opt_resolution">Rendering resolution</string>
-    <string name="opt_dyn_res">Dynamic resolution</string>
-    <string name="opt_dyn_res_hint">Lowers the rendering resolution while the GPU keeps the game below its frame rate (the game slows down then), and raises it back up to the setting above when there is room. The performance overlay shows the current value</string>
-    <string name="dyn_res_down_to">Down to %1$s× (%2$s)</string>
-    <string name="opt_framegen">Frame generation</string>
-    <string name="opt_aspect">Aspect ratio</string>
-    <string name="opt_render_aspect">Widescreen</string>
-    <string name="opt_render_aspect_hint">Screen shape: the game renders at your screen\'s aspect ratio and shows more to the sides; the HUD keeps its proportions at the screen edges</string>
-    <string-array name="render_aspect_modes">
-        <item>Original 16:9</item>
-        <item>Screen shape</item>
-    </string-array>
-    <string name="opt_layout">Screen layout</string>
-    <string name="opt_ao">Ambient occlusion</string>
-    <string name="opt_ao_hires">Full-size occlusion depth</string>
-    <string name="opt_aniso">16× anisotropic filtering</string>
-    <string name="opt_upscale">Upscaling</string>
-    <string name="opt_upscale_hint">How the picture is enlarged to the screen: Sharp keeps edges crisp at lower rendering resolutions</string>
-    <string-array name="upscale_modes">
-        <item>Bilinear (classic)</item>
-        <item>Sharp</item>
-    </string-array>
-    <string name="opt_display_res">Display resolution</string>
-    <string name="opt_display_res_hint">Auto: the picture is drawn at the size it needs and the screen enlarges it, which is faster on high-resolution screens; Full: always at the screen\'s own resolution</string>
-    <string-array name="display_res_modes">
-        <item>Auto</item>
-        <item>Full (classic)</item>
-    </string-array>
-    <string name="opt_perf">Performance overlay</string>
-    <string name="opt_perf_hint">FPS, load and temperatures</string>
-    <string name="opt_fg_choose_dll">Select Lossless.dll</string>
-    <string name="opt_fg_multiplier">Multiplier</string>
-    <string name="opt_fg_multiplier_hint">Frames shown per game frame</string>
-    <string name="opt_fg_network">Network</string>
-    <string name="opt_fg_flow">Flow scale</string>
-    <string name="opt_fg_flow_hint">Resolution of the motion estimate: lower is faster</string>
-    <string name="opt_fg_ui">UI detection</string>
-    <string name="opt_fg_ui_hint">Keeps menus and text sharp</string>
-    <string name="opt_fg_replace_dll">Select Lossless.dll</string>
-    <string name="opt_fg_remove_dll">Remove Lossless.dll</string>
-    <string name="opt_fg_remove_confirm">Remove Lossless.dll from the app? Frame generation is switched off until you choose it again.</string>
-    <string name="opt_perf_move">Move the overlay</string>
-    <string name="opt_perf_move_hint">Closes the menu: drag the overlay with a finger, tap elsewhere when done</string>
-    <string name="opt_perf_reset">Reset its position</string>
-    <string name="opt_capture">Capture a frame</string>
-    <string name="opt_capture_hint">For debugging: written to the app\'s folder</string>
-    <string name="opt_mod_direct_camera">Direct right-stick camera</string>
-    <string name="opt_mod_direct_camera_hint">No easing: the camera follows the stick at once</string>
-    <string name="opt_mod_camera_speed">Direct camera speed</string>
-    <string name="opt_mod_first_person">First person on R3</string>
-    <string name="opt_mod_climb">Climb any wall</string>
-    <string name="opt_mod_climb_hint">With a stamina wheel; B or A lets go</string>
-    <string name="opt_mod_quick_doors">Quick doors</string>
-    <string name="opt_mod_fast_scenes">Fast scene changes</string>
-    <string name="opt_mod_speed_hint">4× speed</string>
-    <string name="opt_mod_ff_cutscenes">Fast forward cutscenes</string>
-    <string name="opt_mod_ff_dialogues">Fast forward dialogues</string>
-    <string name="opt_mod_ff_hint">Faster (up to 4×, as fast as this device draws) while ZR (R2) is held; text boxes still wait for your button</string>
-    <string name="opt_mod_jump">Jump anywhere (L)</string>
-    <string name="opt_mod_jump_hint">L jumps from standing or running, as off a ledge. Switches the moon jump off (it uses L too)</string>
-    <string name="opt_mod_jump_double">Double jump</string>
-    <string name="opt_mod_jump_double_hint">L once more in the air</string>
-    <string name="opt_mod_jump_noauto">No automatic ledge jumps</string>
-    <string name="opt_mod_jump_noauto_hint">Running off an edge, Link drops instead of leaping: you jump with L</string>
-    <string name="opt_mod_jump_off">Jump anywhere switched off (the moon jump uses L)</string>
-    <string name="cheat_moon_jump_off">Moon jump switched off (Jump anywhere uses L)</string>
-    <string name="opt_mod_run">Faster running</string>
-    <string name="opt_mod_run_hint">Link covers more ground while running; jumps and rolls stay as they are</string>
-    <string name="opt_mod_swim">Faster swimming</string>
-    <string name="opt_mod_swim_hint">The same while Link swims</string>
-    <string name="opt_mod_climb_fast">Faster climbing</string>
-    <string name="opt_mod_climb_fast_hint">Ladders, vines and moving along a ledge while hanging</string>
-    <string name="opt_mod_sidle">Faster sidling</string>
-    <string name="opt_mod_sidle_hint">While Link moves with his back to a wall</string>
-    <string name="opt_mod_run_off">Off</string>
-    <string name="opt_packs">Mod packs</string>
-    <string name="opt_packs_hint">Cemu graphic packs and game file mods, imported from .zip and .rar files</string>
-    <string name="packs_on_count">%d on</string>
-    <string name="packs_about">Imports mods from .zip and .rar files: Cemu graphic packs (for example from GameBanana or GitHub) and plain game file mods (a content folder). Code patches (patch_*.asm), game file replacements, pixel shader replacements and texture filtering rules work; vertex shaders and texture resolution rules don\'t yet. A code patch only applies to the game version it was made for. Turning packs on or off, or changing their settings, takes effect after a restart.</string>
-    <string name="packs_import">Import packs</string>
-    <string name="packs_import_hint">Pick one or more .zip or .rar files</string>
-    <string name="packs_none">No packs imported yet.</string>
+    <string name="bench_offer_title">Find the best settings</string>
+    <string name="bench_offer_text">A short test (about 2 minutes) finds the graphics settings for this device. The game starts for it, but its picture stays hidden and there is no sound. Your saves are not touched. Afterwards you choose whether to use the result.</string>
+    <string name="bench_offer_dll">Frame generation: if you own Lossless Scaling (Steam) and want frame generation, choose its Lossless.dll now, so the test includes it.</string>
+    <string name="bench_wide">Widescreen (your screen\'s shape)</string>
+    <string name="bench_show_game">Show the game while measuring</string>
+    <string name="bench_with_fg">Include frame generation</string>
+    <string name="bench_choose_dll">Choose Lossless.dll</string>
+    <string name="bench_not_now">Not now</string>
+    <string name="bench_start">Start test</string>
+    <string name="bench_step_boot">Starting the game…</string>
+    <string name="bench_shaders">Preparing the shaders: %1$d done</string>
+    <string name="bench_step_warm">Preparing…</string>
+    <string name="bench_step_warp">Loading the island…</string>
+    <string name="bench_step_island">Measuring: island</string>
+    <string name="bench_step_check">Checking the result…</string>
+    <string name="bench_live">%1$.1f fps · %2$.2f× · %3$d×%4$d</string>
+    <string name="bench_failed_title">The test couldn\'t finish</string>
+    <string name="bench_failed_text">It stopped at: %1$s. Your settings stay as they were. You can run it again under Options > Graphics.</string>
+    <string name="bench_close">Close</string>
+    <string name="bench_again">Try again</string>
+    <string name="bench_interrupted">the app left the screen (screen off or another app) while measuring</string>
+    <string name="bench_result_title">Recommended for this device</string>
+    <string name="bench_result_60">%1$s: 60 fps, rendering resolution up to %2$s× (lowered when needed)</string>
+    <string name="bench_result_30">%1$s: 30 fps, rendering resolution up to %2$s× (lowered when needed)</string>
+    <string name="bench_result_fg">%1$s with frame generation: 30 fps doubled to 60, rendering resolution up to %2$s× (lowered when needed)</string>
+    <string name="bench_fg_no">Frame generation didn\'t reach 60 fps on this device, so the recommendation is without it.</string>
+    <string name="bench_fg_crashed">The game stopped while the test tried frame generation, so it is not recommended on this device.</string>
+    <string name="bench_now">now: %1$s</string>
+    <string name="bench_keep">Keep my settings</string>
+    <string name="bench_apply">Use it</string>
     <string name="packs_importing">Importing…</string>
     <string name="packs_imported">Imported:</string>
     <string name="packs_import_failed">Not imported:</string>
     <string name="packs_applies">Patches the game code of this game version</string>
     <string name="packs_other_version">Made for another game version: does nothing here</string>
     <string name="packs_error">Doesn\'t work: %s</string>
-    <string name="packs_unsupported">Not supported yet: %s</string>
-    <plurals name="packs_texture_rules">
-        <item quantity="one">Changes texture filtering (%d rule)</item>
-        <item quantity="other">Changes texture filtering (%d rules)</item>
-    </plurals>
-    <plurals name="packs_shaders">
-        <item quantity="one">Replaces %d shader</item>
-        <item quantity="other">Replaces %d shaders</item>
-    </plurals>
-    <plurals name="packs_content">
-        <item quantity="one">Replaces or adds %d game file</item>
-        <item quantity="other">Replaces or adds %d game files</item>
-    </plurals>
-    <string name="packs_versions">Made for: %s (not this game version)</string>
-    <plurals name="packs_added">
-        <item quantity="one">%d file is new to your game; a file of another game version does nothing here:</item>
-        <item quantity="other">%d files are new to your game; files of another game version do nothing here:</item>
-    </plurals>
     <string name="packs_nothing">Nothing this port can use</string>
-    <string name="packs_preset">Setting</string>
-    <string name="packs_details">Details</string>
-    <string name="packs_groups">Patch groups: %1$d for this game version, %2$d for others</string>
-    <string name="packs_folder">Folder: packs/%s</string>
-    <string name="packs_delete">Delete pack</string>
-    <string name="packs_delete_confirm">Delete this pack from the device?</string>
-    <string name="packs_restart_note">Changes apply after a restart; changed code is then recompiled (a short compile, or none for a combination used before).</string>
-    <string name="packs_title_hint">After turning on a pack that patches code, start from the title screen once and load your quest log there: the pack sets itself up while the game loads. Save states made without the pack don\'t have it set up.</string>
-    <string name="packs_restart">Restart now</string>
     <string name="packs_restart_ask">Your mod pack changes only take effect after a restart. Restart the game now? Progress since your last save is lost.</string>
-    <string name="opt_mod_run_when">Applies</string>
-    <string name="opt_mod_run_always">Always</string>
-    <string name="opt_mod_run_with_l3">With L3</string>
-    <string name="opt_mod_run_l3">L3</string>
-    <string name="opt_mod_run_l3_switch">Press: on / off</string>
-    <string name="opt_mod_run_l3_hold">Hold</string>
-    <string name="opt_onscreen">On-screen controls</string>
-    <string name="opt_onscreen_size">On-screen controls size</string>
-    <string name="opt_controls_edit">Edit on-screen layout</string>
-    <string name="opt_controls_edit_hint">Move, resize and hide each button; opacity and style (outline or filled)</string>
-    <string name="opt_controls_style">Touch controls</string>
-    <string name="opt_controls_style_hint">Flexible: the sticks appear where your thumb touches (left half: movement, right half: camera)</string>
-    <string name="controls_classic">Classic</string>
-    <string name="controls_flexible">Flexible</string>
-    <string name="opt_context_buttons">Context buttons</string>
-    <string name="opt_context_buttons_hint">A, B, X, Y, R and ZR appear when there is something to do and say what; the game\'s own button display is hidden</string>
-    <string name="opt_hearts_combat">Hearts only in combat</string>
-    <string name="opt_hearts_combat_hint">The hearts fade out while the sword is put away and fade in when it is drawn or Link takes damage</string>
-    <string name="opt_rupees_change">Rupees only when they change</string>
-    <string name="opt_rupees_change_hint">The rupee count fades in when you collect or spend rupees, and out again after a few seconds</string>
-    <string name="opt_show_sticks">Show sticks</string>
-    <string name="opt_show_sticks_hint">Off: the sticks work from a blank screen</string>
-    <string name="opt_touch_camera">Camera (right half)</string>
-    <string name="opt_touch_camera_hint">Stick: like the right analog stick. Swipe: the camera turns with your finger</string>
-    <string name="touch_camera_stick">Stick</string>
-    <string name="opt_swipe_speed">Swipe speed</string>
-    <string name="touch_camera_swipe">Swipe</string>
-    <string name="opt_states">Save states</string>
-    <string name="opt_backup">Import / export saves</string>
-    <string name="opt_game">Game</string>
-    <string name="opt_language">Game language</string>
-    <string name="opt_language_hint">The languages of your copy of the game; applies after a restart</string>
     <string name="language_restart">The game uses the new language after a restart.</string>
-    <string name="opt_interp">Frame rate</string>
-    <string name="opt_interp_hint">Frame interpolation: in-between frames from the game\'s 30 fps. Needs a fast CPU; where a frame doesn\'t fit in time it is left out and the game keeps its speed</string>
-    <string name="interp_off">30 fps (original)</string>
-    <string name="interp_fps">%d fps (interpolated)</string>
     <string name="cache_loading">Loading the shader cache…</string>
     <string name="cache_loading_detail">%1$,d shader variants prepared</string>
     <string name="headstart_building">Finding the game\'s shaders in your game files… (only this once)</string>
     <string name="headstart_building_detail">%1$,d shaders found</string>
-    <string name="dev_on">Developer options on (Mods tab: Warp)</string>
-    <string name="dev_off">Developer options off</string>
-    <string name="opt_warp">Warp (developer)</string>
-    <string name="opt_warp_hint">Go to any place, room and spawn point of the game</string>
-    <string name="warp_about">Takes Link to the place at once, as a door would. The story stays as in your save file: who and what is there depends on it (or pick a layer). Save in the game only if you want to keep the new place.</string>
-    <string name="warp_where">Now: %1$s · room %2$s · spawn %3$s · layer %4$s</string>
-    <string name="warp_layer">Layer</string>
-    <string name="warp_layer_hint">Which version of the place loads; Story picks it from your progress</string>
-    <string name="warp_layer_auto">Story</string>
-    <string name="warp_spawn">Room %1$d · spawn %2$d</string>
-    <string name="warp_reading">Reading the places from your game files… (a few seconds, only this once)</string>
-    <string name="preset_title">Story presets</string>
-    <string name="preset_hint">Load the story of a save file or a saved moment and warp to its place</string>
-    <string name="preset_about">A preset is the story part of a save (items, hearts, songs, chart, each place\'s switches and chests, story flags) plus a place. Warping to it loads that story into the game you are playing; your save file only changes if you save in the game. Presets stay on this device.</string>
-    <string name="preset_import">Import a save file…</string>
-    <string name="preset_import_hint">Pick a WWHD cking.sav, GameCube .gci saves (USA, Europe, Japan) or presets (.wwp); several at once: each used slot becomes a preset</string>
-    <string name="preset_save">Save the current story as a preset</string>
-    <string name="preset_save_hint">Here and now: the story so far and the place you entered</string>
-    <string name="preset_name">Name</string>
-    <string name="preset_ask">%1$s\n\nWarp there with this story? It replaces the story of the game you are playing until you load your save again.</string>
-    <string name="preset_warp">Warp</string>
-    <string name="preset_delete">Delete</string>
     <string name="preset_imported">%1$d preset(s) imported</string>
     <string name="preset_import_none">No used Wind Waker save slots found in this file</string>
     <string name="preset_import_skipped">%1$d file(s) skipped</string>
-    <string name="warp_test">Test overlay</string>
-    <string name="warp_test_hint">A panel over the game: ✓ / ✗ rate the spot and warp to the next; results in warp_tests.tsv</string>
     <string name="warp_test_title">Warp test</string>
     <string name="warp_test_auto_off">Auto: off</string>
     <string name="warp_test_auto_on">Auto: on</string>
@@ -384,123 +787,8 @@ If the picker doesn\'t show your files, put them directly into Download and open
     <string name="warp_test_loaded">Loaded in %1$.1f s</string>
     <string name="warp_test_stuck">No end after %1$.0f s: stuck. Restart the app (it is written down and skipped).</string>
     <string name="warp_test_refused">Not taken: a scene change was under way. Tap Warp again.</string>
-    <string name="warp_no_save">Load a save file first.</string>
-    <string name="warp_going">Warping to %1$s</string>
-    <string name="opt_cheats">Cheats</string>
-    <string name="opt_cheats_hint">Items, hearts, infinite health… for the save file you play</string>
-    <string name="cheats_about">These change the save file you are playing (from the original project). They apply once a save file is loaded; save in the game to keep them.</string>
-    <string name="cheat_items">Give all items</string>
-    <string name="cheat_items_hint">Every inventory item, light arrows, Deluxe Picto Box, power bracelets, 4 bottles, 99 arrows and bombs</string>
-    <string name="cheat_items_done">All items given.</string>
-    <string name="cheat_sword">Equip Master Sword and Mirror Shield</string>
-    <string name="cheat_sword_hint">Until the save file is loaded again</string>
-    <string name="cheat_sword_done">Master Sword and Mirror Shield equipped until the save file is loaded again.</string>
-    <string name="cheat_stats">20 hearts, double magic, 5000 rupees</string>
-    <string name="cheat_stats_hint">Also refills hearts and magic</string>
-    <string name="cheat_stats_done">20 hearts, double magic and 5000 rupees.</string>
-    <string name="cheat_inf_health">Infinite health</string>
-    <string name="cheat_inf_magic">Infinite magic</string>
-    <string name="cheat_inf_ammo">Infinite arrows and bombs</string>
-    <string name="cheat_inf_rupees">Infinite rupees</string>
-    <string name="cheat_inf_bags">Infinite bait and spoils</string>
-    <string name="cheat_inf_bags_hint">Used bait and Hyoi Pears come back, spoils stay at 99</string>
-    <string name="cheat_inf_breath">Infinite swimming</string>
-    <string name="cheat_inf_breath_hint">The swim meter stays full: Link never tires or sinks in deep water</string>
-    <string name="cheat_bags">Fill the bags</string>
-    <string name="cheat_bags_hint">The Spoils Bag and Bait Bag (if missing), every kind of spoils ×99, bait and Hyoi Pears</string>
-    <string name="cheat_bags_done">Spoils Bag and Bait Bag filled.</string>
-    <string name="cheat_moon_jump">Moon jump (L)</string>
-    <string name="cheat_moon_jump_hint">Hold L (left shoulder button) to rise, steer with the left stick. Switches Jump anywhere off (it uses L too)</string>
-    <string name="cheat_moon_rise">Rise speed</string>
-    <string name="cheat_moon_fly">Flight speed</string>
-    <string name="cheat_moon_nofall">No fall damage</string>
-    <string name="cheat_moon_nofall_hint">Landing after a flight never hurts</string>
-    <string name="cheat_moon_anims">Random lift-off animations</string>
-    <string name="cheat_moon_anims_hint">Each lift-off picks one of 14 poses instead of the two jump poses</string>
-    <string name="cheats_story_about">⚠️ Story cheats can change or break story events: the game may skip or repeat scenes that teach or check them. Save to a spare file first.</string>
-    <string name="cheats_story_confirm">This can change or break story events. Save to a spare file first. Apply it?</string>
-    <string name="cheat_apply">Apply</string>
-    <string name="cheat_songs">All songs</string>
-    <string name="cheat_songs_done">All songs learned.</string>
-    <string name="cheat_triforce">All Triforce shards</string>
-    <string name="cheat_triforce_done">All Triforce shards collected.</string>
-    <string name="cheat_dungeon">Map, compass and boss key (this dungeon)</string>
-    <string name="cheat_dungeon_done">Map, compass and boss key for this dungeon.</string>
-    <string name="cheat_key">Add a small key (this dungeon)</string>
-    <string name="cheat_key_done">One small key added.</string>
     <string name="cheat_keep">Applied once a save file is loaded; save in the game to keep it.</string>
-    <string name="opt_record_thread">Command recording thread</string>
-    <string name="opt_record_thread_hint">A second CPU thread prepares the GPU work: faster on most devices, slower on some (e.g. Snapdragon 855)</string>
-    <string-array name="start_modes">
-        <item>Intro</item>
-        <item>Offer save states</item>
-        <item>Load the last session</item>
-    </string-array>
-    <string-array name="auto_state_modes">
-        <item>Off</item>
-        <item>Every 2 min</item>
-        <item>Every 5 min</item>
-        <item>Every 10 min</item>
-    </string-array>
-    <string-array name="record_thread_modes">
-        <item>Automatic</item>
-        <item>On</item>
-        <item>Off</item>
-    </string-array>
     <string name="record_thread_restart">The setting applies after a restart.</string>
-    <string name="opt_invert_camera_y">Invert camera up/down</string>
-    <string name="opt_invert_camera_y_hint">Push the right stick (or swipe) up to look down. First person and aiming leaves the normal camera and menus as they are</string>
-    <string-array name="invert_camera_y_modes">
-        <item>Off</item>
-        <item>First person and aiming</item>
-        <item>Always</item>
-    </string-array>
-    <string name="opt_motion">Motion controls</string>
-    <string name="opt_motion_hint">Aim by tilting the device, or a controller with motion sensors</string>
-    <string name="opt_rumble">Rumble</string>
-    <string name="opt_rumble_hint">On the controller, or this device if the controller has no rumble or while playing by touch</string>
-    <string name="opt_buttons">Controller buttons</string>
-    <string name="opt_buttons_hint">Which controller button presses which Wii U button</string>
-    <string name="opt_buttons_default">Default</string>
-    <string name="opt_buttons_custom">Custom</string>
-    <string name="opt_buttons_note">Choose a Wii U button, then press the controller button for it. A button that is already in use swaps places, so every Wii U button keeps one. Home / Guide and holding Select always open the menu, and the menu keeps using the buttons by position.</string>
-    <string name="opt_buttons_press">Press the controller button for %1$s (now: %2$s).\n\nHome / Guide or Cancel keeps it as it is.</string>
-    <string name="opt_buttons_reset">Reset to default</string>
-    <string-array name="wiiu_buttons">
-        <item>A</item>
-        <item>B</item>
-        <item>X</item>
-        <item>Y</item>
-        <item>L</item>
-        <item>R</item>
-        <item>ZL</item>
-        <item>ZR</item>
-        <item>− (minus)</item>
-        <item>+ (plus)</item>
-        <item>Left stick click</item>
-        <item>Right stick click</item>
-        <item>D-pad up</item>
-        <item>D-pad down</item>
-        <item>D-pad left</item>
-        <item>D-pad right</item>
-    </string-array>
-    <string name="opt_drc_display">GamePad screen</string>
-    <string name="opt_drc_display_hint">A second display was found (e.g. the lower screen of a dual-screen device)</string>
-    <string name="drc_second_display">Second display</string>
-    <string name="drc_in_layout">In the screen layout</string>
-    <string name="opt_drc_shape">GamePad picture</string>
-    <string name="opt_drc_shape_hint">Fill: the GamePad screen takes the display\'s shape, its background reaches the edges</string>
-    <string name="drc_shape_fill">Fill the screen</string>
-    <string name="drc_shape_original">Original 16:9</string>
-    <string name="opt_gpu_driver">GPU driver</string>
-    <string name="opt_gpu_driver_hint">The system\'s, or an installed driver package</string>
-    <string name="gpu_driver_about">On Adreno GPUs the game can run on another Vulkan driver than the system\'s, for example a Mesa Turnip build or a newer Qualcomm driver. Use driver packages in the AdrenoTools format (a .zip with meta.json and the driver), as other emulators use them. A new driver applies after a restart. If the game doesn\'t start with it, the next start goes back to the system driver.</string>
-    <string name="gpu_driver_running">Running now: %1$s</string>
-    <string name="gpu_driver_fell_back">%1$s couldn\'t be loaded, so the system driver runs. The next start switches back to it.</string>
-    <string name="gpu_driver_system">System driver</string>
-    <string name="gpu_driver_system_hint">The driver that came with the device</string>
-    <string name="gpu_driver_install">Install driver package…</string>
-    <string name="gpu_driver_install_hint">A .zip with meta.json and the driver</string>
     <string name="gpu_driver_installing">Installing the driver package…</string>
     <string name="gpu_driver_install_failed">The driver package couldn\'t be installed: %1$s</string>
     <string name="gpu_driver_not_package">this is not a driver package (a .zip with meta.json and the driver\'s .so file)</string>
@@ -515,46 +803,93 @@ If the picker doesn\'t show your files, put them directly into Download and open
     <string name="gpu_lost_choose_other">Another driver file…</string>
     <string name="gpu_lost_system_driver">Back to the system driver</string>
     <string name="gpu_driver_later">Later</string>
-    <string name="gpu_driver_use">Use</string>
-    <string name="gpu_driver_remove">Remove</string>
     <string name="gpu_driver_switch">Switch to %1$s? The game restarts; the first start with another driver compiles its pipelines again and takes longer.</string>
     <string name="gpu_driver_remove_active">This driver is in use. Remove it and restart with the system driver?</string>
     <string name="gpu_driver_failed">The game didn\'t start with the GPU driver %1$s, so it runs on the system driver again. You can choose the driver again under Graphics › GPU driver.</string>
-    <string name="opt_shaders">Delete shader cache</string>
-    <string name="opt_shaders_hint">Restarts the game as on its first start</string>
-    <string name="opt_about">About</string>
     <string name="crash_title">The game closed unexpectedly</string>
     <string name="crash_text">A crash log was saved. If you report the problem (for example as an issue on GitHub), please attach it. It shows where the game crashed, the app version, the game version, your device model and the settings in use. It contains no personal data.</string>
     <string name="crash_share">Share crash log</string>
     <string name="crash_without_fg">Start without frame generation</string>
     <string name="crash_share_all">Share crash logs</string>
-    <string name="crash_not_now">Not now</string>
     <string name="crash_start_game">Start game</string>
     <string name="crash_without_packs">Start without mod packs</string>
     <string name="crash_subject">Wind Waker HD crash log</string>
-    <string name="opt_quit">Quit</string>
-    <string name="menu_capture">Capture frame (debugging)</string>
-    <string name="menu_clear_shaders">Delete shader cache…</string>
     <string name="clear_shaders_text">The game restarts without its shader cache, as on the first start: shaders are compiled again as scenes appear, so the first visit to each scene loads slower and may stutter. Saves, save states and settings stay. (Unsaved progress is lost.)</string>
     <string name="clear_shaders_restart">Delete and restart</string>
-    <string name="menu_quit">Quit</string>
     <string name="on">on</string>
     <string name="off">off</string>
-    <string name="layout_title">Screen layout</string>
-    <string name="ao_title">Ambient occlusion</string>
     <string name="text_title">Enter text</string>
     <string name="text_message">Up to %1$d characters.</string>
-
-    <string-array name="layouts">
-        <item>TV with GamePad inset</item>
-        <item>TV and GamePad side by side</item>
-        <item>TV, GamePad on +</item>
-        <item>GamePad with TV inset</item>
-        <item>TV, GamePad on demand</item>
-    </string-array>
-    <string-array name="ao_modes">
-        <item>Original (as on Wii U)</item>
-        <item>Centre fix</item>
-        <item>Centre + noise fix</item>
-    </string-array>
+    <!-- touch controls: the on-screen layout editor (ControlsView), button labels -->
+    <string name="edit_size_minus">Size −</string>
+    <string name="edit_size_plus">Size +</string>
+    <string name="edit_hide">Hide</string>
+    <string name="edit_show">Show</string>
+    <string name="edit_shape">Shape: %1$s</string>
+    <string name="edit_shape_default">standard</string>
+    <string name="edit_shape_round">round</string>
+    <string name="edit_shape_oval">oval</string>
+    <string name="edit_shape_square">square</string>
+    <string name="edit_shape_rect">rectangle</string>
+    <string name="edit_shape_hex">hexagon</string>
+    <string name="edit_shape_diamond">diamond</string>
+    <string name="edit_opacity">Opacity %1$d%%</string>
+    <string name="edit_style_filled">Style: filled</string>
+    <string name="edit_style_outline">Style: outline</string>
+    <string name="edit_grid_on">Grid: on</string>
+    <string name="edit_grid_off">Grid: off</string>
+    <string name="edit_presets">Presets</string>
+    <string name="edit_reset">Reset</string>
+    <string name="edit_done">Done</string>
+    <string name="edit_help">Drag to move (locks on the grid while Grid is on), pinch or Size to resize, tap to select.</string>
+    <string name="edit_opacity_one">Opacity: only the selected control (tap an empty spot for all)</string>
+    <string name="edit_opacity_all">Opacity: all controls (tap a control for only that one)</string>
+    <string name="lp_title">Layout presets</string>
+    <string name="lp_none">No saved layouts yet. Save current keeps the layout you are editing under a name.</string>
+    <string name="lp_import">Import</string>
+    <string name="lp_export_all">Export all</string>
+    <string name="lp_save">Save current</string>
+    <string name="lp_preset_info">A layout for the %1$s touch controls. Load puts it into the editor; Done keeps it.</string>
+    <string name="lp_delete">Delete</string>
+    <string name="lp_delete_confirm">Delete this saved layout?</string>
+    <string name="lp_export">Export</string>
+    <string name="lp_load">Load</string>
+    <string name="lp_save_title">Save layout (%1$s)</string>
+    <string name="lp_saved">Saved: %1$s</string>
+    <string name="lp_replace">A saved layout of this style already has this name. Replace it?</string>
+    <string name="lp_replace_yes">Replace</string>
+    <string name="lp_switch_style">This layout is for the %1$s touch controls. Load it and switch the touch controls to %1$s?</string>
+    <string name="lp_file_all">Touch layouts</string>
+    <string name="lp_exported">Exported %1$d layouts</string>
+    <string name="lp_failed">Export failed: %1$s</string>
+    <string name="lp_imported">Imported %1$d layouts</string>
+    <string name="lp_import_skipped">%1$d skipped</string>
+    <string name="edit_layout_classic">Classic layout</string>
+    <string name="edit_layout_flexible">Flexible layout: the sticks appear where your thumbs land</string>
+    <string name="touch_selfie">Selfie</string>
+    <string name="opt_item_tap">Item buttons</string>
+    <string name="opt_item_tap_hint">The bow, boomerang, hookshot and grappling hook with the context buttons. Tap: a tap aims, then the button shoots with each tap, ZL switches the view, B puts the item away. Hold: as in the game</string>
+    <string name="opt_item_tap_tap">Tap</string>
+    <string name="opt_item_tap_hold">Hold (as in the game)</string>
+    <string name="opt_item_tap_focus">Only aiming buttons while aiming</string>
+    <string name="opt_item_tap_focus_hint">With Item buttons: Tap, while an item is aimed only its Shoot button, B (put away), ZL and ZR (arrow types) show; the other item buttons, A, +, first person, the d-pad and the jump buttons hide, so no stray tap lets go of a drawn arrow</string>
+    <string name="touch_shoot">Shoot</string>
+    <string name="touch_throw">Throw</string>
+    <!-- Mods: songs sung into the microphone (SongListener) -->
+    <string name="opt_sing_songs">Sing the songs (experimental)</string>
+    <string name="opt_sing_songs_hint">While Link holds the Wind Waker, sing, hum or whistle one of its songs into the microphone and he plays it (only songs he has learned). The sound is only analysed, never recorded</string>
+    <string name="opt_sing_button">Mic button</string>
+    <string name="opt_sing_button_hint">Hold the mic button at the bottom left (or L on a controller) while singing; letting go plays the song at once. The switch below it picks the time (3/4, 4/4, 6/4): while you hold the button, Link conducts the notes you sing, one per beat of the metronome. Off: the microphone listens by itself and a short pause ends a song</string>
+    <string name="opt_song_list_play">Play buttons in the song list</string>
+    <string name="opt_song_list_play_hint">While Link holds the baton, + shows the songs he knows: a play button beside each one plays it at once, no conducting needed</string>
+    <string name="opt_song_scene_play">Play button in song scenes</string>
+    <string name="opt_song_scene_play_hint">When the story waits for one song (learning it at a stone tablet, a sage), a play button on the message box plays it at once, learned or not</string>
+    <string name="song_not_learned">%1$s: not learned yet</string>
+    <string name="song_practice_title">Practice</string>
+    <string name="song_practice_go">Hold the mic button and sing</string>
+    <string name="song_count_hum">Hum your middle note</string>
+    <string name="song_count_breathe">Breathe in, then the song!</string>
+    <string name="song_practice_none">No song heard. Try again!</string>
+    <string name="song_wrong_time">%1$s: sing it in %2$s!</string>
+    <string name="sing_songs_no_mic">Without the microphone permission the songs can\'t be heard. You can allow it in the system settings of the app.</string>
 </resources>

@@ -26,6 +26,8 @@ void prefer_big_cores(bool game);
 // threads to Android's performance hint session (no-op elsewhere); framesPerStep: frames shown per
 // 30 Hz game step (frame interpolation: 2 at 60 fps), which divides the target
 void perf_hint_frame(int framesPerStep = 1);
+// the busiest of those threads' CPU time over the last frame shown, ns (0: no hint session, unknown)
+int64_t last_busiest_ns();
 // bounds of the calling thread's stack: [lo, hi)
 void thread_stack_bounds(uintptr_t& lo, uintptr_t& hi);
 // CPU time consumed by a thread so far, in microseconds (0 if unavailable)

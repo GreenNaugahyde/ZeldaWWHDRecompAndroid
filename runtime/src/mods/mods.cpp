@@ -21,6 +21,9 @@
 #include "mods.h"
 
 #include <atomic>
+#include <chrono>
+#include <condition_variable>
+#include <thread>
 #include <cstdarg>
 #include <cstdlib>
 #include <mutex>
@@ -63,7 +66,9 @@ std::atomic<bool> g_on[kMoves] = {{false}, {false}, {false}, {false}};
 std::atomic<int> g_doing{kRun};  // which of them Link's last procedure belongs to
 const char* const kMoveName[kMoves] = {"run", "swim", "climb", "sidle"};
 bool g_l3_was = false;
-std::atomic<bool> g_l_held{false};  // the moon jump cheat's button (cheats.cpp)
+// Jump anywhere (jump.cpp) and the moon jump (cheats.cpp): their own inputs (input::kJump / kMoonJump) held in
+// the latest read
+std::atomic<bool> g_jump_held{false}, g_moon_held{false};
 
 void note(const char* what, bool on) { LOG("[mods] %s %s", what, on ? "on" : "off"); }
 }  // namespace
@@ -85,6 +90,12 @@ float mouse_sensitivity() { return g_sens.load(std::memory_order_relaxed); }
 void set_mouse_sensitivity(float s) {
     g_sens = s;
     LOG("[mods] mouse sensitivity %.3f degrees per point", s);
+}
+std::atomic<float> g_swipe_boat{1.0f};
+float swipe_boat() { return g_swipe_boat.load(std::memory_order_relaxed); }
+void set_swipe_boat(float k) {
+    g_swipe_boat = k;
+    LOG("[mods] swipe camera on the boat x%.2f", k);
 }
 bool first_person_wheel() { return g_fp.load(std::memory_order_relaxed); }
 void set_first_person_wheel(bool on) { g_fp = on; note("first person on R3 / mouse wheel", on); }
@@ -153,7 +164,8 @@ static float move_factor(int which, float k) {
 // L3 (left stick click) as the button of faster running, swimming, climbing and sidling, each with its
 // own mode: held, or each press switches it on and off. A press switches the one for what Link is
 // doing (swimming, climbing, sidling, else running). The game itself sees L3 as usual.
-bool l_held() { return g_l_held.load(std::memory_order_relaxed); }
+bool jump_held() { return g_jump_held.load(std::memory_order_relaxed); }
+bool moon_held() { return g_moon_held.load(std::memory_order_relaxed); }
 std::atomic<float> g_lx{0}, g_ly{0};
 void stick_input(float x, float y) {
     g_lx.store(x, std::memory_order_relaxed);
@@ -167,7 +179,8 @@ void left_stick(float& x, float& y) {
 void run_input(uint32_t buttons) {
     g_zr.store((buttons & input::kZR) != 0, std::memory_order_relaxed);  // fast forward (turbo.cpp)
     bool l3 = (buttons & input::kStickL) != 0;
-    g_l_held.store((buttons & input::kL) != 0, std::memory_order_relaxed);
+    g_jump_held.store((buttons & input::kJump) != 0, std::memory_order_relaxed);
+    g_moon_held.store((buttons & input::kMoonJump) != 0, std::memory_order_relaxed);
     for (int w = 0; w < kMoves; w++)
         if (g_mode[w].load(std::memory_order_relaxed) == 1) g_on[w] = l3;
     int w = g_doing.load(std::memory_order_relaxed);
@@ -242,6 +255,39 @@ void trace(const char* fmt, ...) {
     va_end(ap);
     fputc('\n', g_trace);
     fflush(g_trace);
+}
+
+// ---- the game's pace while the app's item ring is open (ItemRing.java): at the frame boundary the
+// main thread waits (paused) or stretches each frame to kSlowFrame (slow motion: a third of the speed
+// at 30 fps), giving up its core meanwhile
+namespace {
+std::atomic<int> g_pace{0};
+std::mutex g_pace_mu;
+std::condition_variable g_pace_cv;
+constexpr auto kSlowFrame = std::chrono::milliseconds(100);
+}  // namespace
+
+void set_game_pace(int mode) {
+    {
+        std::lock_guard<std::mutex> lk(g_pace_mu);
+        g_pace = mode;
+    }
+    g_pace_cv.notify_all();
+}
+
+void pace_service() {
+    static auto last = std::chrono::steady_clock::now();
+    const int mode = g_pace.load(std::memory_order_relaxed);
+    if (mode == 1) {
+        BlockingScope b;
+        std::unique_lock<std::mutex> lk(g_pace_mu);
+        g_pace_cv.wait_until(lk, last + kSlowFrame, [] { return g_pace != 1; });
+    } else if (mode == 2) {
+        BlockingScope b;
+        std::unique_lock<std::mutex> lk(g_pace_mu);
+        g_pace_cv.wait(lk, [] { return g_pace != 2; });
+    }
+    last = std::chrono::steady_clock::now();
 }
 
 }  // namespace mods

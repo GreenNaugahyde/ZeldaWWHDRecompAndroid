@@ -232,6 +232,19 @@ float dynamic_resolution_min();
 bool dynamic_resolution_on();
 float dynamic_resolution_busy();      // GPU busy share 0..1 over the last half second, -1 when off
 void dynres_gpu_busy(double ns);      // a command buffer's GPU time (vk_profile.cpp)
+void benchmark_frame();               // at the swap (render thread)
+// ---- graphics benchmark (vk_dynres.cpp, the app's preset finder): GPU timestamps stay on while it
+// runs; per frame shown: the GPU's busy time and the busiest game / render thread's CPU time
+void set_benchmark(bool on);
+bool benchmark_on();
+// since the last call (then starts again): {frames shown, seconds, GPU ms per frame, busiest thread ms
+// per frame (0: unknown), worst frame interval ms} (any thread)
+void benchmark_sample(float out[6]);  // (kBenchStats, vk_window.h)
+int benchmark_frames();               // frames shown since the benchmark started
+int work_done();                      // shaders compiled and pipelines built since the start
+bool low_memory();                    // a device with little RAM (WWHD_LOW_MEMORY=1, set by the app): no pipelines made ahead
+void set_background_compiles_paused(bool on);  // no new cache / head-start compiles (vk_draw.cpp)
+uint64_t skipped_compiling();         // draws left out while compiling, so far (vk_draw.cpp)
 float dynres_scale(float setting);    // at the swap: the scale for the next frame
 // a render target made at another scale: reallocate it at the current one, keeping its contents
 Surface* rescaled(Surface* s);

@@ -27,6 +27,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cctype>
+#include <chrono>
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
@@ -36,6 +37,7 @@
 #include <vector>
 
 #include "gx2/gx2_cmd.h"
+#include "guest_addr.h"
 #include "hud.h"
 #include "mods/mods.h"
 #include "runtime.h"
@@ -201,8 +203,14 @@ extern "C" void site_025020E0(Cpu* c) { store_aspect(c); }
 // camera_draw: C_MTXPerspective(view.mProjMtx, f1 fovy, f2 aspect, f3 near, f4 far)
 extern "C" void site_024FFD60(Cpu* c) { adjust_projection_args(c, 1, 2); }
 // view_setup: mDoLib_clipper::setup(f1 fovy, f2 aspect, f3 near, f4 far)
-extern "C" void site_024F811C(Cpu* c) { adjust_projection_args(c, 1, 2); }
-extern "C" void site_024F8168(Cpu* c) { adjust_projection_args(c, 1, 2); }
+// (and wider for the view's zoom and shift)
+static void adjust_clipper_args(Cpu* c) {
+    adjust_projection_args(c, 1, 2);
+    float k = aspect::view_tan_scale() * (1.0f + std::fabs(aspect::view_shift_ndc()));
+    if (k != 1.0f) c->f[1].ps0 = c->f[1].ps1 = vert_plus_fovy((float)c->f[1].ps0, k);
+}
+extern "C" void site_024F811C(Cpu* c) { adjust_clipper_args(c); }
+extern "C" void site_024F8168(Cpu* c) { adjust_clipper_args(c); }
 // dScnName_c::setView: C_MTXPerspective (file select)
 extern "C" void site_025ADB38(Cpu* c) { adjust_projection_args(c, 1, 2); }
 
@@ -238,21 +246,53 @@ constexpr uint32_t kPaneFlags = 0x44, kPaneAlpha = 0x45, kPaneMtxDirty = 0x10, k
 constexpr uint32_t kPaneParent = 0x0C, kPaneChildren = 0x14, kPaneTrans = 0x1C, kPaneScale = 0x34, kPaneSize = 0x3C, kPaneName = 0x80;
 
 std::mutex g_root_mu;
-std::vector<std::pair<uint32_t, int>> g_root_tv;  // layout root pane -> the target it was last drawn to (Screen)
+// layout root pane -> the target it was last drawn to (Screen). A root drawn to the TV and to another target in
+// the same frames (the wind compass, ControlWind_00, draws one layout on the TV and the GamePad) counts as the TV's
+// while TV draws keep coming (tvHold: other draws since the last TV one): following each draw flipped its
+// matrices between the two shapes from frame to frame (the compass's background flickered between 16:9 and full)
+// otherHold: draws since the last one to another target (GamePad), counted down by TV draws: a root drawn to both
+// is a menu shown on both screens (the file select), not a marker the game put at an actor (placed roots below)
+struct RootTarget { uint32_t root; int screen; int tvHold; int otherHold; };
+std::vector<RootTarget> g_root_tv;
+constexpr int kTvHold = 6;
 int root_screen(uint32_t root) {
     std::lock_guard<std::mutex> lk(g_root_mu);
-    for (auto& [r, s] : g_root_tv)
-        if (r == root) return s;
+    for (auto& e : g_root_tv)
+        if (e.root == root) return e.tvHold > 0 ? (int)kTvTarget : e.screen;
     return -1;
 }
 // not reported (yet): layouts are TV layouts unless seen elsewhere
 bool root_on_tv(uint32_t root) { int s = root_screen(root); return s < 0 || s == kTvTarget; }
-void set_root_tv(uint32_t root, int screen) {
+// also drawn to another target in the last frames
+bool root_also_elsewhere(uint32_t root) {
     std::lock_guard<std::mutex> lk(g_root_mu);
     for (auto& e : g_root_tv)
-        if (e.first == root) { e.second = screen; return; }
+        if (e.root == root) return e.otherHold > 0;
+    return false;
+}
+void set_root_tv(uint32_t root, int screen) {
+    std::lock_guard<std::mutex> lk(g_root_mu);
+    // debug: WWHD_ROOT_LOG=1 logs a root drawn to another target than before (a few times per root)
+    static const bool log = getenv("WWHD_ROOT_LOG") != nullptr;
+    for (auto& e : g_root_tv)
+        if (e.root == root) {
+            if (log && e.screen != screen) {
+                static std::unordered_map<uint32_t, int> n;
+                if (n[root]++ < 12)
+                    LOG("[aspect] root %08X '%.24s' target %d -> %d", root, (const char*)mem::ptr(root + kPaneName), e.screen, screen);
+            }
+            if (screen == kTvTarget) {
+                e.tvHold = kTvHold;
+                if (e.otherHold > 0) e.otherHold--;
+            } else {
+                if (e.tvHold > 0) e.tvHold--;
+                e.otherHold = kTvHold;
+            }
+            e.screen = screen;
+            return;
+        }
     if (g_root_tv.size() > 256) g_root_tv.erase(g_root_tv.begin());
-    g_root_tv.push_back({root, screen});
+    g_root_tv.push_back({root, screen, screen == kTvTarget ? kTvHold : 0, screen == kTvTarget ? 0 : kTvHold});
 }
 
 // the anchoring state each root's matrices were last computed with: a root whose state changes
@@ -343,9 +383,12 @@ extern "C" void hook_028766CC(Cpu* c) {
         t_root = pane;
         t_anchor = (kx != 1.0f || ky != 1.0f) && root_on_tv(pane);
         // a root placed by the game (layouts are authored with the root at 0,0): small layouts put at
-        // an actor's projected screen position (cursors, markers) -> scaled out with the 3D view
+        // an actor's projected screen position (cursors, markers) -> scaled out with the 3D view. Not one
+        // drawn to the GamePad too: a menu's cursor on both screens follows the menu's 2D buttons (the file
+        // select's cursor on Start sat half a button to the right with the screen-shaped picture)
         float tx = (float)ldf32(pane + kPaneTrans), ty = (float)ldf32(pane + kPaneTrans + 4);
-        bool placed = t_anchor && (tx != 0.0f || ty != 0.0f);
+        bool menu = root_also_elsewhere(pane);
+        bool placed = t_anchor && (tx != 0.0f || ty != 0.0f) && !menu;
         // debug: WWHD_ASPECT_LOG=1 logs each placed root (name, translation) once per name
         static const bool log_roots = getenv("WWHD_ASPECT_LOG") != nullptr;
         if (log_roots && placed) {
@@ -356,7 +399,7 @@ extern "C" void hook_028766CC(Cpu* c) {
             if (seen[nm]++ == 0) LOG("[aspect] placed root '%s' at %.1f, %.1f", nm.c_str(), tx, ty);
         }
         // matrices are only recomputed for dirty panes: after an aspect change, the whole tree
-        if (anchor_changed(pane, t_anchor) || (g_changed_swap && g_swaps - g_changed_swap < 4)) c->r[5] = 1;
+        if (anchor_changed(pane, t_anchor && !menu) || (g_changed_swap && g_swaps - g_changed_swap < 4)) c->r[5] = 1;
         if (placed) { stf32(pane + kPaneTrans, tx * kx); stf32(pane + kPaneTrans + 4, ty * ky); }
         set_offset(pane, placed ? tx * (kx - 1.0f) : 0.0f, placed ? ty * (ky - 1.0f) : 0.0f);
         f_028766CC_orig(c);
@@ -368,8 +411,9 @@ extern "C" void hook_028766CC(Cpu* c) {
     // hearts only in combat (hud.h): the hearts part fades by its own alpha (nw::lyt::Pane +0x45; +0x46
     // is the global alpha computed in this call). Not its container N_Default_00: that one doesn't pass
     // alpha on (flags +0x44 = 0x01, without the "influenced alpha" bit 0x02; L_HeartAll_00 has 0x03)
-    // the rupees (L_Rupy_00) the same way
-    int fade = name_is(pane, "L_HeartAll_00") ? kFadeHearts : name_is(pane, "L_Rupy_00") ? kFadeRupees : -1;
+    // the rupees (L_Rupy_00) and the magic bar (L_MagicBar_00, in N_Default_00 > N_HeartPos_00) the same way
+    int fade = name_is(pane, "L_HeartAll_00") ? kFadeHearts : name_is(pane, "L_Rupy_00") ? kFadeRupees
+             : name_is(pane, "L_MagicBar_00") ? kFadeMagic : -1;
     if (fade >= 0) {
         float f = hud_fade_alpha(fade);
         if (f < 1.0f) {
@@ -383,9 +427,136 @@ extern "C" void hook_028766CC(Cpu* c) {
     calc_pane(c, pane, parent, kx, ky);
 }
 
+namespace aspect {
+namespace {
+std::atomic<bool> g_picto_big{false};
+constexpr float kPictoScale = 2.0f;  // the viewfinder 560x315 -> 1120x630: the 3D view's own size
+}  // namespace
+void set_picto_big(bool on) { g_picto_big = on; }
+// The game's own zoom for the photo: camera_draw (after C_MTXPerspective, 025000D4) gives the HD
+// renderer's projection (camera object +0x66C) the scale 2 and an offset of 63 units up (times 2)
+// when bit 0 of the Picto Box state's flags (*0x1047C9BC +0xF64) is set, which the Picto Box sets
+// for the frame of the shot (026C1E50): the 3D view zoomed around the 560x315 finder, whose centre
+// is 63 above the screen's. With the bigger finder, the bit is set for every frame of the Picto
+// Box's screen: the finder (twice its size, centred) shows exactly the picture the photo takes.
+bool picto_zoom_begin() {
+    if (!g_picto_big.load(std::memory_order_relaxed) || !hud_picto_screen()) return false;
+    uint32_t st = ld32(GD(0x1047C9BC));
+    if (!st) return false;
+    uint32_t flags = ld32(st + 0xF64);
+    if (flags & 1) return false;  // the shot: the game's own
+    st32(st + 0xF64, flags | 1);
+    return true;
+}
+void picto_zoom_end(bool set) {
+    if (!set) return;
+    uint32_t st = ld32(GD(0x1047C9BC));
+    if (st) st32(st + 0xF64, ld32(st + 0xF64) & ~1u);
+}
+
+// ---- the 3D view zoomed out and shifted (set_view_zoom / set_view_shift)
+// Zoom: camera_draw draws with the camera's fovy (+0xD4) times the zoom (as a tangent, like Vert+):
+// both projections it builds take it from there (C_MTXPerspective into view.mProjMtx +0x104, and the
+// HD renderer's PerspectiveProjection at +0x248+0x66C: near +0x94, far +0x98, fovy +0x9C, its matrix
+// +0x04 and device matrix +0x44, which camera_draw copies to 104B45C0+0x14C). Put back afterwards.
+// The culling frustum (view_setup's clipper, set up on the logic step) widens by the same.
+// Shift: after camera_draw the three matrices get row y -= d * row w (d in NDC, down), so the
+// picture's centre moves down d * 360 layout units while it keeps filling the screen (a lens shift:
+// more is seen above, nothing is distorted); the clipper widens to cover it.
+// Not in first person, the Picto Box or the telescope (their own views; photos are judged by the
+// game's fovy). At zoom 1 and no shift nothing is touched.
+namespace {
+std::atomic<float> g_zoom_req{1.0f}, g_shift_req{0.0f};  // as set
+std::atomic<float> g_zoom_now{1.0f}, g_shift_now{0.0f};  // as drawn now (shift in NDC)
+std::chrono::steady_clock::time_point g_shift_t{};
+bool own_view() {
+    if (hud_picto_screen() || mods::first_person_view()) return true;
+    int32_t bar[6];
+    hud_zoom_bar(bar);  // the telescope's (and Picto Box's) zoom bar is up
+    return bar[0] != 0;
+}
+void shift_rows(uint32_t m, float d) {  // 4x4 row-major: row 1 -= d * row 3
+    for (int i = 0; i < 4; i++)
+        stf32(m + 16 + 4 * i, (float)ldf32(m + 16 + 4 * i) - d * (float)ldf32(m + 48 + 4 * i));
+}
+}  // namespace
+void set_view_zoom(float z) { g_zoom_req = std::fmin(std::fmax(z, 1.0f), 3.0f); }
+void set_view_shift(float units) { g_shift_req = units / 360.0f; }
+float view_tan_scale() { return g_zoom_now.load(std::memory_order_relaxed); }
+float view_shift_ndc() { return g_shift_now.load(std::memory_order_relaxed); }
+
+float view_zoom_begin(uint32_t cam) {
+    // the shift eases toward what is asked (about 0.2 s), the zoom follows at once (a pinch is smooth)
+    auto now = std::chrono::steady_clock::now();
+    float dt = g_shift_t.time_since_epoch().count() ? std::chrono::duration<float>(now - g_shift_t).count() : 1.0f;
+    g_shift_t = now;
+    float s = g_shift_now, want = g_shift_req;
+    s += (want - s) * std::fmin(1.0f, dt * 12.0f);
+    if (std::fabs(want - s) < 0.002f) s = want;
+    bool own = own_view();
+    g_shift_now = own ? 0.0f : s;
+    float z = own ? 1.0f : g_zoom_req.load();
+    g_zoom_now = z;
+    if (z == 1.0f) return 0;
+    float fovy = (float)ldf32(cam + 0xD4);
+    if (!(fovy > 1 && fovy < 170)) return 0;
+    stf32(cam + 0xD4, vert_plus_fovy(fovy, z));
+    return fovy;
+}
+void view_zoom_end(uint32_t cam, float fovy) {
+    if (fovy) stf32(cam + 0xD4, fovy);
+    float d = g_shift_now;
+    if (d == 0.0f) return;
+    shift_rows(cam + 0x104, d);
+    shift_rows(cam + 0x248 + 0x66C + 0x04, d);
+    shift_rows(cam + 0x248 + 0x66C + 0x44, d);
+    shift_rows(GD(0x104B45C0) + 0x14C, d);
+}
+}  // namespace aspect
+
+// the Picto Box's viewfinder bigger (set_picto_big): PictographBox_00's N_Frame_00 (the black frame
+// around a 560x315 hole centred 62.5 above its origin) and N_Finder_00's window, photo preview and
+// shutter are scaled around the screen centre; the zoom bar, counter and marks stay. Returns the
+// changed translation y / scale factor for this pane, or false.
+static bool picto_big_pane(uint32_t pane, uint32_t parent, float ty, float& ny, float& k) {
+    using namespace aspect;
+    if (!g_picto_big.load(std::memory_order_relaxed) || !root_on_tv(t_root)) return false;
+    if (name_is(pane, "N_Frame_00") && name_is(parent, "N_All_00")) {
+        uint32_t next = ld32(pane);  // the next sibling: N_Finder_00 (PictographBox_00 only)
+        if (!next || !name_is(next, "N_Finder_00")) return false;
+        k = kPictoScale;
+        ny = ty - 62.5f * kPictoScale;  // the hole's centre to the screen centre (N_All_00 is at +63)
+        return true;
+    }
+    if (name_is(parent, "N_Finder_00") &&
+        (name_is(pane, "W_Finder_00") || name_is(pane, "PF_Pictograph_00") || name_is(pane, "W_Shutter_00"))) {
+        k = kPictoScale;
+        ny = ty - 63.0f;
+        return true;
+    }
+    return false;
+}
+
 // the rest of Pane::CalculateMtx's hook for a non-root pane
 static void calc_pane(Cpu* c, uint32_t pane, uint32_t parent, float kx, float ky) {
     using namespace aspect;
+    {
+        float ny, k;
+        float ty = (float)ldf32(pane + kPaneTrans + 4);
+        if (picto_big_pane(pane, parent, ty, ny, k)) {
+            float sx = (float)ldf32(pane + kPaneScale), sy = (float)ldf32(pane + kPaneScale + 4);
+            st8(pane + kPaneFlags, ld8(pane + kPaneFlags) | kPaneMtxDirty);
+            stf32(pane + kPaneTrans + 4, ny);
+            stf32(pane + kPaneScale, sx * k);
+            stf32(pane + kPaneScale + 4, sy * k);
+            f_028766CC_orig(c);
+            stf32(pane + kPaneTrans + 4, ty);
+            stf32(pane + kPaneScale, sx);
+            stf32(pane + kPaneScale + 4, sy);
+            st8(pane + kPaneFlags, ld8(pane + kPaneFlags) | kPaneMtxDirty);  // recomputed again when it is switched off
+            return;
+        }
+    }
     if (!t_anchor) {
         if (parent == t_root) set_offset(pane, 0, 0);
         f_028766CC_orig(c);
@@ -407,11 +578,13 @@ static void calc_pane(Cpu* c, uint32_t pane, uint32_t parent, float kx, float ky
             if (ty >= 200.0f) ny = ty + halfY;
         }
     }
-    // a leaf covering the whole screen (background, fade): stretch it to the new shape
+    // a leaf covering the whole screen (background, fade): stretch it to the new shape. Only 16:9-shaped ones:
+    // the telescope's wipe (Telescope_00 W_Wipe_00, a 26 x 26 window at scale 66 = 1716 x 1716, the round view
+    // with black frames) turned oval; square, it covers wider screens as it is
     uint32_t sentinel = pane + kPaneChildren;
     if (ld32(sentinel) == sentinel && std::fabs(tx) < 8.0f && std::fabs(ty) < 8.0f) {
         float w = (float)ldf32(pane + kPaneSize) * std::fabs(sx), h = (float)ldf32(pane + kPaneSize + 4) * std::fabs(sy);
-        if (w >= 1270.0f && h >= 710.0f) {
+        if (w >= 1270.0f && h >= 710.0f && std::fabs(w / h - 16.0f / 9.0f) < 0.25f) {
             nsx = sx * kx;
             nsy = sy * ky;
             static const bool log_st = getenv("WWHD_ASPECT_LOG") != nullptr;
@@ -481,6 +654,112 @@ bool drc_touch(float u, float v, float pictureAspect, float& x, float& y) {
 }
 }  // namespace aspect
 
+// ---- the inventory's pages under a finger (item_page_drag). The game moves its pages by N_All_00 and N_All_01
+// (MenuItem_00, both at the same x; setPos 026913EC); its slide states start with a speed from where they are
+// (enter 02691308: (-1280 - x) / 3 per frame, 026916B4: -x / 3), so a slide started where the pages already are
+// has nothing left to move and only switches the game's page. The app's options page lies left of the items
+// (x +1280): the paper sheet (W_Base_00 and its edge shadow and glow line, 2480 wide at +640 in N_All_00) is
+// stretched over it then. Written at the panes' draw on the game thread: the next frame lays them out there.
+namespace aspect {
+namespace {
+std::atomic<int> g_page_mode{0};
+std::atomic<float> g_page_value{0}, g_page_seen{0};
+std::atomic<bool> g_sheet_left{false};
+uint32_t g_item_root;  // MenuItem_00's root (the parent of L_MenuArrowR_00)
+bool g_page_on, g_page_write, g_gliding;
+float g_page_base, g_page_x, g_glide_from, g_glide_to;
+int g_glide_i, g_glide_n;
+
+void item_page_pane(uint32_t pane, uint32_t parent) {
+    if (name_is(pane, "L_MenuArrowR_00")) g_item_root = parent;
+    if (parent != g_item_root) return;
+    bool all0 = name_is(pane, "N_All_00");
+    if (!all0 && !name_is(pane, "N_All_01")) return;
+    if (all0) {  // (drawn first: decides for the frame)
+        int m = g_page_mode.load(std::memory_order_relaxed);
+        float cur = (float)ldf32(pane + kPaneTrans), v = g_page_value.load(std::memory_order_relaxed);
+        // left of the items only with the options page there (else the paper ends there: blank)
+        float most = g_sheet_left.load(std::memory_order_relaxed) ? 1280.0f : 0.0f;
+        g_page_write = false;
+        if (m == 1) {  // following: from where the drag began
+            if (!g_page_on) { g_page_on = true; g_page_base = cur; }
+            g_glide_n = 0;
+            g_page_x = std::fmin(most, std::fmax(-1280.0f, g_page_base + v));
+            g_page_write = true;
+        } else if (m == 2) {  // easing out to v, over 5 to 8 frames by the distance
+            if (!g_gliding) {
+                g_gliding = true;
+                g_glide_from = cur;
+                g_glide_to = std::fmin(most, std::fmax(-1280.0f, v));
+                g_glide_i = 0;
+                g_glide_n = 5 + (int)std::lround(3.0f * std::fmin(1.0f, std::fabs(g_glide_to - g_glide_from) / 1280.0f));
+            }
+            float k = (float)++g_glide_i / (float)g_glide_n, e = 1.0f - (1.0f - k) * (1.0f - k) * (1.0f - k);
+            g_page_x = g_glide_from + (g_glide_to - g_glide_from) * e;
+            if (g_glide_i >= g_glide_n) {
+                g_page_x = g_glide_to;
+                g_gliding = false;
+                g_page_mode.compare_exchange_strong(m, 0);
+            }
+            g_page_on = false;
+            g_page_write = true;
+        } else {
+            g_page_on = g_gliding = false;
+        }
+        g_page_seen.store(g_page_write ? g_page_x : cur, std::memory_order_relaxed);
+    }
+    if (!g_page_write) return;
+    stf32(pane + kPaneTrans, g_page_x);
+    st8(pane + kPaneFlags, ld8(pane + kPaneFlags) | kPaneMtxDirty);
+}
+
+// the menu's tabs (MenuBtns_00: N_All_00 holding N_MenuBtn_00..02) stay put between the game's pages; with the options
+// page coming in they go out to the right with the pages (a little faster: wholly off the 16:9 screen at +1280, so
+// the picture's wider sides hide them too), the page brings its own
+uint32_t g_tab_root, g_tab_all;
+bool g_tab_moved;
+
+void item_tabs_pane(uint32_t pane) {
+    float x = g_page_seen.load(std::memory_order_relaxed);
+    if (x > 0.5f) {
+        stf32(pane + kPaneTrans, x * 1.02f);
+        g_tab_moved = true;
+    } else if (g_tab_moved || (float)ldf32(pane + kPaneTrans) > 0.5f) {  // (also where a save state kept them moved)
+        stf32(pane + kPaneTrans, 0.0f);  // (as laid out)
+        g_tab_moved = false;
+    } else {
+        return;
+    }
+    st8(pane + kPaneFlags, ld8(pane + kPaneFlags) | kPaneMtxDirty);
+}
+
+// the paper sheet: 2480 wide at +640 as laid out, or 3760 at 0 with the options page left of the items
+void item_sheet_pane(uint32_t pane, uint32_t parent) {
+    if (name_is(pane, "N_MenuBtn_00") && name_is(parent, "N_All_00") && ld32(parent + kPaneParent) && !ld32(ld32(parent + kPaneParent) + kPaneParent)) {
+        g_tab_root = ld32(parent + kPaneParent);
+        g_tab_all = parent;
+    }
+    if (!g_item_root || ld32(parent + kPaneParent) != g_item_root || !name_is(parent, "N_All_00")) return;
+    if (!name_is(pane, "W_Base_00") && !name_is(pane, "W_BaseEdgeShadow_00") && !name_is(pane, "W_BaseGlowLine_00")) return;
+    bool left = g_sheet_left.load(std::memory_order_relaxed);
+    float w = left ? 3760.0f : 2480.0f, x = left ? 0.0f : 640.0f;
+    if ((float)ldf32(pane + kPaneSize) == w && (float)ldf32(pane + kPaneTrans) == x) return;
+    stf32(pane + kPaneSize, w);
+    stf32(pane + kPaneTrans, x);
+    st8(pane + kPaneFlags, ld8(pane + kPaneFlags) | kPaneMtxDirty);
+}
+}  // namespace
+
+void item_page_drag(int mode, float v) {
+    g_page_value.store(v, std::memory_order_relaxed);
+    g_page_mode.store(mode, std::memory_order_relaxed);
+}
+
+bool item_page_gliding() { return g_page_mode.load(std::memory_order_relaxed) == 2; }
+float item_page_x() { return g_page_seen.load(std::memory_order_relaxed); }
+void set_item_sheet_left(bool on) { g_sheet_left.store(on, std::memory_order_relaxed); }
+}  // namespace aspect
+
 // Pane::Draw of a pane in a layout drawn to a GamePad picture of another shape: false if it isn't one
 static bool drc_draw(Cpu* c, uint32_t pane) {
     using namespace aspect;
@@ -493,7 +772,13 @@ static bool drc_draw(Cpu* c, uint32_t pane) {
     float w = (float)ldf32(pane + kPaneSize) * std::hypot((float)ldf32(m), (float)ldf32(m + 0x10));
     float h = (float)ldf32(pane + kPaneSize + 4) * std::hypot((float)ldf32(m + 4), (float)ldf32(m + 0x14));
     bool leaf = ld32(pane + kPaneChildren) == pane + kPaneChildren;
-    if (w > 0.0f && h > 0.0f && (std::fabs(gx) - w / 2 > 640.0f + 8.0f || std::fabs(gy) - h / 2 > 360.0f + 8.0f)) {
+    // the item pages' arrows rest at +-686 (MenuItem_00), a little larger than in view: their centre off the
+    // screen is enough (else the left one showed beside the items page once the page right of it was seen)
+    bool arrowOut = false;
+    if (leaf && std::fabs(gx) > 640.0f)
+        for (uint32_t p = ld32(pane + kPaneParent); p && !arrowOut; p = ld32(p + kPaneParent))
+            arrowOut = name_is(p, "L_MenuArrowL_00") || name_is(p, "L_MenuArrowR_00");
+    if (arrowOut || (w > 0.0f && h > 0.0f && (std::fabs(gx) - w / 2 > 640.0f + 8.0f || std::fabs(gy) - h / 2 > 360.0f + 8.0f))) {
         if (leaf) return true;  // parked
         // a parked pane with children (an item icon with its count): its own image transparent (global
         // alpha, +0x46), the children decide for themselves (a container placed a screen to the side
@@ -668,7 +953,7 @@ bool drc_game_cursor() { uint64_t f = g_cursor_frame.load(std::memory_order_rela
 // Pane::Draw(this, DrawInfo&): the render thread reports where each layout root is drawn. The
 // game thread can't tell: TV and GamePad layouts share DrawInfos and are recorded on threads that
 // don't bind the targets.
-extern "C" void hook_02877100(Cpu* c) {
+static void draw_pane(Cpu* c) {
     using namespace aspect;
     uint32_t pane = c->r[3];
     // WWHD_HUD_SKIP_LOG=1: each pane name skipped below, once, with its parents (debugging)
@@ -684,9 +969,19 @@ extern "C" void hook_02877100(Cpu* c) {
         if (seen.insert(path).second) LOG("[hud] skipped (%s): %s", why, path.c_str());
     };
     if (hud_hidden(pane)) return skipped("hidden");  // a HUD element the player hid (hud.h): neither it nor its children
-    if (hud_fade_gone(kFadeHearts) && name_is(pane, "N_Default_00")) return skipped("hearts");  // hearts faded out completely
+    // hearts faded out completely; not their container N_Default_00, which holds the magic bar too (Main_00.bflyt)
+    if (hud_fade_gone(kFadeHearts) && name_is(pane, "L_HeartAll_00")) return skipped("hearts");
+    if (hud_fade_gone(kFadeMagic) && name_is(pane, "L_MagicBar_00")) return skipped("magic");
     if (hud_fade_gone(kFadeRupees) && name_is(pane, "L_Rupy_00")) return skipped("rupees");     // rupees too
     if (ld32(pane + kPaneParent)) note_drc_pane(pane);
+    if (uint32_t pp = ld32(pane + kPaneParent)) {  // the inventory's pages (app swipes, the options page)
+        if (!ld32(pp + kPaneParent)) {
+            item_page_pane(pane, pp);
+            if (pp == g_tab_root && pane == g_tab_all) item_tabs_pane(pane);
+        } else {
+            item_sheet_pane(pane, pp);
+        }
+    }
     // a layout root drawn to the TV: the pause menu's? (hud.h; the GamePad shows the same item layout
     // all the time)
     if (!ld32(pane + kPaneParent) && root_on_tv(pane)) hud_root_drawn(pane);
@@ -710,6 +1005,35 @@ extern "C" void hook_02877100(Cpu* c) {
         }
     }
     f_02877100_orig(c);
+}
+
+// the item pages' arrows fade with the pages' position (with the options page on: set_item_sheet_left): the right
+// arrow (the items page's) out as the page right of it comes in or the options page does, the left one (that
+// page's) in; drawn so (their images' global alpha for the draw), the game's own state left alone
+static int item_arrow_fade(uint32_t pane) {
+    using namespace aspect;
+    if (!g_item_root || !g_sheet_left.load(std::memory_order_relaxed) || ld32(pane + kPaneChildren) != pane + kPaneChildren) return -1;
+    uint32_t p = ld32(pane + kPaneParent);
+    for (int i = 0; i < 5 && p; i++, p = ld32(p + kPaneParent)) {
+        if (ld32(p + kPaneParent) != g_item_root) continue;
+        bool right = name_is(p, "L_MenuArrowR_00");
+        if (!right && !name_is(p, "L_MenuArrowL_00")) return -1;
+        float x = g_page_seen.load(std::memory_order_relaxed);
+        float a = 1.0f - std::fmin(1.0f, std::fabs(right ? x : x + 1280.0f) / 1280.0f);
+        return a >= 0.999f ? -1 : (int)(a * 255.0f);
+    }
+    return -1;
+}
+
+extern "C" void hook_02877100(Cpu* c) {
+    using namespace aspect;
+    uint32_t pane = c->r[3];
+    int fade = item_arrow_fade(pane);
+    if (fade < 0) { draw_pane(c); return; }
+    uint8_t a = ld8(pane + kPaneAlpha + 1);  // (+0x46: the alpha it is drawn with)
+    st8(pane + kPaneAlpha + 1, (uint8_t)(a * fade / 255));
+    draw_pane(c);
+    st8(pane + kPaneAlpha + 1, a);
 }
 
 // the projection matrix uploaded during `fn` is tagged: the render thread narrows it (rows x and y

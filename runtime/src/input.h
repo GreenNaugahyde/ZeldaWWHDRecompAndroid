@@ -13,6 +13,9 @@ enum : uint32_t {
     kPlus = 0x0008, kMinus = 0x0004, kHome = 0x0002,
     kUp = 0x0200, kDown = 0x0100, kLeft = 0x0800, kRight = 0x0400,
     kStickR = 0x00020000, kStickL = 0x00040000,
+    // not GamePad buttons: Jump anywhere's and the moon jump's own inputs (on-screen buttons, a controller button
+    // of their own); mods::filter_pad takes them out before the game sees the buttons
+    kJump = 0x00100000, kMoonJump = 0x00200000,
 };
 
 struct PadState {

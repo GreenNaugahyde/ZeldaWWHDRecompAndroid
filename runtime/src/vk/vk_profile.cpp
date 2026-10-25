@@ -77,8 +77,8 @@ bool on() {
     return g_on;
 }
 
-// timestamps at the command buffers' start and end: for the profile or for dynamic resolution
-bool timing() { return on() || (g_timestamps && dynamic_resolution_on()); }
+// timestamps at the command buffers' start and end: for the profile, dynamic resolution or the benchmark
+bool timing() { return on() || (g_timestamps && (dynamic_resolution_on() || benchmark_on())); }
 // queries per pool: the profile's passes, or only the two
 uint32_t pool_queries() { return g_on ? kQueries : 2; }
 

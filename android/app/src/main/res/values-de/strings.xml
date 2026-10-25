@@ -1,0 +1,886 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- German translation of the app's texts (by the game's language: MainActivity.gameLanguage). Texts missing
+     here are shown in English (values/strings.xml). Corrections and more translations are welcome. -->
+<resources>
+    <!-- touch hints (GameHint): *...* shows in orange -->
+    <string name="hint_ok">Alles klar!</string>
+    <string name="hint_never">Nicht mehr anzeigen</string>
+    <string name="hint_mg_board">*Berühre ein Feld* auf dem Brett, um dorthin zu zielen.\nDu kannst den Finger auch zu einem anderen schieben.\n*Lass los*, um zu feuern!</string>
+    <string name="hint_mg_puzzle">*Berühre ein Teil* in einer Linie mit der Lücke,\num es hinüberzuschieben, oder *zieh es* zur Lücke.\nGanze Reihen rücken mit!</string>
+    <string name="hint_mg_mail">*Berühre das Fach* mit dem Zeichen des Briefes,\num ihn dort einzusortieren!</string>
+    <string name="hint_mg_cannon">*Zieh* über den Bildschirm, um die Kanone auszurichten.\n*Tippe*, um zu feuern!</string>
+    <string name="hint_mg_auction">*Tippe irgendwo* auf den Bildschirm,\num dein Gebot zu erhöhen!</string>
+    <string name="hint_mg_choice">Um zu antworten, *berühre einfach die Zeile*,\ndie du sagen möchtest.</string>
+    <string name="hint_mg_number">*Wische nach oben oder unten*, um eine Ziffer zu ändern,\n*nach links oder rechts* für eine andere.\n*Tippe*, wenn die Zahl stimmt!</string>
+    <string name="hint_mg_shop">*Berühre einen Artikel*, um ihn dir genauer anzusehen.\n*Berühre ihn noch einmal*, um ihn zu kaufen!</string>
+    <string name="hint_mg_figure">*Zieh*, um die Figur zu drehen.\n*Spreize zwei Finger*, um näher heranzugehen!</string>
+    <string name="hint_mg_conduct">Halte einen Finger auf der *linken Hälfte* für den Takt:\nlinks für 4/4, rechts für 6/4, ohne für 3/4.\n*Wisch auf der rechten Hälfte*, um zu dirigieren!</string>
+    <string name="hint_mg_conduct_pad">*Rechtes Feld*: tippe oder zieh auf ein Notenzeichen,\num den Taktstock in diese Richtung zu schwingen.\n*Linkes Feld*: tippe den Takt an (4/4, 3/4, 6/4)!</string>
+    <string name="hint_mg_wind">*Zieh den blauen Pfeil* um den Kompass,\num die Windrichtung zu wählen.\nDann tipp auf den *grünen Knopf*!</string>
+    <string name="hint_leaf_glide">Beim Gleiten: *Tipp auf die Taste des Blatts*,\num es zu schließen und zu fallen; im Fall\nnoch einmal tippen, um weiterzugleiten.\n*Halten* wedelt mit dem Blatt in der Luft!</string>
+    <string name="hint_ring">*Halte eine Item-Taste*, um ihr Item\naus einem Ring zu wählen: *zieh* zum Item\nund *lass los*. Kurz tippen benutzt das Item\nwie bisher. Beutel öffnen ihren eigenen Ring!</string>
+    <string name="hint_songs_button">Halte die *Mikrofontaste* (oder *L*) und singe,\nsumme oder pfeife ein gelerntes Lied.\n*Lass los*, wenn du fertig bist: Link spielt es!</string>
+    <string name="hint_songs_auto">Singe, summe oder pfeife ein gelerntes Lied:\ndas *Mikrofon* hört zu!\nMach nach dem *letzten Ton* eine kurze Pause.</string>
+    <string name="hint_songs_try">Möchtest du es erst *ausprobieren*? Halte die\nMikrofon-Taste und singe: du siehst jeden *Ton*,\nden du triffst. Link spielt dabei noch nichts.</string>
+    <string name="hint_try_yes">Ausprobieren!</string>
+    <string name="hint_try_no">Jetzt nicht</string>
+    <string name="song_play_now">*%1$s* erkannt!\nJetzt richtig spielen? Dann sing es noch\neinmal: Link spielt es.</string>
+    <string name="song_play_yes">Jetzt spielen!</string>
+    <string name="song_play_no">Weiter üben</string>
+    <!-- options menu -->
+    <string name="cheat_apply">Anwenden</string>
+    <string name="cheat_bags">Beutel füllen</string>
+    <string name="cheat_bags_done">Beutebeutel und Futterbeutel gefüllt.</string>
+    <string name="cheat_bags_hint">Beutebeutel und Futterbeutel (falls sie fehlen), jede Beute ×99, Köder und Hyoi-Birnen</string>
+    <string name="cheat_dungeon">Karte, Kompass und Master-Schlüssel (dieser Dungeon)</string>
+    <string name="cheat_dungeon_done">Karte, Kompass und Master-Schlüssel für diesen Dungeon.</string>
+    <string name="cheat_inf_ammo">Unendlich Pfeile und Bomben</string>
+    <string name="cheat_inf_bags">Unendlich Köder und Beute</string>
+    <string name="cheat_inf_bags_hint">Benutzte Köder und Hyoi-Birnen kommen zurück, Beute bleibt bei 99</string>
+    <string name="cheat_inf_breath">Unendlich schwimmen</string>
+    <string name="cheat_inf_breath_hint">Die Schwimmanzeige bleibt voll: Link wird nie müde und geht im tiefen Wasser nicht unter</string>
+    <string name="cheat_one_hit">Ein Treffer reicht</string>
+    <string name="cheat_one_hit_hint">Gegner fallen nach einem einzigen Treffer (außer Bossen, die ihre eigenen Zähler haben)</string>
+    <string name="cheat_inf_health">Unendlich Energie</string>
+    <string name="cheat_inf_magic">Unendlich Magie</string>
+    <string name="cheat_inf_rupees">Unendlich Rubine</string>
+    <string name="cheat_items">Alle Items geben</string>
+    <string name="cheat_items_done">Alle Items gegeben.</string>
+    <string name="cheat_items_hint">Jedes Item des Inventars, Lichtpfeile, Deluxe-Bildbox, Krafthandschuhe, 4 Flaschen, 99 Pfeile und Bomben</string>
+    <string name="cheat_key">Einen kleinen Schlüssel hinzufügen (dieser Dungeon)</string>
+    <string name="cheat_key_done">Ein kleiner Schlüssel hinzugefügt.</string>
+    <string name="cheat_moon_anims">Zufällige Abflug-Animationen</string>
+    <string name="cheat_moon_anims_hint">Jeder Abflug wählt eine von 14 Posen statt der zwei Sprungposen</string>
+    <string name="cheat_moon_fly">Fluggeschwindigkeit</string>
+    <string name="cheat_moon_jump">Mondsprung</string>
+    <string name="cheat_moon_jump_hint">Halte seine Taste, um aufzusteigen, lenke mit dem linken Stick. Auf derselben Controller-Taste wie Springen überall gewinnt der Mondsprung</string>
+    <string name="opt_jump_button">Controller-Taste</string>
+    <string name="opt_jump_button_hint">Per Touch hat er eine eigene Taste. Eine Controller-Taste, die das Spiel beim Spielen nutzt, gibt das an eine andere ab, oder eine Item-Taste fällt weg</string>
+    <string name="opt_jump_clash">%1$s drückt im Spiel %2$s. Mit %3$s darauf würde sie beides tun.</string>
+    <string name="opt_jump_clash_move">Verschieben: %1$s kommt auf %2$s.</string>
+    <string name="opt_jump_clash_nofree">Für %1$s ist keine Controller-Taste mehr frei.</string>
+    <string name="opt_jump_clash_remove">Wegnehmen: Keine Controller-Taste drückt mehr %1$s; sein Item ist vom Controller aus nicht nutzbar (die anderen Item-Tasten bleiben).</string>
+    <string name="opt_jump_clash_remove_ring">Ablegen: Keine Controller-Taste drückt %1$s mehr; der Item-Ring hat weiterhin, was sie tat (Taktstock des Windes, Kanone, Bergungsarm).</string>
+    <string name="opt_jump_move">Verschieben</string>
+    <string name="opt_jump_remove">Wegnehmen</string>
+    <string name="opt_jump_move_l1">Auf L1 legen</string>
+    <string name="opt_jump_move_down">Auf Steuerkreuz unten legen</string>
+    <string name="opt_jump_clash_extra">Auf L1 / Steuerkreuz unten: %1$s kommt stattdessen auf diese Taste und behält sein Item, sein Feld auf der Item-Seite zeigt die neue Taste. L1 drückt dann nicht mehr das L der Wii U (kein Blättern dort, keine Mikrofontaste für die Lieder); Steuerkreuz unten bleibt außerhalb des Spielens unten.</string>
+    <string name="cheat_moon_nofall">Kein Fallschaden</string>
+    <string name="cheat_moon_nofall_hint">Die Landung nach einem Flug tut nie weh</string>
+    <string name="cheat_moon_rise">Steiggeschwindigkeit</string>
+    <string name="cheat_songs">Alle Lieder</string>
+    <string name="cheat_songs_done">Alle Lieder gelernt.</string>
+    <string name="cheat_stats">20 Herzen, doppelte Magie, 5000 Rubine</string>
+    <string name="cheat_stats_done">20 Herzen, doppelte Magie und 5000 Rubine.</string>
+    <string name="cheat_stats_hint">Füllt auch Herzen und Magie auf</string>
+    <string name="cheat_sword">Master-Schwert und Spiegelschild ausrüsten</string>
+    <string name="cheat_sword_done">Master-Schwert und Spiegelschild ausgerüstet, bis der Spielstand neu geladen wird.</string>
+    <string name="cheat_sword_hint">Bis der Spielstand neu geladen wird</string>
+    <string name="cheat_triforce">Alle Triforce-Fragmente</string>
+    <string name="cheat_triforce_done">Alle Triforce-Fragmente gesammelt.</string>
+    <string name="cheats_about">Diese ändern den Spielstand, den du spielst (aus dem ursprünglichen Projekt). Sie wirken, sobald ein Spielstand geladen ist; speichere im Spiel, um sie zu behalten.</string>
+    <string name="cheats_story_about">⚠️ Story-Cheats können Ereignisse der Geschichte verändern oder kaputt machen: Das Spiel kann Szenen überspringen oder wiederholen, die sie beibringen oder prüfen. Speichere vorher in einem Ersatz-Spielstand.</string>
+    <string name="cheats_story_confirm">Das kann Ereignisse der Geschichte verändern oder kaputt machen. Speichere vorher in einem Ersatz-Spielstand. Anwenden?</string>
+    <string name="controller_pro">Wii U Pro Controller</string>
+    <string name="controls_classic">Klassisch</string>
+    <string name="controls_flexible">Flexibel</string>
+    <string name="dev_off">Entwickleroptionen aus</string>
+    <string name="dev_on">Entwickleroptionen an (Tab Mods: Warp)</string>
+    <string name="drc_in_layout">Im Bildschirm-Layout</string>
+    <string name="drc_second_display">Zweiter Bildschirm</string>
+    <string name="drc_shape_fill">Bildschirm füllen</string>
+    <string name="drc_shape_original">Original 16:9</string>
+    <string name="dyn_res_down_to">Bis zu %1$s× (%2$s)</string>
+    <string name="fg_about">Fügt zwischen den 30-fps-Bildern des Spiels interpolierte Bilder ein, mit der Bildgenerierung von Lossless Scaling. Dafür brauchst du deine eigene Lossless.dll aus deiner Lossless-Scaling-Installation (Steam: steamapps/common/Lossless Scaling). Kopiere sie auf dieses Gerät und wähle sie hier aus. Generierte Bilder zeigen das Spiel etwa ein Bild später.</string>
+    <string name="fg_dll_tested_hint">Installiert: eine getestete Version</string>
+    <string name="fg_dll_untested_hint">Installiert: eine ungetestete Version (Bilder können falsch aussehen)</string>
+    <string name="fg_error">Die Bildgenerierung funktioniert nicht: %1$s</string>
+    <string name="fg_multiplier_item">×%1$d (%2$d fps)</string>
+    <string name="fg_multiplier_item_over">×%1$d (%2$d fps: mehr als der Bildschirm zeigt, keine generierten Bilder)</string>
+    <string name="fg_performance">Leistung</string>
+    <string name="fg_quality">Qualität (mehr GPU-Last)</string>
+    <string name="gpu_driver_about">Auf Adreno-GPUs kann das Spiel mit einem anderen Vulkan-Treiber als dem des Systems laufen, zum Beispiel einem Mesa-Turnip-Build oder einem neueren Qualcomm-Treiber. Nutze Treiberpakete im AdrenoTools-Format (eine .zip mit meta.json und dem Treiber), wie andere Emulatoren sie verwenden. Ein neuer Treiber gilt nach einem Neustart. Startet das Spiel damit nicht, kehrt der nächste Start zum Systemtreiber zurück.</string>
+    <string name="gpu_driver_fell_back">%1$s konnte nicht geladen werden, daher läuft der Systemtreiber. Der nächste Start wechselt wieder zu ihm.</string>
+    <string name="gpu_driver_install">Treiberpaket installieren…</string>
+    <string name="gpu_driver_install_hint">Eine .zip mit meta.json und dem Treiber</string>
+    <string name="gpu_driver_remove">Entfernen</string>
+    <string name="gpu_driver_running">Läuft gerade: %1$s</string>
+    <string name="gpu_driver_system">Systemtreiber</string>
+    <string name="gpu_driver_system_hint">Der Treiber, der mit dem Gerät kam</string>
+    <string name="gpu_driver_use">Verwenden</string>
+    <string name="interp_fps">%d fps (interpoliert)</string>
+    <string name="interp_off">30 fps (Original)</string>
+    <string name="opt_about">Info</string>
+    <string name="opt_aniso">16× anisotrope Filterung</string>
+    <string name="opt_ao">Umgebungsverdeckung</string>
+    <string name="opt_ao_hires">Verdeckungstiefe in voller Größe</string>
+    <string name="opt_aspect">Seitenverhältnis</string>
+    <string name="opt_auto_slot">Autospeicher %1$d</string>
+    <string name="opt_auto_state">Automatischer Speicherstand</string>
+    <string name="opt_auto_state_hint">Speichert beim Spielen einen Stand, ohne das Spiel anzuhalten, abwechselnd in zwei Auto-Plätze</string>
+    <string name="opt_back">Zurück</string>
+    <string name="opt_bench">Beste Einstellungen finden</string>
+    <string name="opt_bench_hint">Testet dieses Gerät kurz und stellt danach die Voreinstellung ein (das Spiel startet neu)</string>
+    <string name="opt_buttons">Controller-Tasten</string>
+    <string name="opt_buttons_custom">Eigene</string>
+    <string name="opt_buttons_default">Standard</string>
+    <string name="opt_buttons_hint">Welche Controller-Taste welche Wii-U-Taste drückt</string>
+    <string name="opt_buttons_note">Wähle eine Wii-U-Taste und drücke dann die Controller-Taste dafür. Eine schon belegte Taste tauscht den Platz, so behält jede Wii-U-Taste eine. Springen überall und der Mondsprung fragen erst nach, wenn das Spiel die Taste beim Spielen nutzt. Home / Guide und Select gedrückt halten öffnen immer das Menü, und das Menü nutzt die Tasten weiter nach ihrer Position.</string>
+    <string name="opt_buttons_press">Drücke die Controller-Taste für %1$s (jetzt: %2$s).\n\nHome / Guide oder Abbrechen lässt sie, wie sie ist.</string>
+    <string name="opt_buttons_reset">Auf Standard zurücksetzen</string>
+    <string name="opt_extra_l1">L1 als Item-Taste</string>
+    <string name="opt_extra_l1_hint">Übernimmt die Item-Taste X, Y oder R von ihrer Controller-Taste (ein Sprung dort tauscht hinüber), mit Item, Feld auf der Item-Seite und Item-Ring. L1 drückt dann nicht mehr das L der Wii U: kein Blättern auf der Item-Seite, keine Mikrofontaste für die Lieder.</string>
+    <string name="opt_extra_down">Steuerkreuz unten als Item-Taste</string>
+    <string name="opt_extra_down_hint">Wie L1, aber nur beim Spielen; in Menüs bleibt es unten. Auf der Item-Seite: ZL halten und Steuerkreuz unten drücken legt das Item unter dem Cursor darauf.</string>
+    <string name="opt_slot_labels">Namen der Item-Tasten</string>
+    <string name="opt_slot_labels_hint">Auf den Tasten des Spiels und den Item-Plätzen des GamePads. Auto: A1, A2, A3 per Touch, mit Controller die Taste, die sie drückt</string>
+    <string-array name="slot_labels">
+        <item>Auto</item>
+        <item>A1, A2, A3</item>
+        <item>X, Y, R (wie im Spiel)</item>
+    </string-array>
+    <!-- the controller setup (ControllerSetup) -->
+    <string name="cs_title">Controller einrichten</string>
+    <string name="cs_menu_hint">Schritt für Schritt: was die Tasten tun, eine vorgeschlagene Belegung, ausprobieren</string>
+    <string name="cs_no_controller">Kein Controller verbunden. Verbinde einen (oder drücke eine seiner Tasten) und versuche es noch einmal.</string>
+    <string name="cs_buttons_for">Für: %1$s</string>
+    <string name="cs_offer_title">Neuer Controller</string>
+    <string name="cs_offer_text">%1$s ist verbunden.\n\nEinrichten? Ein paar Schritte zeigen, was seine Tasten im Spiel tun, und schlagen eine Belegung vor, auch eine für Springen überall. Alles lässt sich später unter Steuerung › Controller einrichten ändern.</string>
+    <string name="cs_offer_never">Nicht fragen</string>
+    <string name="cs_offer_later">Später</string>
+    <string name="cs_offer_yes">Einrichten</string>
+    <string name="cs_intro">%1$s\n\nDas Spiel kennt nur das Wii U GamePad. Jede seiner Tasten wird von einer Taste deines Controllers gedrückt. Welche, lässt sich frei ändern, und jeder Controller behält seine eigene Belegung.\n\nIm Spiel sind alle Tasten außer L und Steuerkreuz unten belegt. Springen überall und der Mondsprung teilen sich daher L (L1 / LB) oder nehmen dem Spiel eine Taste: Was sie tat, wandert dann auf L oder wird, bei einer Item-Taste, abgelegt.</string>
+    <string name="cs_next">Weiter</string>
+    <string name="cs_face_title">Aktionstasten</string>
+    <string name="cs_face_text">Wie sollen die vier Tasten rechts belegt sein?\n\nNach Lage: wie auf dem Wii U GamePad. Die untere ist das Schwert (B der Wii U), die rechte die Aktionstaste (A). Die Buchstaben auf deinem Controller weichen dann von denen im Spiel ab.\n\nNach Buchstaben: A deines Controllers ist das A des Spiels (Aktion), B das Schwert, X und Y die Item-Tasten A2 und A1.</string>
+    <string name="cs_face_letters">Nach Buchstaben</string>
+    <string name="cs_face_position">Nach Lage</string>
+    <string name="cs_preset_title">Belegung</string>
+    <string name="cs_preset_text">Wähle einen Ausgangspunkt. Einzelne Tasten lassen sich danach ändern.</string>
+    <string name="cs_preset_original">Original</string>
+    <string name="cs_preset_original_text">Alle Tasten wie auf der Wii U. Springen überall und der Mondsprung (wenn an) auf L1 / LB, das das Spiel beim Spielen nicht nutzt.</string>
+    <string name="cs_preset_takeoff">Springen auf einer Item-Taste, Item ab</string>
+    <string name="cs_preset_takeoff_text">Springen überall auf der Taste einer Item-Taste (A1, A2 oder A3). Diese Item-Taste wird abgelegt: Ihr Item ist vom Controller aus nicht nutzbar, die anderen zwei bleiben. Schaltet Springen überall ein.</string>
+    <string name="cs_preset_tol">Springen auf beliebiger Taste, ihre Belegung auf L</string>
+    <string name="cs_preset_tol_text">Springen überall auf einer Taste deiner Wahl, etwa einer Aktionstaste. Was diese Taste im Spiel tat, wandert auf L1 / LB, es geht also nichts verloren. Schaltet Springen überall ein. Bei einer Item-Taste wird L1 zu dieser Item-Taste; das L der Wii U hat dann keine Controller-Taste mehr (Blättern auf der Item-Seite, Mikrofontaste der Lieder).</string>
+    <string name="cs_jump_title">Taste zum Springen</string>
+    <string name="cs_jump_takeoff">Drücke die Item-Taste, die springen soll: %1$s (A1), %2$s (A2) oder %3$s (A3).\n\nDer Mondsprung nimmt, solange er an ist, dieselbe Taste.</string>
+    <string name="cs_jump_tol">Drücke die Taste, die springen soll, etwa eine Aktionstaste. Was sie im Spiel tut, wandert auf L1 / LB.\n\nDer Mondsprung nimmt, solange er an ist, dieselbe Taste.</string>
+    <string name="cs_jump_not_item">%1$s drückt %2$s des Spiels, keine Item-Taste: Sie lässt sich nicht ablegen.</string>
+    <string name="cs_jump_not_menu">%1$s öffnet Menüs. Wähle eine andere Taste.</string>
+    <string name="cs_try_title">Ausprobieren</string>
+    <string name="cs_try_text">Drücke die Tasten des Controllers: Jede leuchtet mit dem auf, was sie im Spiel tut. Start / Options halten zum Beenden. Einzelne Tasten: Steuerung › Controller-Tasten.</string>
+    <string name="cs_change">Ändern</string>
+    <string name="cs_done">Fertig</string>
+    <string name="cs_nothing">nichts</string>
+    <string name="cs_select_hold">gehalten: das Menü dieser App</string>
+    <string name="cs_tag_jump">Sprung</string>
+    <string name="cs_tag_moon">Mond</string>
+    <string name="cs_takeoff_ring">Mit eingeschaltetem Item-Ring geht auch eine Richtung des Steuerkreuzes (nicht unten, das Spiel nutzt sie nicht): Der Ring hat Taktstock des Windes, Kanone und Bergungsarm.</string>
+    <string name="cs_jump_not_item_ring">%1$s drückt %2$s des Spiels, weder eine Item-Taste noch eine Steuerkreuz-Richtung, die der Item-Ring hat: Sie lässt sich nicht ablegen.</string>
+    <string name="cs_in_ring">auch im Item-Ring</string>
+    <string name="cs_taken_off">Ohne Taste: %1$s</string>
+    <string name="cs_ring_off_warn">Keine Controller-Taste drückt mehr %1$s (für einen Sprung abgelegt, als der Item-Ring es hatte). Ohne den Ring ist das vom Controller aus nicht nutzbar: Gib ihr eine Taste unter Steuerung › Controller-Tasten oder nimm Steuerung › Controller einrichten.</string>
+    <string-array name="cs_wiiu_actions">
+        <item>Aktion (reden, öffnen, heben)</item>
+        <item>Schwert</item>
+        <item>Item-Taste A2</item>
+        <item>Item-Taste A1</item>
+        <item>Beim Spielen ungenutzt</item>
+        <item>Item-Taste A3</item>
+        <item>Anvisieren</item>
+        <item>Ducken, Schild</item>
+        <item>Ungenutzt</item>
+        <item>Pause, GamePad-Bild</item>
+        <item>Schneller bewegen (Mods, wenn auf L3)</item>
+        <item>Ich-Perspektive</item>
+        <item>Taktstock des Windes</item>
+        <item>Beim Spielen ungenutzt</item>
+        <item>Kanone (Boot)</item>
+        <item>Bergungsarm (Boot)</item>
+    </string-array>
+    <string name="opt_cancel">Abbrechen</string>
+    <string name="opt_capture">Ein Bild aufzeichnen</string>
+    <string name="opt_capture_hint">Zur Fehlersuche: wird in den Ordner der App geschrieben</string>
+    <string name="opt_cheats">Cheats</string>
+    <string name="opt_cheats_hint">Items, Herzen, unendlich Energie… für den Spielstand, den du spielst</string>
+    <string name="opt_context_buttons">Kontext-Tasten</string>
+    <string name="opt_context_buttons_hint">A, B, X, Y, R und ZR erscheinen, wenn es etwas zu tun gibt, und sagen was; die Tastenanzeige des Spiels ist ausgeblendet</string>
+    <string name="opt_controls">Steuerung</string>
+    <string name="opt_controls_edit">Bildschirm-Layout bearbeiten</string>
+    <string name="opt_controls_edit_hint">Jede Taste verschieben, in der Größe ändern und ausblenden; Deckkraft und Stil (Umriss oder gefüllt)</string>
+    <string name="opt_controls_style">Touch-Steuerung</string>
+    <string name="opt_controls_style_hint">Flexibel: Die Sticks erscheinen, wo dein Daumen den Bildschirm berührt (linke Hälfte: Bewegung, rechte Hälfte: Kamera)</string>
+    <string name="opt_display_res">Anzeigeauflösung</string>
+    <string name="opt_display_res_hint">Auto: Das Bild wird in der nötigen Größe gezeichnet und vom Bildschirm vergrößert, das ist auf hochauflösenden Bildschirmen schneller; Voll: immer in der eigenen Auflösung des Bildschirms</string>
+    <string name="opt_drc_display">GamePad-Bildschirm</string>
+    <string name="opt_drc_display_hint">Ein zweiter Bildschirm wurde gefunden (z. B. der untere Bildschirm eines Geräts mit zwei Bildschirmen)</string>
+    <string name="opt_drc_shape">GamePad-Bild</string>
+    <string name="opt_drc_shape_hint">Füllen: Der GamePad-Bildschirm nimmt die Form des Bildschirms an, sein Hintergrund reicht bis an die Ränder</string>
+    <string name="opt_dyn_res">Dynamische Auflösung</string>
+    <string name="opt_dyn_res_hint">Senkt die Renderauflösung, solange die GPU das Spiel unter seiner Bildrate hält (das Spiel wird dann langsamer), und hebt sie bis zur Einstellung oben wieder an, wenn Luft ist. Das Leistungs-Overlay zeigt den aktuellen Wert</string>
+    <string name="opt_export">Spielstände exportieren</string>
+    <string name="opt_export_hint">Spielstand und Speicherstände in eine Sicherungsdatei speichern</string>
+    <string name="opt_fg_choose_dll">Lossless.dll auswählen</string>
+    <string name="opt_fg_flow">Flow-Skalierung</string>
+    <string name="opt_fg_flow_hint">Auflösung der Bewegungsschätzung: niedriger ist schneller</string>
+    <string name="opt_fg_multiplier">Multiplikator</string>
+    <string name="opt_fg_multiplier_hint">Gezeigte Bilder pro Spielbild</string>
+    <string name="opt_fg_network">Netzwerk</string>
+    <string name="opt_fg_remove_confirm">Lossless.dll aus der App entfernen? Die Bildgenerierung ist aus, bis du sie wieder auswählst.</string>
+    <string name="opt_fg_remove_dll">Lossless.dll entfernen</string>
+    <string name="opt_fg_replace_dll">Lossless.dll auswählen</string>
+    <string name="opt_fg_ui">UI-Erkennung</string>
+    <string name="opt_fg_ui_hint">Hält Menüs und Text scharf</string>
+    <string name="opt_framegen">Bildgenerierung</string>
+    <string name="opt_game">Spiel</string>
+    <string name="opt_gpu_driver">GPU-Treiber</string>
+    <string name="opt_gpu_driver_hint">Der des Systems oder ein installiertes Treiberpaket</string>
+    <string name="opt_graphics">Grafik</string>
+    <string name="opt_hearts_combat">Herzen nur im Kampf</string>
+    <string name="opt_hearts_combat_hint">Die Herzen blenden aus, während das Schwert weggesteckt ist, und blenden ein, wenn es gezogen wird, Link Schaden nimmt oder geheilt wird; die Magieleiste erscheint allein, solange Magie verbraucht wird</string>
+    <string name="opt_import">Spielstände importieren</string>
+    <string name="opt_import_hint">Aus ihren Dateien wiederherstellen; ein importierter Spielstand startet das Spiel neu</string>
+    <string name="opt_interp">Bildrate</string>
+    <string name="opt_interp_hint">Bildinterpolation: Zwischenbilder aus den 30 fps des Spiels. Braucht eine schnelle CPU; passt ein Bild nicht in die Zeit, entfällt es, und das Spiel behält sein Tempo</string>
+    <string name="opt_invert_camera_y">Kamera oben/unten umkehren</string>
+    <string name="opt_invert_camera_y_hint">Rechten Stick (oder Wischen) nach oben, um nach unten zu sehen. Ego-Perspektive und Zielen lässt die normale Kamera und Menüs, wie sie sind</string>
+    <string name="opt_item_ring">Item-Ring</string>
+    <string name="opt_item_ring_hint">X, Y oder R halten (Touch oder Controller), um das Item dafür zu wählen; Antippen benutzt das Item wie bisher</string>
+    <string name="opt_item_ring_pace">Während der Ring offen ist</string>
+    <string name="opt_language">Spielsprache</string>
+    <string name="opt_language_hint">Die Sprachen deiner Kopie des Spiels; gilt nach einem Neustart</string>
+    <string name="opt_last_slot">Letzte Sitzung</string>
+    <string name="opt_layout">Bildschirm-Layout</string>
+    <string name="opt_leave_state">Speicherstand beim Verlassen der App</string>
+    <string name="opt_leave_state_hint">Behält, wo du warst, falls Android das Spiel im Hintergrund schließt</string>
+    <string name="opt_menu_overlay">Menü-Taste im Spiel</string>
+    <string name="opt_menu_overlay_hint">Aus: Diese Optionen sind eine Seite des +-Menüs, hinter dem Pfeil links von den Items. An: Die ≡-Taste öffnet sie über dem Spiel, wie bisher</string>
+    <string name="opt_minigame_touch">Minispiele per Touch</string>
+    <string name="opt_minigame_touch_hint">Das Bild des Spiels berühren: die Felder von Schiffe versenken, die Teile der Bilderpuzzles, Postfächer, Ladenartikel, Antworten; die Kanone ausrichten, bieten, Figuren drehen und dirigieren durch Ziehen. Aus: nur Stick und Tasten, wie im Original</string>
+    <string name="opt_conduct_pads">Notenfelder zum Dirigieren</string>
+    <string name="opt_conduct_pads_hint">Beim Dirigieren erscheinen zwei Felder: die fünf Notenzeichen (die Richtungen des Taktstocks, wie ein Steuerkreuz) und die drei Takte. Aus: ein Finger auf jeder Bildhälfte ist ein Stick</string>
+    <string name="opt_mod_camera_speed">Tempo der direkten Kamera</string>
+    <string name="opt_mod_climb">Jede Wand erklettern</string>
+    <string name="opt_mod_climb_fast">Schneller klettern</string>
+    <string name="opt_mod_climb_fast_hint">Leitern, Ranken und das Hangeln an einer Kante</string>
+    <string name="opt_mod_climb_hint">Mit einem Ausdauerrad; B oder A lässt los</string>
+    <string name="opt_mod_direct_camera">Direkte Kamera am rechten Stick</string>
+    <string name="opt_mod_direct_camera_hint">Ohne Nachlauf: Die Kamera folgt dem Stick sofort</string>
+    <string name="opt_mod_fast_scenes">Schnelle Szenenwechsel</string>
+    <string name="opt_mod_ff_cutscenes">Zwischensequenzen vorspulen</string>
+    <string name="opt_mod_ff_dialogues">Dialoge vorspulen</string>
+    <string name="opt_mod_picto_pages">Album-Seiten</string>
+    <string name="opt_mod_picto_pages_hint">Das Album der Bildbox bekommt beliebig viele Seiten zu je 12 Bildern: Ist es voll, beginnt ein neues Bild eine neue Seite. Im Album blättert die Leiste oben (oder ZL / L) um. Der Spielstand behält die aktuelle Seite, die anderen werden daneben gespeichert</string>
+    <string name="picto_page">Seite %1$d / %2$d</string>
+    <string name="opt_picto_subject">Bildmotive</string>
+    <string name="opt_picto_subject_hint">Im Album der Bildbox: wen ein Bild zeigt, mit dem Namen der Figur aus der Galerie. Ein Bild mit Goldmedaille (★) reicht für eine Figur; sonst steht dort, was fehlt</string>
+    <string name="picto_mono">schwarz-weiß</string>
+    <string name="picto_turned_away">abgewandt</string>
+    <string name="picto_hidden">teilweise verdeckt</string>
+    <string name="opt_postbox">Bilder per Post verschicken</string>
+    <string name="opt_postbox_hint">Zeig einem Briefkasten die Bildbox und wähle ein Bild: Es geht an Carlov, der die Figur wie in der Galerie macht. Sie steht am nächsten Tag in der Galerie, ohne Besuch</string>
+    <string name="opt_postbox_same_day">Zustellung am selben Tag</string>
+    <string name="opt_postbox_same_day_hint">Die verschickte Figur steht sofort in der Galerie</string>
+    <string name="postbox_mailed">An Carlov verschickt: %1$s. Die Figur steht morgen in der Galerie.</string>
+    <string name="postbox_delivered">Die Figur %1$s steht jetzt in der Galerie.</string>
+    <string name="postbox_no_carlov">Lerne zuerst Carlov in der Galerie kennen.</string>
+    <string name="postbox_mono">Carlov braucht ein Bild in Farbe.</string>
+    <string name="postbox_no_subject">Auf diesem Bild ist nichts, woraus eine Figur werden kann.</string>
+    <string name="postbox_made">Die Figur %1$s steht schon in der Galerie.</string>
+    <string name="postbox_queued">Die Figur %1$s ist schon bestellt.</string>
+    <string name="postbox_face">%1$s: Das Gesicht ist nicht gut genug zu sehen.</string>
+    <string name="postbox_body">%1$s: nicht ganz auf dem Bild.</string>
+    <string name="postbox_full">Carlov hat schon 12 Figuren in Arbeit.</string>
+    <string name="postbox_ask">Ein Bild an Carlov in der Galerie schicken? Er macht eine Figur daraus.</string>
+    <string name="postbox_ask_yes">Ja, ein Bild wählen</string>
+    <string name="postbox_ask_no">Nein</string>
+    <string name="opt_link_clothes">Links Kleidung</string>
+    <string name="opt_link_clothes_hint">Heldenkleidung oder seine Alltagskleidung (das Hummer-Shirt) jederzeit; ein Wechsel zeigt sich als Rauchwolke. Wie in der Geschichte: das Spiel entscheidet</string>
+    <string name="clothes_story">Wie in der Geschichte</string>
+    <string name="clothes_hero">Heldenkleidung</string>
+    <string name="clothes_casual">Alltagskleidung</string>
+    <string name="opt_mod_song_replay">Dirigierte Lieder nachspielen</string>
+    <string name="opt_mod_song_replay_hint">Wie auf dem GameCube: nach einem dirigierten Lied spielt Link es noch einmal, bevor es wirkt (die Wii-U-Version wirkt sofort)</string>
+    <string name="opt_mod_ff_hint">Schneller (bis 4×, so schnell dieses Gerät zeichnet), solange ZR (R2) gehalten wird; Textfenster warten weiter auf deine Taste</string>
+    <string name="opt_mod_first_person">Ego-Perspektive per Mausrad</string>
+    <string name="opt_mod_jump">Springen überall</string>
+    <string name="opt_mod_jump_double">Doppelsprung</string>
+    <string name="opt_mod_jump_double_hint">Die Sprungtaste noch einmal in der Luft</string>
+    <string name="opt_mod_jump_hint">Seine Taste springt aus dem Stand oder Lauf, wie von einer Kante</string>
+    <string name="opt_mod_jump_noauto">Keine automatischen Kantensprünge</string>
+    <string name="opt_mod_jump_noauto_hint">Läuft Link über eine Kante, fällt er, statt zu springen: Du springst mit der Sprungtaste</string>
+    <string name="opt_mod_quick_doors">Schnelle Türen</string>
+    <string name="opt_mod_run">Schneller laufen</string>
+    <string name="opt_mod_run_always">Immer</string>
+    <string name="opt_mod_run_hint">Link legt beim Laufen mehr Strecke zurück; Sprünge und Rollen bleiben, wie sie sind</string>
+    <string name="opt_mod_run_l3">L3</string>
+    <string name="opt_mod_run_l3_hold">Halten</string>
+    <string name="opt_mod_run_l3_switch">Drücken: an / aus</string>
+    <string name="opt_mod_run_off">Aus</string>
+    <string name="opt_mod_run_when">Gilt</string>
+    <string name="opt_mod_run_with_l3">Mit L3</string>
+    <string name="opt_mod_sidle">Schneller an Wänden entlang</string>
+    <string name="opt_mod_sidle_hint">Während Link sich mit dem Rücken zur Wand bewegt</string>
+    <string name="opt_mod_speed_hint">4-faches Tempo</string>
+    <string name="opt_mod_swim">Schneller schwimmen</string>
+    <string name="opt_mod_swim_hint">Dasselbe, während Link schwimmt</string>
+    <string name="opt_mods">Mods</string>
+    <string name="opt_motion">Bewegungssteuerung</string>
+    <string name="opt_motion_hint">Zielen durch Neigen des Geräts oder eines Controllers mit Bewegungssensoren</string>
+    <string name="opt_off">AUS</string>
+    <string name="opt_on">AN</string>
+    <string name="opt_page_touch">Touch</string>
+    <string name="opt_page_touch_hint">Größe, Sticks, Item-Tasten, Symbole, Menütaste</string>
+    <string name="opt_page_ring_hint">Items auf einem Ring wählen; Namen der Item-Tasten</string>
+    <string name="opt_page_camera">Kamera</string>
+    <string name="opt_page_camera_hint">Hoch/runter, direkte Kamera, Laufrichtung, Wisch-Kamera</string>
+    <string name="opt_page_minigames">Minispiele &amp; Hinweise</string>
+    <string name="opt_page_minigames_hint">Minispiele und Dirigieren per Touch, Touch-Hinweise</string>
+    <string name="opt_page_hud">Bildschirm (HUD)</string>
+    <string name="opt_page_hud_hint">Herzen, Rubine, Bildbox-Ansicht</string>
+    <string name="opt_page_controller">Controller</string>
+    <string name="opt_page_controller_hint">Einrichten, Tasten, Controller-Details</string>
+    <string name="cd_title">Controller-Details</string>
+    <string name="cd_hint">Name, IDs, Akku, Vibration, Bewegungssensoren, Lichter, Tasten, Achsen</string>
+    <string name="cd_sec_general">Controller</string>
+    <string name="cd_sec_app">In dieser App</string>
+    <string name="cd_sec_battery">Akku</string>
+    <string name="cd_sec_rumble">Vibration</string>
+    <string name="cd_sec_motion">Bewegungssensoren</string>
+    <string name="cd_sec_lights">Lichter</string>
+    <string name="cd_sec_buttons">Tasten</string>
+    <string name="cd_sec_axes">Sticks und Trigger (Achsen)</string>
+    <string name="cd_name">Name</string>
+    <string name="cd_vendor">Hersteller-ID</string>
+    <string name="cd_product">Produkt-ID</string>
+    <string name="cd_device_id">Geräte-ID</string>
+    <string name="cd_player">Spielernummer</string>
+    <string name="cd_descriptor">Deskriptor</string>
+    <string name="cd_connection">Verbindung</string>
+    <string name="cd_external">Extern</string>
+    <string name="cd_builtin">Eingebaut</string>
+    <string name="cd_enabled">Aktiviert</string>
+    <string name="cd_mic">Mikrofon</string>
+    <string name="cd_keyboard">Tastatur</string>
+    <string name="cd_kb_alpha">Buchstaben</string>
+    <string name="cd_kb_buttons">Nur Tasten</string>
+    <string name="cd_sources">Eingabequellen</string>
+    <string name="cd_face">Aktionstasten</string>
+    <string name="cd_face_sony">PlayStation-Symbole</string>
+    <string name="cd_face_nintendo">Nintendo-Buchstaben (nach Position gelesen)</string>
+    <string name="cd_face_xbox">Xbox-Buchstaben</string>
+    <string name="cd_in_use">Gerade in Benutzung</string>
+    <string name="cd_set_up">Eingerichtet</string>
+    <string name="cd_motion_from">Gyro-Zielen von</string>
+    <string name="cd_rumble_on">Vibration an</string>
+    <string name="cd_this_controller">Diesem Controller</string>
+    <string name="cd_this_device">Diesem Gerät</string>
+    <string name="opt_src_auto">Automatisch</string>
+    <string name="opt_src_device">Dieses Gerät</string>
+    <string name="opt_src_controller">Controller</string>
+    <string name="opt_src_both">Beide</string>
+    <string name="opt_motion_from_hint">Automatisch: der Controller, solange du mit ihm spielst (wenn er Bewegungssensoren hat), dieses Gerät beim Spielen per Touch</string>
+    <string name="opt_rumble_on_hint">Automatisch: der Controller, solange du mit ihm spielst (wenn er vibriert), dieses Gerät beim Spielen per Touch</string>
+    <string name="cd_both">Diesem Controller und diesem Gerät</string>
+    <string name="cd_battery">Akku</string>
+    <string name="cd_charge">Ladung</string>
+    <string name="cd_status">Status</string>
+    <string name="cd_bat_charging">Lädt</string>
+    <string name="cd_bat_discharging">Entlädt</string>
+    <string name="cd_bat_not_charging">Lädt nicht</string>
+    <string name="cd_bat_full">Voll</string>
+    <string name="cd_motors">Motoren</string>
+    <string name="cd_motor">Motor %1$d</string>
+    <string name="cd_amplitude">Stärke regelbar</string>
+    <string name="cd_on_off_only">Nur an / aus</string>
+    <string name="cd_resonance">Resonanz %1$s Hz</string>
+    <string name="cd_effects">Effekte: %1$s</string>
+    <string name="cd_sensors">Sensoren</string>
+    <string name="cd_gyro">Gyroskop</string>
+    <string name="cd_accel">Beschleunigungssensor</string>
+    <string name="cd_range">Bereich ±%1$s, Auflösung %2$s</string>
+    <string name="cd_rate">bis %1$s Hz</string>
+    <string name="cd_lights">Lichter</string>
+    <string name="cd_light">Licht</string>
+    <string name="cd_light_mic">Mikrofonlicht</string>
+    <string name="cd_light_input">Eingabelicht</string>
+    <string name="cd_light_player">Spielerlicht</string>
+    <string name="cd_light_keyboard">Tastaturbeleuchtung</string>
+    <string name="cd_light_colour">Farbe</string>
+    <string name="cd_light_brightness">Helligkeit</string>
+    <string name="cd_button_count">%1$d Tasten</string>
+    <string name="cd_axes">Achsen</string>
+    <string name="cd_axis_left">linker Stick</string>
+    <string name="cd_axis_right">rechter Stick</string>
+    <string name="cd_axis_dpad">Steuerkreuz</string>
+    <string name="cd_axis_lt">linker Trigger</string>
+    <string name="cd_axis_rt">rechter Trigger</string>
+    <string name="cd_resolution">Auflösung %1$s</string>
+    <string name="cd_yes">Ja</string>
+    <string name="cd_no">Nein</string>
+    <string name="cd_none">Keine</string>
+    <string name="cd_none_reported">Keine gemeldet</string>
+    <string name="cd_unknown">Unbekannt</string>
+    <string name="opt_page_res">Auflösung &amp; Hochskalierung</string>
+    <string name="opt_page_res_hint">Dynamische Auflösung, Hochskalierung, Anzeigeauflösung</string>
+    <string name="opt_page_quality">Bildqualität</string>
+    <string name="opt_page_quality_hint">Umgebungsverdeckung, Texturfilterung</string>
+    <string name="opt_page_screen">Bildschirme</string>
+    <string name="opt_page_screen_hint">Breitbild, Sichtfeld, Seitenverhältnis, TV- und GamePad-Bild</string>
+    <string name="opt_page_advanced">Erweitert</string>
+    <string name="opt_page_advanced_hint">GPU-Treiber, VSync, Aufzeichnungs-Thread, Shader-Cache</string>
+    <string name="opt_page_songs">Lieder</string>
+    <string name="opt_page_songs_hint">Wiederholen, ins Mikrofon singen, Abspieltasten</string>
+    <string name="opt_onscreen_size">Größe der Bildschirm-Steuerung</string>
+    <string name="opt_packs">Mod-Pakete</string>
+    <string name="opt_packs_hint">Cemu-Grafikpakete und Mods für Spieldateien, importiert aus .zip- und .rar-Dateien</string>
+    <string name="opt_pad_hint">Controller: Select halten / Home: Menü · L / R: Tabs · Steuerkreuz: bewegen, ändern · rechte Taste: wählen · untere: zurück</string>
+    <string name="opt_perf">Leistungs-Overlay</string>
+    <string name="opt_perf_hint">FPS, Last und Temperaturen</string>
+    <string name="opt_perf_move">Overlay verschieben</string>
+    <string name="opt_perf_move_hint">Schließt das Menü: Zieh das Overlay mit dem Finger, tippe danach woanders hin</string>
+    <string name="opt_perf_reset">Position zurücksetzen</string>
+    <string name="opt_picto_big">Große Bildbox-Ansicht</string>
+    <string name="opt_picto_big_hint">Mit Kontext-Tasten: Der Sucher der Bildbox füllt den Bildschirm, zum Zoomen zwei Finger spreizen (auch beim Fernrohr). Aus: die originalen Bildschirme von Bildbox und Fernrohr</string>
+    <string name="opt_preset">Voreinstellung</string>
+    <string name="opt_preset_hint">Stellt Renderauflösung, dynamische Auflösung und Bildrate zusammen ein (mit Bildgenerierung: 30 fps verdoppelt, höhere Auflösungen). Ändert man eine davon von Hand, wird sie Eigene</string>
+    <string name="opt_quit">Beenden</string>
+    <string name="opt_record_thread">Thread für die Befehlsaufzeichnung</string>
+    <string name="opt_record_thread_hint">Ein zweiter CPU-Thread bereitet die GPU-Arbeit vor: auf den meisten Geräten schneller, auf manchen langsamer (z. B. Snapdragon 855)</string>
+    <string name="opt_vsync">VSync</string>
+    <string name="opt_vsync_hint">Jedes Bild wartet auf den Bildaufbau des Bildschirms. Einschalten, wenn das Bild auf deinem Gerät stark ruckelt oder zur Diashow wird; kann die Eingabe etwas verzögern. Aus: nur mit Bildgenerierung</string>
+    <string name="st_touch_title">Neue Touch-Steuerung</string>
+    <string name="st_touch_text">Die neue Touch-Steuerung ausprobieren?\n\nDie Sticks erscheinen dort, wo deine Daumen landen (rechts dreht sich die Kamera per Wischen), Tasten zeigen sich nur, wenn sie etwas tun, und sagen was, Items werden per Tippen gezielt und abgefeuert, und eine gehaltene Item-Taste öffnet einen Ring mit all deinen Items. Minispiele spielst du durch Berühren des Bildes.\n\nAlles lässt sich später unter Steuerung ändern; Klassisch bringt das feste Bildschirm-GamePad zurück.</string>
+    <string name="st_touch_yes">Neue Steuerung nutzen</string>
+    <string name="st_touch_no">Klassisch behalten</string>
+    <string name="st_jump_title">Springen überall</string>
+    <string name="st_jump_text">Springen, wann immer du willst? Eine eigene Taste lässt Link aus dem Stand oder Lauf springen, wie von einer Kante. (Mods › Springen überall)</string>
+    <string name="st_double_text">Und ein zweiter Sprung in der Luft?</string>
+    <string name="st_sing_title">Lieder singen</string>
+    <string name="st_sing_text">Möchtest du die Lieder des Taktstocks ausprobieren, indem du sie ins Mikrofon singst, summst oder pfeifst? (experimentell; der Ton wird nur auf diesem Gerät ausgewertet, nie aufgenommen)\n\nSonst dirigierst du mit zwei Noten-Feldern auf dem Bildschirm.</string>
+    <string name="st_sing_yes">Singen ausprobieren</string>
+    <string name="st_sing_no">Noten-Felder</string>
+    <string name="st_yes">Ja</string>
+    <string name="st_no">Nein</string>
+    <string name="opt_render_aspect">Breitbild</string>
+    <string name="opt_render_aspect_hint">Bildschirmform: Das Spiel rendert im Seitenverhältnis deines Bildschirms und zeigt mehr zu den Seiten; das HUD behält seine Proportionen an den Bildschirmrändern</string>
+    <string name="opt_view_zoom">Sichtfeld</string>
+    <string name="opt_view_zoom_original">Original</string>
+    <string name="opt_view_zoom_hint">Herauszoomen, um mehr um Link herum zu sehen. Auch mit zwei Fingern auf dem Bild einstellbar</string>
+    <string name="opt_resolution">Renderauflösung</string>
+    <string name="opt_rumble">Vibration</string>
+    <string name="opt_rumble_hint">Am Controller, oder an diesem Gerät, wenn der Controller nicht vibriert oder per Touch gespielt wird</string>
+    <string name="opt_rupees_change">Rubine nur bei Änderung</string>
+    <string name="opt_rupees_change_hint">Die Rubinanzeige blendet ein, wenn du Rubine sammelst oder ausgibst, und nach ein paar Sekunden wieder aus</string>
+    <string name="opt_saves">Speichern</string>
+    <string name="opt_shaders">Shader-Cache löschen</string>
+    <string name="opt_shaders_hint">Startet das Spiel neu wie beim ersten Start</string>
+    <string name="opt_show_sticks">Sticks anzeigen</string>
+    <string name="opt_show_sticks_hint">Aus: Die Sticks funktionieren auf leerem Bildschirm</string>
+    <string name="opt_stick_follows">Linker Stick folgt dem Daumen</string>
+    <string name="opt_stick_follows_hint">Gleitet der Daumen über den Rand des linken Sticks, wird der Stick mitgezogen. Aus: Der Stick bleibt an seinem Platz</string>
+    <string name="opt_slot">Speicherstand %1$d</string>
+    <string name="opt_slot_empty">Leer</string>
+    <string name="opt_slot_incompatible">%1$s · aus einem anderen Build, kann nicht geladen werden</string>
+    <string name="opt_slot_load">Laden</string>
+    <string name="opt_slot_save">Speichern</string>
+    <string name="opt_start_mode">Beim Start</string>
+    <string name="opt_start_mode_hint">Vor dem Intro: einen Speicherstand wählen oder direkt dorthin zurück, wo du das Spiel verlassen hast</string>
+    <string name="opt_steer">Laufrichtung</string>
+    <string name="opt_steer_hint">Link behält die Richtung, in die er läuft, wenn sich die Kamera dreht. Bewege den Stick (oder lass ihn los), um wieder relativ zur Kamera zu laufen</string>
+    <string name="opt_steer_resync">Stick gleicht sich wieder an nach</string>
+    <string name="opt_steer_resync_hint">Wie weit sich der Stick bewegt, bevor Link wieder relativ zur Kamera läuft. Weniger reagiert schneller</string>
+    <string name="opt_steer_swing">Kamera schwenkt hinter Link</string>
+    <string name="opt_steer_swing_delay">Schwenk beginnt nach</string>
+    <string name="opt_steer_swing_delay_hint">Zeit ohne rechten Stick oder beim Laufen auf die Kamera zu</string>
+    <string name="opt_steer_swing_hint">Während er läuft und der rechte Stick in Ruhe ist</string>
+    <string name="opt_swipe_boat">Wischtempo auf dem Boot</string>
+    <string name="opt_swipe_boat_hint">Wischen dreht die Kamera um so viel schneller, während Link segelt. Fernrohr und andere Ego-Ansichten bleiben, wie sie sind</string>
+    <string name="opt_swipe_speed">Wischtempo</string>
+    <string name="opt_to_inventory">Zurück zu den Items</string>
+    <string name="opt_touch_camera">Kamera (rechte Hälfte)</string>
+    <string name="opt_touch_camera_hint">Stick: wie der rechte Analogstick. Wischen: Die Kamera dreht sich mit deinem Finger</string>
+    <string name="opt_touch_hints">Touch-Hinweise</string>
+    <string name="opt_touch_hints_hint">Wenn ein Minispiel oder ein Menü des Spiels zum ersten Mal per Touch gespielt wird, erklärt eine Nachricht, wie. Wieder an: Jeder Hinweis erscheint noch einmal</string>
+    <string name="opt_link_poses">Link in den Tastensymbolen</string>
+    <string name="opt_link_poses_hint">Springen, Ducken, Rollen, an der Wand entlang, Heben, Werfen, Absetzen, Öffnen, Greifen und Aufheben zeigen Link selbst dabei, gezeichnet aus dem Modell des Spiels und animiert. Aus: die einfachen Piktogramme</string>
+    <string name="opt_zl_defeat">ZL, wenn das Ziel besiegt ist</string>
+    <string name="opt_zl_defeat_hint">Mit angetipptem ZL (Anvisieren gehalten): Ist der anvisierte Gegner besiegt, lässt ZL los. Nächstes Ziel: ZL bleibt und visiert den nächsten Gegner in Reichweite an (lässt los, wenn keiner da ist)</string>
+    <string name="opt_zl_defeat_release">Loslassen</string>
+    <string name="opt_zl_defeat_next">Nächstes Ziel</string>
+    <string name="opt_upscale">Hochskalierung</string>
+    <string name="opt_upscale_hint">Wie das Bild auf den Bildschirm vergrößert wird: Scharf hält Kanten bei niedrigeren Renderauflösungen klar</string>
+    <string name="opt_warp">Warp (Entwickler)</string>
+    <string name="opt_warp_hint">Zu jedem Ort, Raum und Startpunkt des Spiels gehen</string>
+    <string name="packs_about">Importiert Mods aus .zip- und .rar-Dateien: Cemu-Grafikpakete (zum Beispiel von GameBanana oder GitHub) und einfache Mods für Spieldateien (ein content-Ordner). Code-Patches (patch_*.asm), ersetzte Spieldateien, ersetzte Pixel-Shader und Regeln für Texturfilterung funktionieren; Vertex-Shader und Regeln für Texturauflösung noch nicht. Ein Code-Patch gilt nur für die Spielversion, für die er gemacht wurde. Pakete an- oder ausschalten oder ihre Einstellungen ändern wirkt nach einem Neustart.</string>
+    <string name="packs_delete">Paket löschen</string>
+    <string name="packs_delete_confirm">Dieses Paket vom Gerät löschen?</string>
+    <string name="packs_details">Details</string>
+    <string name="packs_folder">Ordner: packs/%s</string>
+    <string name="packs_groups">Patch-Gruppen: %1$d für diese Spielversion, %2$d für andere</string>
+    <string name="packs_import">Pakete importieren</string>
+    <string name="packs_import_hint">Eine oder mehrere .zip- oder .rar-Dateien wählen</string>
+    <string name="packs_none">Noch keine Pakete importiert.</string>
+    <string name="packs_on_count">%d an</string>
+    <string name="packs_preset">Einstellung</string>
+    <string name="packs_restart">Jetzt neu starten</string>
+    <string name="packs_restart_note">Änderungen gelten nach einem Neustart; geänderter Code wird dann neu kompiliert (kurz, oder gar nicht für eine schon benutzte Kombination).</string>
+    <string name="packs_title_hint">Nachdem du ein Paket angeschaltet hast, das Code patcht, starte einmal vom Titelbildschirm und lade dort deinen Spielstand: Das Paket richtet sich ein, während das Spiel lädt. Speicherstände ohne das Paket haben es nicht eingerichtet.</string>
+    <string name="packs_unsupported">Noch nicht unterstützt: %s</string>
+    <string name="packs_versions">Gemacht für: %s (nicht diese Spielversion)</string>
+    <string name="perf_show">Overlay anzeigen</string>
+    <string name="preset_about">Eine Vorlage ist der Story-Teil eines Spielstands (Items, Herzen, Lieder, Seekarte, Schalter und Truhen jedes Ortes, Story-Flags) plus ein Ort. Ein Warp dorthin lädt diese Story in das Spiel, das du spielst; dein Spielstand ändert sich nur, wenn du im Spiel speicherst. Vorlagen bleiben auf diesem Gerät.</string>
+    <string name="preset_ask">%1$s\n\nMit dieser Story dorthin warpen? Sie ersetzt die Story des laufenden Spiels, bis du deinen Spielstand wieder lädst.</string>
+    <string name="preset_custom">Eigene</string>
+    <string name="preset_delete">Löschen</string>
+    <string name="preset_guess_hint">Empfohlen für dieses Gerät: %1$s</string>
+    <string name="preset_hint">Die Story eines Spielstands oder eines gespeicherten Moments laden und zu seinem Ort warpen</string>
+    <string name="preset_song_scenes">Lieder-Szenen</string>
+    <string name="preset_song_scenes_hint">Die Story kurz bevor ein Lied gelernt wird, Link direkt vor seiner Steintafel oder seinem Lehrer</string>
+    <string name="preset_song_scenes_about">Jede lädt die eingebaute Story-Vorlage von kurz vor dem Lied und stellt Link dorthin, wo das Spiel es lehrt (eine Steintafel, Tott). Lies die Tafel oder sprich mit dem Lehrer, dann nimm den Taktstock, wenn das Spiel nach dem Lied fragt.</string>
+    <string name="preset_import">Einen Spielstand importieren…</string>
+    <string name="preset_import_hint">Eine WWHD cking.sav, GameCube-.gci-Spielstände (USA, Europa, Japan) oder Vorlagen (.wwp) wählen; mehrere auf einmal: Jeder belegte Platz wird eine Vorlage</string>
+    <string name="preset_save">Die aktuelle Story als Vorlage speichern</string>
+    <string name="preset_save_hint">Hier und jetzt: die bisherige Story und der Ort, den du betreten hast</string>
+    <string name="preset_title">Story-Vorlagen</string>
+    <string name="preset_warp">Warp</string>
+    <string name="start_states_loading">Speicherstand wird geladen…</string>
+    <string name="start_states_pad_hint">Controller: Steuerkreuz bewegt · rechte Taste wählt · untere Taste startet das Spiel</string>
+    <string name="start_states_title">Fortsetzen</string>
+    <string name="start_states_title_hint">Das Spiel wie gewohnt starten</string>
+    <string name="state_overwrite">Den Stand in Platz %1$d ersetzen?</string>
+    <string name="touch_camera_stick">Stick</string>
+    <string name="touch_camera_swipe">Wischen</string>
+    <string name="warp_about">Bringt Link sofort an den Ort, wie eine Tür. Die Story bleibt wie in deinem Spielstand: Wer und was dort ist, hängt davon ab (oder wähle eine Ebene). Speichere im Spiel nur, wenn du den neuen Ort behalten willst.</string>
+    <string name="warp_going">Warp nach %1$s</string>
+    <string name="warp_layer">Ebene</string>
+    <string name="warp_layer_auto">Story</string>
+    <string name="warp_layer_hint">Welche Version des Ortes lädt; Story wählt sie nach deinem Fortschritt</string>
+    <string name="warp_no_save">Lade zuerst einen Spielstand.</string>
+    <string name="warp_reading">Die Orte werden aus deinen Spieldateien gelesen… (ein paar Sekunden, nur dieses eine Mal)</string>
+    <string name="warp_spawn">Raum %1$d · Startpunkt %2$d</string>
+    <string name="warp_test">Test-Overlay</string>
+    <string name="warp_test_hint">Ein Feld über dem Spiel: ✓ / ✗ bewerten die Stelle und warpen zur nächsten; Ergebnisse in warp_tests.tsv</string>
+    <string name="warp_where">Jetzt: %1$s · Raum %2$s · Startpunkt %3$s · Ebene %4$s</string>
+    <string-array name="ao_modes">
+        <item>Original (wie auf der Wii U)</item>
+        <item>Mitte korrigiert</item>
+        <item>Mitte + Rauschen korrigiert</item>
+    </string-array>
+    <string-array name="aspect_modes">
+        <item>Original 16:9 (Balken)</item>
+        <item>Auf Bildschirm strecken</item>
+        <item>Bildschirm füllen (Ränder abgeschnitten)</item>
+    </string-array>
+    <string-array name="auto_state_modes">
+        <item>Aus</item>
+        <item>Alle 2 Min.</item>
+        <item>Alle 5 Min.</item>
+        <item>Alle 10 Min.</item>
+    </string-array>
+    <string-array name="display_res_modes">
+        <item>Auto</item>
+        <item>Voll (klassisch)</item>
+    </string-array>
+    <string-array name="invert_camera_y_modes">
+        <item>Aus</item>
+        <item>Ego-Perspektive und Zielen</item>
+        <item>Immer</item>
+    </string-array>
+    <string-array name="item_ring_paces">
+        <item>Weiterlaufen</item>
+        <item>Zeitlupe</item>
+        <item>Pause</item>
+    </string-array>
+    <string-array name="layouts">
+        <item>TV mit eingeblendetem GamePad</item>
+        <item>TV und GamePad nebeneinander</item>
+        <item>TV, GamePad auf +</item>
+        <item>GamePad mit eingeblendetem TV</item>
+        <item>TV, GamePad bei Bedarf</item>
+    </string-array>
+    <string-array name="preset_steps">
+        <item>Am niedrigsten</item>
+        <item>Niedrig</item>
+        <item>Mittel</item>
+        <item>Hoch</item>
+    </string-array>
+    <string-array name="record_thread_modes">
+        <item>Automatisch</item>
+        <item>An</item>
+        <item>Aus</item>
+    </string-array>
+    <string-array name="render_aspect_modes">
+        <item>Original 16:9</item>
+        <item>Bildschirmform</item>
+    </string-array>
+    <string-array name="start_modes">
+        <item>Intro</item>
+        <item>Speicherstände anbieten</item>
+        <item>Letzte Sitzung laden</item>
+    </string-array>
+    <string-array name="steer_modes">
+        <item>Folgt der Kamera (Original)</item>
+        <item>Bleibt beim Drehen der Kamera</item>
+        <item>Bleibt, solange der Stick gehalten wird</item>
+    </string-array>
+    <string-array name="upscale_modes">
+        <item>Bilinear (klassisch)</item>
+        <item>Scharf</item>
+    </string-array>
+    <string-array name="wiiu_buttons">
+        <item>A</item>
+        <item>B</item>
+        <item>X</item>
+        <item>Y</item>
+        <item>L</item>
+        <item>R</item>
+        <item>ZL</item>
+        <item>ZR</item>
+        <item>− (Minus)</item>
+        <item>+ (Plus)</item>
+        <item>Linker Stick drücken</item>
+        <item>Rechter Stick drücken</item>
+        <item>Steuerkreuz oben</item>
+        <item>Steuerkreuz unten</item>
+        <item>Steuerkreuz links</item>
+        <item>Steuerkreuz rechts</item>
+    </string-array>
+    <!-- setup, dialogs and screens around the menu -->
+    <string name="setup_text">Die Spieldateien wurden nicht gefunden oder passen nicht zu diesem Build.\n\nDiese App enthält nur den neu kompilierten Code aus deiner eigenen Kopie des Spiels; sie braucht die entpackten Spieldateien aus demselben Dump. Entpacke sie an einem Computer (siehe README.md: tools/wudextract.py) und kopiere den entstandenen Ordner (mit code/, content/ und meta/ darin) nach:\n\n%1$s\n\nZum Beispiel: adb push game /sdcard/Android/data/org.wwhdrecomp.app/files/\n\nProblem: %2$s</string>
+    <string name="setup_retry">Erneut prüfen</string>
+    <string name="setup_welcome">Willkommen!\n\nDiese App enthält keine Spieldateien. Sie spielt deine eigene Kopie von The Legend of Zelda: The Wind Waker HD für Wii U (US-, europäische oder japanische Version).\n\nLege diese drei Dateien auf dieses Gerät und wähle sie dann zusammen aus:\n•  dein Disc-Image (.wux oder .wud)\n•  seinen Disc-Key (der Name des Images mit .key)\n•  den Common Key der Konsole (common.key)\n\nOder wähle ein Cemu-Archiv deines Spiels (.wua); es braucht keine Keys.\n\nDie App entpackt dann die Spieldateien (etwa 1,7 GB) und bereitet den Spielcode für dieses Gerät vor. Das passiert einmal und dauert je nach Prozessor des Geräts eine Weile.</string>
+    <string name="setup_problem">Die gefundenen Spieldateien funktionieren nicht: %1$s</string>
+    <string name="setup_extract">Aus deinem Disc-Image oder .wua entpacken…</string>
+    <string name="setup_extract_files">Deine Spieldateien auswählen…</string>
+    <string name="extract_missing">Wähle dein Disc-Image, seinen Disc-Key und den Common Key der Konsole zusammen aus (das erste lange drücken, dann die anderen antippen):\n\n%1$s das Image (.wux oder .wud)\n%2$s sein Disc-Key (der Name des Images mit .key)\n%3$s common.key\n\nOder ein Cemu-Archiv deines Spiels (.wua).\n\nZeigt die Auswahl deine Dateien nicht, lege sie direkt in Download und öffne dort Downloads.</string>
+    <string name="extract_bad_key">Eine Key-Datei muss 16 Bytes oder 32 Hex-Ziffern enthalten.</string>
+    <string name="extract_running">Das Spiel wird aus deinem Disc-Image entpackt…</string>
+    <string name="extract_detail">%1$d von %2$d MB (%3$.0f MB/s)</string>
+    <string name="extract_detail_short">%1$d von %2$d MB</string>
+    <string name="work_channel">Spiel einrichten</string>
+    <string name="work_extracting">Spieldateien werden entpackt</string>
+    <string name="work_compiling">Spielcode wird vorbereitet</string>
+    <string name="space_title">Nicht genug freier Speicher</string>
+    <string name="space_text">Dieser Schritt braucht etwa %1$d MB freien Speicher; %2$d MB sind frei. Schaffe etwas Platz und versuche es erneut.</string>
+    <string name="extract_failed">Entpacken fehlgeschlagen: %1$s</string>
+    <string name="compile_running">Der Spielcode wird für dieses Gerät vorbereitet…\n\nDas passiert einmal und dauert je nach Prozessor eine Weile: einige Minuten auf schnellen Geräten, länger auf langsameren. Du kannst die App solange verlassen: Es geht im Hintergrund weiter (siehe Benachrichtigung), und wird sie geschlossen, geht es dort weiter, wo es aufgehört hat.</string>
+    <string name="compile_detail">%1$d von %2$d Teilen (%3$d:%4$02d)</string>
+    <string name="compile_failed">Vorbereiten des Spielcodes fehlgeschlagen: %1$s</string>
+    <string name="menu_about">Info und Lizenzen</string>
+    <string name="compile_continue">Weiter</string>
+    <string name="compile_stopping">Wird angehalten…</string>
+    <string name="compile_cancelled">Das Vorbereiten des Spielcodes wurde abgebrochen. Es geht beim nächsten Start dort weiter, wo es aufgehört hat.</string>
+    <string name="res_original">Original (%1$s)</string>
+    <string name="res_scaled_up">%1$s× (%2$s, mehr GPU-Last)</string>
+    <string name="res_scaled_down">%1$s× (%2$s, weniger GPU-Last)</string>
+    <string name="res_restart_now">Jetzt neu starten</string>
+    <string name="res_restart_later">Später</string>
+    <string name="backup_title">Spielstände importieren / exportieren</string>
+    <string name="backup_export_title">Exportieren</string>
+    <string name="backup_game_save">Spielstand</string>
+    <string name="backup_states">Speicherstände (%1$d MB)</string>
+    <string name="backup_save_file">Als Datei speichern…</string>
+    <string name="backup_scanning">Suche nach Spielständen…</string>
+    <string name="backup_exporting">Wird exportiert…</string>
+    <string name="backup_exported">Exportiert nach „%1$s“.</string>
+    <string name="backup_import_how">Wähle eine mit Exportieren erstellte Sicherung (WindWakerHD backup ….zip), einen GameCube-Wind-Waker-Spielstand (.gci, USA, Europa oder Japan: er wird dein Spielstand, alle drei Abenteuer) oder die Dateien selbst zusammen (die erste lange drücken, dann die anderen antippen): cking.sav mit den anderen cking….sav-Dateien eines Spielstands, slot1–5.bin und .png von Speicherständen. Zeigt die Auswahl sie nicht, lege die Dateien direkt in Download und öffne dort Downloads.</string>
+    <string name="backup_choose_files">Dateien auswählen…</string>
+    <string name="backup_picked_files">die gewählten Dateien</string>
+    <string name="backup_from_gc">GameCube-Spielstand %1$s, umgewandelt: alle drei Abenteuer</string>
+    <string name="backup_nothing_files">Kein Spielstand (cking.sav) und keine Speicherstände (slot1–5.bin) unter den gewählten Dateien.</string>
+    <string name="backup_import_title">Importieren (ersetzt, was da ist)</string>
+    <string name="backup_import_save">Spielstand (aus %1$s)</string>
+    <string name="backup_import_states">Speicherstände: Platz %1$s</string>
+    <string name="backup_import_go">Importieren</string>
+    <string name="backup_importing">Wird importiert…</string>
+    <string name="backup_imported_states">Speicherstände importiert. Stände aus einem anderen Build der App können nicht geladen werden.</string>
+    <string name="backup_imported_save">Spielstand importiert. Das Spiel startet jetzt neu, um ihn zu nutzen (der vorige Spielstand bleibt in save-before-import).</string>
+    <string name="backup_failed">Fehlgeschlagen: %1$s</string>
+    <string name="fg_title">Bildgenerierung (Lossless Scaling)</string>
+    <string name="fg_no_dll">braucht Lossless.dll</string>
+    <string name="fg_bad_dll">Diese Datei ist nicht nutzbar: %1$s</string>
+    <string name="fg_dll_untested">Lossless.dll ist installiert und die Bildgenerierung an, aber diese Version ihrer Shader wurde nicht mit der App getestet: Generierte Bilder können falsch aussehen. Dann wähle eine andere Lossless.dll (die README nennt die getestete).</string>
+    <string name="fg_not_working">funktioniert nicht</string>
+    <string name="fg_risk_title">Bildgenerierung auf dieser GPU</string>
+    <string name="fg_risk_text">Auf dieser GPU (%1$s) kann die Bildgenerierung die GPU hängen lassen. Das Spiel kann abstürzen, und in seltenen Fällen kann das ganze Gerät einfrieren oder neu starten.\n\nStürzt das Spiel ab, bietet der Dialog beim nächsten Start an, ohne Bildgenerierung zu starten.</string>
+    <string name="fg_risk_accept">Trotzdem einschalten</string>
+    <string name="fg_risk_keep_off">Aus lassen</string>
+    <string name="fg_dll_ok">Lossless.dll ist bereit und die Bildgenerierung an.</string>
+    <string name="perf_fps">Bildrate</string>
+    <string name="perf_frame">Bildzeit</string>
+    <string name="perf_cpu">CPU-Last (diese App)</string>
+    <string name="perf_gpu">GPU-Last (und Zeit der Bildgenerierung)</string>
+    <string name="perf_temp_cpu">CPU-Temperatur</string>
+    <string name="perf_temp_gpu">GPU-Temperatur</string>
+    <string name="perf_temp_bat">Akkutemperatur</string>
+    <string name="perf_settings">Einstellungen (Auflösung, Effekte, GPU-Treiber)</string>
+    <string name="perf_move_hint">Ziehen zum Verschieben · danach woanders tippen</string>
+    <string name="start_last_loading">Letzte Sitzung wird geladen…</string>
+    <string name="quit_saving">Letzte Sitzung wird gespeichert…</string>
+    <string name="opt_ok">OK</string>
+    <string name="bench_offer_title">Beste Einstellungen finden</string>
+    <string name="bench_offer_text">Ein kurzer Test (etwa 2 Minuten) findet die Grafikeinstellungen für dieses Gerät. Das Spiel startet dafür, aber sein Bild bleibt verborgen und es gibt keinen Ton. Deine Spielstände werden nicht angerührt. Danach entscheidest du, ob du das Ergebnis nutzt.</string>
+    <string name="bench_offer_dll">Bildgenerierung: Wenn du Lossless Scaling (Steam) besitzt und Bildgenerierung willst, wähle jetzt seine Lossless.dll, damit der Test sie einschließt.</string>
+    <string name="bench_wide">Breitbild (die Form deines Bildschirms)</string>
+    <string name="bench_show_game">Das Spiel beim Messen zeigen</string>
+    <string name="bench_with_fg">Bildgenerierung einschließen</string>
+    <string name="bench_choose_dll">Lossless.dll wählen</string>
+    <string name="bench_not_now">Nicht jetzt</string>
+    <string name="bench_start">Test starten</string>
+    <string name="bench_step_boot">Das Spiel startet…</string>
+    <string name="bench_shaders">Shader werden vorbereitet: %1$d fertig</string>
+    <string name="bench_step_warm">Vorbereitung…</string>
+    <string name="bench_step_warp">Die Insel wird geladen…</string>
+    <string name="bench_step_island">Messung: Insel</string>
+    <string name="bench_step_check">Das Ergebnis wird geprüft…</string>
+    <string name="bench_live">%1$.1f fps · %2$.2f× · %3$d×%4$d</string>
+    <string name="bench_failed_title">Der Test konnte nicht abgeschlossen werden</string>
+    <string name="bench_failed_text">Er hielt an bei: %1$s. Deine Einstellungen bleiben, wie sie waren. Du kannst ihn unter Optionen &gt; Grafik erneut starten.</string>
+    <string name="bench_close">Schließen</string>
+    <string name="bench_again">Erneut versuchen</string>
+    <string name="bench_interrupted">die App hat den Bildschirm verlassen (Bildschirm aus oder eine andere App), während gemessen wurde</string>
+    <string name="bench_result_title">Empfohlen für dieses Gerät</string>
+    <string name="bench_result_60">%1$s: 60 fps, Renderauflösung bis %2$s× (bei Bedarf gesenkt)</string>
+    <string name="bench_result_30">%1$s: 30 fps, Renderauflösung bis %2$s× (bei Bedarf gesenkt)</string>
+    <string name="bench_result_fg">%1$s mit Bildgenerierung: 30 fps verdoppelt auf 60, Renderauflösung bis %2$s× (bei Bedarf gesenkt)</string>
+    <string name="bench_fg_no">Die Bildgenerierung erreichte auf diesem Gerät keine 60 fps, daher ist die Empfehlung ohne sie.</string>
+    <string name="bench_fg_crashed">Das Spiel hielt an, als der Test die Bildgenerierung probierte, daher wird sie auf diesem Gerät nicht empfohlen.</string>
+    <string name="bench_now">jetzt: %1$s</string>
+    <string name="bench_keep">Meine Einstellungen behalten</string>
+    <string name="bench_apply">Übernehmen</string>
+    <string name="packs_importing">Wird importiert…</string>
+    <string name="packs_imported">Importiert:</string>
+    <string name="packs_import_failed">Nicht importiert:</string>
+    <string name="packs_applies">Patcht den Spielcode dieser Spielversion</string>
+    <string name="packs_other_version">Für eine andere Spielversion gemacht: bewirkt hier nichts</string>
+    <string name="packs_error">Funktioniert nicht: %s</string>
+    <string name="packs_nothing">Nichts, was diese Portierung nutzen kann</string>
+    <string name="packs_restart_ask">Deine Änderungen an Mod-Paketen wirken erst nach einem Neustart. Das Spiel jetzt neu starten? Fortschritt seit deinem letzten Speichern geht verloren.</string>
+    <string name="language_restart">Das Spiel nutzt die neue Sprache nach einem Neustart.</string>
+    <string name="cache_loading">Shader-Cache wird geladen…</string>
+    <string name="cache_loading_detail">%1$,d Shader-Varianten vorbereitet</string>
+    <string name="headstart_building">Die Shader des Spiels werden in deinen Spieldateien gesucht… (nur dieses eine Mal)</string>
+    <string name="headstart_building_detail">%1$,d Shader gefunden</string>
+    <string name="preset_imported">%1$d Vorlage(n) importiert</string>
+    <string name="preset_import_none">Keine belegten Wind-Waker-Speicherplätze in dieser Datei gefunden</string>
+    <string name="preset_import_skipped">%1$d Datei(en) übersprungen</string>
+    <string name="warp_test_title">Warp-Test</string>
+    <string name="warp_test_auto_off">Auto: aus</string>
+    <string name="warp_test_auto_on">Auto: an</string>
+    <string name="warp_test_auto_secs">%1$d s</string>
+    <string name="warp_test_auto_event">Geladen; Auto wartet, bis die Zwischensequenz / der Dialog endet (höchstens 20 s)</string>
+    <string name="warp_test_last">Letztes Ergebnis: %1$s</string>
+    <string name="warp_test_ready">Warpen oder mit ✓ / ✗ bewerten und weiter</string>
+    <string name="warp_test_loading">Lädt… %1$.0f s</string>
+    <string name="warp_test_loaded">Geladen in %1$.1f s</string>
+    <string name="warp_test_stuck">Kein Ende nach %1$.0f s: hängt. Starte die App neu (es ist notiert und wird übersprungen).</string>
+    <string name="warp_test_refused">Nicht angenommen: ein Szenenwechsel lief. Tippe erneut auf Warp.</string>
+    <string name="cheat_keep">Wirkt, sobald ein Spielstand geladen ist; speichere im Spiel, um es zu behalten.</string>
+    <string name="record_thread_restart">Die Einstellung gilt nach einem Neustart.</string>
+    <string name="gpu_driver_installing">Das Treiberpaket wird installiert…</string>
+    <string name="gpu_driver_install_failed">Das Treiberpaket konnte nicht installiert werden: %1$s</string>
+    <string name="gpu_driver_not_package">dies ist kein Treiberpaket (eine .zip mit meta.json und der .so-Datei des Treibers)</string>
+    <string name="gpu_driver_installed">%1$s ist installiert. Jetzt verwenden? Das Spiel startet neu.</string>
+    <string name="gpu_driver_use_now">Verwenden und neu starten</string>
+    <string name="gpu_lost_title">Der GPU-Treiber reagierte nicht mehr</string>
+    <string name="gpu_lost_system">Das Spiel wurde letztes Mal geschlossen, weil der GPU-Treiber des Telefons hing:\n%1$s\n\nDas kann bei fehlerhaften Systemtreibern passieren. Ein Turnip-Treiber führt das Spiel meist aus. Wähle ein Treiberpaket (eine .zip im AdrenoTools-Format, z. B. ein aktueller Turnip-Build für deine Adreno), um es ab jetzt zu nutzen, oder starte das Spiel so, wie es ist.</string>
+    <string name="gpu_lost_custom">Das Spiel wurde letztes Mal geschlossen, weil der installierte GPU-Treiber hing:\n%1$s\n\nKehre zum Systemtreiber zurück, wähle ein anderes Treiberpaket oder starte das Spiel noch einmal mit diesem.</string>
+    <string name="gpu_lost_unknown_driver">(unbekannter Treiber)</string>
+    <string name="gpu_lost_start">Spiel starten</string>
+    <string name="gpu_lost_choose">Eine Treiberdatei wählen…</string>
+    <string name="gpu_lost_choose_other">Eine andere Treiberdatei…</string>
+    <string name="gpu_lost_system_driver">Zurück zum Systemtreiber</string>
+    <string name="gpu_driver_later">Später</string>
+    <string name="gpu_driver_switch">Zu %1$s wechseln? Das Spiel startet neu; der erste Start mit einem anderen Treiber kompiliert seine Pipelines neu und dauert länger.</string>
+    <string name="gpu_driver_remove_active">Dieser Treiber ist in Gebrauch. Entfernen und mit dem Systemtreiber neu starten?</string>
+    <string name="gpu_driver_failed">Das Spiel startete nicht mit dem GPU-Treiber %1$s, daher läuft es wieder mit dem Systemtreiber. Du kannst den Treiber unter Grafik › GPU-Treiber erneut wählen.</string>
+    <string name="crash_title">Das Spiel wurde unerwartet beendet</string>
+    <string name="crash_text">Ein Absturzprotokoll wurde gespeichert. Wenn du das Problem meldest (zum Beispiel als Issue auf GitHub), hänge es bitte an. Es zeigt, wo das Spiel abstürzte, die App-Version, die Spielversion, dein Gerätemodell und die genutzten Einstellungen. Es enthält keine persönlichen Daten.</string>
+    <string name="crash_share">Absturzprotokoll teilen</string>
+    <string name="crash_without_fg">Ohne Bildgenerierung starten</string>
+    <string name="crash_share_all">Absturzprotokolle teilen</string>
+    <string name="crash_start_game">Spiel starten</string>
+    <string name="crash_without_packs">Ohne Mod-Pakete starten</string>
+    <string name="crash_subject">Absturzprotokoll von Wind Waker HD</string>
+    <string name="clear_shaders_text">Das Spiel startet ohne seinen Shader-Cache neu, wie beim ersten Start: Shader werden neu kompiliert, wenn Szenen erscheinen, daher lädt der erste Besuch jeder Szene langsamer und kann ruckeln. Spielstände, Speicherstände und Einstellungen bleiben. (Ungespeicherter Fortschritt geht verloren.)</string>
+    <string name="clear_shaders_restart">Löschen und neu starten</string>
+    <string name="on">an</string>
+    <string name="off">aus</string>
+    <string name="text_title">Text eingeben</string>
+    <string name="text_message">Bis zu %1$d Zeichen.</string>
+    <!-- touch controls: the on-screen layout editor (ControlsView), button labels -->
+    <string name="edit_size_minus">Größe −</string>
+    <string name="edit_size_plus">Größe +</string>
+    <string name="edit_hide">Ausblenden</string>
+    <string name="edit_show">Einblenden</string>
+    <string name="edit_shape">Form: %1$s</string>
+    <string name="edit_shape_default">Standard</string>
+    <string name="edit_shape_round">rund</string>
+    <string name="edit_shape_oval">oval</string>
+    <string name="edit_shape_square">quadratisch</string>
+    <string name="edit_shape_rect">rechteckig</string>
+    <string name="edit_shape_hex">sechseckig</string>
+    <string name="edit_shape_diamond">Raute</string>
+    <string name="edit_opacity">Deckkraft %1$d %%</string>
+    <string name="edit_style_filled">Stil: gefüllt</string>
+    <string name="edit_style_outline">Stil: Umriss</string>
+    <string name="edit_grid_on">Raster: an</string>
+    <string name="edit_grid_off">Raster: aus</string>
+    <string name="edit_presets">Vorlagen</string>
+    <string name="edit_reset">Zurücksetzen</string>
+    <string name="edit_done">Fertig</string>
+    <string name="edit_help">Ziehen zum Verschieben (rastet ein, wenn das Raster an ist), mit zwei Fingern oder Größe die Größe ändern, Tippen zum Auswählen.</string>
+    <string name="edit_opacity_one">Deckkraft: nur das ausgewählte Element (leere Stelle antippen für alle)</string>
+    <string name="edit_opacity_all">Deckkraft: alle Elemente (ein Element antippen für nur dieses)</string>
+    <string name="lp_title">Layout-Vorlagen</string>
+    <string name="lp_none">Noch keine gespeicherten Layouts. Aktuelles speichern legt das bearbeitete Layout unter einem Namen ab.</string>
+    <string name="lp_import">Importieren</string>
+    <string name="lp_export_all">Alle exportieren</string>
+    <string name="lp_save">Aktuelles speichern</string>
+    <string name="lp_preset_info">Ein Layout für die Touch-Steuerung %1$s. Laden übernimmt es in den Editor; Fertig behält es.</string>
+    <string name="lp_delete">Löschen</string>
+    <string name="lp_delete_confirm">Dieses gespeicherte Layout löschen?</string>
+    <string name="lp_export">Exportieren</string>
+    <string name="lp_load">Laden</string>
+    <string name="lp_save_title">Layout speichern (%1$s)</string>
+    <string name="lp_saved">Gespeichert: %1$s</string>
+    <string name="lp_replace">Ein gespeichertes Layout dieses Stils hat schon diesen Namen. Ersetzen?</string>
+    <string name="lp_replace_yes">Ersetzen</string>
+    <string name="lp_switch_style">Dieses Layout ist für die Touch-Steuerung %1$s. Laden und die Touch-Steuerung auf %1$s umstellen?</string>
+    <string name="lp_file_all">Touch-Layouts</string>
+    <string name="lp_exported">%1$d Layouts exportiert</string>
+    <string name="lp_failed">Export fehlgeschlagen: %1$s</string>
+    <string name="lp_imported">%1$d Layouts importiert</string>
+    <string name="lp_import_skipped">%1$d übersprungen</string>
+    <string name="edit_layout_classic">Klassisches Layout</string>
+    <string name="edit_layout_flexible">Flexibles Layout: die Sticks erscheinen dort, wo die Daumen aufsetzen</string>
+    <string name="touch_selfie">Selfie</string>
+    <string name="opt_item_tap">Item-Tasten</string>
+    <string name="opt_item_tap_hint">Bogen, Bumerang, Enterhaken und Greifhaken mit den Kontext-Tasten. Tippen: Ein Tippen zielt, dann schießt die Taste bei jedem Tippen, ZL wechselt die Sicht, B steckt das Item weg. Halten: wie im Spiel</string>
+    <string name="opt_item_tap_tap">Tippen</string>
+    <string name="opt_item_tap_hold">Halten (wie im Spiel)</string>
+    <string name="opt_item_tap_focus">Beim Zielen nur Ziel-Tasten</string>
+    <string name="opt_item_tap_focus_hint">Mit Item-Tasten: Tippen zeigen beim Zielen nur die Schießen-Taste, B (wegstecken), ZL und ZR (Pfeilart); die anderen Item-Tasten, A, +, Ego-Sicht, Steuerkreuz und Sprung-Tasten verschwinden, damit kein Fehltippen einen gespannten Pfeil löst</string>
+    <string name="touch_shoot">Schießen</string>
+    <string name="touch_throw">Werfen</string>
+    <!-- Mods: songs sung into the microphone (SongListener) -->
+    <string name="opt_sing_songs">Lieder singen (experimentell)</string>
+    <string name="opt_sing_songs_hint">Während Link den Taktstock hält, singe, summe oder pfeife eines seiner Lieder ins Mikrofon, und er spielt es (nur gelernte Lieder). Der Ton wird nur ausgewertet, nie aufgenommen</string>
+    <string name="opt_sing_button">Mikrofontaste</string>
+    <string name="opt_sing_button_hint">Halte die Mikrofontaste unten links (oder L am Controller) beim Singen; Loslassen spielt das Lied sofort. Der Schalter darunter wählt den Takt (3/4, 4/4, 6/4): Solange du die Taste hältst, dirigiert Link die gesungenen Töne, einen pro Schlag des Metronoms. Aus: Das Mikrofon hört selbst zu, eine kurze Pause beendet ein Lied</string>
+    <string name="opt_song_list_play">Abspielknöpfe in der Liederliste</string>
+    <string name="opt_song_list_play_hint">Während Link den Taktstock hält, zeigt + seine Lieder: ein Abspielknopf neben jedem spielt es sofort, ohne zu dirigieren</string>
+    <string name="opt_song_scene_play">Abspielknopf in Lieder-Szenen</string>
+    <string name="opt_song_scene_play_hint">Wartet die Story auf ein Lied (es an einer Steintafel lernen, ein Weiser), spielt es ein Abspielknopf auf dem Textfenster sofort, gelernt oder nicht</string>
+    <string name="song_not_learned">%1$s: noch nicht gelernt</string>
+    <string name="song_practice_title">Übung</string>
+    <string name="song_practice_go">Halte die Mikrofon-Taste und singe</string>
+    <string name="song_count_hum">Summe deinen Mittelton</string>
+    <string name="song_count_breathe">Luft holen, dann das Lied!</string>
+    <string name="song_practice_none">Kein Lied erkannt. Versuch es noch mal!</string>
+    <string name="song_wrong_time">%1$s: im %2$s-Takt singen!</string>
+    <string name="sing_songs_no_mic">Ohne die Mikrofon-Berechtigung können die Lieder nicht gehört werden. Du kannst sie in den Systemeinstellungen der App erlauben.</string>
+</resources>

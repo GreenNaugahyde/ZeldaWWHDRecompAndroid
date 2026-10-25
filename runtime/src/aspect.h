@@ -36,4 +36,29 @@ void set_drc_aspect(float a);
 // a touch on the GamePad picture (u, v in 0..1 of the picture, whose aspect is given) -> the
 // game's 16:9 touch screen in its middle
 bool drc_touch(float u, float v, float pictureAspect, float& x, float& y);  // false: nothing there
+// the Picto Box's viewfinder at twice its size (touch controls): its window, black frame and shutter
+// in the PictographBox_00 layout are scaled up around the screen centre, the 3D view zoomed to match
+void set_picto_big(bool on);
+// around camera_draw (interp.cpp's hook): the 3D view zoomed as for a photo while the bigger finder
+// is up (aspect.cpp); end() gets what begin() returned
+bool picto_zoom_begin();
+void picto_zoom_end(bool set);
+// The 3D view zoomed out (z: the vertical field of view's tangent times z, 1 = the game's; Graphics
+// menu and a pinch) and its picture's centre moved down (layout units of 720; the singing panel), see
+// aspect.cpp. Around camera_draw: begin() returns what end() needs. For projections of our own: this
+// frame's tangent factor and shift (NDC, down).
+void set_view_zoom(float z);
+void set_view_shift(float units);
+float view_zoom_begin(uint32_t cam);
+void view_zoom_end(uint32_t cam, float fovy);
+float view_tan_scale();
+float view_shift_ndc();
+// The GamePad inventory's pages (MenuItem_00: the items at x 0, the page right of them at -1280, the app's options
+// page left of them at +1280) moved by the app: mode 1 follows a finger (v layout units to the right of where the
+// drag began), 2 glides to x = v, 0 leaves them where they are. A tap on the game's arrow where the pages already
+// are switches the game's page without a move (its slide's speed comes from what is left).
+void item_page_drag(int mode, float v);
+bool item_page_gliding();     // mode 2 still running
+float item_page_x();          // the pages' x as of the last frame drawn
+void set_item_sheet_left(bool on);  // the paper sheet reaches left of the items (under the options page)
 }  // namespace aspect

@@ -73,9 +73,27 @@ final class GameDialog extends Dialog {
      */
     GameDialog captureButton(Capture c) { capture = c; return this; }
 
+    interface KeyWatch { void key(int keyCode, boolean down); }
+    private KeyWatch watch;
+    private final java.util.Set<Integer> analogHeld = new java.util.HashSet<>();
+
+    /**
+     * Every controller button goes to `w` (pressed and released; analog triggers and a hat D-pad as their buttons)
+     * instead of operating the dialog; Home / Guide closes it.
+     */
+    GameDialog watchKeys(KeyWatch w) { watch = w; return this; }
+
     @Override
     public boolean dispatchKeyEvent(KeyEvent e) {
         int code = e.getKeyCode();
+        if (watch != null && (InputMapper.isController(e.getDevice()) || KeyEvent.isGamepadButton(code))) {
+            if (code == KeyEvent.KEYCODE_BACK) code = KeyEvent.KEYCODE_BUTTON_SELECT;
+            if (code == KeyEvent.KEYCODE_BUTTON_MODE) {
+                if (e.getAction() == KeyEvent.ACTION_UP) dismiss();
+            } else if (e.getAction() == KeyEvent.ACTION_DOWN && e.getRepeatCount() == 0) watch.key(code, true);
+            else if (e.getAction() == KeyEvent.ACTION_UP) watch.key(code, false);
+            return true;
+        }
         if (capture == null || !(InputMapper.isController(e.getDevice()) || KeyEvent.isGamepadButton(code)))
             return super.dispatchKeyEvent(e);
         if (code == KeyEvent.KEYCODE_BACK) code = KeyEvent.KEYCODE_BUTTON_SELECT;
@@ -91,6 +109,14 @@ final class GameDialog extends Dialog {
 
     @Override
     public boolean dispatchGenericMotionEvent(android.view.MotionEvent e) {
+        if (watch != null && InputMapper.isController(e.getDevice())) {
+            java.util.List<Integer> held = InputMapper.analogButtons(e);
+            for (Integer c : new java.util.ArrayList<>(analogHeld))
+                if (!held.contains(c)) { analogHeld.remove(c); watch.key(c, false); }
+            for (int c : held)
+                if (analogHeld.add(c)) watch.key(c, true);
+            return true;
+        }
         if (capture == null || !InputMapper.isController(e.getDevice())) return super.dispatchGenericMotionEvent(e);
         java.util.List<Integer> held = InputMapper.analogButtons(e);
         if (captureCode == 0 && !held.isEmpty()) captureCode = held.get(0);
@@ -134,13 +160,17 @@ final class GameDialog extends Dialog {
         FrameLayout root = new FrameLayout(c);
         LinearLayout card = new LinearLayout(c);
         card.setOrientation(LinearLayout.VERTICAL);
-        card.setBackground(new GameUi.WoodFrame(c));  // wooden boat planks around the paper
-        int frame = px(GameUi.WoodFrame.THICK_DP);
-        card.setPadding(frame + px(24), frame + px(18), frame + px(24), frame + px(18));
         int screenW = c.getResources().getDisplayMetrics().widthPixels, screenH = c.getResources().getDisplayMetrics().heightPixels;
+        // the GamePad menus' torn paper sheet (GameUi.GamePaper, in the menus' layout units fitted to the screen); its
+        // torn edge and blue line take ~30 of its 48-unit frame
+        float unit = Math.min(screenW / 1280f, screenH / 720f);
+        card.setBackground(new GameUi.GamePaper(c, unit));
+        int frame = Math.round(52 * unit);  // (clear of the blue line along it)
+        card.setPadding(frame + px(20), frame + px(12), frame + px(20), frame + px(14));
         FrameLayout.LayoutParams clp = new FrameLayout.LayoutParams(Math.min(screenW - px(64), px(760)), -2,
                 top ? Gravity.CENTER_HORIZONTAL | Gravity.TOP : Gravity.CENTER);
-        if (top) clp.topMargin = px(28);
+        clp.topMargin = top ? px(28) : px(8);
+        clp.bottomMargin = px(8);  // (the card fits the screen: the scrolling part shrinks, the buttons stay in view)
         root.addView(card, clp);
 
         if (title != null) {
@@ -149,9 +179,10 @@ final class GameDialog extends Dialog {
             t.setTextColor(Color.WHITE);
             t.setTextSize(22);
             t.setTypeface(Typeface.create("sans-serif-black", Typeface.NORMAL));
-            t.setPadding(px(22), px(5), px(22), px(7));
-            t.setBackground(new GameUi.TabPlate(c, true, GameUi.GREEN));
+            t.setPadding(px(24), px(6), px(26), px(12));  // (the plate leaves its shadow's room below)
+            t.setBackground(new GameUi.GameTabPlate(c, false, GameUi.GREEN, unit));  // (as the menus' tabs)
             t.outline = GameUi.GREEN.dark;
+            t.gameFontAuto = true;  // (the game's tab font at this size)
             LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-2, -2);
             lp.bottomMargin = px(14);
             card.addView(t, lp);
@@ -161,7 +192,7 @@ final class GameDialog extends Dialog {
         LinearLayout body = new LinearLayout(c);
         body.setOrientation(LinearLayout.VERTICAL);
         if (message != null) {
-            TextView m = new TextView(c);
+            TextView m = GameUi.text(c, true);
             m.setText(message);
             m.setTextColor(GameUi.INK);
             m.setTextSize(17);
@@ -177,7 +208,7 @@ final class GameDialog extends Dialog {
             }
         };
         scroll.addView(body);
-        card.addView(scroll, new LinearLayout.LayoutParams(-1, -2));
+        card.addView(scroll, new LinearLayout.LayoutParams(-1, -2, 1));
 
         if (!buttons.isEmpty()) {
             LinearLayout row = new LinearLayout(c);
@@ -190,7 +221,7 @@ final class GameDialog extends Dialog {
                 TextView v = GameUi.barButton(c, (String) b[0], x -> {
                     dismiss();
                     if (run != null) run.run();
-                }, i == buttons.size() - 1);
+                }, i == buttons.size() - 1, true);
                 v.setMinWidth(px(130));
                 if (!(Boolean) b[2]) {
                     v.setEnabled(false);
@@ -221,18 +252,19 @@ final class GameDialog extends Dialog {
         r.setMinimumHeight(px(54));
         r.setFocusable(true);
         r.setBackground(GameUi.slotStates(c));
-        TextView l = new TextView(c);
+        TextView l = GameUi.text(c, true);
         l.setText((CharSequence) t[0]);
         l.setTextColor(GameUi.INK);
         l.setTextSize(17);
         r.addView(l, new LinearLayout.LayoutParams(0, -2, 1));
-        TextView pill = GameUi.pill(c, on[0]);
-        r.addView(pill, new LinearLayout.LayoutParams(px(92), px(38)));
+        TextView[] pill = {GameUi.pill(c, on[0], true)};  // (the one shown: each tap replaces it)
+        r.addView(pill[0], new LinearLayout.LayoutParams(px(92), px(38)));
         r.setOnClickListener(v -> {
             on[0] = !on[0];
             ((Toggle) t[2]).set(on[0]);
-            r.removeView(pill);
-            r.addView(GameUi.pill(c, on[0]), new LinearLayout.LayoutParams(px(92), px(38)));
+            r.removeView(pill[0]);
+            pill[0] = GameUi.pill(c, on[0], true);
+            r.addView(pill[0], new LinearLayout.LayoutParams(px(92), px(38)));
         });
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2);
         lp.topMargin = px(8);
@@ -240,14 +272,22 @@ final class GameDialog extends Dialog {
         return r;
     }
 
+    // the bottom / right buttons pressed here: a release whose press came before the dialog (one shown by a press)
+    // does nothing
+    private final java.util.Set<Integer> downHere = new java.util.HashSet<>();
+
     @Override
     public boolean onKeyDown(int code, KeyEvent e) {
-        if (code == KeyEvent.KEYCODE_BUTTON_A || code == KeyEvent.KEYCODE_BUTTON_B) return true;  // acted on release
+        if (code == KeyEvent.KEYCODE_BUTTON_A || code == KeyEvent.KEYCODE_BUTTON_B) {  // acted on release
+            downHere.add(code);
+            return true;
+        }
         return super.onKeyDown(code, e);
     }
 
     @Override
     public boolean onKeyUp(int code, KeyEvent e) {
+        if ((code == KeyEvent.KEYCODE_BUTTON_A || code == KeyEvent.KEYCODE_BUTTON_B) && !downHere.remove(code)) return true;
         if (code == KeyEvent.KEYCODE_BUTTON_A) {  // bottom button: cancel
             if (cancelable) cancel();
             return true;

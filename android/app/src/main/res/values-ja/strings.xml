@@ -1,0 +1,886 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Japanese translation of the app's texts (by the game's language: MainActivity.gameLanguage). Texts missing
+     here are shown in English (values/strings.xml). Corrections and more translations are welcome. -->
+<resources>
+    <!-- touch hints (GameHint): *...* shows in orange -->
+    <string name="hint_ok">わかった！</string>
+    <string name="hint_never">もう表示しない</string>
+    <string name="hint_mg_board">ボードの*マスにさわる*と そこをねらいます\n指をすべらせて 別のマスに移すこともできます\n*指をはなす*と 発射！</string>
+    <string name="hint_mg_puzzle">すき間と たてかよこに並んだ*ピースにさわる*と\nスライドします すき間に向かって*ドラッグ*してもOK\n並んだピースごと動きます！</string>
+    <string name="hint_mg_mail">手紙のマークと同じ*たなにさわる*と\nそこに仕分けます！</string>
+    <string name="hint_mg_cannon">画面を*ドラッグ*して 大砲をねらいます\n*タップ*で発射！</string>
+    <string name="hint_mg_auction">画面の*どこかをタップ*すると\n入札額が上がります！</string>
+    <string name="hint_mg_choice">答えるときは 言いたい*行にさわる*だけ</string>
+    <string name="hint_mg_number">*上下にスワイプ*で数字を変え\n*左右にスワイプ*でけたを選びます\n数字が決まったら*タップ*！</string>
+    <string name="hint_mg_shop">*商品にさわる*と よく見られます\n*もう一度さわる*と 買います！</string>
+    <string name="hint_mg_figure">*ドラッグ*でフィギュアを回します\n*二本指で広げる*と 近くで見られます！</string>
+    <string name="hint_mg_conduct">*左半分*に指を置いて 拍子を決めます\n左で4/4 右で6/4 置かなければ3/4\n*右半分をドラッグ*して 指揮しよう！</string>
+    <string name="hint_mg_conduct_pad">*右のパッド*：おんぷのマークをタッチ\nまたはスライドすると その向きにタクトを振ります\n*左のパッド*：拍子をタッチ（4/4、3/4、6/4）！</string>
+    <string name="hint_mg_wind">*青い矢印をドラッグ*して\n風の向きを決めます\n*緑のボタン*をタッチで決定！</string>
+    <string name="hint_leaf_glide">滑空中に*葉っぱのボタンをタップ*すると\n葉っぱをとじて落下、落下中にもう一度で\nふたたび滑空します\n*おしつづける*と空中で葉っぱをあおぎます！</string>
+    <string name="hint_ring">*アイテムボタンを長押し*すると\nリングからアイテムを選べます\n*スライド*して*はなす*と決定\n短く押すと今までどおり使います\n袋はそれぞれのリングが開きます！</string>
+    <string name="hint_songs_button">*マイクボタン*（または*L*）をおしたまま\n覚えた唄を歌うか ハミングかくちぶえで！\n*はなす*と リンクがその唄を振ります</string>
+    <string name="hint_songs_auto">覚えた唄を歌うか ハミングかくちぶえで！\n*マイク*が聞いています\n*最後の音*のあとに 少し間をあけてね</string>
+    <string name="hint_songs_try">まず *ためして* みますか？\nマイクボタンを押したまま歌うと\nとどいた*音*が見えます（リンクは演奏しません）</string>
+    <string name="hint_try_yes">ためす！</string>
+    <string name="hint_try_no">今はいい</string>
+    <string name="song_play_now">*%1$s*が聞こえました！\n本番で演奏しますか？もう一度歌うと\nリンクが演奏します</string>
+    <string name="song_play_yes">演奏する！</string>
+    <string name="song_play_no">練習を続ける</string>
+    <!-- options menu -->
+    <string name="cheat_apply">適用</string>
+    <string name="cheat_bags">ふくろを満たす</string>
+    <string name="cheat_bags_done">えものぶくろとエサぶくろを満たしました。</string>
+    <string name="cheat_bags_hint">えものぶくろとエサぶくろ（ない場合）、すべてのえもの×99、エサとヒョイの実</string>
+    <string name="cheat_dungeon">マップ、コンパス、ボスのカギ（このダンジョン）</string>
+    <string name="cheat_dungeon_done">このダンジョンのマップ、コンパス、ボスのカギ。</string>
+    <string name="cheat_inf_ammo">矢とバクダン無限</string>
+    <string name="cheat_inf_bags">エサとえもの無限</string>
+    <string name="cheat_inf_bags_hint">使ったエサとヒョイの実がもどり、えものは99のまま</string>
+    <string name="cheat_inf_breath">泳ぎ無限</string>
+    <string name="cheat_inf_breath_hint">泳ぎのゲージが満タンのまま：リンクは疲れず、深い水でもしずみません</string>
+    <string name="cheat_one_hit">一撃で倒す</string>
+    <string name="cheat_one_hit_hint">敵は一撃で倒れます（独自のカウンターを持つボスは除く）</string>
+    <string name="cheat_inf_health">ライフ無限</string>
+    <string name="cheat_inf_magic">魔力無限</string>
+    <string name="cheat_inf_rupees">ルピー無限</string>
+    <string name="cheat_items">すべてのアイテムをもらう</string>
+    <string name="cheat_items_done">すべてのアイテムをもらいました。</string>
+    <string name="cheat_items_hint">すべての持ち物、光の矢、デラックス写し絵の箱、パワーブレスレット、ビン4本、矢とバクダン99</string>
+    <string name="cheat_key">小さなカギを追加（このダンジョン）</string>
+    <string name="cheat_key_done">小さなカギを1つ追加しました。</string>
+    <string name="cheat_moon_anims">ランダムな離陸アニメーション</string>
+    <string name="cheat_moon_anims_hint">離陸のたびに、2つのジャンプポーズの代わりに14のポーズから1つを選びます</string>
+    <string name="cheat_moon_fly">飛ぶ速さ</string>
+    <string name="cheat_moon_jump">ムーンジャンプ</string>
+    <string name="cheat_moon_jump_hint">ボタンをおしている間、上昇します。左スティックで方向を変えます。どこでもジャンプと同じコントローラーのボタンでは、ムーンジャンプが優先されます</string>
+    <string name="opt_jump_button">コントローラーのボタン</string>
+    <string name="opt_jump_button_hint">タッチでは専用のボタンがあります。プレイ中にゲームが使うコントローラーのボタンは、その役目をほかのボタンにゆずるか、アイテムボタンを1つ外します</string>
+    <string name="opt_jump_clash">%1$sはゲームで%2$sをおします。%3$sもつけると、両方をします。</string>
+    <string name="opt_jump_clash_move">移動：%1$sは%2$sに移ります。</string>
+    <string name="opt_jump_clash_nofree">%1$sに使えるコントローラーのボタンがもうありません。</string>
+    <string name="opt_jump_clash_remove">外す：%1$sをおすコントローラーのボタンはなくなり、そのアイテムはコントローラーから使えません（ほかのアイテムボタンはそのまま）。</string>
+    <string name="opt_jump_clash_remove_ring">はずす：%1$s をおすボタンはなくなります。その働き（風のタクト、大砲、サルベージアーム）はアイテムリングに残ります。</string>
+    <string name="opt_jump_move">移動</string>
+    <string name="opt_jump_remove">外す</string>
+    <string name="opt_jump_move_l1">L1へ移す</string>
+    <string name="opt_jump_move_down">十字ボタン下へ移す</string>
+    <string name="opt_jump_clash_extra">L1 / 十字ボタン下へ：%1$sはかわりにそのボタンへ移り、アイテムもそのまま。アイテムページの枠には新しいボタンが表示されます。L1はWii UのLを押さなくなります（そこでのページ切りかえ、歌のマイクボタンはなし）。十字ボタン下はプレイ中以外では下のままです。</string>
+    <string name="cheat_moon_nofall">落下ダメージなし</string>
+    <string name="cheat_moon_nofall_hint">飛んだあとの着地で痛くなりません</string>
+    <string name="cheat_moon_rise">上昇の速さ</string>
+    <string name="cheat_songs">すべての歌</string>
+    <string name="cheat_songs_done">すべての歌を覚えました。</string>
+    <string name="cheat_stats">ハート20、魔力2倍、5000ルピー</string>
+    <string name="cheat_stats_done">ハート20、魔力2倍、5000ルピー。</string>
+    <string name="cheat_stats_hint">ハートと魔力も回復します</string>
+    <string name="cheat_sword">マスターソードとミラーシールドを装備</string>
+    <string name="cheat_sword_done">セーブデータを読み込み直すまで、マスターソードとミラーシールドを装備しました。</string>
+    <string name="cheat_sword_hint">セーブデータを読み込み直すまで</string>
+    <string name="cheat_triforce">トライフォースのかけらすべて</string>
+    <string name="cheat_triforce_done">トライフォースのかけらをすべて集めました。</string>
+    <string name="cheats_about">プレイ中のセーブデータを変えます（元のプロジェクトより）。セーブデータを読み込むと適用されます。残すにはゲーム内でセーブしてください。</string>
+    <string name="cheats_story_about">⚠️ ストーリーのチートはストーリーのイベントを変えたり壊したりすることがあります：それを教えたり確かめたりする場面が飛ばされたり、くり返されたりします。先に予備のデータにセーブしてください。</string>
+    <string name="cheats_story_confirm">ストーリーのイベントを変えたり壊したりすることがあります。先に予備のデータにセーブしてください。適用しますか？</string>
+    <string name="controller_pro">Wii U PRO コントローラー</string>
+    <string name="controls_classic">クラシック</string>
+    <string name="controls_flexible">フレキシブル</string>
+    <string name="dev_off">開発者オプション オフ</string>
+    <string name="dev_on">開発者オプション オン（Modタブ：ワープ）</string>
+    <string name="drc_in_layout">画面レイアウト内</string>
+    <string name="drc_second_display">2つ目の画面</string>
+    <string name="drc_shape_fill">画面いっぱい</string>
+    <string name="drc_shape_original">オリジナル 16:9</string>
+    <string name="dyn_res_down_to">%1$s×まで（%2$s）</string>
+    <string name="fg_about">Lossless Scalingのフレーム生成で、ゲームの30fpsのフレームの間に補間フレームを加えます。お持ちのLossless ScalingのLossless.dllが必要です（Steam：steamapps/common/Lossless Scaling）。この端末にコピーして、ここで選んでください。生成されたフレームは約1フレーム遅れてゲームを表示します。</string>
+    <string name="fg_dll_tested_hint">インストール済み：テスト済みのバージョン</string>
+    <string name="fg_dll_untested_hint">インストール済み：未テストのバージョン（フレームが正しく見えないことがあります）</string>
+    <string name="fg_error">フレーム生成が動いていません：%1$s</string>
+    <string name="fg_multiplier_item">×%1$d（%2$d fps）</string>
+    <string name="fg_multiplier_item_over">×%1$d（%2$d fps：画面の表示より多く、生成フレームなし）</string>
+    <string name="fg_performance">パフォーマンス</string>
+    <string name="fg_quality">品質（GPU負荷が多め）</string>
+    <string name="gpu_driver_about">Adreno GPUでは、システムとは別のVulkanドライバーでゲームを動かせます。例えばMesa TurnipのビルドやQualcommの新しいドライバーです。ほかのエミュレーターと同じAdrenoTools形式のドライバーパッケージ（meta.jsonとドライバーの入った.zip）を使ってください。新しいドライバーは再起動後に適用されます。それでゲームが起動しない場合、次の起動でシステムのドライバーにもどります。</string>
+    <string name="gpu_driver_fell_back">%1$sを読み込めなかったため、システムのドライバーで動いています。次の起動でまたそれに切り替えます。</string>
+    <string name="gpu_driver_install">ドライバーパッケージをインストール…</string>
+    <string name="gpu_driver_install_hint">meta.jsonとドライバーの入った.zip</string>
+    <string name="gpu_driver_remove">削除</string>
+    <string name="gpu_driver_running">現在使用中：%1$s</string>
+    <string name="gpu_driver_system">システムのドライバー</string>
+    <string name="gpu_driver_system_hint">端末に付いてきたドライバー</string>
+    <string name="gpu_driver_use">使う</string>
+    <string name="interp_fps">%d fps（補間）</string>
+    <string name="interp_off">30 fps（オリジナル）</string>
+    <string name="opt_about">このアプリについて</string>
+    <string name="opt_aniso">16×異方性フィルタリング</string>
+    <string name="opt_ao">アンビエントオクルージョン</string>
+    <string name="opt_ao_hires">フルサイズのオクルージョン深度</string>
+    <string name="opt_aspect">アスペクト比</string>
+    <string name="opt_auto_slot">オートセーブ %1$d</string>
+    <string name="opt_auto_state">自動ステートセーブ</string>
+    <string name="opt_auto_state_hint">ゲームを止めずにプレイ中のステートを保存し、2つのオート枠に交互に記録します</string>
+    <string name="opt_back">もどる</string>
+    <string name="opt_bench">最適な設定を探す</string>
+    <string name="opt_bench_hint">この端末を短くテストして、それに合わせてプリセットを設定します（ゲームが再起動します）</string>
+    <string name="opt_buttons">コントローラーのボタン</string>
+    <string name="opt_buttons_custom">カスタム</string>
+    <string name="opt_buttons_default">デフォルト</string>
+    <string name="opt_buttons_hint">どのコントローラーのボタンがどのWii Uのボタンを押すか</string>
+    <string name="opt_buttons_note">Wii Uのボタンを選んでから、それに使うコントローラーのボタンを押してください。すでに使われているボタンは入れ替わるので、どのWii Uのボタンにも1つずつ残ります。どこでもジャンプとムーンジャンプは、プレイ中にゲームが使うボタンでは先に確認します。Home / GuideとSelectの長押しはいつでもメニューを開き、メニューでは引き続き位置でボタンを使います。</string>
+    <string name="opt_buttons_press">%1$sに使うコントローラーのボタンを押してください（現在：%2$s）。\n\nHome / Guideかキャンセルでそのままにします。</string>
+    <string name="opt_buttons_reset">デフォルトにもどす</string>
+    <string name="opt_extra_l1">L1をアイテムボタンに</string>
+    <string name="opt_extra_l1_hint">アイテムボタンX・Y・Rのひとつを元のコントローラーボタンから引きつぎます（そこにあるジャンプは入れかわります）。アイテム、アイテムページの枠、アイテムリングもいっしょです。L1はWii UのLを押さなくなります：アイテムページでのページ切りかえ、歌のマイクボタンはなし。</string>
+    <string name="opt_extra_down">十字ボタン下をアイテムボタンに</string>
+    <string name="opt_extra_down_hint">L1と同じですが、プレイ中だけ。メニューでは下のままです。アイテムページでは、ZLを押したまま十字ボタン下でカーソルのアイテムをセットします。</string>
+    <string name="opt_slot_labels">アイテムボタンの名前</string>
+    <string name="opt_slot_labels_hint">ゲームのボタンとGamePadのアイテム欄に表示します。自動：タッチではA1、A2、A3、コントローラーではそれをおすボタン</string>
+    <string-array name="slot_labels">
+        <item>自動</item>
+        <item>A1、A2、A3</item>
+        <item>X、Y、R（ゲームのまま）</item>
+    </string-array>
+    <!-- the controller setup (ControllerSetup) -->
+    <string name="cs_title">コントローラーの設定</string>
+    <string name="cs_menu_hint">ボタンの働き、おすすめの配置、ためしにおす、を順番に</string>
+    <string name="cs_no_controller">コントローラーがつながっていません。つないで（またはボタンをおして）もう一度ためしてください。</string>
+    <string name="cs_buttons_for">対象：%1$s</string>
+    <string name="cs_offer_title">新しいコントローラー</string>
+    <string name="cs_offer_text">%1$s がつながりました。\n\n設定しますか？ ボタンがゲームで何をするかを見せ、配置を提案します（どこでもジャンプ用も）。あとから「そうさ › コントローラーの設定」でいつでも変えられます。</string>
+    <string name="cs_offer_never">聞かない</string>
+    <string name="cs_offer_later">あとで</string>
+    <string name="cs_offer_yes">設定する</string>
+    <string name="cs_intro">%1$s\n\nゲームが知っているのはWii U GamePadだけです。そのボタンひとつひとつを、コントローラーのボタンがひとつずつおします。どれでおすかは自由に変えられ、コントローラーごとに保存されます。\n\nプレイ中、ゲームはLと十字ボタン下以外のすべてのボタンを使います。そのため、どこでもジャンプと月ジャンプはL（L1 / LB）を使うか、ゲームのボタンをひとつ借ります。そのボタンの働きはLへ移るか、アイテムボタンならはずされます。</string>
+    <string name="cs_next">次へ</string>
+    <string name="cs_face_title">右側のボタン</string>
+    <string name="cs_face_text">右側の4つのボタンをどう使いますか？\n\n位置で：Wii U GamePadと同じ。下が剣（Wii UのB）、右がアクション（A）。コントローラーの文字はゲームの文字とちがいます。\n\n文字で：コントローラーのAがゲームのA（アクション）、Bが剣、XとYがアイテムボタンA2とA1。</string>
+    <string name="cs_face_letters">文字で</string>
+    <string name="cs_face_position">位置で</string>
+    <string name="cs_preset_title">配置</string>
+    <string name="cs_preset_text">出発点をえらんでください。ボタンはあとでひとつずつ変えられます。</string>
+    <string name="cs_preset_original">オリジナル</string>
+    <string name="cs_preset_original_text">すべてWii Uと同じ。どこでもジャンプと月ジャンプ（オンのとき）はL1 / LB。ゲームはプレイ中これを使いません。</string>
+    <string name="cs_preset_takeoff">アイテムボタンでジャンプ、アイテムははずす</string>
+    <string name="cs_preset_takeoff_text">どこでもジャンプをアイテムボタン（A1、A2、A3）のボタンに。そのアイテムボタンははずされ、コントローラーからそのアイテムは使えません。ほかの2つはそのまま。どこでもジャンプをオンにします。</string>
+    <string name="cs_preset_tol">好きなボタンでジャンプ、その働きはLへ</string>
+    <string name="cs_preset_tol_text">どこでもジャンプを好きなボタン（たとえば右側のボタン）に。そのボタンのゲームでの働きはL1 / LBへ移るので、なにも失いません。どこでもジャンプをオンにします。アイテムボタンの場合、L1がそのアイテムボタンになり、Wii UのLはコントローラーのボタンがなくなります（アイテムページの切りかえ、歌のマイクボタン）。</string>
+    <string name="cs_jump_title">ジャンプのボタン</string>
+    <string name="cs_jump_takeoff">ジャンプさせるアイテムボタンをおしてください：%1$s（A1）、%2$s（A2）、%3$s（A3）。\n\n月ジャンプはオンのあいだ同じボタンを使います。</string>
+    <string name="cs_jump_tol">ジャンプさせるボタンをおしてください（たとえば右側のボタン）。そのボタンのゲームでの働きはL1 / LBへ移ります。\n\n月ジャンプはオンのあいだ同じボタンを使います。</string>
+    <string name="cs_jump_not_item">%1$s はゲームの %2$s をおします。アイテムボタンではないので、はずせません。</string>
+    <string name="cs_jump_not_menu">%1$s はメニューを開きます。ほかのボタンをえらんでください。</string>
+    <string name="cs_try_title">ためしにおす</string>
+    <string name="cs_try_text">コントローラーのボタンをおすと、ゲームでの働きといっしょに光ります。Start / Optionsを長おしで終了。ボタンひとつずつは「そうさ › コントローラーのボタン」で。</string>
+    <string name="cs_change">変える</string>
+    <string name="cs_done">完了</string>
+    <string name="cs_nothing">なし</string>
+    <string name="cs_select_hold">長おし：このアプリのメニュー</string>
+    <string name="cs_tag_jump">ジャンプ</string>
+    <string name="cs_tag_moon">月</string>
+    <string name="cs_takeoff_ring">アイテムリングがオンなら、十字ボタンの方向（下以外。下はゲームが使いません）も使えます：リングに風のタクト、大砲、サルベージアームがあります。</string>
+    <string name="cs_jump_not_item_ring">%1$s はゲームの %2$s をおします。アイテムボタンでも、アイテムリングにある十字ボタンの方向でもないので、はずせません。</string>
+    <string name="cs_in_ring">アイテムリングにもあり</string>
+    <string name="cs_taken_off">ボタンなし：%1$s</string>
+    <string name="cs_ring_off_warn">%1$s をおすボタンがありません（アイテムリングがあったときにジャンプ用にはずしました）。リングなしでは、その働きをコントローラーから使えません。「そうさ › コントローラーのボタン」でボタンをわりあてるか、「そうさ › コントローラーの設定」を使ってください。</string>
+    <string-array name="cs_wiiu_actions">
+        <item>アクション（話す、開ける、持ち上げる）</item>
+        <item>剣</item>
+        <item>アイテムボタンA2</item>
+        <item>アイテムボタンA1</item>
+        <item>プレイ中は使わない</item>
+        <item>アイテムボタンA3</item>
+        <item>注目</item>
+        <item>しゃがむ、盾</item>
+        <item>使わない</item>
+        <item>ポーズ、GamePadの画面</item>
+        <item>速く動く（Mods、L3のとき）</item>
+        <item>一人称視点</item>
+        <item>風のタクト</item>
+        <item>プレイ中は使わない</item>
+        <item>大砲（船）</item>
+        <item>サルベージアーム（船）</item>
+    </string-array>
+    <string name="opt_cancel">キャンセル</string>
+    <string name="opt_capture">フレームをキャプチャ</string>
+    <string name="opt_capture_hint">デバッグ用：アプリのフォルダーに書き出します</string>
+    <string name="opt_cheats">チート</string>
+    <string name="opt_cheats_hint">アイテム、ハート、ライフ無限…プレイ中のセーブデータに</string>
+    <string name="opt_context_buttons">コンテキストボタン</string>
+    <string name="opt_context_buttons_hint">A、B、X、Y、R、ZRは、できることがあるときに現れて内容を表示します。ゲームのボタン表示は隠れます</string>
+    <string name="opt_controls">そうさ</string>
+    <string name="opt_controls_edit">画面上の配置を編集</string>
+    <string name="opt_controls_edit_hint">各ボタンの移動、サイズ変更、非表示。不透明度とスタイル（ふちどりか塗りつぶし）</string>
+    <string name="opt_controls_style">タッチ操作</string>
+    <string name="opt_controls_style_hint">フレキシブル：親指でさわった場所にスティックが現れます（左半分：移動、右半分：カメラ）</string>
+    <string name="opt_display_res">表示解像度</string>
+    <string name="opt_display_res_hint">オート：必要なサイズで描いて画面が拡大します。高解像度の画面では速くなります。フル：常に画面そのものの解像度</string>
+    <string name="opt_drc_display">Wii U GamePadの画面</string>
+    <string name="opt_drc_display_hint">2つ目の画面が見つかりました（例：2画面端末の下の画面）</string>
+    <string name="opt_drc_shape">Wii U GamePadの映像</string>
+    <string name="opt_drc_shape_hint">いっぱい：GamePadの画面がディスプレイの形になり、背景が端まで広がります</string>
+    <string name="opt_dyn_res">動的解像度</string>
+    <string name="opt_dyn_res_hint">GPUがゲームのフレームレートを下回らせている間はレンダリング解像度を下げ（そのときゲームは遅くなります）、余裕があれば上の設定までもどします。パフォーマンス表示に現在の値が出ます</string>
+    <string name="opt_export">セーブを書き出す</string>
+    <string name="opt_export_hint">セーブデータとステートを1つのバックアップファイルに保存</string>
+    <string name="opt_fg_choose_dll">Lossless.dllを選ぶ</string>
+    <string name="opt_fg_flow">フロースケール</string>
+    <string name="opt_fg_flow_hint">動きの推定の解像度：低いほど速い</string>
+    <string name="opt_fg_multiplier">倍率</string>
+    <string name="opt_fg_multiplier_hint">ゲームの1フレームあたりに表示するフレーム</string>
+    <string name="opt_fg_network">ネットワーク</string>
+    <string name="opt_fg_remove_confirm">アプリからLossless.dllを削除しますか？もう一度選ぶまで、フレーム生成はオフになります。</string>
+    <string name="opt_fg_remove_dll">Lossless.dllを削除</string>
+    <string name="opt_fg_replace_dll">Lossless.dllを選ぶ</string>
+    <string name="opt_fg_ui">UI検出</string>
+    <string name="opt_fg_ui_hint">メニューや文字をくっきり保ちます</string>
+    <string name="opt_framegen">フレーム生成</string>
+    <string name="opt_game">ゲーム</string>
+    <string name="opt_gpu_driver">GPUドライバー</string>
+    <string name="opt_gpu_driver_hint">システムのもの、またはインストールしたドライバーパッケージ</string>
+    <string name="opt_graphics">グラフィック</string>
+    <string name="opt_hearts_combat">ハートは戦闘中のみ</string>
+    <string name="opt_hearts_combat_hint">剣をしまっている間はハートが消え、剣をぬく、リンクがダメージを受ける、または回復すると現れます。魔法を使っている間は魔法メーターだけが表示されます</string>
+    <string name="opt_import">セーブを読み込む</string>
+    <string name="opt_import_hint">ファイルから元にもどします。読み込んだセーブデータはゲームを再起動します</string>
+    <string name="opt_interp">フレームレート</string>
+    <string name="opt_interp_hint">フレーム補間：ゲームの30fpsから中間フレームを作ります。速いCPUが必要です。間に合わないフレームは省かれ、ゲームの速さは保たれます</string>
+    <string name="opt_invert_camera_y">カメラの上下を反転</string>
+    <string name="opt_invert_camera_y_hint">右スティック（またはスワイプ）を上で下を見ます。「一人称とねらい」では通常のカメラとメニューはそのままです</string>
+    <string name="opt_item_ring">アイテムリング</string>
+    <string name="opt_item_ring_hint">X、Y、Rを長押し（タッチかコントローラー）でそのボタンのアイテムを選べます。短く押すと今までどおりアイテムを使います</string>
+    <string name="opt_item_ring_pace">リングを開いている間</string>
+    <string name="opt_language">ゲームの言語</string>
+    <string name="opt_language_hint">お持ちのゲームの言語。再起動後に適用されます</string>
+    <string name="opt_last_slot">前回のセッション</string>
+    <string name="opt_layout">画面レイアウト</string>
+    <string name="opt_leave_state">アプリを離れるときにステートを保存</string>
+    <string name="opt_leave_state_hint">バックグラウンドでAndroidがゲームを閉じても、いた場所を残します</string>
+    <string name="opt_menu_overlay">ゲーム内のメニューボタン</string>
+    <string name="opt_menu_overlay_hint">オフ：このオプションは+メニューの1ページで、アイテムの左の矢印の先にあります。オン：≡ボタンでゲームの上に開きます（以前どおり）</string>
+    <string name="opt_minigame_touch">ミニゲームをタッチで</string>
+    <string name="opt_minigame_touch_hint">ゲームの画面にさわります：イカ撃ちのマス、絵合わせパズルのピース、手紙の棚、お店の品物、返事。ドラッグで大砲をねらい、入札し、フィギュアを回し、指揮します。オフ：オリジナルどおりスティックとボタンだけ</string>
+    <string name="opt_conduct_pads">指揮をおんぷパッドで</string>
+    <string name="opt_conduct_pads_hint">指揮のとき 2つのパッドを出します：5つのおんぷのマーク（タクトの向き、十字ボタンのように）と3つの拍子。オフ：画面の左右にそれぞれ指を置くとスティックになります</string>
+    <string name="opt_mod_camera_speed">ダイレクトカメラの速さ</string>
+    <string name="opt_mod_climb">どの壁でも登る</string>
+    <string name="opt_mod_climb_fast">速く登る</string>
+    <string name="opt_mod_climb_fast_hint">はしご、ツタ、ぶら下がっての横移動</string>
+    <string name="opt_mod_climb_hint">スタミナのリング付き。BかAで手をはなします</string>
+    <string name="opt_mod_direct_camera">右スティックのダイレクトカメラ</string>
+    <string name="opt_mod_direct_camera_hint">なめらかにせず、カメラがすぐにスティックに従います</string>
+    <string name="opt_mod_fast_scenes">場面切り替えを速く</string>
+    <string name="opt_mod_ff_cutscenes">イベントシーンを早送り</string>
+    <string name="opt_mod_ff_dialogues">会話を早送り</string>
+    <string name="opt_mod_picto_pages">アルバムのページ</string>
+    <string name="opt_mod_picto_pages_hint">写し絵の箱のアルバムに12枚ずつのページをいくつでも追加します。いっぱいになると、新しい写し絵は新しいページに入ります。アルバムでは上のバー(またはZL / L)でページをめくります。セーブデータには表示中のページが残り、ほかのページはその横に保存されます</string>
+    <string name="picto_page">%1$d / %2$d ページ</string>
+    <string name="opt_picto_subject">写し絵の被写体</string>
+    <string name="opt_picto_subject_hint">写し絵の箱のアルバムで、写し絵に写った相手をギャラリーのフィギュアの名前で表示します。金メダル(★)の写し絵ならフィギュアにできます。そうでなければ足りない点を表示します</string>
+    <string name="picto_mono">白黒</string>
+    <string name="picto_turned_away">後ろ向き</string>
+    <string name="picto_hidden">一部が隠れている</string>
+    <string name="opt_postbox">ポストで写し絵を送る</string>
+    <string name="opt_postbox_hint">ポストに写し絵の箱を見せて写し絵を選ぶと、カーロフに届き、ギャラリーと同じようにフィギュアを作ってくれます。次の日にはギャラリーに並び、行く必要はありません</string>
+    <string name="opt_postbox_same_day">即日配達</string>
+    <string name="opt_postbox_same_day_hint">送ったフィギュアがすぐにギャラリーに並びます</string>
+    <string name="postbox_mailed">カーロフに送りました:%1$s。フィギュアは明日ギャラリーに並びます。</string>
+    <string name="postbox_delivered">%1$sのフィギュアがギャラリーに並びました。</string>
+    <string name="postbox_no_carlov">先にギャラリーでカーロフに会いましょう。</string>
+    <string name="postbox_mono">カーロフにはカラーの写し絵が必要です。</string>
+    <string name="postbox_no_subject">この写し絵にはフィギュアにできるものが写っていません。</string>
+    <string name="postbox_made">%1$sのフィギュアはもうギャラリーにあります。</string>
+    <string name="postbox_queued">%1$sのフィギュアはもう注文済みです。</string>
+    <string name="postbox_face">%1$s:顔がよく写っていません。</string>
+    <string name="postbox_body">%1$s:全身が写っていません。</string>
+    <string name="postbox_full">カーロフはもう12体のフィギュアを作っています。</string>
+    <string name="postbox_ask">ギャラリーのカーロフに写し絵を送りますか?フィギュアにしてくれます。</string>
+    <string name="postbox_ask_yes">はい、写し絵を選ぶ</string>
+    <string name="postbox_ask_no">いいえ</string>
+    <string name="opt_link_clothes">リンクの服</string>
+    <string name="opt_link_clothes_hint">勇者の服か普段着(エビのシャツ)をいつでも選べます。着替えるとけむりが出ます。ストーリーどおり:ゲームが決めます</string>
+    <string name="clothes_story">ストーリーどおり</string>
+    <string name="clothes_hero">勇者の服</string>
+    <string name="clothes_casual">普段着</string>
+    <string name="opt_mod_song_replay">指揮した曲をもう一度演奏</string>
+    <string name="opt_mod_song_replay_hint">ゲームキューブ版のように、指揮した曲をリンクがもう一度演奏してから効果が出ます（Wii U版はすぐに効果が出ます）</string>
+    <string name="opt_mod_ff_hint">ZR（R2）を押している間速くなります（最大4×、この端末が描ける速さまで）。文字の窓はボタンを待ちます</string>
+    <string name="opt_mod_first_person">マウスホイールで一人称視点</string>
+    <string name="opt_mod_jump">どこでもジャンプ</string>
+    <string name="opt_mod_jump_double">二段ジャンプ</string>
+    <string name="opt_mod_jump_double_hint">空中でもう一度ジャンプボタン</string>
+    <string name="opt_mod_jump_hint">ボタンで、立ち止まっていても走っていても、がけから跳ぶようにジャンプします</string>
+    <string name="opt_mod_jump_noauto">がけでの自動ジャンプなし</string>
+    <string name="opt_mod_jump_noauto_hint">がけから走り出ると、リンクは飛ばずに落ちます：ジャンプはジャンプボタンで</string>
+    <string name="opt_mod_quick_doors">扉を速く</string>
+    <string name="opt_mod_run">速く走る</string>
+    <string name="opt_mod_run_always">いつも</string>
+    <string name="opt_mod_run_hint">走るときに進む距離が長くなります。ジャンプと前転はそのままです</string>
+    <string name="opt_mod_run_l3">L3</string>
+    <string name="opt_mod_run_l3_hold">押している間</string>
+    <string name="opt_mod_run_l3_switch">押す：オン／オフ</string>
+    <string name="opt_mod_run_off">オフ</string>
+    <string name="opt_mod_run_when">使うとき</string>
+    <string name="opt_mod_run_with_l3">L3で</string>
+    <string name="opt_mod_sidle">壁づたいを速く</string>
+    <string name="opt_mod_sidle_hint">リンクが壁に背をつけて動く間</string>
+    <string name="opt_mod_speed_hint">4倍速</string>
+    <string name="opt_mod_swim">速く泳ぐ</string>
+    <string name="opt_mod_swim_hint">リンクが泳ぐ間も同じ</string>
+    <string name="opt_mods">Mod</string>
+    <string name="opt_motion">ジャイロ操作</string>
+    <string name="opt_motion_hint">端末、またはジャイロ付きコントローラーをかたむけてねらいます</string>
+    <string name="opt_off">オフ</string>
+    <string name="opt_on">オン</string>
+    <string name="opt_page_touch">タッチ</string>
+    <string name="opt_page_touch_hint">サイズ、スティック、アイテムボタン、アイコン、メニューボタン</string>
+    <string name="opt_page_ring_hint">リングでアイテムを選ぶ、アイテムボタンの名前</string>
+    <string name="opt_page_camera">カメラ</string>
+    <string name="opt_page_camera_hint">上下、ダイレクトカメラ、歩く方向、スワイプカメラ</string>
+    <string name="opt_page_minigames">ミニゲームとヒント</string>
+    <string name="opt_page_minigames_hint">ミニゲームと指揮をタッチで、タッチのヒント</string>
+    <string name="opt_page_hud">画面（HUD）</string>
+    <string name="opt_page_hud_hint">ハート、ルピー、写し絵の箱の表示</string>
+    <string name="opt_page_controller">コントローラー</string>
+    <string name="opt_page_controller_hint">設定、ボタン、コントローラーの詳細</string>
+    <string name="cd_title">コントローラーの詳細</string>
+    <string name="cd_hint">名前、ID、バッテリー、振動、モーションセンサー、ライト、ボタン、軸</string>
+    <string name="cd_sec_general">コントローラー</string>
+    <string name="cd_sec_app">このアプリでは</string>
+    <string name="cd_sec_battery">バッテリー</string>
+    <string name="cd_sec_rumble">振動</string>
+    <string name="cd_sec_motion">モーションセンサー</string>
+    <string name="cd_sec_lights">ライト</string>
+    <string name="cd_sec_buttons">ボタン</string>
+    <string name="cd_sec_axes">スティックとトリガー(軸)</string>
+    <string name="cd_name">名前</string>
+    <string name="cd_vendor">ベンダーID</string>
+    <string name="cd_product">プロダクトID</string>
+    <string name="cd_device_id">デバイスID</string>
+    <string name="cd_player">プレイヤー番号</string>
+    <string name="cd_descriptor">ディスクリプター</string>
+    <string name="cd_connection">接続</string>
+    <string name="cd_external">外部</string>
+    <string name="cd_builtin">内蔵</string>
+    <string name="cd_enabled">有効</string>
+    <string name="cd_mic">マイク</string>
+    <string name="cd_keyboard">キーボード</string>
+    <string name="cd_kb_alpha">文字あり</string>
+    <string name="cd_kb_buttons">ボタンのみ</string>
+    <string name="cd_sources">入力ソース</string>
+    <string name="cd_face">フェイスボタン</string>
+    <string name="cd_face_sony">PlayStationの記号</string>
+    <string name="cd_face_nintendo">Nintendoの文字(位置で読む)</string>
+    <string name="cd_face_xbox">Xboxの文字</string>
+    <string name="cd_in_use">いま使用中</string>
+    <string name="cd_set_up">設定ずみ</string>
+    <string name="cd_motion_from">ジャイロ操作</string>
+    <string name="cd_rumble_on">振動</string>
+    <string name="cd_this_controller">このコントローラー</string>
+    <string name="cd_this_device">この端末</string>
+    <string name="opt_src_auto">自動</string>
+    <string name="opt_src_device">この端末</string>
+    <string name="opt_src_controller">コントローラー</string>
+    <string name="opt_src_both">両方</string>
+    <string name="opt_motion_from_hint">自動：コントローラーで遊んでいる間はコントローラー（ジャイロ付きなら）、タッチで遊んでいる間はこの端末</string>
+    <string name="opt_rumble_on_hint">自動：コントローラーで遊んでいる間はコントローラー（振動するなら）、タッチで遊んでいる間はこの端末</string>
+    <string name="cd_both">このコントローラーとこの端末</string>
+    <string name="cd_battery">バッテリー</string>
+    <string name="cd_charge">充電量</string>
+    <string name="cd_status">状態</string>
+    <string name="cd_bat_charging">充電中</string>
+    <string name="cd_bat_discharging">放電中</string>
+    <string name="cd_bat_not_charging">充電していない</string>
+    <string name="cd_bat_full">満充電</string>
+    <string name="cd_motors">モーター</string>
+    <string name="cd_motor">モーター %1$d</string>
+    <string name="cd_amplitude">強さを調整できる</string>
+    <string name="cd_on_off_only">オン / オフのみ</string>
+    <string name="cd_resonance">共振 %1$s Hz</string>
+    <string name="cd_effects">効果: %1$s</string>
+    <string name="cd_sensors">センサー</string>
+    <string name="cd_gyro">ジャイロスコープ</string>
+    <string name="cd_accel">加速度センサー</string>
+    <string name="cd_range">範囲 ±%1$s、分解能 %2$s</string>
+    <string name="cd_rate">最大 %1$s Hz</string>
+    <string name="cd_lights">ライト</string>
+    <string name="cd_light">ライト</string>
+    <string name="cd_light_mic">マイクのライト</string>
+    <string name="cd_light_input">入力ライト</string>
+    <string name="cd_light_player">プレイヤーライト</string>
+    <string name="cd_light_keyboard">キーボードのバックライト</string>
+    <string name="cd_light_colour">色</string>
+    <string name="cd_light_brightness">明るさ</string>
+    <string name="cd_button_count">%1$d個のボタン</string>
+    <string name="cd_axes">軸</string>
+    <string name="cd_axis_left">左スティック</string>
+    <string name="cd_axis_right">右スティック</string>
+    <string name="cd_axis_dpad">十字ボタン</string>
+    <string name="cd_axis_lt">左トリガー</string>
+    <string name="cd_axis_rt">右トリガー</string>
+    <string name="cd_resolution">分解能 %1$s</string>
+    <string name="cd_yes">はい</string>
+    <string name="cd_no">いいえ</string>
+    <string name="cd_none">なし</string>
+    <string name="cd_none_reported">報告なし</string>
+    <string name="cd_unknown">不明</string>
+    <string name="opt_page_res">解像度とアップスケール</string>
+    <string name="opt_page_res_hint">動的解像度、アップスケール、表示解像度</string>
+    <string name="opt_page_quality">画質</string>
+    <string name="opt_page_quality_hint">アンビエントオクルージョン、テクスチャフィルタリング</string>
+    <string name="opt_page_screen">画面</string>
+    <string name="opt_page_screen_hint">ワイド画面、視野、アスペクト比、テレビとGamePadの画面</string>
+    <string name="opt_page_advanced">詳細</string>
+    <string name="opt_page_advanced_hint">GPUドライバー、VSync、記録スレッド、シェーダーキャッシュ</string>
+    <string name="opt_page_songs">歌</string>
+    <string name="opt_page_songs_hint">もう一度演奏、マイクで歌う、再生ボタン</string>
+    <string name="opt_onscreen_size">画面上の操作の大きさ</string>
+    <string name="opt_packs">Modパック</string>
+    <string name="opt_packs_hint">Cemuのグラフィックパックとゲームファイルのmod。.zipと.rarファイルから読み込みます</string>
+    <string name="opt_pad_hint">コントローラー：Selectの長押しかHomeで開閉 · L / Rでタブ切り替え · 十字ボタンで移動と値の変更 · 右のボタンで決定 · 下のボタンでもどる</string>
+    <string name="opt_perf">パフォーマンス表示</string>
+    <string name="opt_perf_hint">FPS、負荷、温度</string>
+    <string name="opt_perf_move">表示を動かす</string>
+    <string name="opt_perf_move_hint">メニューを閉じます：指で表示をドラッグし、終わったら別の場所をタップ</string>
+    <string name="opt_perf_reset">位置をもどす</string>
+    <string name="opt_picto_big">写し絵の箱を大きく表示</string>
+    <string name="opt_picto_big_hint">コンテキストボタンと一緒に：写し絵の箱のファインダーが画面いっぱいになり、ピンチでズーム（望遠鏡も）。オフ：写し絵の箱と望遠鏡のオリジナルの画面</string>
+    <string name="opt_preset">プリセット</string>
+    <string name="opt_preset_hint">レンダリング解像度、動的解像度、フレームレートをまとめて設定します（フレーム生成オン時：30fpsを2倍、高めの解像度）。どれかを手で変えるとカスタムになります</string>
+    <string name="opt_quit">おわる</string>
+    <string name="opt_record_thread">コマンド記録スレッド</string>
+    <string name="opt_record_thread_hint">2つ目のCPUスレッドがGPUの作業を準備します：ほとんどの端末で速く、一部では遅くなります（例：Snapdragon 855）</string>
+    <string name="opt_vsync">VSync</string>
+    <string name="opt_vsync_hint">各フレームが画面のリフレッシュを待ちます。お使いの端末で映像がひどくカクついたり、スライドショーのようになる場合はオンにしてください。操作がわずかに遅れることがあります。オフ：フレーム生成の使用時のみ</string>
+    <string name="st_touch_title">新しいタッチ操作</string>
+    <string name="st_touch_text">新しいタッチ操作を試しますか？\n\nスティックは親指を置いた場所に現れ（右側はスワイプでカメラが回ります）、ボタンは使えるときだけ表示されて何をするかを示し、アイテムはタップで構えて撃てます。アイテムボタンを長押しすると全アイテムのリングが開きます。ミニゲームは画面に触れて遊べます。\n\nあとで「そうさ」からすべて変更でき、「クラシック」で固定の画面GamePadに戻せます。</string>
+    <string name="st_touch_yes">新しい操作を使う</string>
+    <string name="st_touch_no">クラシックのまま</string>
+    <string name="st_jump_title">どこでもジャンプ</string>
+    <string name="st_jump_text">いつでもジャンプしますか？専用のボタンで、立ち止まっていても走っていても、段差から飛ぶようにリンクがジャンプします。（Mod › どこでもジャンプ）</string>
+    <string name="st_double_text">空中でもう一回ジャンプもしますか？</string>
+    <string name="st_sing_title">歌で奏でる</string>
+    <string name="st_sing_text">風のタクトの曲を、マイクに向かって歌ったり、ハミングしたり、口笛で吹いたりして奏でてみますか？（試験的機能。音はこの端末で解析するだけで、録音はしません）\n\nそうでなければ、画面の2つのパッドで指揮します。</string>
+    <string name="st_sing_yes">歌ってみる</string>
+    <string name="st_sing_no">パッドで指揮</string>
+    <string name="st_yes">はい</string>
+    <string name="st_no">いいえ</string>
+    <string name="opt_render_aspect">ワイド画面</string>
+    <string name="opt_render_aspect_hint">画面の形：画面のアスペクト比でレンダリングし、左右がより広く見えます。HUDは画面の端で比率を保ちます</string>
+    <string name="opt_view_zoom">視野</string>
+    <string name="opt_view_zoom_original">オリジナル</string>
+    <string name="opt_view_zoom_hint">ズームアウトしてリンクの周りをもっと広く見せます。画面を2本の指でピンチしても変えられます</string>
+    <string name="opt_resolution">レンダリング解像度</string>
+    <string name="opt_rumble">振動</string>
+    <string name="opt_rumble_hint">コントローラーで。振動しないコントローラーやタッチでのプレイ中はこの端末で</string>
+    <string name="opt_rupees_change">ルピーは変わったときだけ</string>
+    <string name="opt_rupees_change_hint">ルピーを手に入れたり使ったりすると数が現れ、数秒後にまた消えます</string>
+    <string name="opt_saves">セーブ</string>
+    <string name="opt_shaders">シェーダーキャッシュを削除</string>
+    <string name="opt_shaders_hint">最初の起動と同じようにゲームを再起動します</string>
+    <string name="opt_show_sticks">スティックを表示</string>
+    <string name="opt_show_sticks_hint">オフ：何もない画面でスティックが動きます</string>
+    <string name="opt_stick_follows">左スティックが親指についていく</string>
+    <string name="opt_stick_follows_hint">親指が左スティックのふちを越えると、スティックもいっしょに動きます。オフ：スティックはその場所にとどまります</string>
+    <string name="opt_slot">ステート %1$d</string>
+    <string name="opt_slot_empty">空き</string>
+    <string name="opt_slot_incompatible">%1$s · 別のビルドのもの、読み込めません</string>
+    <string name="opt_slot_load">ロード</string>
+    <string name="opt_slot_save">セーブ</string>
+    <string name="opt_start_mode">起動時</string>
+    <string name="opt_start_mode_hint">オープニングの前に：ステートを選ぶか、ゲームを離れた場所にそのままもどります</string>
+    <string name="opt_steer">歩く向き</string>
+    <string name="opt_steer_hint">カメラが回っても、リンクは歩いている向きを保ちます。スティックを動かす（またははなす）と、またカメラ基準で歩きます</string>
+    <string name="opt_steer_resync">スティックが合わせ直すまで</string>
+    <string name="opt_steer_resync_hint">リンクがまたカメラ基準で歩くまでにスティックが動く量。小さいほどきびきび</string>
+    <string name="opt_steer_swing">カメラがリンクの後ろに回る</string>
+    <string name="opt_steer_swing_delay">回り始めるまで</string>
+    <string name="opt_steer_swing_delay_hint">右スティックを使わない時間、またはカメラに向かって走る時間</string>
+    <string name="opt_steer_swing_hint">走っていて右スティックをさわっていない間</string>
+    <string name="opt_swipe_boat">船でのスワイプの速さ</string>
+    <string name="opt_swipe_boat_hint">リンクが船に乗っている間、スワイプでカメラがこれだけ速く回ります。望遠鏡などの一人称視点はそのままです</string>
+    <string name="opt_swipe_speed">スワイプの速さ</string>
+    <string name="opt_to_inventory">アイテムにもどる</string>
+    <string name="opt_touch_camera">カメラ（右半分）</string>
+    <string name="opt_touch_camera_hint">スティック：右アナログスティックと同じ。スワイプ：指に合わせてカメラが回ります</string>
+    <string name="opt_touch_hints">タッチのヒント</string>
+    <string name="opt_touch_hints_hint">ミニゲームやゲームのメニューを初めてタッチで遊ぶとき、メッセージが遊び方を説明します。もう一度オン：すべてのヒントがもう一度出ます</string>
+    <string name="opt_link_poses">ボタンのアイコンにリンク</string>
+    <string name="opt_link_poses_hint">ジャンプ、しゃがむ、前転、壁ぞい移動、持ち上げる、投げる、置く、開ける、つかむ、拾うのボタンに、ゲームのモデルから描いたリンクの動きを表示します（アニメーション付き）。オフ：シンプルな絵文字</string>
+    <string name="opt_zl_defeat">ターゲットを倒したときのZL</string>
+    <string name="opt_zl_defeat_hint">タップしたZL（注目したまま）：注目している敵を倒すと、ZLがはなれます。次のターゲット：ZLはそのままで、近くの次の敵に注目します（いなければはなれます）</string>
+    <string name="opt_zl_defeat_release">はなす</string>
+    <string name="opt_zl_defeat_next">次のターゲット</string>
+    <string name="opt_upscale">アップスケール</string>
+    <string name="opt_upscale_hint">画面への拡大のしかた：シャープは低いレンダリング解像度でもふちをくっきり保ちます</string>
+    <string name="opt_warp">ワープ（開発者）</string>
+    <string name="opt_warp_hint">ゲームのどの場所、部屋、出現地点にも行けます</string>
+    <string name="packs_about">.zipと.rarファイルからmodを読み込みます：Cemuのグラフィックパック（例えばGameBananaやGitHubから）と、シンプルなゲームファイルのmod（contentフォルダー）。コードパッチ（patch_*.asm）、ゲームファイルの置き換え、ピクセルシェーダーの置き換え、テクスチャフィルタリングのルールは動きます。頂点シェーダーとテクスチャ解像度のルールはまだです。コードパッチは作られたゲームのバージョンにだけ適用されます。パックのオン・オフや設定の変更は再起動後に有効になります。</string>
+    <string name="packs_delete">パックを削除</string>
+    <string name="packs_delete_confirm">このパックを端末から削除しますか？</string>
+    <string name="packs_details">詳細</string>
+    <string name="packs_folder">フォルダー：packs/%s</string>
+    <string name="packs_groups">パッチグループ：このゲームのバージョン用 %1$d、ほか用 %2$d</string>
+    <string name="packs_import">パックを読み込む</string>
+    <string name="packs_import_hint">.zipか.rarファイルを1つ以上選びます</string>
+    <string name="packs_none">まだパックがありません。</string>
+    <string name="packs_on_count">%d個オン</string>
+    <string name="packs_preset">設定</string>
+    <string name="packs_restart">今すぐ再起動</string>
+    <string name="packs_restart_note">変更は再起動後に適用され、変わったコードはそのときコンパイルし直されます（短いコンパイル、または以前使った組み合わせなら無し）。</string>
+    <string name="packs_title_hint">コードを変えるパックをオンにしたら、一度タイトル画面から始めて、そこで冒険の記録を読み込んでください：ゲームの読み込み中にパックが準備されます。パックなしで保存したステートには準備されていません。</string>
+    <string name="packs_unsupported">まだ対応していません：%s</string>
+    <string name="packs_versions">対象：%s（このゲームのバージョンではありません）</string>
+    <string name="perf_show">表示する</string>
+    <string name="preset_about">ストーリープリセットは、セーブデータのストーリー部分（アイテム、ハート、歌、海図、各場所のスイッチと宝箱、ストーリーのフラグ）と場所です。そこへワープすると、プレイ中のゲームにそのストーリーを読み込みます。ゲーム内でセーブしない限り、セーブデータは変わりません。プリセットはこの端末に残ります。</string>
+    <string name="preset_ask">%1$s\n\nこのストーリーでそこへワープしますか？セーブデータを読み込み直すまで、プレイ中のゲームのストーリーが置き換わります。</string>
+    <string name="preset_custom">カスタム</string>
+    <string name="preset_delete">削除</string>
+    <string name="preset_guess_hint">この端末へのおすすめ：%1$s</string>
+    <string name="preset_hint">セーブデータや保存した瞬間のストーリーを読み込み、その場所へワープします</string>
+    <string name="preset_song_scenes">唄の場面</string>
+    <string name="preset_song_scenes_hint">唄を覚える直前のストーリーで、石版や教える人のすぐ前にリンクを置きます</string>
+    <string name="preset_song_scenes_about">内蔵のストーリープリセット（その唄を覚える直前）を読み込み、ゲームが唄を教える場所（石版、トット）の前にリンクを置きます。石版を読むか話しかけて、唄を求められたらタクトを構えてください。</string>
+    <string name="preset_import">セーブデータを読み込む…</string>
+    <string name="preset_import_hint">WWHDのcking.sav、ゲームキューブの.gciセーブ（北米、欧州、日本）、またはプリセット（.wwp）を選びます。複数同時なら、使用中の枠がそれぞれプリセットになります</string>
+    <string name="preset_save">今のストーリーをプリセットとして保存</string>
+    <string name="preset_save_hint">今ここで：これまでのストーリーと入った場所</string>
+    <string name="preset_title">ストーリープリセット</string>
+    <string name="preset_warp">ワープ</string>
+    <string name="start_states_loading">ステートを読み込み中…</string>
+    <string name="start_states_pad_hint">コントローラー：十字ボタンで移動 · 右のボタンで決定 · 下のボタンでゲーム開始</string>
+    <string name="start_states_title">つづきから</string>
+    <string name="start_states_title_hint">いつもどおりゲームを始めます</string>
+    <string name="state_overwrite">枠%1$dのステートを置き換えますか？</string>
+    <string name="touch_camera_stick">スティック</string>
+    <string name="touch_camera_swipe">スワイプ</string>
+    <string name="warp_about">扉を通るように、リンクをすぐにその場所へ連れて行きます。ストーリーはセーブデータのままです：だれが何がいるかはそれによります（またはレイヤーを選んでください）。新しい場所を残したいときだけ、ゲーム内でセーブしてください。</string>
+    <string name="warp_going">%1$sへワープ</string>
+    <string name="warp_layer">レイヤー</string>
+    <string name="warp_layer_auto">ストーリー</string>
+    <string name="warp_layer_hint">読み込む場所のバージョン。ストーリーは進み具合から選びます</string>
+    <string name="warp_no_save">先にセーブデータを読み込んでください。</string>
+    <string name="warp_reading">ゲームファイルから場所を読んでいます…（数秒、この一度だけ）</string>
+    <string name="warp_spawn">部屋 %1$d · 出現地点 %2$d</string>
+    <string name="warp_test">テスト表示</string>
+    <string name="warp_test_hint">ゲームの上のパネル：✓ / ✗ で場所を評価して次へワープ。結果はwarp_tests.tsvに</string>
+    <string name="warp_where">現在：%1$s · 部屋 %2$s · 出現地点 %3$s · レイヤー %4$s</string>
+    <string-array name="ao_modes">
+        <item>オリジナル（Wii Uと同じ）</item>
+        <item>中央を修正</item>
+        <item>中央とノイズを修正</item>
+    </string-array>
+    <string-array name="aspect_modes">
+        <item>オリジナル 16:9（帯あり）</item>
+        <item>画面に引きのばす</item>
+        <item>画面いっぱい（端を切る）</item>
+    </string-array>
+    <string-array name="auto_state_modes">
+        <item>オフ</item>
+        <item>2分ごと</item>
+        <item>5分ごと</item>
+        <item>10分ごと</item>
+    </string-array>
+    <string-array name="display_res_modes">
+        <item>オート</item>
+        <item>フル（クラシック）</item>
+    </string-array>
+    <string-array name="invert_camera_y_modes">
+        <item>オフ</item>
+        <item>一人称とねらい</item>
+        <item>いつも</item>
+    </string-array>
+    <string-array name="item_ring_paces">
+        <item>そのまま進む</item>
+        <item>スローモーション</item>
+        <item>ポーズ</item>
+    </string-array>
+    <string-array name="layouts">
+        <item>TVにGamePadを小さく</item>
+        <item>TVとGamePadを並べる</item>
+        <item>TV、+でGamePad</item>
+        <item>GamePadにTVを小さく</item>
+        <item>TV、必要なときGamePad</item>
+    </string-array>
+    <string-array name="preset_steps">
+        <item>最低</item>
+        <item>低</item>
+        <item>中</item>
+        <item>高</item>
+    </string-array>
+    <string-array name="record_thread_modes">
+        <item>自動</item>
+        <item>オン</item>
+        <item>オフ</item>
+    </string-array>
+    <string-array name="render_aspect_modes">
+        <item>オリジナル 16:9</item>
+        <item>画面の形</item>
+    </string-array>
+    <string-array name="start_modes">
+        <item>オープニング</item>
+        <item>ステートを選ぶ</item>
+        <item>前回のセッションを読み込む</item>
+    </string-array>
+    <string-array name="steer_modes">
+        <item>カメラに従う（オリジナル）</item>
+        <item>カメラを回しても保つ</item>
+        <item>スティックを倒している間保つ</item>
+    </string-array>
+    <string-array name="upscale_modes">
+        <item>バイリニア（クラシック）</item>
+        <item>シャープ</item>
+    </string-array>
+    <string-array name="wiiu_buttons">
+        <item>A</item>
+        <item>B</item>
+        <item>X</item>
+        <item>Y</item>
+        <item>L</item>
+        <item>R</item>
+        <item>ZL</item>
+        <item>ZR</item>
+        <item>−（マイナス）</item>
+        <item>+（プラス）</item>
+        <item>左スティック押しこみ</item>
+        <item>右スティック押しこみ</item>
+        <item>十字ボタン上</item>
+        <item>十字ボタン下</item>
+        <item>十字ボタン左</item>
+        <item>十字ボタン右</item>
+    </string-array>
+    <!-- setup, dialogs and screens around the menu -->
+    <string name="setup_text">ゲームファイルが見つからないか、このビルドに合っていません。\n\nこのアプリにはあなたのゲームから再コンパイルしたコードだけが入っています。同じダンプから取り出したゲームファイルが必要です。パソコンで取り出して（README.md：tools/wudextract.pyを参照）、できたフォルダー（中にcode/、content/、meta/）を次の場所にコピーしてください：\n\n%1$s\n\n例：adb push game /sdcard/Android/data/org.wwhdrecomp.app/files/\n\n問題：%2$s</string>
+    <string name="setup_retry">もう一度確認</string>
+    <string name="setup_welcome">ようこそ！\n\nこのアプリにはゲームファイルは入っていません。お持ちのWii U版「ゼルダの伝説 風のタクト HD」（北米版、欧州版、日本版）を遊びます。\n\n次の3つのファイルをこの端末に置いて、まとめて選んでください：\n•  ディスクイメージ（.wuxか.wud）\n•  そのディスクキー（イメージの名前に.key）\n•  本体のコモンキー（common.key）\n\nまたはゲームのCemuアーカイブ（.wua）を選んでください。キーは不要です。\n\nアプリはゲームファイル（約1.7 GB）を取り出し、この端末用にゲームのコードを準備します。最初の一度だけで、端末のプロセッサーにより時間がかかります。</string>
+    <string name="setup_problem">見つかったゲームファイルが動きません：%1$s</string>
+    <string name="setup_extract">ディスクイメージか.wuaから取り出す…</string>
+    <string name="setup_extract_files">ゲームファイルを選ぶ…</string>
+    <string name="extract_missing">ディスクイメージ、そのディスクキー、本体のコモンキーをまとめて選んでください（最初のものを長押しして、ほかをタップ）：\n\n%1$s イメージ（.wuxか.wud）\n%2$s そのディスクキー（イメージの名前に.key）\n%3$s common.key\n\nまたはゲームのCemuアーカイブ（.wua）。\n\n選択画面にファイルが出ない場合は、Downloadに直接置いて、そこでダウンロードを開いてください。</string>
+    <string name="extract_bad_key">キーファイルは16バイトか16進数32けたでなければなりません。</string>
+    <string name="extract_running">ディスクイメージからゲームを取り出しています…</string>
+    <string name="extract_detail">%1$d / %2$d MB（%3$.0f MB/s）</string>
+    <string name="extract_detail_short">%1$d / %2$d MB</string>
+    <string name="work_channel">ゲームの準備</string>
+    <string name="work_extracting">ゲームファイルを取り出し中</string>
+    <string name="work_compiling">ゲームのコードを準備中</string>
+    <string name="space_title">空き容量が足りません</string>
+    <string name="space_text">この作業には約%1$d MBの空き容量が必要です。空きは%2$d MBです。容量を空けてもう一度お試しください。</string>
+    <string name="extract_failed">取り出しに失敗しました：%1$s</string>
+    <string name="compile_running">この端末用にゲームのコードを準備しています…\n\n最初の一度だけで、プロセッサーにより時間がかかります：速い端末で数分、遅い端末ではもっと長く。その間アプリを離れてもかまいません：バックグラウンドで続き（通知を参照）、閉じられても止まったところから続きます。</string>
+    <string name="compile_detail">%2$d中%1$d（%3$d:%4$02d）</string>
+    <string name="compile_failed">ゲームのコードの準備に失敗しました：%1$s</string>
+    <string name="menu_about">このアプリとライセンス</string>
+    <string name="compile_continue">つづける</string>
+    <string name="compile_stopping">停止中…</string>
+    <string name="compile_cancelled">ゲームのコードの準備は中止されました。次に起動すると止まったところから続きます。</string>
+    <string name="res_original">オリジナル（%1$s）</string>
+    <string name="res_scaled_up">%1$s×（%2$s、GPU負荷が多め）</string>
+    <string name="res_scaled_down">%1$s×（%2$s、GPU負荷が少なめ）</string>
+    <string name="res_restart_now">今すぐ再起動</string>
+    <string name="res_restart_later">あとで</string>
+    <string name="backup_title">セーブの読み込み / 書き出し</string>
+    <string name="backup_export_title">書き出す</string>
+    <string name="backup_game_save">セーブデータ</string>
+    <string name="backup_states">ステート（%1$d MB）</string>
+    <string name="backup_save_file">ファイルとして保存…</string>
+    <string name="backup_scanning">セーブを探しています…</string>
+    <string name="backup_exporting">書き出し中…</string>
+    <string name="backup_exported">「%1$s」に書き出しました。</string>
+    <string name="backup_import_how">書き出すで作ったバックアップ（WindWakerHD backup ….zip）、ゲームキューブ版風のタクトのセーブ（.gci、北米、欧州、日本：3つの冒険の記録すべてがあなたのセーブデータになります）、またはファイルそのものをまとめて選んでください（最初のものを長押しして、ほかをタップ）：セーブデータのcking.savとほかのcking….savファイル、ステートのslot1–5.binと.png。選択画面に出ない場合は、ファイルをDownloadに直接置いて、そこでダウンロードを開いてください。</string>
+    <string name="backup_choose_files">ファイルを選ぶ…</string>
+    <string name="backup_picked_files">選んだファイル</string>
+    <string name="backup_from_gc">ゲームキューブのセーブ %1$s を変換：3つの冒険の記録すべて</string>
+    <string name="backup_nothing_files">選んだファイルにセーブデータ（cking.sav）もステート（slot1–5.bin）もありません。</string>
+    <string name="backup_import_title">読み込む（今あるものを置き換えます）</string>
+    <string name="backup_import_save">セーブデータ（%1$sから）</string>
+    <string name="backup_import_states">ステート：枠 %1$s</string>
+    <string name="backup_import_go">読み込む</string>
+    <string name="backup_importing">読み込み中…</string>
+    <string name="backup_imported_states">ステートを読み込みました。アプリの別のビルドのステートは読み込めません。</string>
+    <string name="backup_imported_save">セーブデータを読み込みました。使うためにゲームを再起動します（前のセーブはsave-before-importに残ります）。</string>
+    <string name="backup_failed">失敗しました：%1$s</string>
+    <string name="fg_title">フレーム生成（Lossless Scaling）</string>
+    <string name="fg_no_dll">Lossless.dllが必要</string>
+    <string name="fg_bad_dll">このファイルは使えません：%1$s</string>
+    <string name="fg_dll_untested">Lossless.dllがインストールされフレーム生成はオンですが、このバージョンのシェーダーはアプリで未テストです：生成フレームが正しく見えないことがあります。その場合は別のLossless.dllを選んでください（READMEにテスト済みのものがあります）。</string>
+    <string name="fg_not_working">動いていません</string>
+    <string name="fg_risk_title">このGPUでのフレーム生成</string>
+    <string name="fg_risk_text">このGPU（%1$s）では、フレーム生成でGPUが止まることがあります。ゲームが落ちたり、まれに端末全体が固まったり再起動したりすることがあります。\n\nゲームが落ちた場合、次の起動時の画面でフレーム生成なしで起動できます。</string>
+    <string name="fg_risk_accept">それでもオンにする</string>
+    <string name="fg_risk_keep_off">オフのままにする</string>
+    <string name="fg_dll_ok">Lossless.dllの準備ができ、フレーム生成はオンです。</string>
+    <string name="perf_fps">フレームレート</string>
+    <string name="perf_frame">フレーム時間</string>
+    <string name="perf_cpu">CPU負荷（このアプリ）</string>
+    <string name="perf_gpu">GPU負荷（とフレーム生成の時間）</string>
+    <string name="perf_temp_cpu">CPU温度</string>
+    <string name="perf_temp_gpu">GPU温度</string>
+    <string name="perf_temp_bat">バッテリー温度</string>
+    <string name="perf_settings">設定（解像度、効果、GPUドライバー）</string>
+    <string name="perf_move_hint">ドラッグで移動 · 終わったら別の場所をタップ</string>
+    <string name="start_last_loading">前回のセッションを読み込み中…</string>
+    <string name="quit_saving">前回のセッションを保存中…</string>
+    <string name="opt_ok">OK</string>
+    <string name="bench_offer_title">最適な設定を探す</string>
+    <string name="bench_offer_text">短いテスト（約2分）でこの端末のグラフィック設定を見つけます。そのためにゲームが起動しますが、映像は隠れたままで音も出ません。セーブには手をつけません。終わったら結果を使うかどうか選べます。</string>
+    <string name="bench_offer_dll">フレーム生成：Lossless Scaling（Steam）をお持ちでフレーム生成を使いたい場合は、テストに含めるために今そのLossless.dllを選んでください。</string>
+    <string name="bench_wide">ワイド画面（画面の形）</string>
+    <string name="bench_show_game">計測中にゲームを表示</string>
+    <string name="bench_with_fg">フレーム生成を含める</string>
+    <string name="bench_choose_dll">Lossless.dllを選ぶ</string>
+    <string name="bench_not_now">今はしない</string>
+    <string name="bench_start">テスト開始</string>
+    <string name="bench_step_boot">ゲームを起動中…</string>
+    <string name="bench_shaders">シェーダーを準備中：%1$d 完了</string>
+    <string name="bench_step_warm">準備中…</string>
+    <string name="bench_step_warp">島を読み込み中…</string>
+    <string name="bench_step_island">計測中：島</string>
+    <string name="bench_step_check">結果を確認中…</string>
+    <string name="bench_live">%1$.1f fps · %2$.2f× · %3$d×%4$d</string>
+    <string name="bench_failed_title">テストを完了できませんでした</string>
+    <string name="bench_failed_text">止まった場所：%1$s。設定はそのままです。オプション &gt; グラフィックからもう一度実行できます。</string>
+    <string name="bench_close">閉じる</string>
+    <string name="bench_again">もう一度</string>
+    <string name="bench_interrupted">計測中にアプリが画面から離れました（画面オフか別のアプリ）</string>
+    <string name="bench_result_title">この端末へのおすすめ</string>
+    <string name="bench_result_60">%1$s：60 fps、レンダリング解像度は最大%2$s×（必要なら下げます）</string>
+    <string name="bench_result_30">%1$s：30 fps、レンダリング解像度は最大%2$s×（必要なら下げます）</string>
+    <string name="bench_result_fg">%1$s フレーム生成あり：30 fpsを60に倍増、レンダリング解像度は最大%2$s×（必要なら下げます）</string>
+    <string name="bench_fg_no">この端末ではフレーム生成で60 fpsに届かなかったため、おすすめはフレーム生成なしです。</string>
+    <string name="bench_fg_crashed">テストがフレーム生成を試したときにゲームが止まったため、この端末ではおすすめしません。</string>
+    <string name="bench_now">現在：%1$s</string>
+    <string name="bench_keep">今の設定のまま</string>
+    <string name="bench_apply">使う</string>
+    <string name="packs_importing">読み込み中…</string>
+    <string name="packs_imported">読み込みました：</string>
+    <string name="packs_import_failed">読み込めませんでした：</string>
+    <string name="packs_applies">このゲームのバージョンのコードにパッチを当てます</string>
+    <string name="packs_other_version">別のゲームのバージョン用：ここでは何もしません</string>
+    <string name="packs_error">動きません：%s</string>
+    <string name="packs_nothing">この移植で使えるものがありません</string>
+    <string name="packs_restart_ask">Modパックの変更は再起動後に有効になります。今ゲームを再起動しますか？最後のセーブ以降の進み具合は失われます。</string>
+    <string name="language_restart">ゲームは再起動後に新しい言語を使います。</string>
+    <string name="cache_loading">シェーダーキャッシュを読み込み中…</string>
+    <string name="cache_loading_detail">%1$,d個のシェーダーのバリエーションを準備しました</string>
+    <string name="headstart_building">ゲームファイルからゲームのシェーダーを探しています…（この一度だけ）</string>
+    <string name="headstart_building_detail">%1$,d個のシェーダーが見つかりました</string>
+    <string name="preset_imported">プリセットを%1$d個読み込みました</string>
+    <string name="preset_import_none">このファイルに使用中の風のタクトのセーブ枠がありません</string>
+    <string name="preset_import_skipped">%1$d個のファイルを飛ばしました</string>
+    <string name="warp_test_title">ワープテスト</string>
+    <string name="warp_test_auto_off">オート：オフ</string>
+    <string name="warp_test_auto_on">オート：オン</string>
+    <string name="warp_test_auto_secs">%1$d秒</string>
+    <string name="warp_test_auto_event">読み込み完了。オートはイベントシーンか会話の終わりを待ちます（最大20秒）</string>
+    <string name="warp_test_last">前回の結果：%1$s</string>
+    <string name="warp_test_ready">ワープするか、✓ / ✗ で評価して次へ</string>
+    <string name="warp_test_loading">読み込み中… %1$.0f秒</string>
+    <string name="warp_test_loaded">%1$.1f秒で読み込みました</string>
+    <string name="warp_test_stuck">%1$.0f秒たっても終わりません：止まっています。アプリを再起動してください（記録され、飛ばされます）。</string>
+    <string name="warp_test_refused">受け付けませんでした：場面切り替えの途中でした。もう一度ワープをタップしてください。</string>
+    <string name="cheat_keep">セーブデータを読み込むと適用されます。残すにはゲーム内でセーブしてください。</string>
+    <string name="record_thread_restart">この設定は再起動後に適用されます。</string>
+    <string name="gpu_driver_installing">ドライバーパッケージをインストール中…</string>
+    <string name="gpu_driver_install_failed">ドライバーパッケージをインストールできませんでした：%1$s</string>
+    <string name="gpu_driver_not_package">ドライバーパッケージではありません（meta.jsonとドライバーの.soファイルの入った.zip）</string>
+    <string name="gpu_driver_installed">%1$sをインストールしました。今使いますか？ゲームが再起動します。</string>
+    <string name="gpu_driver_use_now">使って再起動</string>
+    <string name="gpu_lost_title">GPUドライバーが応答しなくなりました</string>
+    <string name="gpu_lost_system">前回、スマートフォンのGPUドライバーが止まったためゲームが閉じました：\n%1$s\n\n不具合のあるシステムドライバーで起こることがあります。Turnipドライバーなら多くの場合ゲームが動きます。これから使うドライバーパッケージ（AdrenoTools形式の.zip、例えばお使いのAdreno用の最近のTurnipビルド）を選ぶか、このままゲームを起動してください。</string>
+    <string name="gpu_lost_custom">前回、インストールしたGPUドライバーが止まったためゲームが閉じました：\n%1$s\n\nシステムのドライバーにもどすか、別のドライバーパッケージを選ぶか、このドライバーでもう一度ゲームを起動してください。</string>
+    <string name="gpu_lost_unknown_driver">（不明なドライバー）</string>
+    <string name="gpu_lost_start">ゲームを起動</string>
+    <string name="gpu_lost_choose">ドライバーファイルを選ぶ…</string>
+    <string name="gpu_lost_choose_other">別のドライバーファイル…</string>
+    <string name="gpu_lost_system_driver">システムのドライバーにもどす</string>
+    <string name="gpu_driver_later">あとで</string>
+    <string name="gpu_driver_switch">%1$sに切り替えますか？ゲームが再起動します。別のドライバーでの最初の起動はパイプラインをコンパイルし直すため時間がかかります。</string>
+    <string name="gpu_driver_remove_active">このドライバーは使用中です。削除してシステムのドライバーで再起動しますか？</string>
+    <string name="gpu_driver_failed">GPUドライバー%1$sでゲームが起動しなかったため、システムのドライバーにもどしました。グラフィック › GPUドライバーでもう一度選べます。</string>
+    <string name="crash_title">ゲームが予期せず終了しました</string>
+    <string name="crash_text">クラッシュログを保存しました。問題を報告するとき（例えばGitHubのissue）、添付してください。ゲームが落ちた場所、アプリのバージョン、ゲームのバージョン、端末の機種、使っている設定がわかります。個人情報は含まれません。</string>
+    <string name="crash_share">クラッシュログを共有</string>
+    <string name="crash_without_fg">フレーム生成なしで起動</string>
+    <string name="crash_share_all">クラッシュログを共有</string>
+    <string name="crash_start_game">ゲームを起動</string>
+    <string name="crash_without_packs">Modパックなしで起動</string>
+    <string name="crash_subject">風のタクト HD クラッシュログ</string>
+    <string name="clear_shaders_text">最初の起動と同じく、シェーダーキャッシュなしでゲームを再起動します：場面が現れるたびにシェーダーをコンパイルし直すため、各場面の最初は読み込みが遅く、カクつくことがあります。セーブ、ステート、設定は残ります。（セーブしていない進み具合は失われます。）</string>
+    <string name="clear_shaders_restart">削除して再起動</string>
+    <string name="on">オン</string>
+    <string name="off">オフ</string>
+    <string name="text_title">文字を入力</string>
+    <string name="text_message">%1$d文字まで。</string>
+    <!-- touch controls: the on-screen layout editor (ControlsView), button labels -->
+    <string name="edit_size_minus">サイズ −</string>
+    <string name="edit_size_plus">サイズ ＋</string>
+    <string name="edit_hide">隠す</string>
+    <string name="edit_show">表示</string>
+    <string name="edit_shape">形：%1$s</string>
+    <string name="edit_shape_default">標準</string>
+    <string name="edit_shape_round">丸</string>
+    <string name="edit_shape_oval">楕円</string>
+    <string name="edit_shape_square">正方形</string>
+    <string name="edit_shape_rect">長方形</string>
+    <string name="edit_shape_hex">六角形</string>
+    <string name="edit_shape_diamond">ひし形</string>
+    <string name="edit_opacity">不透明度 %1$d%%</string>
+    <string name="edit_style_filled">スタイル：塗りつぶし</string>
+    <string name="edit_style_outline">スタイル：輪郭</string>
+    <string name="edit_grid_on">グリッド：オン</string>
+    <string name="edit_grid_off">グリッド：オフ</string>
+    <string name="edit_presets">プリセット</string>
+    <string name="edit_reset">リセット</string>
+    <string name="edit_done">完了</string>
+    <string name="edit_help">ドラッグで移動（グリッドがオンなら吸着）、ピンチまたはサイズで大きさを変更、タップで選択。</string>
+    <string name="edit_opacity_one">不透明度：選択中の操作だけ（空いた所をタップで全部）</string>
+    <string name="edit_opacity_all">不透明度：すべての操作（操作をタップでそれだけ）</string>
+    <string name="lp_title">配置プリセット</string>
+    <string name="lp_none">保存した配置はまだありません。「現在の配置を保存」で編集中の配置に名前を付けて保存します。</string>
+    <string name="lp_import">読み込む</string>
+    <string name="lp_export_all">すべて書き出す</string>
+    <string name="lp_save">現在の配置を保存</string>
+    <string name="lp_preset_info">%1$sタッチ操作用の配置です。「ロード」でエディターに入れ、「完了」で確定します。</string>
+    <string name="lp_delete">削除</string>
+    <string name="lp_delete_confirm">この保存した配置を削除しますか？</string>
+    <string name="lp_export">書き出す</string>
+    <string name="lp_load">ロード</string>
+    <string name="lp_save_title">配置を保存（%1$s）</string>
+    <string name="lp_saved">保存しました：%1$s</string>
+    <string name="lp_replace">このスタイルの保存済み配置に同じ名前があります。置き換えますか？</string>
+    <string name="lp_replace_yes">置き換える</string>
+    <string name="lp_switch_style">この配置は%1$sタッチ操作用です。ロードしてタッチ操作を%1$sに切り替えますか？</string>
+    <string name="lp_file_all">タッチ配置</string>
+    <string name="lp_exported">%1$d個の配置を書き出しました</string>
+    <string name="lp_failed">書き出しに失敗しました：%1$s</string>
+    <string name="lp_imported">%1$d個の配置を読み込みました</string>
+    <string name="lp_import_skipped">%1$d個をスキップ</string>
+    <string name="edit_layout_classic">クラシック配置</string>
+    <string name="edit_layout_flexible">フレキシブル配置：スティックは親指を置いた場所に現れます</string>
+    <string name="touch_selfie">自撮り</string>
+    <string name="opt_item_tap">アイテムボタン</string>
+    <string name="opt_item_tap_hint">コンテキストボタンでの弓、ブーメラン、フックショット、かぎつきロープ。タップ：タップでかまえ、そのあとタップのたびにうつ。ZLで視点を切りかえ、Bでアイテムをしまう。おしつづける：ゲームと同じ</string>
+    <string name="opt_item_tap_tap">タップ</string>
+    <string name="opt_item_tap_hold">おしつづける（ゲームと同じ）</string>
+    <string name="opt_item_tap_focus">かまえ中はかまえのボタンだけ</string>
+    <string name="opt_item_tap_focus_hint">アイテムボタンがタップのとき、かまえている間はうつボタン、B（しまう）、ZL、ZR（矢の種類）だけを表示。ほかのアイテムボタン、A、＋、主観視点、十字ボタン、ジャンプボタンはかくれ、まちがってタップしても引いた矢がはなれない</string>
+    <string name="touch_shoot">うつ</string>
+    <string name="touch_throw">なげる</string>
+    <!-- Mods: songs sung into the microphone (SongListener) -->
+    <string name="opt_sing_songs">唄を歌う（実験的）</string>
+    <string name="opt_sing_songs_hint">リンクがタクトを構えている間に、タクトの唄をマイクに向かって歌う・ハミングする・口笛で吹くと、リンクがその唄を振ります（覚えた唄だけ）。音は解析するだけで、録音はしません</string>
+    <string name="opt_sing_button">マイクボタン</string>
+    <string name="opt_sing_button_hint">歌っている間は左下のマイクボタン（コントローラーではL）をおしたままにします。はなすとすぐに唄を振ります。下のボタンで拍子（3/4・4/4・6/4）を選べます。ボタンをおしている間、歌った音をリンクがメトロノームの1拍ごとに指揮します。オフ：マイクが自動で聞き取り、少し間をあけると唄の終わりになります</string>
+    <string name="opt_song_list_play">唄の一覧の再生ボタン</string>
+    <string name="opt_song_list_play_hint">タクトを構えている間に+で出る唄の一覧に再生ボタンを付けます。押すと、振らなくてもすぐにリンクがその唄を振ります</string>
+    <string name="opt_song_scene_play">唄の場面の再生ボタン</string>
+    <string name="opt_song_scene_play_hint">ストーリーが唄を待っているとき（石版で覚える、賢者）、メッセージウインドウの再生ボタンで、覚えていなくてもすぐに演奏します</string>
+    <string name="song_not_learned">%1$s：まだ覚えていません</string>
+    <string name="song_practice_title">れんしゅう</string>
+    <string name="song_practice_go">マイクボタンを押したまま歌ってね</string>
+    <string name="song_count_hum">まん中の音をハミングしよう</string>
+    <string name="song_count_breathe">息を吸って、次は曲！</string>
+    <string name="song_practice_none">唄が聞きとれませんでした もう一度！</string>
+    <string name="song_wrong_time">%1$s：%2$sで歌ってね</string>
+    <string name="sing_songs_no_mic">マイクの許可がないと唄を聞き取れません。アプリのシステム設定で許可できます。</string>
+</resources>

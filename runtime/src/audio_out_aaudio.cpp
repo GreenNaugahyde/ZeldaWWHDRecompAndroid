@@ -27,6 +27,7 @@ std::atomic<uint32_t> g_read{0}, g_write{0};
 std::atomic<bool> g_started{false};
 std::atomic<bool> g_active{false};  // a stream exists and consumes the ring
 std::atomic<bool> g_flush{false};   // consumer skips everything queued (a save state was loaded)
+std::atomic<bool> g_muted{false};   // silence goes in instead of the game's sound
 std::mutex g_stream_mutex;
 AAudioStream* g_stream = nullptr;
 float g_volume = 1.0f;
@@ -164,10 +165,11 @@ void push(const int16_t* stereo, int frames) {
         g_dropped += frames;
         return;
     }
+    const bool muted = g_muted.load(std::memory_order_relaxed);
     for (int i = 0; i < frames; i++) {
         uint32_t idx = (w + i) & (kCapacity - 1);
-        g_ring[idx * 2] = stereo[i * 2];
-        g_ring[idx * 2 + 1] = stereo[i * 2 + 1];
+        g_ring[idx * 2] = muted ? 0 : stereo[i * 2];
+        g_ring[idx * 2 + 1] = muted ? 0 : stereo[i * 2 + 1];
     }
     g_write.store(w + frames, std::memory_order_release);
 }
@@ -181,6 +183,8 @@ int buffered_frames() {
 int target_frames() { return kTarget; }
 
 void flush() { g_flush = true; }
+
+void set_muted(bool muted) { g_muted = muted; }
 
 void stats(uint64_t& underrun, uint64_t& dropped) {
     underrun = g_underrun;

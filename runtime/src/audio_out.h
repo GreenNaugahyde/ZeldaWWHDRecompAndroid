@@ -13,5 +13,6 @@ int target_frames();                            // latency the producer should a
 void stats(uint64_t& underrun, uint64_t& dropped);  // frames of silence inserted / frames discarded
 void set_paused(bool paused);                   // app in the background: stop the device (the mix keeps running)
 void flush();                                   // drop what is queued (a save state was loaded)
+void set_muted(bool muted);                     // silence (the graphics benchmark: no game sound)
 
 }  // namespace audio

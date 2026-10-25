@@ -1066,6 +1066,9 @@ static void create_device() {
 
 // ---------------------------------------------------------------- presentation
 namespace {
+// Graphics > Advanced > VSync on: FIFO always (frames wait for the display's refresh), for devices whose
+// mailbox presentation falls out of step with the display (issue #54: a slideshow). Off: mailbox where offered
+std::atomic<bool> g_vsync{false};
 // runtime/shaders/present.vert and .frag, compiled to SPIR-V at build time
 const uint32_t kPresentVS[] = {
 #include "present.vert.inc"
@@ -1271,7 +1274,7 @@ bool ensure_swapchain(Swapchain& sc, bool main = true) {
     // With frame generation the present thread paces the frames and each one must be shown: FIFO.
     VkPresentModeKHR mode = VK_PRESENT_MODE_FIFO_KHR;
     for (auto m : modes)
-        if (m == VK_PRESENT_MODE_MAILBOX_KHR && !(main && fg::loaded())) mode = m;
+        if (m == VK_PRESENT_MODE_MAILBOX_KHR && !(main && fg::loaded()) && !g_vsync.load()) mode = m;
 
     VkSwapchainCreateInfoKHR ci{VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR};
     ci.surface = sc.surface;
@@ -1971,6 +1974,14 @@ bool present_frame_fg() {
 }
 }  // namespace
 
+bool vsync() { return g_vsync.load(std::memory_order_relaxed); }
+void set_vsync(bool v) {
+    if (g_vsync.exchange(v) == v) return;
+    LOG("[vk] VSync %s", v ? "on" : "automatic");
+    g_present_outdated = true;  // the swapchains are made again with the new mode
+    g_drc_present_outdated = true;
+}
+
 void set_fast_forward(bool on) { g_fast_forward.store(on, std::memory_order_relaxed); }
 
 void set_window(ANativeWindow* w) {
@@ -2624,6 +2635,7 @@ void swap() {
     cache_warm_step();
     perf_frame();
     platform::perf_hint_frame(interp::frames_per_step());
+    benchmark_frame();
     prof_frame();
     latch_resolution_scale();
     apply_frame_generation();

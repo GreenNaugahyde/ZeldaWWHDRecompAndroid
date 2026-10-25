@@ -7,6 +7,9 @@
 @02510EA0 # manualCamera: V smoothing factor (cSAngle * f1)
 @02510EE4 # manualCamera: U smoothing factor (cSAngle * f1)
 025071FC  # dCamera_c::subjectCamera: first person is active
+# Walking direction (mods/steer.cpp): daPy_lk_c::setStickData stores Link's direction (stick + camera angle)
+@023F35BC # setStickData: sth r9, 0x6930(r31), normal branch
+@023F3610 # setStickData: the same, confused branch
 0240EBB0  # daPy_Execute: Link (left click while aiming, traces)
 # Quick doors / fast scene changes (mods/turbo.cpp; extra logic steps from interp.cpp's fpcEx_Handler hook)
 0252A684  # dDoor_info_c::getDemoAction: a door event cut is running
@@ -26,3 +29,23 @@
 026D50C4  # SelectController_00 draw: hide the automatically answered title prompt
 026F8B54  # Parts::draw: hide only the title background during automatic choice/caption fade
 026D87D0  # Options > Controller: switch handler; locked to the GamePad (controller_selection.cpp)
+# Touch for the minigames (mods/minigames.cpp): the minigame actors' Execute (r3 = the actor)
+021C5634  # daMgBoard_Execute: Sploosh Kaboom
+02318640  # daObjApzl_Execute: the Cabana's picture puzzles
+0220EFF0  # daNpc_Bmsw_Execute: Rito post mail sorting
+022197C4  # daNpc_Btsw_Execute: Rito post mail sorting (Koboli)
+02109AF8  # daCanonExecute: Spectacle Island's cannon game
+025BB698  # dShop_now_triggercheck: a shop's item choice (r4 = ShopItems_c)
+02483C0C  # daShopItem_Execute: a shop's item (where it is)
+# Songs sung into the microphone (mods/songs.cpp)
+0202A3B4  # JAIZelInst::judge: the conducted notes' song (answers the sung one while Link conducts)
+# One hit kills (mods/cheats.cpp; autoplay.cpp reads the actors there too)
+025D475C  # fopAc_Execute (named CHECK_VEC3_RANGE by the matcher: its assert): every actor's execute
+# Picto Box album pages (mods/picto_pages.cpp)
+026C1974  # the Picto Box's aim, each frame: a picto taken into a full album gets a new page first
+02720D34  # a file loaded: its album block copied into the working album (r4 the file)
+02721B34  # the game saves: the working album copied into the file's block (r4 the file)
+# Pictos mailed to Carlov at postboxes (mods/postbox.cpp)
+023A4BB0  # daObjTpost execute: the postbox takes pictos (attention flag 0x01000000)
+023A5570  # daObjTpost::getMsg: a handed picto gets Carlov's checks and order
+023A55BC  # daObjTpost::next_msgStatus: after a picto, "accepted for delivery" and done

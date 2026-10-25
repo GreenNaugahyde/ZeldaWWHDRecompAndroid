@@ -103,6 +103,15 @@ final class Pictograms {
         shape(c, q, col);
     }
 
+    // a crescent moon centred at (u,v), radius rad: the circle less one shifted up right
+    private static Path crescent(float u, float v, float rad) {
+        Path o = new Path(), cut = new Path();
+        o.addCircle(x(u), y(v), rad * S, Path.Direction.CW);
+        cut.addCircle(x(u + rad * 0.5f), y(v - rad * 0.35f), rad * 0.85f * S, Path.Direction.CW);
+        o.op(cut, Path.Op.DIFFERENCE);
+        return o;
+    }
+
     /** the coloured version of a pictogram, if there is one */
     private static boolean drawColoured(Canvas c, String name) {
         inkC.setColor(a(INK));
@@ -267,6 +276,12 @@ final class Pictograms {
                 fatArrow(c, 0, 0.24f, 0, -0.44f, BLUE);
                 return true;
             }
+            case "moonjump": {  // the jump's arrow up to a crescent moon
+                shape(c, rect(-0.42f, 0.32f, 0.42f, 0.42f, 0.04f), GREEN);
+                shape(c, crescent(0.2f, -0.24f, 0.22f), BRASS);
+                fatArrow(c, -0.16f, 0.24f, -0.16f, -0.44f, BLUE);
+                return true;
+            }
             case "throw": {  // an arrow curving up and over
                 Path arc = new Path();
                 inkC.setStrokeWidth(Math.max(4f, S * 0.2f));
@@ -371,6 +386,12 @@ final class Pictograms {
                 head(c, 0.18f, -0.3f, 1f, 0f);
                 c.drawLine(x(-0.42f), y(0.4f), x(0.42f), y(0.4f), line);
                 return true;
+            case "moonjump":  // straight arrow up beside a crescent moon
+                c.drawLine(x(-0.18f), y(0.3f), x(-0.18f), y(-0.36f), line);
+                head(c, -0.18f, -0.36f, 0f, -1f);
+                c.drawLine(x(-0.42f), y(0.4f), x(0.42f), y(0.4f), line);
+                c.drawPath(crescent(0.22f, -0.2f, 0.2f), solid);
+                return true;
             case "attack":  // a plain straight sword, diagonal
                 c.drawLine(x(-0.3f), y(0.3f), x(0.34f), y(-0.34f), line);
                 c.drawLine(x(-0.36f), y(0.08f), x(-0.08f), y(0.36f), line);  // guard
@@ -464,6 +485,17 @@ final class Pictograms {
                 p.moveTo(x(-0.03f), y(-0.38f));
                 p.quadTo(x(0.2f), y(-0.3f), x(0.3f), y(-0.12f));
                 c.drawPath(p, line);
+                return true;
+            }
+            case "mic": {  // microphone: a capsule in a cradle on a stand
+                r.set(x(-0.14f), y(-0.42f), x(0.14f), y(0.1f));
+                c.drawRoundRect(r, s * 0.14f, s * 0.14f, solid);
+                p.moveTo(x(-0.26f), y(-0.08f));
+                p.quadTo(x(-0.26f), y(0.26f), x(0), y(0.26f));
+                p.quadTo(x(0.26f), y(0.26f), x(0.26f), y(-0.08f));
+                c.drawPath(p, line);
+                c.drawLine(x(0), y(0.26f), x(0), y(0.4f), line);
+                c.drawLine(x(-0.16f), y(0.4f), x(0.16f), y(0.4f), line);
                 return true;
             }
             case "cannon":  // wheel and barrel

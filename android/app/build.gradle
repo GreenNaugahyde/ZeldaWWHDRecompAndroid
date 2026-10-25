@@ -19,6 +19,13 @@ def publicRelease = project.hasProperty('wwhdPublicRelease') ? project.property(
 
 android {
     namespace 'org.wwhdrecomp.app'
+    buildFeatures {
+        buildConfig true
+    }
+    // translations (res/values-xx) may cover only part of the texts: the rest shows in English
+    lint {
+        disable 'MissingTranslation'
+    }
     compileSdk 36
     ndkVersion '27.2.12479018'
 
@@ -27,11 +34,13 @@ android {
         minSdk 30          // Vulkan 1.1, AAudio, 39-bit+ address space handling
         targetSdk 36
         // -PwwhdVersionCode / -PwwhdVersionName for a release; raise the code with every APK you share
-        versionCode((project.findProperty('wwhdVersionCode') ?: '14') as int)
-        versionName project.findProperty('wwhdVersionName') ?: '0.9.5'
+        versionCode((project.findProperty('wwhdVersionCode') ?: '15') as int)
+        versionName project.findProperty('wwhdVersionName') ?: '0.9.6'
         ndk {
             abiFilters 'arm64-v8a'
         }
+        // developer tools in Java that published releases leave out (ShaderTour)
+        buildConfigField 'boolean', 'PUBLIC_RELEASE', publicRelease.toString()
         externalNativeBuild {
             cmake {
                 targets 'wwhd', 'main_hook', 'hook_impl'  // + libadrenotools' hooks (custom GPU drivers)

@@ -21,7 +21,7 @@ import java.util.Map;
  */
 final class GameIcons {
     private static final String DIR = "game_icons";
-    private static final int VERSION = 3;  // bump to rebuild after a change of the list
+    private static final int VERSION = 26;  // bump to rebuild after a change of the list
     private static final String ITEMS = "BtnItemIcon_00", COLLECT = "BtnCollectIcon_00";
     private static final Map<String, Bitmap> cache = new HashMap<>();
     private static volatile boolean building;
@@ -36,7 +36,7 @@ final class GameIcons {
             case 0x21: i = 14; break;  // Tingle Bottle
             case 0x23: i = 12; break;  // Picto Box
             case 0x26: i = 13; break;  // Deluxe Picto Box
-            case 0x24: i = 25; break;  // spoils bag
+            case 0x24: i = 23; break;  // spoils bag
             case 0x25: i = 11; break;  // grappling hook
             case 0x27: case 0x35: case 0x36: i = 18; break;  // bow (and its magic arrows)
             case 0x29: i = 15; break;  // Iron Boots
@@ -44,7 +44,7 @@ final class GameIcons {
             case 0x2C: i = 24; break;  // bait bag
             case 0x2D: i = 17; break;  // boomerang
             case 0x2F: i = 19; break;  // hookshot
-            case 0x30: i = 23; break;  // delivery bag
+            case 0x30: i = 25; break;  // delivery bag
             case 0x31: i = 21; break;  // bombs
             case 0x33: i = 20; break;  // Skull Hammer
             case 0x34: i = 22; break;  // Deku Leaf
@@ -60,6 +60,38 @@ final class GameIcons {
             case 0x59: i = 2; break;   // Forest Water
             case 0x78: return "CollectIcon118_06^l";  // sail
             case 0x77: return "CollectIcon118_16^l";  // swift sail
+            case 0x22: return "CollectIcon118_15^l";  // the Wind Waker (as on d-pad up)
+            // the bags' contents (Icon128_26..54, mapped by looking at them; the delivery bag's
+            // letters and cards 36..42 not yet confirmed in the game)
+            case 0x83: i = 26; break;  // Hyoi Pear
+            case 0x82: i = 27; break;  // All-Purpose Bait
+            case 0x1F: i = 28; break;  // Joy Pendant
+            case 0x46: i = 29; break;  // Boko Baba Seed
+            case 0x48: i = 30; break;  // Knight's Crest
+            case 0x47: i = 31; break;  // Golden Feather
+            case 0x45: i = 32; break;  // Skull Necklace
+            case 0x49: i = 33; break;  // Red Chu Jelly
+            case 0x4A: i = 34; break;  // Green Chu Jelly
+            case 0x4B: i = 35; break;  // Blue Chu Jelly
+            case 0x9C: i = 36; break;  // Cabana Deed (?)
+            case 0x9D: i = 37; break;  // Complimentary ID (?)
+            case 0x98: i = 38; break;  // Father's Letter (?)
+            case 0x9B: i = 39; break;  // Moblin's Letter (?)
+            case 0x99: i = 40; break;  // Note to Mom (?)
+            case 0x9A: i = 41; break;  // Maggie's Letter (?)
+            case 0x9E: i = 42; break;  // Fill-Up Coupon (?)
+            case 0x8C: i = 43; break;  // Town Flower
+            case 0x8D: i = 44; break;  // Sea Flower
+            case 0x8E: i = 45; break;  // Exotic Flower
+            case 0x8F: i = 46; break;  // Hero's Flag
+            case 0x93: i = 47; break;  // Sickle Moon Flag
+            case 0x90: i = 48; break;  // Big Catch Flag
+            case 0x91: i = 49; break;  // Big Sale Flag
+            case 0x92: i = 50; break;  // Pinwheel
+            case 0x94: i = 51; break;  // Skull Tower Idol
+            case 0x95: i = 52; break;  // Fountain Idol
+            case 0x96: i = 53; break;  // Postman Statue
+            case 0x97: i = 54; break;  // Shop Guru Statue
             default: return null;
         }
         return String.format(java.util.Locale.ROOT, "Icon128_%02d^l", i);
@@ -93,26 +125,173 @@ final class GameIcons {
             {"PictographBox_00", "LStick_00^t"},           // L3
             {"PictographBox_00", "RStick_00^t"},           // R3
             {"BtnDungeonItemIcon_00", "MapItemIcon_00^l"}, // +: menu (map)
+            {"DungeonMap_00", "MapLinkFace_00^l"},         // ZL in the bow's first person: Link seen (third person; link_poses off)
+            {"PictographBox_00", "PictographFinder_00^t"}, // the Picto Box's finder: its top left corner (R3: first person)
+            {"MsgWindowScroll_00", "MsgWindowScrollStone_00^q"},  // the stone message window's pattern (the wall of sidle)
+            // the HUD's button bases (context buttons): white round, A's yellow star
+            {"CommandGuide_00", "ABXY^f"}, {"CommandGuide_00", "ABXY_f"},
+            {"CommandGuide_00", "ASpecial^l"}, {"CommandGuide_00", "ASpecial_l"},
+            // parts of composed action icons
+            {"Battleship_00", "BattleshipIcon_00^l"},      // boat (get in / out)
+            {"Auction_00", "AuctionIcon_00^l"},            // bid
+            {"BtnMapIcon_01", "MapBtn_00^l"},              // sea chart
+            {"Arrow_00", "NormalArrow_00^l"}, {"Arrow_00", "FireArrow_00^l"}, {"Arrow_00", "IceArrow_00^l"},
+            {"BestShotMark_00", "BestShotMark_00^t"},      // the album's gold medal (a picto good enough for a figurine)
             {"Cursor_00", "Crsor_00^t"},                   // the menus' cursor: its top left corner, frame 1
             {"Cursor_00", "Crsor_01^t"},                   // ... frame 2
+            {"BtnMenuArrow_00", "ArrowBase_00^t"},         // the GamePad menus' page arrow (GameUi.MenuArrow)
+            {"BtnMenuArrow_00", "ArrowShadow_00^t"},       // ... its shadow
+            // conducting (the song panel of singing the songs, SongPanel): the note signs and the input points
+            {"BatonSign_00", "BatonSignBase_00^t"}, {"BatonSign_00", "BatonSignFrame_00^t"},
+            {"BatonSign_00", "BatonSignArrow_00^t"}, {"BatonSign_00", "BatonSign_00^t"},
+            {"BatonInput_00", "BatonInputPointBase_00^t"},
+            {"BatonInputPoint_01", "BatonInputPoint_00^t"}, {"BatonInputPoint_01", "BatonInputPoint_01^t"},
+            {"BatonInputPoint_01", "BatonInputPoint_02^t"},
+            {"BatonSignList_00", "BatonSlidInputFrame_00^t"}, {"BatonSignList_00", "GradationFrameLT_00^t"},
+            {"BtnMenuArrow_00", "ArrowSpec_00^t"},         // ... its gloss
+            {"BtnMenu_00", "ScratchPattern_00^t"},         // the menu tabs' scratches (GameUi.TabPlate)
+            {"BtnMenu_00", "MenuBtnBase_00^t"},            // ... their plate
+            {"BtnMenu_00", "MenuBtnShadow_00^t"},          // ... its shadow
+            {"BtnMenu_00", "MenuBtnSpec_00^t"},            // ... its gloss
+            {"BtnMenu_00", "MenuBtnDot_00^t"},             // ... its dots
+            {"BtnMenuSaveOption_00", "BtnSequencePattern_01^t"},  // the inventory's Save / Options button (GameUi.GameRowPlate)
+            {"BtnMenuSaveOption_00", "BtnSequenceShadow_01^t"},   // ... its edge and shadow
+            {"BtnMenuSaveOption_00", "BtnSequenceSpec_01^q"},     // ... its gloss
+            {"BtnMenuSaveOption_00", "BtnSelect_02^q"},           // ... its highlight
+            {"BtnOption_00", "OlvSetBtnBase_00^t"},        // the game's Options: its value button (GameUi.GameValueButton)
+            {"BtnOption_00", "OlvSetBtnShadow_00^t"},      // ... its edge and shadow
+            {"BtnOption_00", "OlvSetBtnSpec_00^t"},        // ... its gloss
+            {"BtnOption_00", "OlvSetBtnDot_00^t"},         // ... its dots
+            {"BtnOption_00", "BtnSelect_00^q"},            // ... its highlight
+            {"SequenceOption_00", "OptionArrow_00^s"},     // ... the arrows beside a value
+            {"SequenceOption_00", "OptionBaseLT_00^s"},    // ... the chosen row's crossed bands (content cursor)
+            {"MenuItem_00", "ItemBasePattern_00^r"},       // the GamePad menus' blue background (GameUi.GamePaper)
+            {"MenuItem_00", "ItemBasePattern_01^r"},       // their paper
+            {"MenuItem_00", "RepeatWindowLT_00^t"},        // the paper sheet's torn corner,
+            {"MenuItem_00", "RepeatWindowTB_00^t"},        // ... top / bottom edge,
+            {"MenuItem_00", "RepeatWindowLR_00^t"},        // ... left / right edge
+            {"MenuItem_00", "RepeatWindowEdgeShadowLT_00^t"},
+            {"MenuItem_00", "RepeatWindowEdgeShadowRT_00^t"},
+            {"MenuItem_00", "RepeatWindowEdgeShadowLB_00^t"},
+            {"MenuItem_00", "RepeatWindowEdgeShadowRB_00^t"},
+            {"MenuItem_00", "RepeatWindowEdgeShadowT_00^t"},
+            {"MenuItem_00", "RepeatWindowEdgeShadowB_00^t"},
+            {"MenuItem_00", "RepeatWindowEdgeShadowL_00^t"},
+            {"MenuItem_00", "RepeatWindowEdgeShadowR_00^t"},
+            {"MenuItem_00", "RepeatWindowGlowLineLT_00^t"},
+            {"MenuItem_00", "RepeatWindowGlowLineTB_00^t"},
+            {"MenuItem_00", "RepeatWindowGlowLineLR_00^t"},
+            {"MsgWindowMain_00", "MsgWindowMain_00^t"},    // the game's message window (GameHint)
+            {"MsgWindowMain_00", "MsgSubWindowC2_00^t"},   // ... its two-choice box (left half)
+            {"Cursor_01", "CrsorS_00^t"},                  // ... the choices' cursor, frame 1
+            {"Cursor_01", "CrsorS_01^t"},                  // ... frame 2
+            {"Moon_00", "CrescentMoon_00^t"},              // the moon jump (with Link's jump)
     };
 
-    /** the game icon for an action code (dActStts), or null; sword / shield: the equipped ones */
-    static String actionTexture(int code, int sword, int shield) {
+    // Link in poses of his own animations, drawn from the game's model (Native.renderLinkIcons): jump, crouch,
+    // standing (stand up), seen from behind (third person), sidling (a step), crouching down and standing up, the roll's LINK_ROLL_FRAMES pictures (LINK_ROLL + frame)
+    // and its resting one, carrying a pot: lifting, throwing, setting it down (the lift backwards), opening a door, a
+    // chest, pushing (grab), picking up a Bokoblin's stick; linkPoses off: the pictograms (behind: MapLinkFace).
+    // Animated ones (ANIMATED: prefix and pictures) are named with '*' for the picture in icon keys
+    // (ControlsView plays them, then keeps the last)
+    static final String LINK_JUMP = "link_jump_0", LINK_CROUCH = "link_crouch_0", LINK_STAND = "link_stand_0", LINK_BACK = "link_back_0",
+            LINK_SIDLE = "link_sidle_", LINK_ROLL = "link_roll_", LINK_LIFT = "link_lift_", LINK_THROW = "link_throw_",
+            LINK_DROP = "link_drop_", LINK_DOOR = "link_door_", LINK_CHEST = "link_chest_", LINK_PUSH = "link_push_",
+            LINK_PICKUP = "link_pickup_", LINK_KNEEL = "link_kneel_", LINK_RISE = "link_rise_", POSTBOX = "link_postbox_";
+    static final int LINK_ROLL_FRAMES = 12, LINK_ROLL_REST = 12;
+    private static final Object[][] ANIMATED = {{LINK_SIDLE, 16}, {LINK_LIFT, 8}, {LINK_THROW, 8}, {LINK_DROP, 8},
+            {LINK_DOOR, 12}, {LINK_CHEST, 10}, {LINK_PUSH, 12}, {LINK_PICKUP, 8}, {LINK_KNEEL, 8}, {LINK_RISE, 8}, {POSTBOX, 10}};
+
+    /** how many pictures the animation in an icon key ("...link_x_*...") has, 0 for a still icon */
+    static int pictures(String key) {
+        for (Object[] a : ANIMATED)
+            if (key.contains((String) a[0] + "*")) return (Integer) a[1];
+        return 0;
+    }
+    static volatile boolean linkPoses = true;
+
+    private static final Map<Bitmap, float[]> offsets = new java.util.WeakHashMap<>();
+
+    /** how far the visible part's centre (alpha >= 32) is from b's centre, in b's width / height */
+    static synchronized float[] contentOffset(Bitmap b) {
+        float[] o = offsets.get(b);
+        if (o != null) return o;
+        int w = b.getWidth(), h = b.getHeight(), x0 = w, y0 = h, x1 = -1, y1 = -1;
+        int[] px = new int[w * h];
+        b.getPixels(px, 0, w, 0, 0, w, h);
+        for (int y = 0; y < h; y++)
+            for (int x = 0; x < w; x++)
+                if ((px[y * w + x] >>> 24) >= 32) {
+                    x0 = Math.min(x0, x); x1 = Math.max(x1, x);
+                    y0 = Math.min(y0, y); y1 = Math.max(y1, y);
+                }
+        o = x1 < 0 ? new float[2] : new float[] {((x0 + x1 + 1) / 2f - w / 2f) / w, ((y0 + y1 + 1) / 2f - h / 2f) / h};
+        offsets.put(b, o);
+        return o;
+    }
+
+    /** b is one of Link's poses (as get() returned it) */
+    static synchronized boolean isLinkPose(Bitmap b) {
+        if (b == null) return false;
+        for (Map.Entry<String, Bitmap> e : cache.entrySet())
+            if (e.getValue() == b) return e.getKey().startsWith("link_") || e.getKey().startsWith("#sidle:") || e.getKey().startsWith("#carry:")
+                        || e.getKey().startsWith("#grab:");
+        return false;
+    }
+
+    // the HUD's button bases ("ABXY^f" may also be named with '_': both are extracted to one file)
+    static final String BASE_ROUND = "ABXY^f", BASE_STAR = "ASpecial^l";
+
+    // ---- action icons: the game's own textures, alone or composed ("#..." keys, built on first use).
+    // Arrows are the message arrow with a thick dark outline, like the game's own Return icon.
+    static final String SWORD_DEFAULT = "CollectIcon118_00^l";
+
+    /** the icon for an action code (dActStts) on A / B / ZR, or null (then text): sword and shield
+     *  are the equipped ones */
+    static String actionIcon(int code, int sword, int shield) {
+        String sw = swordTexture(sword);
+        if (sw == null) sw = SWORD_DEFAULT;
         switch (code) {
-            case 0x19: return "MsgArrow_00^s";
-            case 0x27: case 0x07: return "Back_00^t";
-            case 0x17: return "MapCheck_00^t";
-            case 0x01: case 0x0A: return "MiiverseZoomIcon_00^t";
-            case 0x02: return "SubmarineBalloon_00^t";
-            case 0x36: return shield == 0x3C ? "CollectIcon118_05^l" : "CollectIcon118_04^l";
+            case 0x01: case 0x0A: return "MiiverseZoomIcon_00^t";  // look, check
+            case 0x02: return "SubmarineBalloon_00^t";             // speak
+            case 0x03: case 0x30: return "MapBtn_00^l";             // (sea) chart
+            case 0x04: return linkPoses ? "#carry:" + LINK_LIFT + "*:180" : "#arrow:180";  // lift: Link lifting a pot, arrow up
+            case 0x05: return "#arrow:180";                         // climb: up
+            case 0x06: case 0x16: case 0x09: return "#arrow:0";     // let go, drop: down
+            case 0x07: case 0x27: return "Back_00^t";               // return, cancel
+            case 0x08: return "#putaway:" + sw;                     // put away: the sword, pointing down, and an arrow
+            case 0x0E: return "#arrow:135";                         // throw: up and away
+            case 0x12: return linkPoses ? LINK_JUMP : "#arrow:150";  // jump
+            case 0x0C: return linkPoses ? LINK_ROLL : null;          // roll (ControlsView plays its frames)
+            case 0x0F: return linkPoses ? LINK_KNEEL + "*" : null;   // crouch: Link going down
+            case 0x10: return linkPoses ? "#sidle:*" : null;         // sidle: Link at a wall, arrows to both sides
+            case 0x11: return linkPoses ? "#grab:*" : null;          // grab: Link pushing a stone block
+            case 0x1B: return linkPoses ? LINK_PICKUP + "*" : null;  // pick up (a Bokoblin's stick): Link crouching to it
+            case 0x17: return "MapCheck_00^t";                      // choose
+            case 0x19: return "#arrow:90";                          // next
+            case 0x1C: return "#ship:0";                            // get in: boat, arrow down
+            case 0x1D: return "#ship:180";                          // get out: boat, arrow up
+            case 0x20: return "Icon128_12^l";                       // take a photo: the Picto Box
+            case 0x22: return "#arrows";                            // swap modes (arrow types)
+            case 0x23: return "Icon128_22^l";                       // fly: the Deku Leaf
+            case 0x25: return "AuctionIcon_00^l";                   // bid
+            case 0x2C: return "CollectIcon118_06^l";                // cruise: the sail
+            case 0x2F: return "Icon128_11^l";                       // swing: the grappling hook
+            case 0x35: return sw;                                   // the sword
+            case 0x36: return shield == 0x3C ? "CollectIcon118_05^l" : "CollectIcon118_04^l";  // defend
+            case 0x3D: return "Icon128_18^l";                       // the bow (Windfall's bomb game)
+            case 0x45: return "#delete";                            // erase (HD)
+            case 0x4B: return "MapCheck_00^t";                      // choose (HD)
+            case 0x4C: return "Back_00^t";                          // close (HD)
+            case 0x49: return "#album";                             // the Picto Box's album (HD)
+            case 0x48: return "Icon128_12^l";                       // the album: back to the Picto Box (HD)
             default: return null;
         }
     }
 
     private static String[][] wanted() {
         java.util.List<String[]> l = new java.util.ArrayList<>();
-        for (int i = 0; i <= 25; i++) l.add(new String[] {ITEMS, String.format(java.util.Locale.ROOT, "Icon128_%02d^l", i)});
+        for (int i = 0; i <= 54; i++) l.add(new String[] {ITEMS, String.format(java.util.Locale.ROOT, "Icon128_%02d^l", i)});
         for (int i : new int[] {0, 1, 2, 3, 6, 16}) l.add(new String[] {COLLECT, String.format(java.util.Locale.ROOT, "CollectIcon118_%02d^l", i)});
         java.util.Collections.addAll(l, EXTRA);
         return l.toArray(new String[0][]);
@@ -122,6 +301,11 @@ final class GameIcons {
     static synchronized Bitmap get(Context c, String texture, Runnable whenReady) {
         if (texture == null) return null;
         if (cache.containsKey(texture)) return cache.get(texture);
+        if (texture.startsWith("#")) {
+            Bitmap b = compose(c, texture.substring(1), whenReady);
+            if (b != null) cache.put(texture, b);
+            return b;
+        }
         File dir = new File(c.getFilesDir(), DIR);
         if (new File(dir, "version" + VERSION).exists()) {
             Bitmap b = BitmapFactory.decodeFile(new File(dir, file(texture)).getAbsolutePath());
@@ -143,6 +327,352 @@ final class GameIcons {
         return null;
     }
 
+    // ---- composed icons: 256 x 256, parts placed by their centre (fractions) and longest side
+    private static final int SIZE = 256;
+
+    private static Bitmap compose(Context c, String key, Runnable whenReady) {
+        Bitmap out = Bitmap.createBitmap(SIZE, SIZE, Bitmap.Config.ARGB_8888);
+        android.graphics.Canvas cv = new android.graphics.Canvas(out);
+        String[] k = key.split(":", 2);
+        switch (k[0]) {
+            case "arrow": {
+                Bitmap a = arrow(c, whenReady);
+                if (a == null) return null;
+                place(cv, a, Float.parseFloat(k[1]), 0.5f, 0.5f, Float.parseFloat(k[1]) % 90 == 0 ? 0.62f : 0.58f);
+                return out;
+            }
+            case "target": {  // four yellow arrows (the Z-target's colour) pointing in: targeting; "1" latched: closer in
+                Bitmap a = arrow(c, 0xFFFFC828, whenReady);
+                if (a == null) return null;
+                float d = k[1].equals("1") ? 0.22f : 0.3f;
+                place(cv, a, 0, 0.5f, 0.5f - d, 0.34f);
+                place(cv, a, 270, 0.5f + d, 0.5f, 0.34f);
+                place(cv, a, 180, 0.5f, 0.5f + d, 0.34f);
+                place(cv, a, 90, 0.5f - d, 0.5f, 0.34f);
+                return out;
+            }
+            case "finder": {  // the Picto Box's finder, its four round corners with a dark edge: first person
+                Bitmap f = outlined(get(c, "PictographFinder_00^t", whenReady), 0xFF0A0A14, 0, 6, 2);
+                if (f == null) return null;
+                android.graphics.Paint p = new android.graphics.Paint(android.graphics.Paint.FILTER_BITMAP_FLAG | android.graphics.Paint.ANTI_ALIAS_FLAG);
+                float sc = 0.36f * SIZE / f.getWidth();
+                for (int i = 0; i < 4; i++) {  // top left, top right, bottom right, bottom left: mirrored
+                    float sx = i == 1 || i == 2 ? -1 : 1, sy = i >= 2 ? -1 : 1;
+                    android.graphics.Matrix m = new android.graphics.Matrix();
+                    m.postTranslate(-f.getWidth() / 2f, -f.getHeight() / 2f);
+                    m.postScale(sx * sc, sy * sc);
+                    m.postTranslate((0.5f - sx * 0.2f) * SIZE, (0.5f - sy * 0.2f) * SIZE);
+                    cv.drawBitmap(f, m, p);
+                }
+                return out;
+            }
+            case "sidle": {  // Link stepping along a stone wall (the stone message window's pattern), arrows to both sides (#sidle:<picture>)
+                Bitmap link = get(c, LINK_SIDLE + k[1], whenReady), stone = get(c, "MsgWindowScrollStone_00^q", whenReady), a = arrow(c, whenReady);
+                if (link == null || stone == null || a == null) return null;
+                android.graphics.RectF wall = new android.graphics.RectF(0.18f * SIZE, 0.06f * SIZE, 0.82f * SIZE, 0.9f * SIZE);
+                android.graphics.Paint edge = new android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG);
+                edge.setColor(0xFF0A0A14);
+                float e = SIZE * 0.025f, rr = SIZE * 0.05f;
+                cv.drawRoundRect(new android.graphics.RectF(wall.left - e, wall.top - e, wall.right + e, wall.bottom + e), rr + e, rr + e, edge);
+                android.graphics.Paint fill = new android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG | android.graphics.Paint.FILTER_BITMAP_FLAG);
+                android.graphics.Matrix sm = new android.graphics.Matrix();
+                sm.setScale((float) SIZE / stone.getWidth(), (float) SIZE / stone.getHeight());
+                android.graphics.BitmapShader sh = new android.graphics.BitmapShader(stone, android.graphics.Shader.TileMode.REPEAT, android.graphics.Shader.TileMode.REPEAT);
+                sh.setLocalMatrix(sm);
+                fill.setShader(sh);
+                cv.drawRoundRect(wall, rr, rr, fill);
+                place(cv, link, 0, 0.5f, 0.52f, 0.9f);
+                place(cv, a, 270, 0.13f, 0.62f, 0.26f);
+                place(cv, a, 90, 0.87f, 0.62f, 0.26f);
+                return out;
+            }
+            case "third": {  // Link from behind, the item he aims held up at his shoulder: the third person view
+                Bitmap link = get(c, LINK_BACK, whenReady), item = get(c, k[1], whenReady);
+                if (link == null || item == null) return null;
+                place(cv, link, 0, 0.42f, 0.5f, 0.95f);
+                place(cv, item, 0, 0.66f, 0.40f, 0.5f);
+                return out;
+            }
+            case "grab": {  // Link pushing a block of stone (the stone message window's pattern), as the sidle wall (#grab:<picture>)
+                Bitmap link = get(c, LINK_PUSH + k[1], whenReady), stone = get(c, "MsgWindowScrollStone_00^q", whenReady);
+                if (link == null || stone == null) return null;
+                android.graphics.RectF block = new android.graphics.RectF(0.56f * SIZE, 0.3f * SIZE, 0.94f * SIZE, 0.9f * SIZE);
+                android.graphics.Paint edge = new android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG);
+                edge.setColor(0xFF0A0A14);
+                float e = SIZE * 0.025f, rr = SIZE * 0.04f;
+                cv.drawRoundRect(new android.graphics.RectF(block.left - e, block.top - e, block.right + e, block.bottom + e), rr + e, rr + e, edge);
+                android.graphics.Paint fill = new android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG | android.graphics.Paint.FILTER_BITMAP_FLAG);
+                android.graphics.Matrix sm = new android.graphics.Matrix();
+                sm.setScale((float) SIZE / stone.getWidth(), (float) SIZE / stone.getHeight());
+                android.graphics.BitmapShader sh = new android.graphics.BitmapShader(stone, android.graphics.Shader.TileMode.REPEAT, android.graphics.Shader.TileMode.REPEAT);
+                sh.setLocalMatrix(sm);
+                fill.setShader(sh);
+                cv.drawRoundRect(block, rr, rr, fill);
+                place(cv, link, 0, 0.33f, 0.56f, 0.8f);
+                return out;
+            }
+            case "carry": {  // Link with the pot he carries and an arrow where it goes (#carry:<picture>:<arrow's angle>)
+                String[] p = k[1].split(":");
+                Bitmap link = get(c, p[0], whenReady), a = arrow(c, whenReady);
+                if (link == null || a == null) return null;
+                int deg = Integer.parseInt(p[1]);
+                place(cv, link, 0, 0.42f, 0.54f, 0.9f);
+                place(cv, a, deg, 0.8f, deg == 0 ? 0.74f : 0.26f, 0.36f);
+                return out;
+            }
+            case "moon": {  // Link's jump and the crescent moon above, ahead of him: the moon jump
+                Bitmap link = get(c, k[1], whenReady), moon = get(c, "CrescentMoon_00^t", whenReady);
+                if (link == null || moon == null) return null;
+                place(cv, link, 0, 0.42f, 0.56f, 0.86f);
+                place(cv, moon, 0, 0.78f, 0.22f, 0.38f);
+                return out;
+            }
+            case "ff": {  // two arrows to the right, as Next's: fast forward
+                Bitmap a = arrow(c, whenReady);
+                if (a == null) return null;
+                place(cv, a, 90, 0.33f, 0.5f, 0.5f);
+                place(cv, a, 90, 0.67f, 0.5f, 0.5f);
+                return out;
+            }
+            case "putaway": {
+                Bitmap sw = get(c, k[1], whenReady), a = arrow(c, whenReady);
+                if (sw == null || a == null) return null;
+                place(cv, sw, 200, 0.42f, 0.44f, 0.66f);
+                place(cv, a, 0, 0.76f, 0.72f, 0.42f);
+                return out;
+            }
+            case "stow": {  // an item held in the hand (upright) and the arrow down: put it away
+                Bitmap item = get(c, k[1], whenReady), a = arrow(c, whenReady);
+                if (item == null || a == null) return null;
+                place(cv, item, 0, 0.42f, 0.42f, 0.66f);
+                place(cv, a, 0, 0.76f, 0.72f, 0.42f);
+                return out;
+            }
+            case "shoot": {  // an aimed item and an arrow away from it, up and to the right: shoot / throw / fire
+                Bitmap item = get(c, k[1], whenReady), a = arrow(c, whenReady);
+                if (item == null || a == null) return null;
+                place(cv, item, 0, 0.40f, 0.58f, 0.62f);
+                place(cv, a, 135, 0.74f, 0.28f, 0.40f);
+                return out;
+            }
+            case "ship": {
+                Bitmap ship = get(c, "BattleshipIcon_00^l", whenReady), a = arrow(c, whenReady);
+                if (ship == null || a == null) return null;
+                place(cv, ship, 0, 0.5f, 0.6f, 0.75f);
+                boolean in = k[1].equals("0");
+                place(cv, a, in ? 0 : 180, in ? 0.5f : 0.78f, 0.22f, 0.38f);
+                return out;
+            }
+            case "turn": {  // an item inside a turning arrow (the Picto Box's selfie)
+                Bitmap item = get(c, k[1], whenReady);
+                if (item == null) return null;
+                place(cv, item, 0, 0.5f, 0.5f, 0.56f);
+                android.graphics.RectF ring = new android.graphics.RectF(0.07f * SIZE, 0.07f * SIZE, 0.93f * SIZE, 0.93f * SIZE);
+                android.graphics.Paint arc = new android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG);
+                arc.setStyle(android.graphics.Paint.Style.STROKE);
+                arc.setStrokeCap(android.graphics.Paint.Cap.ROUND);
+                // two arcs, each with a head: a full turn around the item
+                float cx = SIZE / 2f, r = 0.43f * SIZE;
+                for (int pass = 0; pass < 2; pass++) {
+                    arc.setColor(pass == 0 ? 0xFF0A0A14 : 0xFFFFFFFF);
+                    arc.setStrokeWidth(SIZE * (pass == 0 ? 0.12f : 0.055f));
+                    android.graphics.Paint head = new android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG);
+                    head.setColor(arc.getColor());
+                    head.setStyle(android.graphics.Paint.Style.FILL_AND_STROKE);
+                    head.setStrokeJoin(android.graphics.Paint.Join.ROUND);
+                    head.setStrokeWidth(pass == 0 ? SIZE * 0.06f : 0);
+                    for (int half = 0; half < 2; half++) {
+                        float start = -150 + half * 180;
+                        cv.drawArc(ring, start, 120, false, arc);
+                        double end = Math.toRadians(start + 120);
+                        float ex = cx + (float) Math.cos(end) * r, ey = cx + (float) Math.sin(end) * r;
+                        // the head points along the circle (clockwise)
+                        float tx = (float) -Math.sin(end), ty = (float) Math.cos(end), nx = (float) Math.cos(end), ny = (float) Math.sin(end);
+                        float hl = SIZE * 0.11f, hw = SIZE * 0.09f;
+                        android.graphics.Path p = new android.graphics.Path();
+                        p.moveTo(ex + tx * hl, ey + ty * hl);
+                        p.lineTo(ex + nx * hw, ey + ny * hw);
+                        p.lineTo(ex - nx * hw, ey - ny * hw);
+                        p.close();
+                        cv.drawPath(p, head);
+                    }
+                }
+                return out;
+            }
+            case "cross": {  // a red cross with a dark edge (no / cancel)
+                android.graphics.Paint x = new android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG);
+                x.setStyle(android.graphics.Paint.Style.STROKE);
+                x.setStrokeCap(android.graphics.Paint.Cap.ROUND);
+                float a = 0.27f * SIZE, b = 0.73f * SIZE;
+                x.setColor(0xFF0A0A14);
+                x.setStrokeWidth(SIZE * 0.19f);
+                cv.drawLine(a, a, b, b, x);
+                cv.drawLine(a, b, b, a, x);
+                x.setColor(0xFFE0473A);
+                x.setStrokeWidth(SIZE * 0.11f);
+                cv.drawLine(a, a, b, b, x);
+                cv.drawLine(a, b, b, a, x);
+                return out;
+            }
+            case "delete": {  // a photo card with a red cross (the album's Delete)
+                android.graphics.Paint card = new android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG);
+                android.graphics.Paint edge = new android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG);
+                edge.setStyle(android.graphics.Paint.Style.STROKE);
+                edge.setStrokeWidth(SIZE * 0.035f);
+                edge.setColor(0xFF0A0A14);
+                card.setColor(0xFFFFFFFF);
+                android.graphics.RectF r = new android.graphics.RectF(0.2f * SIZE, 0.28f * SIZE, 0.8f * SIZE, 0.72f * SIZE);
+                cv.save();
+                cv.rotate(-6, SIZE / 2f, SIZE / 2f);
+                cv.drawRoundRect(r, SIZE * 0.03f, SIZE * 0.03f, card);
+                cv.drawRoundRect(r, SIZE * 0.03f, SIZE * 0.03f, edge);
+                card.setColor(0xFF8FC8F0);
+                cv.drawRect(r.left + SIZE * 0.05f, r.top + SIZE * 0.05f, r.right - SIZE * 0.05f, r.bottom - SIZE * 0.05f, card);
+                cv.restore();
+                android.graphics.Paint x = new android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG);
+                x.setStyle(android.graphics.Paint.Style.STROKE);
+                x.setStrokeCap(android.graphics.Paint.Cap.ROUND);
+                float a = 0.3f * SIZE, b = 0.7f * SIZE;
+                x.setColor(0xFF0A0A14);
+                x.setStrokeWidth(SIZE * 0.16f);
+                cv.drawLine(a, a, b, b, x);
+                cv.drawLine(a, b, b, a, x);
+                x.setColor(0xFFE0473A);
+                x.setStrokeWidth(SIZE * 0.09f);
+                cv.drawLine(a, a, b, b, x);
+                cv.drawLine(a, b, b, a, x);
+                return out;
+            }
+            case "album": {  // two photo cards (white, dark edge like the arrows) behind the Picto Box
+                Bitmap box = get(c, "Icon128_12^l", whenReady);
+                if (box == null) return null;
+                android.graphics.Paint card = new android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG);
+                android.graphics.Paint edge = new android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG);
+                edge.setStyle(android.graphics.Paint.Style.STROKE);
+                edge.setStrokeWidth(SIZE * 0.035f);
+                edge.setStrokeJoin(android.graphics.Paint.Join.ROUND);
+                edge.setColor(0xFF0A0A14);
+                card.setColor(0xFFFFFFFF);
+                android.graphics.RectF r = new android.graphics.RectF(-0.27f * SIZE, -0.2f * SIZE, 0.27f * SIZE, 0.2f * SIZE);
+                float[][] at = {{0.42f, 0.36f, -12}, {0.58f, 0.42f, 8}};
+                for (float[] p : at) {
+                    cv.save();
+                    cv.translate(p[0] * SIZE, p[1] * SIZE);
+                    cv.rotate(p[2]);
+                    cv.drawRoundRect(r, SIZE * 0.03f, SIZE * 0.03f, card);
+                    cv.drawRoundRect(r, SIZE * 0.03f, SIZE * 0.03f, edge);
+                    android.graphics.Paint sky = new android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG);
+                    sky.setColor(0xFF8FC8F0);
+                    cv.drawRect(r.left + SIZE * 0.05f, r.top + SIZE * 0.05f, r.right - SIZE * 0.05f, r.bottom - SIZE * 0.05f, sky);
+                    cv.restore();
+                }
+                place(cv, box, 0, 0.5f, 0.68f, 0.56f);
+                return out;
+            }
+            case "arrows": {
+                String[] t = {"NormalArrow_00^l", "FireArrow_00^l", "IceArrow_00^l"};
+                float[][] at = {{0.32f, 0.36f}, {0.68f, 0.36f}, {0.5f, 0.68f}};
+                for (int i = 0; i < 3; i++) {
+                    Bitmap b = get(c, t[i], whenReady);
+                    if (b == null) return null;
+                    place(cv, b, 0, at[i][0], at[i][1], 0.5f);
+                }
+                return out;
+            }
+            case "baton": {  // a conducting note sign as the game's row shows it (BatonSign_00): "dir:lit"
+                String[] a = k[1].split(":");
+                int dir = Integer.parseInt(a[0]);
+                boolean lit = a[1].equals("1");
+                Bitmap base = get(c, "BatonSignBase_00^t", whenReady), sign = get(c, dir == 0 ? "BatonSign_00^t" : "BatonSignArrow_00^t", whenReady),
+                        frame = get(c, "BatonSignFrame_00^t", whenReady);
+                if (base == null || sign == null || frame == null) return null;
+                // the layout's materials: the base black at half, the sign yellow (unlit: grey), the frame white at 200
+                Bitmap one = Bitmap.createBitmap(base.getWidth() * 2, base.getHeight(), Bitmap.Config.ARGB_8888);
+                android.graphics.Canvas oc = new android.graphics.Canvas(one);
+                drawMirrored(oc, base, 0xFF000000, 128);
+                drawMirrored(oc, sign, lit ? 0xFFFFE100 : 0xFFE6E6E6, lit ? 255 : 235);
+                drawMirrored(oc, frame, 0xFFFFFFFF, 200);
+                place(cv, one, dir == 2 ? -90 : dir == 3 ? 180 : dir == 4 ? 90 : 0, 0.5f, 0.5f, 1f);  // (the arrow sign points up)
+                return out;
+            }
+            case "batonbar": {  // the time bar's dark base (BatonInput_00), whole: 560 x 46
+                Bitmap bar = get(c, "BatonInputPointBase_00^t", whenReady);
+                if (bar == null) return null;
+                Bitmap whole = Bitmap.createBitmap(bar.getWidth() * 2, bar.getHeight(), Bitmap.Config.ARGB_8888);
+                drawMirrored(new android.graphics.Canvas(whole), bar, 0xFFFFFFFF, 220);
+                return whole;
+            }
+            case "batonpoint": {  // the time bar's input point (BatonInputPoint_00), whole, in a colour: "rrggbb"
+                Bitmap pt = get(c, "BatonInputPoint_00^t", whenReady);
+                if (pt == null) return null;
+                Bitmap whole = Bitmap.createBitmap(pt.getWidth() * 2, pt.getHeight(), Bitmap.Config.ARGB_8888);
+                drawMirrored(new android.graphics.Canvas(whole), pt, 0xFF000000 | Integer.parseInt(k[1], 16), 255);
+                return whole;
+            }
+            default:
+                return null;
+        }
+    }
+
+    /** a half texture the layouts mirror (wrap mode mirror): it and its mirror image side by side, its colours
+     *  multiplied by color (a material's white colour), at alpha */
+    private static void drawMirrored(android.graphics.Canvas cv, Bitmap half, int color, int alpha) {
+        android.graphics.Paint p = new android.graphics.Paint(android.graphics.Paint.FILTER_BITMAP_FLAG);
+        float r = ((color >> 16) & 0xFF) / 255f, g = ((color >> 8) & 0xFF) / 255f, b = (color & 0xFF) / 255f;
+        p.setColorFilter(new android.graphics.ColorMatrixColorFilter(new float[] {
+                r, 0, 0, 0, 0, 0, g, 0, 0, 0, 0, 0, b, 0, 0, 0, 0, 0, alpha / 255f, 0}));
+        cv.drawBitmap(half, 0, 0, p);
+        android.graphics.Matrix m = new android.graphics.Matrix();
+        m.setScale(-1, 1);
+        m.postTranslate(half.getWidth() * 2, 0);
+        cv.drawBitmap(half, m, p);
+    }
+
+    /** draws b rotated by deg (counter-clockwise, as the mockup), centred at (fx, fy), longest side = fs */
+    private static void place(android.graphics.Canvas cv, Bitmap b, float deg, float fx, float fy, float fs) {
+        float sc = fs * SIZE / Math.max(b.getWidth(), b.getHeight());
+        android.graphics.Matrix m = new android.graphics.Matrix();
+        m.postTranslate(-b.getWidth() / 2f, -b.getHeight() / 2f);
+        m.postRotate(-deg);
+        m.postScale(sc, sc);
+        m.postTranslate(fx * SIZE, fy * SIZE);
+        cv.drawBitmap(b, m, new android.graphics.Paint(android.graphics.Paint.FILTER_BITMAP_FLAG | android.graphics.Paint.ANTI_ALIAS_FLAG));
+    }
+
+    /** the message arrow (pointing down) with a thick dark outline */
+    private static Bitmap arrow(Context c, Runnable whenReady) {
+        return arrow(c, 0, whenReady);
+    }
+
+    /** ... its white multiplied by fill (0: as it is) */
+    private static Bitmap arrow(Context c, int fill, Runnable whenReady) {
+        return outlined(get(c, "MsgArrow_00^s", whenReady), 0xFF0A0A14, fill, 4, 4);
+    }
+
+    /** src (white) enlarged scale times with an outline of r source pixels in ink, its fill multiplied (0: as it is),
+     *  or null for null */
+    private static Bitmap outlined(Bitmap src, int ink0, int fill, int scale, int rSrc) {
+        if (src == null) return null;
+        int r = rSrc * scale, pad = r + 4;
+        int w = src.getWidth() * scale + 2 * pad, h = src.getHeight() * scale + 2 * pad;
+        Bitmap big = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);
+        android.graphics.Canvas cv = new android.graphics.Canvas(big);
+        android.graphics.Rect s = new android.graphics.Rect(0, 0, src.getWidth(), src.getHeight());
+        android.graphics.Paint ink = new android.graphics.Paint(android.graphics.Paint.FILTER_BITMAP_FLAG | android.graphics.Paint.ANTI_ALIAS_FLAG);
+        ink.setColorFilter(new android.graphics.PorterDuffColorFilter(ink0, android.graphics.PorterDuff.Mode.SRC_IN));
+        // the outline: the arrow's shape stamped around a circle of radius r (and inside it)
+        for (int rr = r; rr > 0; rr -= scale * 2)
+            for (int i = 0; i < 32; i++) {
+                double t = i * Math.PI / 16;
+                float dx = (float) (Math.cos(t) * rr), dy = (float) (Math.sin(t) * rr);
+                cv.drawBitmap(src, s, new android.graphics.RectF(pad + dx, pad + dy, w - pad + dx, h - pad + dy), ink);
+            }
+        android.graphics.Paint top = new android.graphics.Paint(android.graphics.Paint.FILTER_BITMAP_FLAG | android.graphics.Paint.ANTI_ALIAS_FLAG);
+        if (fill != 0) top.setColorFilter(new android.graphics.PorterDuffColorFilter(fill, android.graphics.PorterDuff.Mode.MULTIPLY));
+        cv.drawBitmap(src, s, new android.graphics.RectF(pad, pad, w - pad, h - pad), top);
+        return big;
+    }
+
     private static String file(String texture) { return texture.replace("^", "_") + ".png"; }
 
     private static void build(Context c, File dir, String gameDir) {
@@ -157,7 +687,13 @@ final class GameIcons {
             textures[i] = w[i][1];
         }
         Native.extractUiTextures(gameDir, raw.getAbsolutePath(), layouts, textures);
-        for (String t : textures) {
+        Native.renderLinkIcons(gameDir, raw.getAbsolutePath());
+        java.util.List<String> all = new java.util.ArrayList<>(java.util.Arrays.asList(textures));
+        java.util.Collections.addAll(all, LINK_JUMP, LINK_CROUCH, LINK_STAND, LINK_BACK);
+        for (Object[] a : ANIMATED)
+            for (int i = 0; i < (Integer) a[1]; i++) all.add((String) a[0] + i);
+        for (int i = 0; i <= LINK_ROLL_REST; i++) all.add(LINK_ROLL + i);
+        for (String t : all) {
             try {
                 Bitmap b = loadRgba(new File(raw, t + ".rgba"));
                 if (b == null) continue;

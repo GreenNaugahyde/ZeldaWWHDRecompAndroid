@@ -172,6 +172,18 @@ void fill_bags(uint32_t s) {
             st8(s + kBaitNum + k, 3);
         }
     st8(s + kBaitFlags, ld8(s + kBaitFlags) | 3);
+    // a test of the ring's delivery bag icons (WWHD_DELIVERY_TEST, debug builds by intent extra): each
+    // fill puts the next 8 of the bag's 19 items in it (letters, cards, flowers, flags, statues),
+    // replacing what it held; story items, so only in a save for testing
+    static const bool delivery_test = getenv("WWHD_DELIVERY_TEST") != nullptr;
+    if (delivery_test) {
+        static const uint8_t kDelivery[19] = {0x98, 0x99, 0x9A, 0x9B, 0x9C, 0x9D, 0x9E, 0x8C, 0x8D, 0x8E,
+                                              0x8F, 0x90, 0x91, 0x92, 0x93, 0x94, 0x95, 0x96, 0x97};
+        static int next = 0;
+        for (int k = 0; k < 8; k++) st8(s + kBait + 8 + k, next + k < 19 ? kDelivery[next + k] : 0xFF);
+        LOG("[cheats] delivery bag test: items %d..%d of 19", next + 1, std::min(next + 8, 19));
+        next = next + 8 >= 19 ? 0 : next + 8;
+    }
 }
 
 // Infinite bait and spoils, each frame: spoils counts stay at 99; bait that was used is put back. A
@@ -219,13 +231,15 @@ std::atomic<int> g_pending{parse_env("WWHD_CHEAT", {{"items", kCheatItems}, {"sw
                                                     {"dungeon", kCheatDungeon}, {"key", kCheatKey}, {"bags", kCheatBags}})};
 std::atomic<int> g_infinite{parse_env("WWHD_CHEAT_INFINITE",
                                       {{"health", kInfHealth}, {"magic", kInfMagic}, {"ammo", kInfAmmo}, {"moonjump", kMoonJump}, {"nofall", kMoonNoFall},
-                                       {"allanims", kMoonAllAnims}, {"rupees", kInfRupees}, {"bags", kInfBags}, {"breath", kInfBreath}})};
+                                       {"allanims", kMoonAllAnims}, {"rupees", kInfRupees}, {"bags", kInfBags}, {"breath", kInfBreath}, {"onehit", kOneHit}})};
 }  // namespace
 
 uint32_t loaded_save() {
     uint32_t s = save_addr();
     return save_loaded(s) ? s : 0;
 }
+
+uint32_t save_info() { return save_addr(); }
 
 void request_cheat(int which) { g_pending |= which; }
 bool infinite(int which) { return g_infinite.load(std::memory_order_relaxed) & which; }
@@ -241,6 +255,7 @@ void set_infinite(int which, bool on) {
         : which == kInfRupees ? "infinite rupees"
         : which == kInfBags   ? "infinite bait and spoils"
         : which == kInfBreath ? "infinite swimming"
+        : which == kOneHit    ? "one hit kills (enemies)"
                              : "random lift-off animations",
         on ? "on" : "off");
 }
@@ -357,7 +372,7 @@ void moon_jump_step(Cpu* c, uint32_t link, bool before) {
     if (g_flight && (g_infinite.load(std::memory_order_relaxed) & kMoonNoFall))
         st32(link + kFallStartY, ld32(link + kPosY));  // no fall height: no hard landing
     const uint32_t mode = ld32(link + kModeFlg);
-    if (!l_held()) {
+    if (!moon_held()) {
         if (before) g_l_was = false;
         // let go: gravity takes over, the stick still steers until he lands (or swims)
         if (g_flight && (!(mode & kModeMidair) || (mode & kModeSwim))) g_flight = g_face_set = false;
@@ -459,3 +474,14 @@ void cheats_service() {
 }
 
 }  // namespace mods
+
+// One hit kills: every actor's execute goes through fopAc_Execute (025D475C; the matcher named it after its
+// CHECK_VEC3_RANGE assert); an enemy (fopAc_ac_c group, GameCube 0x1BE -> WWHD 0x2DA, == fopAc_ENEMY_e 2) keeps
+// its health (0x285 -> 0x3A1) at 1, so any hit takes the last point. Bosses that count hits themselves are
+// not changed by it.
+extern "C" void f_025D475C_orig(Cpu* c);
+extern "C" void hook_025D475C(Cpu* c) {
+    const uint32_t a = c->r[3];
+    if (mods::infinite(mods::kOneHit) && ld8(a + 0x2DA) == 2 && (int8_t)ld8(a + 0x3A1) > 1) st8(a + 0x3A1, 1);
+    f_025D475C_orig(c);
+}

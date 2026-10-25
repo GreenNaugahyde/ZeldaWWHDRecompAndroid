@@ -64,6 +64,7 @@ struct SlotInfo {
     bool used = false;
     bool compatible = true;
     std::string when;  // local time of the save
+    int64_t created = 0;  // ... as seconds since 1970 (the app shows it in the device's language)
     std::string area;  // stage name, if known
     int controller = 0;  // controls when saved: 0 unknown (older states), 1 GamePad, 2 Pro Controller
 };
@@ -85,6 +86,8 @@ int start_hold_state();
 // the stage loaded: 1 the title screen (sea_T), 2 the file select (Name), 3 on from the file select
 // (a new game's opening, or loading), 4 none yet (booting), 0 another
 int front_screen();
+// how many states have been loaded (game thread; mods that keep host-side copies read theirs again)
+unsigned load_count();
 
 // ---- game thread: call at the frame boundary (top of the per-frame function) ----
 void service(Cpu* c);

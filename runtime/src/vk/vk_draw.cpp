@@ -23,6 +23,7 @@ extern "C" uint64_t g_draw_state_gen;    // gx2_core.cpp: bumped by any non-data
 #include "flat_table.h"
 
 #include <climits>
+#include <fcntl.h>
 #include <condition_variable>
 #include <cstdarg>
 #include <ctime>
@@ -459,6 +460,9 @@ static LatteFetchShader* get_fetch_shader(const uint32_t* regs, uint64_t* keyOut
 // ---------------------------------------------------------------- shaders
 static const bool g_sync_shaders = getenv("WWHD_SYNC_SHADERS") != nullptr;
 enum CompileState { CS_PENDING, CS_READY, CS_FAILED, CS_DEFERRED };  // deferred: translated from the cache, not compiled yet
+// shaders compiled and pipelines built (or failed) since the start, for the benchmark's boot wait (work_done)
+static std::atomic<int> g_work_done{0};
+int work_done() { return g_work_done.load(std::memory_order_relaxed); }
 
 // A compiled shader module, shared by every shader variant whose translation came out identical.
 // Shader keys include cross-stage state (a vertex shader is keyed by the pixel shader inputs it
@@ -534,8 +538,13 @@ static void report_compile_error(const std::string& src, uint64_t key, const std
 // ---- SPIR-V cache on disk (spirv3.bin next to shaders.bin): translations seen in earlier sessions
 // skip glslang. Records: uint64 source hash, uint32 word count, words. The file only grows: when
 // every translation changes (strictMul, mul_nonIEEE's form), a new name starts it over and the old file is deleted.
+// Only where each record is stays in memory (the whole file was ~170 MB of native heap with the head
+// start); the words are read when a module is made, and again for a module made anew (free_modules).
 static std::mutex g_spv_mutex;
-static std::unordered_map<uint64_t, std::vector<uint32_t>> g_spv_disk;
+struct SpvRec { uint64_t at; uint32_t words; };
+static std::unordered_map<uint64_t, SpvRec> g_spv_index;
+static int g_spv_fd = -1;
+static uint64_t g_spv_end = 0;  // the file's length (new records go there)
 static FILE* g_spv_out = nullptr;
 static size_t g_spv_disk_hits;
 
@@ -544,45 +553,64 @@ static void spirv_cache_open(const std::string& dir) {
     remove((dir + "/spirv2.bin").c_str());  // before the select form of mul_nonIEEE
     std::string path = dir + "/spirv3.bin";
     if (FILE* f = fopen(path.c_str(), "rb")) {
+        fseek(f, 0, SEEK_END);
+        const uint64_t size = (uint64_t)ftell(f);
+        rewind(f);
         uint64_t h;
         uint32_t n;
         while (fread(&h, 8, 1, f) == 1 && fread(&n, 4, 1, f) == 1 && n < (1u << 24)) {
-            std::vector<uint32_t> w(n);
-            if (fread(w.data(), 4, n, f) != n) break;
-            g_spv_disk[h] = std::move(w);
+            uint64_t at = g_spv_end + 12;
+            if (at + (uint64_t)n * 4 > size || fseek(f, (long)n * 4, SEEK_CUR) != 0) break;
+            g_spv_index[h] = SpvRec{at, n};
+            g_spv_end = at + (uint64_t)n * 4;
         }
         fclose(f);
+        if (size > g_spv_end) truncate(path.c_str(), (off_t)g_spv_end);  // a record cut short: new ones follow the last whole one
     }
     g_spv_out = fopen(path.c_str(), "ab");
-    if (!g_spv_disk.empty()) LOG("[gfx] SPIR-V cache: %zu modules from %s", g_spv_disk.size(), path.c_str());
+    g_spv_fd = open(path.c_str(), O_RDONLY | O_CLOEXEC);
+    if (!g_spv_index.empty()) LOG("[gfx] SPIR-V cache: %zu modules in %s", g_spv_index.size(), path.c_str());
+}
+
+// the SPIR-V of a translation from the disk cache (with g_spv_mutex held)
+static bool spirv_read(uint64_t hash, std::vector<uint32_t>& out) {
+    auto it = g_spv_index.find(hash);
+    if (it == g_spv_index.end() || g_spv_fd < 0) return false;
+    out.resize(it->second.words);
+    size_t bytes = (size_t)it->second.words * 4;
+    return pread(g_spv_fd, out.data(), bytes, (off_t)it->second.at) == (ssize_t)bytes;
 }
 
 static void compile_now(Module* m, uint64_t hash, uint64_t key, bool vertex, const std::string& src) {
     double t0 = now_ms();
+    m->hash = hash;
     std::vector<uint32_t> spirv;
     {
         std::lock_guard<std::mutex> lk(g_spv_mutex);
-        auto it = g_spv_disk.find(hash);
-        if (it != g_spv_disk.end()) {
-            spirv = it->second;
-            g_spv_disk_hits++;
-        }
+        if (spirv_read(hash, spirv)) g_spv_disk_hits++;
+        else spirv.clear();
     }
     if (spirv.empty()) {
         std::string log;
         if (!compile_glsl(src.c_str(), vertex, spirv, log)) {
             report_compile_error(src, key, log);
             m->state.store(CS_FAILED, std::memory_order_release);
+            g_work_done.fetch_add(1, std::memory_order_relaxed);
             compile_done();
             return;
         }
         std::lock_guard<std::mutex> lk(g_spv_mutex);
         if (g_spv_out) {
             uint32_t n = (uint32_t)spirv.size();
-            fwrite(&hash, 8, 1, g_spv_out);
-            fwrite(&n, 4, 1, g_spv_out);
-            fwrite(spirv.data(), 4, n, g_spv_out);
-            fflush(g_spv_out);
+            bool ok = fwrite(&hash, 8, 1, g_spv_out) == 1 && fwrite(&n, 4, 1, g_spv_out) == 1 &&
+                      fwrite(spirv.data(), 4, n, g_spv_out) == n && fflush(g_spv_out) == 0;
+            if (ok) {
+                g_spv_index[hash] = SpvRec{g_spv_end + 12, n};
+                g_spv_end += 12 + (uint64_t)n * 4;
+            } else {  // the file can't be trusted any more: no further records
+                fclose(g_spv_out);
+                g_spv_out = nullptr;
+            }
         }
     }
     VkShaderModuleCreateInfo ci{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
@@ -596,6 +624,7 @@ static void compile_now(Module* m, uint64_t hash, uint64_t key, bool vertex, con
     }
     g_t_spirv_us += (uint64_t)((now_ms() - t0) * 1000);
     m->state.store(CS_READY, std::memory_order_release);
+    g_work_done.fetch_add(1, std::memory_order_relaxed);
     compile_done();
 }
 
@@ -708,6 +737,49 @@ static void compile_module(Module* m, uint64_t hash, uint64_t key, bool vertex, 
         compile_now(m, hash, key, vertex, src);
         g_compiles_in_flight--;
     }, !g_cache_replaying);
+}
+
+// ---- modules freed once their pipelines exist (all devices): a VkShaderModule is only read while a
+// pipeline is made from it. Every few seconds without compiles running (none can be using one then)
+// the ready modules whose SPIR-V is on disk are destroyed; a pipeline made later makes its modules
+// again from the disk cache (~0.1 ms). With the head start: ~11,700 modules. WWHD_KEEP_MODULES=1 keeps them.
+static size_t g_modules_freed, g_modules_remade;
+
+static bool ensure_module(Module* m) {
+    if (m->module) return true;
+    if (m->state.load(std::memory_order_acquire) != CS_READY) return false;
+    std::vector<uint32_t> spirv;
+    {
+        std::lock_guard<std::mutex> lk(g_spv_mutex);
+        if (!spirv_read(m->hash, spirv)) return false;
+    }
+    VkShaderModuleCreateInfo ci{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
+    ci.codeSize = spirv.size() * 4;
+    ci.pCode = spirv.data();
+    if (vkCreateShaderModule(R.device, &ci, nullptr, &m->module) != VK_SUCCESS) {
+        m->module = VK_NULL_HANDLE;
+        return false;
+    }
+    g_modules_remade++;
+    return true;
+}
+
+static void free_modules() {
+    static const bool keep = getenv("WWHD_KEEP_MODULES") != nullptr;
+    static double last = 0;
+    const double now = now_ms();
+    if (keep || now - last < 5000 || g_compiles_in_flight != 0 || !g_deferred_modules.empty()) return;
+    last = now;
+    size_t n = 0;
+    std::lock_guard<std::mutex> lk(g_spv_mutex);
+    for (auto& [hash, m] : g_modules) {
+        if (!m->module || m->state.load(std::memory_order_acquire) != CS_READY || !g_spv_index.count(m->hash)) continue;
+        vkDestroyShaderModule(R.device, m->module, nullptr);
+        m->module = VK_NULL_HANDLE;
+        n++;
+    }
+    g_modules_freed += n;
+    if (n >= 100) LOG("[gfx] %zu shader modules freed (their pipelines are made; %zu made again so far)", n, g_modules_remade);
 }
 
 // descriptor set layout from the decompiler's Vulkan binding assignment
@@ -1506,6 +1578,15 @@ static Shader* get_shader_uncached(const uint32_t* regs, bool vertex, LatteFetch
     // Rito mail sorting game); Cemu's default too (original project 0dfd3c3). WWHD_STRICT_MUL=0: off
     static const bool strictMul = !getenv("WWHD_STRICT_MUL") || strcmp(getenv("WWHD_STRICT_MUL"), "0");
     opt.strictMul = strictMul;
+    // the 32-bit vertex byte swap by bytes on PowerVR (issue #17; LatteDecompilerEmitGLSLAttrDecoder.cpp).
+    // WWHD_VTX_SWAP32=0 / 1 forces Cemu's form / the bytes form
+    static const bool swap32Bytes = [] {
+        const char* e = getenv("WWHD_VTX_SWAP32");
+        g_latteSwap32Bytes = e ? strcmp(e, "0") != 0 : R.props.vendorID == 0x1010;  // Imagination
+        LOG("[gfx] 32-bit vertex byte swap: %s", g_latteSwap32Bytes ? "bytes (PowerVR)" : "shifts");
+        return g_latteSwap32Bytes;
+    }();
+    (void)swap32Bytes;
     if (!vertex && link.linked) {
         opt.linkPSInputsToVS = true;
         opt.vsOutputSemantics = link.exports;
@@ -1747,8 +1828,26 @@ struct Pipeline {
     VkPipeline pipeline = VK_NULL_HANDLE;   // valid once status == CS_READY
     VkPipelineLayout layout = VK_NULL_HANDLE;
     std::atomic<int> status{CS_PENDING};
+    uint64_t lastUse = 0;                   // the frame a draw last asked for it (evict_pipelines)
 };
 static std::unordered_map<uint64_t, Pipeline*> g_pipelines;
+// the frame's pipelines are found in a small table first (cleared when pipelines are freed)
+static HotCache<Pipeline*, 1024> g_pipe_hot;
+// pipelines freed (evict_pipelines): made again when needed, but not recorded in the cache file again
+static std::unordered_set<uint64_t> g_pipes_freed;
+
+// A device with little RAM (the app sets WWHD_LOW_MEMORY=1 below 4.5 GB): every pipeline is ~11 KB of
+// driver memory and the head start's 36,000 took ~400 MB on a Snapdragon 855, beyond what Android leaves
+// a 4 GB phone. There no pipeline is made ahead (no head start, the cache's recipes not built): each is
+// made when a draw first needs it, quick from the driver's pipeline cache after the first time, and
+// those unused for a while are freed beyond a budget (evict_pipelines).
+bool low_memory() {
+    static const bool on = [] {
+        const char* e = getenv("WWHD_LOW_MEMORY");
+        return e && atoi(e) != 0;
+    }();
+    return on;
+}
 
 static VkPipelineLayout get_pipeline_layout(Shader* vs, Shader* ps) {
     static std::unordered_map<uint64_t, VkPipelineLayout> cache;
@@ -1867,18 +1966,22 @@ static Pipeline* get_pipeline(const uint32_t* regs, Shader* vs, Shader* ps, Latt
     h = hash_bytes(&ps->dsl, sizeof(ps->dsl), h);
     h ^= fsKey;
     h = hash_bytes(&st, sizeof st, h);
-    // ~1750 pipelines: the frame's are found in a small table first (pipelines are never freed)
-    static HotCache<Pipeline*, 1024> hot;
-    if (Pipeline** p = hot.find(h)) return wait_compiled((*p)->status) ? *p : nullptr;
+    if (Pipeline** p = g_pipe_hot.find(h)) {
+        (*p)->lastUse = R.frame;
+        return wait_compiled((*p)->status) ? *p : nullptr;
+    }
     auto it = g_pipelines.find(h);
     if (it != g_pipelines.end()) {
-        hot.put(h, it->second);
+        g_pipe_hot.put(h, it->second);
+        it->second->lastUse = R.frame;
         return wait_compiled(it->second->status) ? it->second : nullptr;
     }
+    if (!ensure_module(vm) || !ensure_module(pm)) return nullptr;  // (freed: made again from the disk cache)
     auto* pl = new Pipeline();
+    pl->lastUse = R.frame;
     g_pipelines[h] = pl;
-    hot.put(h, pl);
-    cache_record_pipeline(regs, vs, ps, fsKey, st);
+    g_pipe_hot.put(h, pl);
+    if (g_pipes_freed.empty() || !g_pipes_freed.count(h)) cache_record_pipeline(regs, vs, ps, fsKey, st);
     pl->layout = get_pipeline_layout(vs, ps);
 
     auto d = std::make_shared<PipelineDesc>();
@@ -2009,6 +2112,7 @@ static Pipeline* get_pipeline(const uint32_t* regs, Shader* vs, Shader* ps, Latt
             rec::crumb_pipeline(pl->pipeline, vsKey, psKey);
         }
         pl->status.store(r == VK_SUCCESS ? CS_READY : CS_FAILED, std::memory_order_release);
+        g_work_done.fetch_add(1, std::memory_order_relaxed);
         compile_done();
     };
     if (g_sync_shaders) {
@@ -2290,6 +2394,18 @@ static Surface* feedback_copy(Surface* s) {
 }
 
 // textures of one stage, resolved before the render pass begins
+// image pixels per guest pixel of a rescaled surface, x and y: the image's size over the guest's,
+// not rscale * ax, as the image sizes are rounded. With the product, a full-target viewport ended half
+// a pixel short where the size rounds up at .5 (160x90 at 1.25x: 112.5 of 113 rows, 80x45 at 1.10x:
+// 49.5 of 50); the last row's centre lies on the edge and was never drawn, kept old contents, and the
+// bloom spread it into the blue haze along the bottom edge (Adreno 640, 1.50x at start, 1.10x)
+static float image_scale_x(const Surface* s) {
+    return s->rscale == 1.0f && s->ax == 1.0f ? 1.0f : (float)s->img.width / (float)s->width;
+}
+static float image_scale_y(const Surface* s) {
+    return s->rscale == 1.0f && s->ay == 1.0f ? 1.0f : (float)s->img.height / (float)s->height;
+}
+
 struct StageTextures {
     VkImageView view[LATTE_NUM_MAX_TEX_UNITS];
     VkSampler sampler[LATTE_NUM_MAX_TEX_UNITS];
@@ -2368,8 +2484,8 @@ static void resolve_textures(const uint32_t* regs, Shader* sh, bool vertex, Surf
              regs[REGADDR::SQ_TEX_SAMPLER_WORD0_0 + (std::min<uint32_t>(samplerIdx, 17) + samplerBase) * 3 + 2]);
         if (v) {
             out.sampled[i] = &s->img;  // prepared once the draw's textures are all resolved (prepare_sampled)
-            out.unitScale[unit] = s->rscale * s->ax;
-            out.unitScaleY[unit] = s->rscale * s->ay;
+            out.unitScale[unit] = image_scale_x(s);
+            out.unitScaleY[unit] = image_scale_y(s);
             // a rendered picture (layouts also draw with 16:9 textures from the game files, 800x450)
             if (s->gpuWritten && s->width >= 640 && target_is_tv(s->width, s->height)) out.tvPicture = true;
         }
@@ -3636,6 +3752,10 @@ static void cache_load() {
     }
     void headstart_vk_load(const std::string& dir);  // vk_headstart.cpp
     headstart_vk_load(slash == std::string::npos ? std::string(".") : path.substr(0, slash));
+    if (low_memory() && !g_pending_pipelines.empty()) {  // no pipelines made ahead (the shaders are)
+        LOG("[gfx] low memory device: %zu cached pipelines made when first drawn, not ahead", g_pending_pipelines.size());
+        g_pending_pipelines = {};
+    }
     g_cache_state = 1;
     g_cache_out = fopen(path.c_str(), "ab");
     if (shaders || pipelines)
@@ -3708,7 +3828,15 @@ void cache_warm_held() {
 }
 
 // build cached pipelines whose shaders have finished compiling; a few per frame
+// the benchmark's measuring windows: no new background compiles (they would take CPU cores from the
+// game on CPU-bound devices); the game's own compiles go on
+static std::atomic<bool> g_bg_paused{false};
+void set_background_compiles_paused(bool on) { g_bg_paused = on; }
+
+static void pipeline_budget_step();
+
 void cache_warm_step() {
+    if (g_bg_paused.load(std::memory_order_relaxed)) return;
     // a few background compiles per frame keep the startup burst from starving the game, and none
     // start while the game's own compiles keep the compiler busy (WWHD_BG_COMPILES in flight, default
     // one less than the compile threads: one is always free for a shader the game needs now)
@@ -3727,6 +3855,8 @@ void cache_warm_step() {
     build_pending_pipelines(8, maxInFlight);
     g_t_warm += now_ms() - t0;
     if ((R.frame & 255) == 0) shader_use_save();
+    if (g_pending_pipelines.empty()) free_modules();
+    pipeline_budget_step();
     if (queued && g_pending_pipelines.empty()) {
         queued = false;
         LOG("[gfx] background pipelines done by frame %llu: %zu built, %zu unresolved", (unsigned long long)R.frame,
@@ -3740,6 +3870,9 @@ static uint64_t g_skip[SK_COUNT];
 static const char* kSkipNames[SK_COUNT] = {"geometry-shader", "raster-kill", "no-fetch-shader", "shader-failed", "no-target",
                                            "unsupported-prim", "no-pass", "pipeline-failed", "cull-all", "empty-scissor",
                                            "compiling", "dropped-depth", "dropped-color", "pipeline-compiling"};
+// draws left out so far because their shader or pipeline was still compiling (the benchmark)
+uint64_t skipped_compiling() { return g_skip[SK_COMPILING] + g_skip[SK_PIPE_COMPILING]; }
+
 void report_skips() {
     char buf[512];
     int n = 0;
@@ -3750,8 +3883,10 @@ void report_skips() {
         LOG("[gfx] waited for compiles (policy %d): recent targets %llu draws %.0f ms, intermittent %llu draws %.0f ms, "
             "new targets %llu draws %.0f ms", g_wait_policy, (unsigned long long)g_waited_n[0], g_waited_ms[0],
             (unsigned long long)g_waited_n[1], g_waited_ms[1], (unsigned long long)g_waited_n[2], g_waited_ms[2]);
-    LOG("[gfx] %zu shaders (%zu distinct modules, %zu SPIR-V from disk), %zu pipelines; ms decompile %.0f, spirv %.0f, pipeline %.0f",
-        g_shaders.size(), g_modules.size(), g_spv_disk_hits, g_pipelines.size(), g_t_decompile, g_t_spirv_us / 1000.0,
+    LOG("[gfx] %zu shaders (%zu distinct modules, %zu SPIR-V from disk, %zu freed, %zu made again), %zu pipelines; ms decompile "
+        "%.0f, spirv %.0f, pipeline %.0f",
+        g_shaders.size(), g_modules.size(), g_spv_disk_hits, g_modules_freed, g_modules_remade, g_pipelines.size(), g_t_decompile,
+        g_t_spirv_us / 1000.0,
         g_t_pipeline_us / 1000.0);
     {  // where compile stutter comes from: the game's compiles waiting in the queue, or render thread time
         static double lastDecompile = 0, lastWarm = 0;
@@ -3962,6 +4097,50 @@ static struct PrepKey {
     uint32_t prim;
     bool valid;
 } g_prep_key{};
+// ---- pipelines freed: the least recently used, unused for minAge frames, until at most `keep` remain;
+// only with no compile running (a background build writes its pipeline). Made again when a draw needs
+// one (from the driver's pipeline cache: a few ms). The frame's prepared draw and the hot table may
+// point to a freed one: both are dropped.
+static size_t g_pipes_evicted;
+static size_t evict_pipelines(size_t keep, uint64_t minAge) {
+    if (g_compiles_in_flight != 0 || g_pipelines.size() <= keep) return 0;
+    std::vector<std::pair<uint64_t, uint64_t>> old;  // last use, key
+    for (auto& [h, pl] : g_pipelines)
+        if (pl->status.load(std::memory_order_acquire) == CS_READY && R.frame >= pl->lastUse + minAge) old.push_back({pl->lastUse, h});
+    size_t n = std::min(old.size(), g_pipelines.size() - keep);
+    if (!n) return 0;
+    std::partial_sort(old.begin(), old.begin() + n, old.end());
+    for (size_t i = 0; i < n; i++) {
+        auto it = g_pipelines.find(old[i].second);
+        vkDestroyPipeline(R.device, it->second->pipeline, nullptr);
+        delete it->second;
+        g_pipelines.erase(it);
+        g_pipes_freed.insert(old[i].second);
+    }
+    g_pipe_hot.clear();
+    g_prep_key.valid = false;
+    g_pipes_evicted += n;
+    return n;
+}
+
+static std::atomic<bool> g_trim{false};
+void trim_memory() { g_trim = true; }
+
+// low memory devices: at most 3,000 pipelines (WWHD_PIPELINE_BUDGET) beyond those used in the last 30 s,
+// checked every ~10 s; any device: when Android runs low on memory, all unused for 10 s
+static void pipeline_budget_step() {
+    static const size_t budget = getenv("WWHD_PIPELINE_BUDGET") ? (size_t)atoi(getenv("WWHD_PIPELINE_BUDGET")) : 3000;
+    if (g_trim && g_compiles_in_flight == 0) {
+        g_trim = false;
+        size_t n = evict_pipelines(0, 300);
+        LOG("[gfx] memory low: %zu pipelines unused for 10 s freed, %zu kept", n, g_pipelines.size());
+        return;
+    }
+    if (!low_memory() || R.frame % 300 != 0) return;
+    if (size_t n = evict_pipelines(budget, 900))
+        LOG("[gfx] pipeline budget: %zu unused for 30 s freed, %zu kept (%zu freed so far)", n, g_pipelines.size(), g_pipes_evicted);
+}
+
 // Records a draw whose state is resolved (Prepared): dynamic state, vertex buffers, descriptors and
 // the draw itself, inside the current render pass.
 static void record_draw(const uint32_t* regs, const Prepared& P, uint32_t prim, uint32_t count, uint32_t indexType,
@@ -4253,9 +4432,9 @@ void draw(const uint32_t* regs, uint32_t prim, uint32_t count, uint32_t indexTyp
     uint32_t w = 0, h = 0;
     float targetScale = 1.0f, targetScaleY = 1.0f;
     for (auto* c : colors)
-        if (c) { w = c->img.width; h = c->img.height; targetScale = c->rscale * c->ax; targetScaleY = c->rscale * c->ay; break; }
+        if (c) { w = c->img.width; h = c->img.height; targetScale = image_scale_x(c); targetScaleY = image_scale_y(c); break; }
     if (depth && w && (depth->img.width < w || depth->img.height < h)) { depth = nullptr; g_skip[SK_DROPPED_DEPTH]++; }
-    if (!w && depth) { w = depth->img.width; h = depth->img.height; targetScale = depth->rscale * depth->ax; targetScaleY = depth->rscale * depth->ay; }
+    if (!w && depth) { w = depth->img.width; h = depth->img.height; targetScale = image_scale_x(depth); targetScaleY = image_scale_y(depth); }
     for (auto& c : colors)
         if (c && (c->img.width != w || c->img.height != h)) { c = nullptr; g_skip[SK_DROPPED_COLOR]++; }
     if (!w) { g_skip[SK_NO_TARGET]++; return; }

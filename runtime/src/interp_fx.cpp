@@ -43,6 +43,7 @@
 
 #include "guest_addr.h"
 #include "interp_pacing.h"
+#include "mods/mods.h"
 #include "runtime.h"
 #include "true60.h"
 
@@ -805,6 +806,7 @@ extern "C" void hook_025AF8A0(Cpu* c) {
     // (already done at the pass start; a blended hold pass has its particles re-applied by now)
     if (!(interp::hold_pass() && !interp::record_pass())) ptcl_restore();
     if (interp::logic_pass()) fx_step_stats();
+    mods::warp_title_draw(c, c->r[3]);  // (the benchmark's warp from the title)
     f_025AF8A0_orig(c);
 }
 

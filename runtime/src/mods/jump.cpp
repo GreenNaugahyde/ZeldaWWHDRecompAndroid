@@ -129,9 +129,9 @@ void jump_after_step(Cpu* c, uint32_t link) {
 }
 
 void jump_step(Cpu* c, uint32_t link) {
-    const bool l = l_held(), press = l && !g_l_was;
+    const bool l = jump_held(), press = l && !g_l_was;
     g_l_was = l;
-    if (!link || !g_on.load(std::memory_order_relaxed) || infinite(kMoonJump)) return;
+    if (!link || !g_on.load(std::memory_order_relaxed) || (infinite(kMoonJump) && moon_held())) return;
     const uint32_t proc = ld32(link + kCurProc), mode = ld32(link + kModeFlg);
     if (ground_proc(proc)) {
         g_doubled = false;

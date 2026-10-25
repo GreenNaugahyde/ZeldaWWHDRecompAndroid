@@ -1,0 +1,79 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- English texts not in the translation files (yet): the app's name, plural forms, texts no code uses any more.
+     The translated ones are in strings.xml. -->
+<resources>
+    <string name="app_name">TLoZ:TWW HD Recompiled</string>
+    <string name="menu_resolution">Resolution: %1$s</string>
+    <string name="res_title">Rendering resolution</string>
+    <string name="res_restart">The new resolution takes effect when the game restarts. Progress since your last save is lost.</string>
+    <string name="menu_fg">Frame generation: %1$s</string>
+    <string name="menu_states">Save states…</string>
+    <string name="states_title">Save states</string>
+    <string name="state_slot">Slot %1$d %2$s</string>
+    <string name="state_empty">— empty</string>
+    <string name="state_incompatible">%1$s (from another build, can\'t be loaded)</string>
+    <string name="state_save">Save here</string>
+    <string name="state_load">Load</string>
+    <string name="menu_mods">Gameplay mods…</string>
+    <string name="menu_aspect">Aspect ratio: %1$s</string>
+    <string name="aspect_title">Aspect ratio of the picture</string>
+    <string name="menu_backup">Import / export saves…</string>
+    <string name="mods_title">Gameplay mods</string>
+    <string name="mod_direct_camera">Direct right-stick camera (no easing): %1$s</string>
+    <string name="mod_camera_speed">Direct camera speed: %1$.1f×</string>
+    <string name="mod_speed_title">Direct camera speed</string>
+    <string name="mod_speed_item">%1$.1f×</string>
+    <string name="mod_first_person">First person on R3: %1$s</string>
+    <string name="mod_climb">Climb any wall (stamina wheel; B or A lets go): %1$s</string>
+    <string name="mod_quick_doors">Quick doors (4× speed): %1$s</string>
+    <string name="mod_fast_scenes">Fast scene changes (4× speed): %1$s</string>
+    <string name="fg_choose_dll">Choose Lossless.dll…</string>
+    <string name="fg_replace_dll">Choose another Lossless.dll…</string>
+    <string name="fg_remove_dll">Remove Lossless.dll</string>
+    <string name="fg_enabled">Frame generation: %1$s</string>
+    <string name="fg_multiplier">Multiplier: ×%1$d (%2$d fps)</string>
+    <string name="fg_multiplier_title">Frames per game frame</string>
+    <string name="fg_mode">Network: %1$s</string>
+    <string name="fg_flow_scale">Flow scale: %1$d%%</string>
+    <string name="fg_flow_title">Motion estimate resolution</string>
+    <string name="fg_flow_item">%1$d%%</string>
+    <string name="fg_ui_detection">UI detection: %1$s</string>
+    <string name="menu_layout">Screen layout: %1$s</string>
+    <string name="menu_controls_hide">Hide on-screen controls</string>
+    <string name="menu_controls_show">Show on-screen controls</string>
+    <string name="menu_controls_size">On-screen controls size</string>
+    <string name="menu_ao">Ambient occlusion: %1$s</string>
+    <string name="menu_ao_hires">Full-size occlusion depth: %1$s</string>
+    <string name="menu_aniso">16x anisotropic filtering: %1$s</string>
+    <string name="menu_perf_hud">Performance overlay (FPS, load, temperatures): %1$s…</string>
+    <string name="perf_title">Performance overlay</string>
+    <string name="perf_done">Done</string>
+    <string name="perf_move">Move overlay</string>
+    <string name="perf_reset">Reset position</string>
+    <string name="bench_step_sea">Measuring: open sea</string>
+    <plurals name="packs_texture_rules">
+        <item quantity="one">Changes texture filtering (%d rule)</item>
+        <item quantity="other">Changes texture filtering (%d rules)</item>
+    </plurals>
+    <plurals name="packs_shaders">
+        <item quantity="one">Replaces %d shader</item>
+        <item quantity="other">Replaces %d shaders</item>
+    </plurals>
+    <plurals name="packs_content">
+        <item quantity="one">Replaces or adds %d game file</item>
+        <item quantity="other">Replaces or adds %d game files</item>
+    </plurals>
+    <plurals name="packs_added">
+        <item quantity="one">%d file is new to your game; a file of another game version does nothing here:</item>
+        <item quantity="other">%d files are new to your game; files of another game version do nothing here:</item>
+    </plurals>
+    <string name="opt_states">Save states</string>
+    <string name="opt_backup">Import / export saves</string>
+    <string name="preset_name">Name</string>
+    <string name="crash_not_now">Not now</string>
+    <string name="menu_capture">Capture frame (debugging)</string>
+    <string name="menu_clear_shaders">Delete shader cache…</string>
+    <string name="menu_quit">Quit</string>
+    <string name="layout_title">Screen layout</string>
+    <string name="ao_title">Ambient occlusion</string>
+</resources>

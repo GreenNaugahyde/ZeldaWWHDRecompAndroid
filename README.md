@@ -16,6 +16,22 @@ The original project (macOS, the 60 fps modes, decompilation tools) is described
 
 ## What this fork adds
 
+| | |
+|---|---|
+| ![Flexible touch controls with context buttons and Link in the button icons, on Outset Island](docs/screenshots/touch-controls.jpg) | ![Hold an item button: the item ring](docs/screenshots/item-ring.jpg) |
+| *Flexible touch controls with context buttons and Link in the button icons, on Outset Island* | *Hold an item button: the item ring* |
+| ![The layout editor with its grid](docs/screenshots/layout-editor.jpg) | ![The options as a page of the + menu, in the game's style](docs/screenshots/options-controls.jpg) |
+| *The layout editor with its grid* | *The options as a page of the + menu, in the game's style* |
+| ![The large Picto Box view](docs/screenshots/picto-view.jpg) | ![Album pages: a full album goes on to page 2](docs/screenshots/album-pages.jpg) |
+| *The large Picto Box view* | *Album pages: a full album goes on to page 2* |
+| ![At a postbox, A shows the postbox itself](docs/screenshots/postbox.jpg) | ![The postbox offers to send a picto to Carlov](docs/screenshots/postbox-ask.jpg) |
+| *At a postbox, A shows the postbox itself* | *The postbox offers to send a picto to Carlov* |
+| ![Note pads for conducting](docs/screenshots/note-pads.jpg) | ![Play buttons in the + song list](docs/screenshots/song-list.jpg) |
+| *Note pads for conducting* | *Play buttons in the + song list* |
+| ![Singing a song: the practice timeline](docs/screenshots/singing.jpg) | ![The Game tab with the new options](docs/screenshots/options-game.jpg) |
+| *Singing a song: the practice timeline* | *The Game tab with the new options* |
+
+
 - **Android port**: Vulkan renderer, AAudio sound, touch screen, game controllers and hardware
   keyboards.
 - **An APK without game code**: on the first start the app extracts the game from your disc image or `.wua` archive
@@ -29,9 +45,12 @@ The original project (macOS, the 60 fps modes, decompilation tools) is described
   120 Hz or more. It needs a fast phone (60 fps on a Snapdragon 7+ Gen 3); where a frame doesn't
   fit in time it is left out, so the game always keeps its speed. Works together with frame
   generation ×2.
-- **An in-game options menu** in the style of the game's own menus, with tabs for saves, the game,
-  graphics, mods and controls, usable by touch and with a controller (see below); it fits phone
+- **An in-game options menu** that looks like the game's own GamePad menus (its paper, tabs, buttons
+  and fonts, taken from your game files), as a page of the game's + menu, with tabs for saves, the
+  game, graphics, mods and controls, usable by touch and with a controller (see below); it fits phone
   screens too.
+- **Six languages**: the app's texts in English, German, French, Italian, Spanish and Japanese,
+  following the game's language.
 - **Save states**: five slots with a picture, time and place of each state. Saving stops the game
   for only a few hundredths of a second (the memory is copied in the background), and a state loads
   anywhere: in the game, at the title screen or the file select. An auto save every 2, 5 or 10 minutes
@@ -44,10 +63,6 @@ The original project (macOS, the 60 fps modes, decompilation tools) is described
   imported from `.zip` and `.rar` files: code patches (`patch_*.asm`, Cemuhook `patches.txt`), game
   file replacements, shader replacements and texture filtering rules. A code patch only applies to
   the game version it was made for; turning packs on or off recompiles the changed code once.
-- **Shader head start**: a template of the shaders and GPU pipelines the game uses (only their
-  settings, no shader code) is shipped with the app. On the first start the app finds the programs in
-  your own game files and prepares them in the background, so first visits to a place stutter much
-  less (on a Helio G85: compiles during play from about 500 to about 20).
 - **Performance overlay**: frame rate with its average, frame time, CPU and GPU load, CPU, GPU and
   battery temperatures, the graphics settings in use, the SoC, GPU and GPU driver; you choose the
   values and drag it where you want it.
@@ -78,16 +93,35 @@ The original project (macOS, the 60 fps modes, decompilation tools) is described
   itself, with touch, and the main screen shows the TV picture; Graphics › GamePad screen switches
   back to the screen layouts. The GamePad screens (items, map, bottles) fill a second screen of
   another shape, such as the Thor's lower screen; Graphics › GamePad picture keeps the original 16:9.
-- **On-screen controls** for the whole GamePad, which hide while a controller is in use.
+- **New touch controls** (see the [controls guide](docs/new-controls.md)): a Classic fixed GamePad or
+  Flexible sticks where the thumbs land; context buttons that appear when they do something and show
+  what with the game's own icons; items aimed and shot by tapping; an item ring (hold X, Y or R);
+  a layout editor with a grid, button shapes, opacity and saved layouts; Link drawn in the button
+  icons; a large Picto Box view. They hide while a controller is in use.
+- **Minigames and menus by touch**: Sploosh Kaboom, the picture puzzles, mail sorting, the cannon,
+  the auction, shops, the gallery's figures, the wind compass, answers and number entry, with a first
+  time hint in the game's message style.
+- **The songs**: conducting by note pads, play buttons in the song list and in the story scenes that
+  wait for a song, and (experimental) singing, humming or whistling a song into the microphone.
+- **Controller setup**: face buttons by position or by letters, ready-made layouts for Jump anywhere,
+  L1 and d-pad down as item buttons, controller details.
+- **Graphics presets** and a 2-minute test that finds the best settings for the device.
+- **Picto Box album and postboxes**: an album with any number of pages of 12 pictos, the subject of
+  each picto named (with the game's gold medal when it is good enough for a figurine), and pictos
+  mailed to Carlov from any postbox, so his figurines arrive in the Nintendo Gallery without a trip
+  there. **Link's clothes**: the hero's or the casual ones at any time.
 - **Gyro aiming** with the device's motion sensors or a controller's (DualSense, DualShock 4, Switch
   Pro and others that Android reports with sensors).
 - **Rumble** on the controller in use, or on the device while playing by touch.
 - **The original project's gameplay mods** on Android: climb any wall, direct right-stick camera,
-  first person on R3, quick doors, fast scene changes.
+  first person on the mouse wheel, quick doors, fast scene changes.
+- **Walking direction**: Link keeps walking his way while the camera turns, optionally with the camera
+  swinging back behind him; a zoomed-out field of view.
 - **Faster running, swimming, climbing and sidling** (new mods): 1.25 up to 4 times as fast;
   everything else keeps its speed.
-- **Jump anywhere** (a new mod): L jumps from standing or running, as off a ledge, with an optional
-  double jump and without the automatic ledge jumps. **Moon jump**: hold L to rise and fly.
+- **Jump anywhere** (a new mod): its button jumps from standing or running, as off a ledge, with an
+  optional double jump and without the automatic ledge jumps. **Moon jump**: hold its button to rise
+  and fly. Both have their own touch buttons and any controller button you choose.
 - **Inverted camera up/down** for first person and aiming, or always (contributed by Abssenta).
 - **Fast forward** (a new mod): hold ZR (R2) to run cutscenes and dialogues faster, switched
   separately. The game plays its normal frames, only more of them per second (up to 4×, as fast as
@@ -98,7 +132,8 @@ The original project (macOS, the 60 fps modes, decompilation tools) is described
   part of the next render pass, mipmap chains built in place and only as far as they are read,
   exact float multiplies only where a value can be infinite (Mali-G52 at 1×: GPU time 47 → 40 ms),
   shadows with emulated depth clamping where the GPU has none, BC textures unpacked on the GPU where
-  it can't sample them (most Mali and PowerVR GPUs). On the CPU side: faster recompiled game code
+  it can't sample them (most Mali and PowerVR GPUs), vertex byte swaps PowerVR drivers decode
+  correctly. On the CPU side: faster recompiled game code
   (guest registers in the CPU's own registers, cheaper function entries and memory accesses, hot
   functions grouped together), a render thread with a third less work, unchanged vertex and index
   data kept across frames, a second thread for the Vulkan commands, the game and render threads on
@@ -114,6 +149,39 @@ The original project (macOS, the 60 fps modes, decompilation tools) is described
 - **No internet access**: the app doesn't request it, and its manifest explicitly excludes it.
 
 ## Version history
+
+**0.9.6**
+
+- New touch controls: Classic or Flexible (sticks where the thumbs land, camera by stick or swipe),
+  context buttons with the game's icons and words, items by tap (aim once, tap Shoot, B puts away),
+  the item ring (hold X, Y or R), item button names (A1–A3, the controller's, or X / Y / R) and
+  emptying, a layout editor with a grid, shapes, opacity and saved layouts, Link in the button icons,
+  left stick following the thumb, ZL after a defeated target, the large Picto Box view, hearts only in
+  combat and rupees only when they change. Explained in the [controls guide](docs/new-controls.md).
+- Link in the button icons, animated: jumping, crouching, rolling, sidling, lifting, throwing,
+  opening doors and chests, grabbing and picking up.
+- Picto Box: album pages (any number of pages of 12 pictos), picto subjects named in the album (gold
+  medal for a picto good enough for a figurine), pictos mailed to Carlov from any postbox (figurines
+  in the gallery the next day, or at once with Same day delivery). Link's clothes: hero's or casual
+  at any time. Cheats: one hit kills.
+- Minigames, shops, answers, number entry, the wind compass and the item pages by touch, with first
+  time hints.
+- Songs: note pads for conducting, play buttons in the song list and in song scenes, singing into the
+  microphone (experimental), replaying conducted songs as on the GameCube.
+- Controllers: a setup (offered on first use), Jump anywhere and the moon jump on their own buttons,
+  L1 and d-pad down as item buttons, motion and rumble sources, controller details, the game's cursor
+  on the options page, hints answered with a controller or keyboard.
+- Camera: walking direction kept while the camera turns, camera swing behind Link, field of view,
+  swipe speed on the boat.
+- The options as a page of the + menu (the ≡ button optional), in the game's style, regrouped into
+  pages; the app in six languages.
+- Graphics presets, a best-settings test, VSync (issue #54).
+- Less memory: about 200 MB less on every device, about 800 MB less on devices with less than 4.5 GB
+  of RAM (issues #51, #52).
+- Fixes: PowerVR 3D (issue #17), looping sounds cutting off (issue #23), a blue haze at the bottom edge
+  with dynamic resolution, the round telescope view, the file select's cursor with the screen-filling
+  picture on phone-shaped screens.
+- The game code is prepared once more after the update; save states of 0.9.5 can't be loaded.
 
 **0.9.5**
 
@@ -131,8 +199,6 @@ The original project (macOS, the 60 fps modes, decompilation tools) is described
 - Graphics › Upscaling: sharp (keeps edges crisp at lower resolutions) or bilinear.
 - Much less shader stutter: shader variants that only differ in settings the shader doesn't read
   share one translation. Also fixes the crash with very large shader caches (issue #48).
-- The shader head start knows more of the game's pipelines (now from Adreno and Mali devices), the
-  game's own shader compiles go before the background ones.
 - Shadows on GPUs without depth clamping (Mali-G52): no longer come and go with the camera
   (issue #45).
 - The GamePad is the only controller: every controller and the on-screen controls act as the Wii U
@@ -154,8 +220,6 @@ The original project (macOS, the 60 fps modes, decompilation tools) is described
 - Mod packs (Mods › Mod packs): Cemu graphic packs and game file mods from `.zip` and `.rar` files,
   with code patches, game file and shader replacements and texture filtering rules. Changes ask for
   a restart; if the game doesn't start any more, the crash dialog can start it without mod packs.
-- Shader head start: the shaders and pipelines the game uses are prepared from a template on the
-  first start, so first visits stutter much less.
 - Shader cache: shaders not used for a while are dropped, so the cache stays small and starts fast.
 - New mods: Jump anywhere (L, with double jump), faster climbing and sidling. The moon jump moved
   from the cheats to the mods.
@@ -322,26 +386,26 @@ None of these are included or provided here.
 3. The app extracts the game files (a few seconds to minutes), then prepares the game code for
    your device (once; how long depends on the processor: about 6 minutes on a Snapdragon 7+ Gen 3,
    9 minutes on a Snapdragon 855, 16 minutes on a Helio G99, 18 minutes on a Helio G85). You can leave the app meanwhile and read a Wind Waker walkthrough guide. A notification shows the progress and keeps the process alive.
-4. The game starts. In the background the app prepares the shaders it knows the game uses, so the
-   first visits to places stutter much less; the rest compile on their first use and are cached.
+4. The game starts. Shaders compile on their first use and are cached.
 
 ## Controls
 
-The **on-screen controls** cover the Wii U GamePad: both sticks, the D-pad, A/B/X/Y, L/R/ZL/ZR,
-+ and the stick clicks (L3/R3). − is left out: the game uses it only to swap the TV and GamePad
-pictures, which + does here. The controls hide while a game controller is in use and come back on
-the next touch. On the title screen a touch anywhere presses A.
+Everything about the controls, with every option explained, is in the
+**[controls guide](docs/new-controls.md)**. In short:
 
-**Game controllers** map by button position, as the game uses them: the bottom face button is the
-Wii U's B, the right one A, the left one Y and the top one X; Start is +. Under
-Controls › **Controller buttons** you can assign each Wii U button to another controller button:
-choose the Wii U button, then press the controller button (analog triggers and a D-pad that reports
-as a hat count too). A controller button already in use swaps places, so no Wii U button is lost.
-Home / Guide and holding Select always open the menu, and the menu itself keeps using the buttons by
-position.
-
-**Keyboards**: WASD move, the arrow keys turn the camera, K or Space = A, J = B, L = X, I = Y, Q/E =
-L/R, Left Shift = ZL, C = ZR, Enter = +, H = HOME, 1–4 = D-pad, X/V = stick clicks.
+- **Touch**: Classic (a fixed on-screen GamePad) or Flexible (the sticks appear where the thumbs land,
+  with optional context buttons that show only what can be done). − is left out: the game uses it
+  only to swap the TV and GamePad pictures, which + does here. The controls hide while a game
+  controller is in use and come back on the next touch. On the title screen a touch anywhere presses A.
+- **Game controllers** map by button position, as the game uses them: the bottom face button is the
+  Wii U's B, the right one A, the left one Y and the top one X; Start is +. When a controller is first
+  used the app offers a setup (by position or by letters, layouts for Jump anywhere). Under
+  Controls › Controller › **Controller buttons** you can assign each Wii U button to another
+  controller button: choose the Wii U button, then press the controller button (analog triggers and a
+  D-pad that reports as a hat count too). A controller button already in use swaps places, so no
+  Wii U button is lost. Home / Guide and holding Select always open the menu.
+- **Keyboards**: WASD move, the arrow keys turn the camera, K or Space = A, J = B, L = X, I = Y, Q/E =
+  L/R, Left Shift = ZL, C = ZR, Enter = +, H = HOME, 1–4 = D-pad, X/V = stick clicks.
 
 ## The options menu
 
@@ -349,15 +413,17 @@ The game keeps running while the menu is open, and changes apply at once.
 
 **How to open it**
 
-- touch: the ≡ button at the top left of the screen, or Android's Back.
+- touch: press **+**, then the page arrow left of the items (or swipe the item pages to the right):
+  the options slide in as a page of the game's GamePad menu. Android's Back opens them over the
+  game. Controls › Touch › Menu button in the game brings back the ≡ button at the top left.
 - controller: **hold Select** (View, Share, −: whatever the controller calls it) for a moment, or
   press **Home / Guide** (the logo button, where the controller passes it to apps). The same
-  buttons close the menu again.
+  buttons close the menu again. In the + menu they go back a step, as B.
 
-**With a controller**: L / R switch tabs, the D-pad moves and changes values, and as in the game
-the **right** face button selects and the **bottom** one goes back. (On an Xbox-style controller
-that is B to select and A to go back; on a PlayStation controller Circle selects and Cross goes
-back.)
+**With a controller** the game's bracket cursor shows where you are: L / R switch tabs, the D-pad
+moves and changes values, pressing toward a big page arrow turns the page, and as in the game the
+**right** face button selects and the **bottom** one goes back. (On an Xbox-style controller that is
+B to select and A to go back; on a PlayStation controller Circle selects and Cross goes back.)
 
 **The tabs**
 
@@ -368,32 +434,38 @@ back.)
   2, 5 or 10 minutes, two slots), the "Last session" state, and what happens at start (the intro, the
   save states to choose from, or the last session at once). Exporting saves as one backup file and
   importing it, or a GameCube save (`.gci`). An imported game save restarts the game.
-- **Game**: the game language (the languages of your copy; applies after a restart).
-- **Graphics**: rendering resolution, dynamic resolution (off, or down to 0.75×, 0.6×, 0.5× or
-  0.4× while the GPU can't keep up), frame rate (30 fps, or 60/120 fps by frame interpolation), frame generation, widescreen, aspect ratio, the GamePad screen and its
-  picture (with a second display), screen layout, ambient
-  occlusion, full-size occlusion depth, 16× anisotropic filtering, upscaling (sharp or bilinear),
-  display resolution (Auto: drawn at the size the picture needs and enlarged by the display hardware;
-  Full: always at the screen's resolution), the performance overlay, the GPU
-  driver (Adreno only), the command recording thread (a second CPU thread for the GPU work; on by
-  default, "Off" can be faster on some devices such as the Snapdragon 855; applies after a restart),
-  and deleting the shader cache (restarts the game as on its first start).
-- **Mods**: the gameplay mods, all off by default, and faster running, swimming, climbing and
-  sidling (each 1.25× up to 4×; jumps, rolls and the boat stay as they are). Each applies always or
-  with L3, set separately: one press switches it on and the next off (a press switches the one for
-  what Link is doing), or only while L3 is held. Jump anywhere (L, with double jump and without the
-  automatic ledge jumps) and the moon jump (hold L to rise, steer with the left stick; rise and
-  flight speed, no fall damage, random lift-off poses); both use L, so one switches the other off.
-  Fast forward of cutscenes and of dialogues: faster while ZR is held. **Cheats** (from the original
-  project) change the save file you play: items, hearts, magic, rupees, filled bags, infinite health,
-  magic, ammunition, rupees, bait and spoils, and swimming, and story cheats (save to a spare file
-  first; they can change story events). **Mod packs**: import, turn on and off, choose a pack's
-  presets; changes apply after a restart, which the menu offers when you leave it.
-- **Controls**: on-screen controls on or off, their size, inverted camera up/down, motion controls (gyro aiming),
-  rumble (on the phone when the controller has none), and which controller button
-  presses which Wii U button.
+- **Game**: the game language (the languages of your copy; applies after a restart), quick doors,
+  fast scene changes, fast forward of cutscenes and of dialogues (faster while ZR is held; text boxes
+  still wait for your button), album pages, picto subjects, mailing pictos at postboxes (and same day
+  delivery), Link's clothes, and the **Songs** page (replay conducted songs, singing into the
+  microphone, play buttons).
+- **Graphics**: a **preset** (Lowest to High) and **Find the best settings** (a 2-minute test of the
+  device), rendering resolution, frame rate (30 fps, or 60/120 fps by frame interpolation) and frame
+  generation, then pages:
+  - *Resolution & upscaling*: dynamic resolution (off, or down to 0.75×, 0.6×, 0.5× or 0.4× while
+    the GPU can't keep up), upscaling (sharp or bilinear), display resolution (Auto: drawn at the size
+    the picture needs and enlarged by the display hardware; Full: always at the screen's resolution);
+  - *Picture quality*: ambient occlusion, full-size occlusion depth, 16× anisotropic filtering;
+  - *Screens*: widescreen, field of view, aspect ratio, the GamePad screen and its picture (with a
+    second display), screen layout;
+  - *Performance overlay*;
+  - *Advanced*: the GPU driver (Adreno only), VSync (each frame waits for the screen's refresh, for
+    devices where the picture stutters badly otherwise), the command recording thread (a second CPU
+    thread for the GPU work; "Off" can be faster on some devices such as the Snapdragon 855; applies
+    after a restart), and deleting the shader cache (restarts the game as on its first start).
+- **Mods**: all off by default. Jump anywhere (its button, double jump, no automatic ledge jumps) and
+  the moon jump (its button, rise and flight speed, no fall damage, random lift-off poses), climb any
+  wall, faster running, swimming, climbing and sidling (each 1.25× up to 4×, always or with L3).
+  **Cheats** (from the original project) change the save file you play: items, hearts, magic,
+  rupees, filled bags, infinite health, magic, ammunition, rupees, bait and spoils, and swimming, one
+  hit kills, and story cheats (save to a spare file first; they can change story events). **Mod packs**: import,
+  turn on and off, choose a pack's presets; changes apply after a restart, which the menu offers when
+  you leave it.
+- **Controls**: the touch style and the layout editor, motion controls and rumble (and where from),
+  and the pages Touch, Item ring, Camera, Minigames & hints, Screen (HUD) and Controller, all
+  explained in the [controls guide](docs/new-controls.md).
 
-About (with the licenses) and Quit are always on the left.
+About (with the licenses) and Quit are at the foot of the page.
 
 ## Frame generation (Lossless Scaling)
 
@@ -437,7 +509,7 @@ with, for example a Mesa Turnip build or a newer Qualcomm driver. The app loads 
 usual driver packages: a `.zip` with a `meta.json` and the driver's `.so` file.
 
 1. Copy the driver package to your device.
-2. In the menu, open Graphics › GPU driver › **Install driver package…** and pick the file.
+2. In the menu, open Graphics › Advanced › GPU driver › **Install driver package…** and pick the file.
 3. Choose **Use and restart**. The first start with a driver takes a little longer while it compiles
    the game's pipelines; each driver keeps its own pipeline cache.
 

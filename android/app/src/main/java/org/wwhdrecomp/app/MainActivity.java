@@ -56,7 +56,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     // The redesigned touch controls (style "Flexible", context buttons, layout editor, HUD fades) and the
     // screen layout "TV, GamePad on demand" are unfinished: hidden from the options, and saved settings
     // of them are ignored, until this is true.
-    static final boolean NEW_TOUCH_CONTROLS = false;
+    static final boolean NEW_TOUCH_CONTROLS = true;
 
     // screen layouts
     static final int LAYOUT_INSET = 0, LAYOUT_SIDE = 1, LAYOUT_TV = 2, LAYOUT_DRC_LARGE = 3, LAYOUT_ON_DEMAND = 4;
@@ -65,14 +65,79 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     // the file select is shown as the GamePad picture (touchable) on a single screen, until it's left
     private boolean drcForFiles;
     private int front = -1;
+    // The very first start (no game save when the game started): the game makes its save and shows "save data
+    // created" with OK in its boot layout, then goes on to the file select. The app presses OK itself, once: the
+    // message tells nothing the player needs (pref skip_save_message, on; hud_boot_message)
+    private boolean firstStart;
+    private int firstStartPresses;   // presses so far (the button takes them only once it has faded in: again until gone)
+    private long firstStartSeen, firstStartPressed;
+    private static final int FIRST_START_MAX_PRESSES = 6;
+
+    private void firstStartMessage() {
+        if (firstStartPresses >= FIRST_START_MAX_PRESSES || !firstStart || !started || !prefs.getBoolean("skip_save_message", true))
+            return;
+        long now = android.os.SystemClock.uptimeMillis();
+        if (Native.getOption("boot_message") == 0) {
+            if (firstStartPresses > 0) firstStartPresses = FIRST_START_MAX_PRESSES;  // gone after a press: done
+            firstStartSeen = 0;
+            return;
+        }
+        if (firstStartSeen == 0) firstStartSeen = now;
+        if (now - firstStartSeen < 700 || now - firstStartPressed < 1500) return;
+        firstStartPressed = now;
+        firstStartPresses++;
+        Log.i(TAG, "first start: the game's \"save data created\" confirmed (press " + firstStartPresses + ")");
+        mapper.pulse(Native.A, true);
+        pushInput();
+        frontHandler.postDelayed(() -> {
+            mapper.pulse(Native.A, false);
+            pushInput();
+        }, 150);
+    }
+
+    static final long LOW_MEMORY_MB = 4608;
+
+    // Android low on memory (it no longer tells running apps through onTrimMemory): the renderer frees the
+    // pipelines unused lately (made again when needed); checked every 2 s, at most every 30 s
+    private long memoryCheckedAt, memoryTrimmedAt;
+
+    private void checkMemory() {
+        long now = android.os.SystemClock.uptimeMillis();
+        if (!started || now - memoryCheckedAt < 2000) return;
+        memoryCheckedAt = now;
+        android.app.ActivityManager am = (android.app.ActivityManager) getSystemService(ACTIVITY_SERVICE);
+        if (am == null) return;
+        android.app.ActivityManager.MemoryInfo mi = new android.app.ActivityManager.MemoryInfo();
+        am.getMemoryInfo(mi);
+        if ((mi.lowMemory || mi.availMem < mi.threshold + (256L << 20)) && now - memoryTrimmedAt > 30000) {
+            memoryTrimmedAt = now;
+            Log.i(TAG, "memory low: " + (mi.availMem >> 20) + " MB available (threshold " + (mi.threshold >> 20) + " MB)");
+            Native.setOption("trim_memory", 1);
+        }
+    }
+
     private final Runnable frontPoll = new Runnable() {
         @Override
         public void run() {
             int f = Native.frontScreen();
+            firstStartMessage();
+            checkMemory();
+            if (controls != null && !benchRunning && tour == null) {
+                int[] ts = Native.touchState();
+                controls.ringHint(ts);
+                controls.pictoPages(ts);
+            }
             boolean noPad = !controllerConnected();
             setFilesTouch(f == Native.FRONT_FILES && noPad);
             setMenuTouch(noPad && drcScreen() && Native.drcGameCursor());
+            if (lastController == null) usePadMap(firstController());  // (the one the menu's buttons page edits)
+            if (controls != null) {
+                controls.setPadConnected(!noPad);
+                setShortcutHidden(controls.dpadInRing());
+                applySlotLabels(!noPad);
+            }
             if (f != front && controls != null) {
+                Log.i(TAG, "front screen " + f);  // (4 boot, 1 title, 2 file select, 3 opening, 0 play)
                 front = f;
                 controls.setFrontScreen(f);
                 boolean files = f == Native.FRONT_FILES && !drcOnOwnDisplay();
@@ -108,6 +173,18 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     private float bufRequested = 1;  // what was last asked for (setFixedSize)
     private float renderScale = 1;   // the rendering resolution setting (the 3D view is 720 lines at 1x)
 
+    // the app's own texts in the game's language (res/values-xx; what isn't translated stays English)
+    @Override
+    protected void attachBaseContext(android.content.Context base) {
+        String l = base.getSharedPreferences("settings", MODE_PRIVATE).getString("language", "");
+        if (l.isEmpty()) l = java.util.Locale.getDefault().getLanguage();
+        boolean known = false;
+        for (String s : LANGUAGES) known |= s.equals(l);
+        android.content.res.Configuration c = new android.content.res.Configuration(base.getResources().getConfiguration());
+        c.setLocale(new java.util.Locale(known ? l : "en"));
+        super.attachBaseContext(base.createConfigurationContext(c));
+    }
+
     @Override
     protected void onCreate(Bundle state) {
         super.onCreate(state);
@@ -115,6 +192,23 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         prefs = getSharedPreferences("settings", MODE_PRIVATE);
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         getWindow().getAttributes().layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES;
+        // testing (debug builds): --es bench "fg,show" runs the graphics benchmark at this start
+        String benchExtra = debuggable() && !libraryLoaded ? getIntent().getStringExtra("bench") : null;
+        // testing (not in published releases): --es shader_tour <slot> plays by itself (ShaderTour); with
+        // --ez shader_tour_reset true from the start of its list
+        if (!BuildConfig.PUBLIC_RELEASE && !libraryLoaded) {
+            String t = getIntent().getStringExtra(ShaderTour.EXTRA);
+            tourSlot = t != null ? Integer.parseInt(t) : 0;
+            if (getIntent().getBooleanExtra("shader_tour_reset", false)) ShaderTour.reset(prefs);
+            ShaderTour.storyName = getIntent().getStringExtra("shader_tour_story");
+            ShaderTour.placesOnly = getIntent().getBooleanExtra("shader_tour_places_only", false);
+        }
+        if (benchExtra != null)
+            prefs.edit().putBoolean(Benchmark.PENDING, true).putBoolean(Benchmark.WITH_FG, benchExtra.contains("fg"))
+                    .putBoolean(Benchmark.SHOW, benchExtra.contains("show")).putBoolean(Benchmark.DONE, true)
+                    .putBoolean("bench_slow", benchExtra.contains("slow")).putBoolean(Benchmark.WIDE, benchExtra.contains("wide")).commit();
+        // a new installation starts at the graphics preset guessed for this device (before the settings below are read)
+        GraphicsPresets.firstStart(this, prefs, new File(gameDir()));
         if (!libraryLoaded) {
             // static initializers in the library read these, so they must be set before it loads
             setenv("WWHD_RES_SCALE", prefs.getString("res_scale", "1"));  // wwhd.env / intent extras below override
@@ -126,7 +220,9 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
             if (recordThread != 0) setenv("WWHD_RECORD_THREAD", recordThread == 1 ? "1" : "0");
             // frame interpolation (Graphics > Frame rate): 0 off, 60 or 120 fps
             int interp = prefs.getInt("interp_fps", 0);
-            if (interp != 0) setenv("WWHD_INTERP_FPS", String.valueOf(interp));
+            if (interp != 0 && !Benchmark.pending(prefs)) setenv("WWHD_INTERP_FPS", String.valueOf(interp));
+            // little RAM (4 GB devices report ~3.6-3.8 GB): no shader pipelines made ahead, a budget for them (vk_draw.cpp)
+            if (GraphicsPresets.ramMb(this) < LOW_MEMORY_MB) setenv("WWHD_LOW_MEMORY", "1");
             applyEnvironment();
             CrashLogs.deleteShared(this, prefs);  // shared in an earlier run
             // a shader dump (WWHD_DUMP_SHADERS=<files>/shaders, debugging) left from an earlier start
@@ -243,14 +339,13 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
             box.setOrientation(LinearLayout.VERTICAL);
             int pad = (int) (24 * getResources().getDisplayMetrics().density);
             box.setPadding(pad, pad, pad, pad);
-            TextView t = new TextView(this);
-            t.setTextSize(16);
+            TextView t = cardText();
             t.setText(R.string.compile_running);
             box.addView(t);
             android.widget.ProgressBar bar = new android.widget.ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
             bar.setMax(1000);
             box.addView(bar);
-            TextView detail = new TextView(this);
+            TextView detail = cardText();
             box.addView(detail);
             setContentView(seaScreen(box));
             final long t0 = android.os.SystemClock.elapsedRealtime();
@@ -289,36 +384,54 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
             runCompile();
             return;
         }
+        // the graphics benchmark ended in its frame generation stage (a crash or GPU hang): its result
+        // without frame generation, before the crash dialog
+        if (!benchCrashChecked) {
+            benchCrashChecked = true;
+            if (Benchmark.afterCrash(this)) return;
+        }
         // the last run ended unexpectedly: offer its log before the game starts (a game that closes
         // again right after loading leaves no time to share it later)
-        if (!crashOffered) {
+        if (!crashOffered && !Benchmark.pending(prefs)) {  // (a benchmark run: at the next normal start)
             crashOffered = true;
             CrashLogs.recordExit(this, prefs);
-            if (CrashLogs.offerNew(this, prefs, this::checkAndStart)) return;
+            if (tourSlot != 0) CrashLogs.markSeen(this, prefs);  // (the tour goes on by itself)
+            else if (CrashLogs.offerNew(this, prefs, this::checkAndStart)) return;
         }
         // the GPU driver lost the device last time (it hung): offer another driver before the game starts
-        if (!gpuLostOffered) {
+        if (!gpuLostOffered && tourSlot == 0) {
             gpuLostOffered = true;
             if (offerGpuDriverAfterLoss(this::checkAndStart)) return;
         }
+        boolean bench = Benchmark.pending(prefs);
+        // the graphics benchmark's offer, once (new installations right after the compile, existing ones at the first
+        // start of a version with it). Without a game save the game shows its "save data created" message before
+        // the title; firstStartMessage confirms it, in the benchmark's run too
+        if (!bench && tourSlot == 0 && !prefs.getBoolean(Benchmark.DONE, false) && prefs.contains(GraphicsPresets.STATE)) {
+            Benchmark.offer(this, this::checkAndStart);
+            return;
+        }
+        // once: the new touch controls, Jump anywhere and singing the songs (StarterQuestions)
+        if (!bench && tourSlot == 0 && StarterQuestions.offer(this, this::checkAndStart)) return;
         File base = baseDir();
         // testing: WWHD_CLEAR_SHADERS=1 (an intent extra) starts as with "Delete shader cache"
         if (Os.getenv("WWHD_CLEAR_SHADERS") != null) Backup.deleteTree(new File(getNoBackupFilesDir(), "shadercache"));
         installShaderTemplate();
         String failedDriver = applyGpuDriver();
         // the save state picker before the intro: the game waits for it from its first frame on
-        boolean offerStates = startMode() != START_INTRO && !usedStateSlots(base).isEmpty();
+        boolean offerStates = !bench && (tourSlot != 0 || startMode() != START_INTRO) && !usedStateSlots(base).isEmpty();
         if (offerStates) Native.setStartHold(true);
         // the last run's frame generation mark is read (crash dialog); frame generation switched off there
         // since the library loaded (the renderer reads WWHD_LSFG_DLL when it starts)
         //noinspection ResultOfMethodCallIgnored
         frameGenMarker(this).delete();
-        if (!frameGenOn()) {
+        if (!frameGenOn() || bench) {
             try {
                 Os.unsetenv("WWHD_LSFG_DLL");
             } catch (ErrnoException ignored) {
             }
         }
+        firstStart = !new File(base, "save/user/cking.sav").exists();  // (the game makes its save at this start)
         Native.start(gameDir(), new File(base, "save").getAbsolutePath(),
                 new File(getNoBackupFilesDir(), "shadercache").getAbsolutePath(), base.getAbsolutePath());
         started = true;
@@ -326,8 +439,10 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         startMotion();
         showGame();
         frontHandler.post(frontPoll);
-        showCacheLoading();
+        if (bench) Benchmark.run(this, (FrameLayout) surface.getParent());
+        else showCacheLoading();
         if (offerStates) offerStartStates();
+        else if (tourSlot != 0) tour = new ShaderTour(this, tourSlot, true);  // (no states at all: a fresh installation)
         updateDrcDisplay();
         if (failedDriver != null)
             new GameDialog(this).title(R.string.opt_gpu_driver).message(getString(R.string.gpu_driver_failed, failedDriver))
@@ -335,6 +450,13 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     }
 
     private boolean crashOffered;  // once per process: the offer before the game starts
+    private boolean benchCrashChecked;
+    private boolean benchRunning;  // the graphics benchmark runs in this process: no save states
+    private static int tourSlot;  // the shader tour's save state slot (0: no tour); ShaderTour
+    private ShaderTour tour;
+
+    /** continues the start after a dialog that came first */
+    void continueStart() { checkAndStart(); }
     private boolean gpuLostOffered;
 
     // `gpu_lost` (vk_device.cpp, vk_note_device_lost): the GPU driver hung or crashed in the last run.
@@ -492,29 +614,134 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     // seascape (SeaView), whose boat sails across as the work progresses.
     private SeaView sea;
 
+    // ---- the graphics benchmark (Benchmark.java)
+    /** a sea card over the game for the benchmark (the game's picture stays hidden) */
+    View coverScreen(LinearLayout content) {
+        View v = seaScreen(content);
+        coverSea = sea;
+        sea = null;  // the game's screen: no work screen of its own
+        return v;
+    }
+
+    private SeaView coverSea;
+
+    SeaView coverSea() { return coverSea; }
+
+    void restartForBenchmark() { restartApp(); }
+
+    void restartAfterBenchmark() { restartApp(); }
+
+    private boolean benchCamera;
+
+    /** the benchmark: the camera turns around Link (the right stick held) */
+    void setBenchmarkCamera(boolean on) {
+        benchCamera = on;
+        pushInput();
+    }
+
+    /** the benchmark runs: touch controls, overlay and saves out of the way */
+    void setBenchmarkControls(boolean on) {
+        benchRunning = on;
+        if (controls != null) controls.setVisibility(on ? View.GONE : View.VISIBLE);
+        if (filesBack != null && on) filesBack.setVisibility(View.GONE);
+    }
+
+    /** the rendering scale for the benchmark, live, without touching the setting */
+    void setRenderScaleLive(float scale) {
+        Native.setOption("res_scale", Math.round(scale * 100));
+        renderScale = scale;
+        updateBufferSize();
+    }
+
+    /** frame generation for the benchmark: the player's network settings, x2, without the setting */
+    void applyFrameGenBenchmark(boolean on) {
+        if (on) Native.setFrameGenRiskAccepted(prefs.getBoolean("fg_risk_ok", false));
+        Native.applyFrameGen(on && frameGenDll().exists(), frameGenDll().getAbsolutePath(), prefs.getBoolean("fg_quality", false),
+                Float.parseFloat(prefs.getString("fg_flow_scale", "0.5")), 2, prefs.getBoolean("fg_ui_detection", true));
+    }
+
+    private Runnable afterDllPick;
+
+    /** the Lossless.dll picker; `then` runs once a good file was taken (or the pick ended) */
+    void pickDllThen(Runnable then) {
+        afterDllPick = then;
+        pickDll();
+    }
+
     private View seaScreen(LinearLayout content) {
         float d = getResources().getDisplayMetrics().density;
         android.widget.FrameLayout root = new android.widget.FrameLayout(this);
         sea = new SeaView(this);
         root.addView(sea, new android.widget.FrameLayout.LayoutParams(-1, -1));
-        android.graphics.drawable.GradientDrawable card = new android.graphics.drawable.GradientDrawable();
-        card.setColor(0xFBF6EBCB);
-        card.setCornerRadius(18 * d);
-        card.setStroke((int) (3 * d), 0xFF8B5A2B);
-        content.setBackground(card);
-        content.setElevation(8 * d);
+        // the GamePad menus' torn paper (GameUi.GamePaper; drawn parchment until the game files are there): its torn
+        // edge and blue line take ~30 of its 48-unit frame
+        android.graphics.Rect win = getWindowManager().getCurrentWindowMetrics().getBounds();
+        float unit = Math.min(win.width() / 1280f, win.height() / 720f);
+        int frame = Math.round(52 * unit);
         styleCardText(content);
-        ScrollView sv = new ScrollView(this);
+        // at most the upper 60% of the screen (it scrolls inside if longer): the boat sails below it, always in view;
+        // the paper behind the scrolling part, so its torn edges stay
+        int maxH = (int) (win.height() * 0.6f) - 2 * frame;
+        ScrollView sv = new ScrollView(this) {
+            @Override
+            protected void onMeasure(int wSpec, int hSpec) {
+                super.onMeasure(wSpec, MeasureSpec.makeMeasureSpec(maxH, MeasureSpec.AT_MOST));
+            }
+        };
         sv.setFillViewport(false);
+        // the card's buttons below the scrolling part, always in view (on a phone held sideways the text alone can
+        // fill the card): the game's buttons at the end of the content move into rows of their own
+        java.util.List<View> buttons = new java.util.ArrayList<>();
+        for (int i = content.getChildCount() - 1; i >= 0 && isCardButton(content.getChildAt(i)); i--) buttons.add(0, content.getChildAt(i));
+        for (View b : buttons) content.removeView(b);
         sv.addView(content, new android.widget.FrameLayout.LayoutParams(-1, -2));
+        LinearLayout card = new LinearLayout(this);
+        card.setOrientation(LinearLayout.VERTICAL);
+        card.setBackground(new GameUi.GamePaper(this, unit));
+        card.setPadding(frame, frame, frame, frame);
+        card.addView(sv, new LinearLayout.LayoutParams(-1, -2, 1));  // (the part that shrinks when the card is too tall)
+        if (!buttons.isEmpty()) {
+            GameUi.ButtonRows rows = new GameUi.ButtonRows(this, (int) (12 * d));
+            for (View b : buttons) rows.addView(b, new android.view.ViewGroup.LayoutParams(-2, (int) (54 * d)));
+            LinearLayout.LayoutParams rlp = new LinearLayout.LayoutParams(-1, -2);
+            rlp.leftMargin = (int) (24 * d);
+            rlp.rightMargin = (int) (24 * d);
+            rlp.topMargin = (int) (4 * d);
+            card.addView(rows, rlp);
+        }
         // a card of at most 640 dp, in the upper part so the sea stays visible
         int width = (int) Math.min(getResources().getDisplayMetrics().widthPixels - 32 * d, 640 * d);
         android.widget.FrameLayout.LayoutParams lp = new android.widget.FrameLayout.LayoutParams(width, -2,
                 Gravity.CENTER_HORIZONTAL | Gravity.TOP);
         lp.topMargin = (int) (24 * d);
         lp.bottomMargin = (int) (24 * d);
-        root.addView(sv, lp);
+        root.addView(card, lp);
         return root;
+    }
+
+    private static boolean isCardButton(View v) {
+        return v.getBackground() instanceof android.graphics.drawable.StateListDrawable;  // (cardButton, as styleCardText)
+    }
+
+    /** a text of a sea card: in the game's text font (until the game files are there: the system's) */
+    private TextView cardText() {
+        TextView t = GameUi.text(this, true);
+        t.setTextSize(13);
+        return t;
+    }
+
+    /** a button of a sea card: the game's green value button */
+    private TextView cardButton(CharSequence text, View.OnClickListener click) {
+        TextView b = GameUi.barButton(this, text.toString(), click, true, true);
+        b.setMinWidth((int) (150 * getResources().getDisplayMetrics().density));
+        return b;
+    }
+
+    private LinearLayout.LayoutParams cardButtonLp() {
+        float d = getResources().getDisplayMetrics().density;
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, (int) (54 * d));
+        lp.topMargin = (int) (12 * d);
+        return lp;
     }
 
     private static void styleCardText(android.view.ViewGroup g) {
@@ -525,13 +752,14 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
                 ((Button) v).setTextColor(0xFFFFF6E0);
                 continue;
             }
-            if (v instanceof android.widget.ProgressBar) {
-                ((android.widget.ProgressBar) v).setProgressTintList(android.content.res.ColorStateList.valueOf(0xFF8B5A2B));
-                ((android.widget.ProgressBar) v).setProgressBackgroundTintList(android.content.res.ColorStateList.valueOf(0xFFD9C79E));
+            if (v instanceof android.widget.ProgressBar) {  // (the game's value button green on a paper shade)
+                ((android.widget.ProgressBar) v).setProgressTintList(android.content.res.ColorStateList.valueOf(0xFF4FAE1C));
+                ((android.widget.ProgressBar) v).setProgressBackgroundTintList(android.content.res.ColorStateList.valueOf(0xFFB4B9A2));
                 continue;
             }
+            if (v.getBackground() instanceof android.graphics.drawable.StateListDrawable) continue;  // (the game's buttons: cardButton)
             if (v instanceof TextView) {
-                ((TextView) v).setTextColor(0xFF4A2C12);
+                ((TextView) v).setTextColor(GameUi.OPTION_TEXT);
                 ((TextView) v).setLinkTextColor(0xFF1F5FA8);
             } else if (v instanceof android.view.ViewGroup) styleCardText((android.view.ViewGroup) v);
         }
@@ -542,8 +770,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         box.setOrientation(LinearLayout.VERTICAL);
         int pad = (int) (24 * getResources().getDisplayMetrics().density);
         box.setPadding(pad, pad, pad, pad);
-        TextView t = new TextView(this);
-        t.setTextSize(16);
+        TextView t = cardText();
         if (Native.buildsGameCode()) {  // the APK without game code: a first start is the normal case
             String text = getString(R.string.setup_welcome);
             if (new File(gameDir()).exists()) text += "\n\n" + getString(R.string.setup_problem, problem);
@@ -555,18 +782,9 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         box.addView(t);
         // the files themselves, not their folder: some devices' folder picker lists nothing on the
         // internal storage (Android 16 with AOSP DocumentsUI, on a Snapdragon and a Unisoc device)
-        Button extractFiles = new Button(this);
-        extractFiles.setText(R.string.setup_extract_files);
-        extractFiles.setOnClickListener(v -> pickDiscFiles());
-        box.addView(extractFiles, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT));
-        Button retry = new Button(this);
-        retry.setText(R.string.setup_retry);
-        retry.setOnClickListener(v -> checkAndStart());
-        box.addView(retry, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT));
-        Button about = new Button(this);
-        about.setText(R.string.menu_about);
-        about.setOnClickListener(v -> showLicenses());
-        box.addView(about, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT));
+        box.addView(cardButton(getText(R.string.setup_extract_files), v -> pickDiscFiles()), cardButtonLp());
+        box.addView(cardButton(getText(R.string.setup_retry), v -> checkAndStart()), cardButtonLp());
+        box.addView(cardButton(getText(R.string.menu_about), v -> showLicenses()), cardButtonLp());
         setContentView(seaScreen(box));
     }
 
@@ -583,6 +801,8 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         }
         root.addView(surface, new FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
         controls = new ControlsView(this, this);
+        itemRing = new ItemRing(this, controls);
+        controls.setItemRing(itemRing);
         root.addView(controls, new FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT,
                 Gravity.CENTER));
         // the file select's Back (B) while no controller is connected, in the game's green button style
@@ -715,14 +935,13 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         box.setOrientation(LinearLayout.VERTICAL);
         int pad = (int) (24 * getResources().getDisplayMetrics().density);
         box.setPadding(pad, pad, pad, pad);
-        TextView t = new TextView(this);
-        t.setTextSize(16);
+        TextView t = cardText();
         t.setText(R.string.cache_loading);
         box.addView(t);
         android.widget.ProgressBar bar = new android.widget.ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
         bar.setMax(1000);
         box.addView(bar);
-        TextView detail = new TextView(this);
+        TextView detail = cardText();
         box.addView(detail);
         View screen = seaScreen(box);
         final SeaView mySea = sea;
@@ -731,20 +950,33 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         screen.setVisibility(View.GONE);
         root.addView(screen, new FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
         final long t0 = android.os.SystemClock.uptimeMillis();
+        // the very first start (no game save): the card covers the game until its title, so the game's "save data
+        // created" message (confirmed by firstStartMessage) is never seen; at most 30 s
+        final boolean saveCover = firstStart && prefs.getBoolean("skip_save_message", true);
         final android.os.Handler h = new android.os.Handler(android.os.Looper.getMainLooper());
         h.post(new Runnable() {
             @Override
             public void run() {
                 long[] p = Native.cacheProgress();
-                if (p[0] == 2 || screen.getParent() != root) {  // done, or the game's screen was replaced
+                long now = android.os.SystemClock.uptimeMillis();
+                int f = Native.frontScreen();
+                boolean saveWait = saveCover && f != Native.FRONT_TITLE && now - t0 < 30000;
+                if ((p[0] == 2 && !saveWait) || screen.getParent() != root) {  // done, or the game's screen was replaced
                     root.removeView(screen);
                     return;
                 }
                 // only while a cache file is replayed (state 1 with a size) or the shader head start is
-                // made from the game files (3), not while the game boots
-                if (screen.getVisibility() != View.VISIBLE && (p[0] == 1 || p[0] == 3) && p[2] > 0
-                        && android.os.SystemClock.uptimeMillis() - t0 > 300)
+                // made from the game files (3), not while the game boots (but from the start at the very first)
+                if (screen.getVisibility() != View.VISIBLE && (saveWait || (p[0] == 1 || p[0] == 3) && p[2] > 0
+                        && now - t0 > 300))
                     screen.setVisibility(View.VISIBLE);
+                if (p[0] == 2 || p[0] == 0) {  // the shaders are done (or not begun): the game boots
+                    t.setText(R.string.bench_step_boot);
+                    detail.setText("");
+                    bar.setProgress(p[0] == 2 ? 1000 : 0);
+                    h.postDelayed(this, 150);
+                    return;
+                }
                 if (p[2] > 0) {
                     bar.setProgress((int) Math.min(1000, p[1] * 1000 / p[2]));
                     mySea.setProgress(Math.min(1f, (float) p[1] / p[2]));
@@ -787,6 +1019,14 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
                 int st = Native.startHoldState();
                 if (st == 0) return;
                 if (st == 1) { h.postDelayed(this, 100); return; }
+                if (tourSlot != 0) {  // the shader tour: its state, then it plays (none: the tour gets there itself)
+                    String[] info = Native.saveSlotInfo(tourSlot);
+                    boolean load = info[0].equals("1") && info[1].equals("1");
+                    if (load) Native.loadState(tourSlot);
+                    else Native.setStartHold(false);
+                    tour = new ShaderTour(MainActivity.this, tourSlot, !load);
+                    return;
+                }
                 // an automatic load that didn't keep running for 20 s (crashed): the picker this time
                 boolean lastFailed = prefs.getBoolean("start_last_trying", false);
                 prefs.edit().putBoolean("start_last_trying", false).commit();
@@ -822,25 +1062,35 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         Native.setOption("ao_mode", prefs.getInt("ao_mode", Native.getOption("ao_mode")));
         Native.setOption("ao_hires", prefs.getBoolean("ao_hires", Native.getOption("ao_hires") != 0) ? 1 : 0);
         Native.setOption("aniso", prefs.getBoolean("aniso", Native.getOption("aniso") != 0) ? 1 : 0);
+        Native.setOption("vsync", prefs.getBoolean("vsync", false) ? 1 : 0);
         Native.setOption("upscale", prefs.getInt("upscale", Native.getOption("upscale")));
         // every controller and the touch controls act as the Wii U GamePad (+ shows its screen, see
         // pushInput); the setting "Controls act as" is gone, as is the Pro Controller mode
         Native.setOption("pro_controller", 0);
         if (prefs.contains("pro_controller")) prefs.edit().remove("pro_controller").apply();
         Native.setOption("invert_camera_y", prefs.getInt("invert_camera_y_mode", 0));
+        Native.setOption("steer_mode", prefs.getInt("steer_mode", 0));
+        Native.setOption("steer_swing", prefs.getBoolean("steer_swing", false) ? 1 : 0);
+        Native.setOption("steer_swing_delay", prefs.getInt("steer_swing_delay", 1000));
+        Native.setOption("steer_resync", prefs.getInt("steer_resync", 1));
         Native.setOption("tv_aspect", prefs.getInt("tv_aspect", 0));
         Native.setOption("render_aspect", prefs.getInt("render_aspect", 0));
+        Native.setOption("view_zoom", viewZoomNow());
         Native.setOption("dyn_res_min", prefs.getInt("dyn_res_min", 0));
         for (String m : MODS) Native.setOption(m, prefs.getBoolean(m, false) ? 1 : 0);
         for (String c : CHEATS_INFINITE) Native.setOption(c, prefs.getBoolean(c, false) ? 1 : 0);
         Native.setOption("cheat_moon_rise", prefs.getInt("cheat_moon_rise", 100));
         Native.setOption("cheat_moon_fly", prefs.getInt("cheat_moon_fly", 100));
         Native.setOption("mod_camera_speed", prefs.getInt("mod_camera_speed", 100));
+        Native.setOption("swipe_boat", prefs.getInt("swipe_boat", 100));
         Native.setOption("mod_jump", prefs.getBoolean("mod_jump", false) ? 1 : 0);
         Native.setOption("mod_jump_double", prefs.getBoolean("mod_jump_double", false) ? 1 : 0);
         Native.setOption("mod_jump_noauto", prefs.getBoolean("mod_jump_noauto", false) ? 1 : 0);
-        Native.setOption("auto_state", prefs.getInt("auto_state", 0));
+        Native.setOption("auto_state", tourSlot != 0 ? 0 : prefs.getInt("auto_state", 0));  // (no states while the tour runs)
         Native.setOption("mod_run_speed", prefs.getInt("mod_run_speed", 100));
+        Native.setOption("link_clothes", prefs.getInt("link_clothes", 0));
+        Native.setOption("postbox_mail", prefs.getBoolean("postbox_mail", true) ? 1 : 0);
+        Native.setOption("postbox_same_day", prefs.getBoolean("postbox_same_day", false) ? 1 : 0);
         Native.setOption("mod_swim_speed", prefs.getInt("mod_swim_speed", 100));
         Native.setOption("mod_run_mode", moveMode("mod_run"));
         Native.setOption("mod_swim_mode", moveMode("mod_swim"));
@@ -852,34 +1102,101 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
 
     void applyControlsAppearance() {
         if (controls == null) return;
-        boolean visible = prefs.getBoolean("controls_visible", true) && !autoHidden;
+        GameIcons.linkPoses = prefs.getBoolean("link_poses", true);  // (before the redraws below)
+        boolean visible = !autoHidden;  // (the old "On-screen controls" switch, controls_visible, is ignored)
         final boolean nw = NEW_TOUCH_CONTROLS;
         controls.setAppearance(visible, prefs.getFloat("controls_scale", 1f), nw ? prefs.getFloat("controls_opacity", 0.45f) : 0.45f);
         boolean flexible = nw && prefs.getInt("controls_style", 0) == 1, swipe = prefs.getInt("touch_camera", 0) == 1;
         controls.setStyle(flexible, prefs.getBoolean("controls_show_sticks", true), swipe);
         controls.setSwipeSpeed(prefs.getFloat("swipe_speed", SWIPE_SPEED_DEFAULT));
         controls.setFilled(nw && prefs.getBoolean("controls_filled", false));
-        // context buttons: the game's button cluster (X, Y, R, B, ZR, A's seat and floating label) is hidden
+        // context buttons: the game's button cluster (X, Y, R, B, ZR, A's seat and floating label) is hidden.
+        // The large Picto Box view (off: the game's original Picto Box and telescope screens): the finder
+        // twice its size (aspect.cpp), zoomed by pinching; the zoom bar and the stick guides (Zoom / Look
+        // around) of the Picto Box and the telescope are hidden, and the album's d-pad icons (swiped instead)
         boolean context = flexible && prefs.getBoolean("context_buttons", false);
+        boolean pictoBig = context && prefs.getBoolean("picto_big", true);
         controls.setContext(context);
-        hudContext = context;
+        controls.setPictoBig(pictoBig);
+        controls.setMinigameTouch(nw && prefs.getBoolean("minigame_touch", true));
+        controls.setConductPads(prefs.getBoolean("conduct_pads", true));
+        controls.setStickFollows(prefs.getBoolean("stick_follows", true));
+        controls.setAfterDefeat(nw ? prefs.getInt("zl_after_defeat", 0) : 0);
+        controls.setItemTap(nw && prefs.getBoolean("item_tap", true));
+        controls.setAimFocus(prefs.getBoolean("item_tap_focus", true));
+        hudContext = context && visible;  // touch controls hidden (by hand, or a controller in use): the game's own back
+        hudPicto = pictoBig;
         applyHudHidden();
+        Native.setOption("picto_big", pictoBig ? 1 : 0);
+        Native.setOption("ring_no_baton", itemRingOn() ? 1 : 0);  // the Wind Waker conducts from the ring, never kept on a button
         Native.setHudFade(0, nw && prefs.getBoolean("hearts_combat", false));
+        Native.setHudFade(2, nw && prefs.getBoolean("hearts_combat", false));  // the magic bar: on its own while used
         Native.setHudFade(1, nw && prefs.getBoolean("rupees_on_change", false));
-        if (!controls.editing()) controls.setLayoutString(nw ? prefs.getString("controls_layout", "") : "");
+        if (!controls.editing()) controls.setLayoutString(nw ? controlsLayout() : "");
         Native.setTouchSwipeCamera(flexible && swipe);
         updateLayout();
     }
 
     // the game's button cluster (X, Y, R, B, ZR, A's seat and floating label): hidden for the context
-    // buttons, and on the file select while no controller is connected (its A OK / B Back icons don't
+    // buttons while they show, and on the file select while no controller is connected (its A OK / B Back icons don't
     // take touches; filesBack stands in for B), and on the GamePad picture's Options / Save while no
     // controller is connected (their A / B hints)
     private static final String HUD_BUTTONS = "N_X_00,N_Y_00,N_R_00,P_B_00,P_ZR_00,P_SetSeatASpecial_00,W_SetSeatA_00,L_CommandA_00";
-    private boolean hudContext, filesTouch, menuTouch;
+    private boolean hudContext, hudPicto, filesTouch, menuTouch, shortcutHidden;
     private TextView filesBack;
 
-    private void applyHudHidden() { Native.setHudHidden(hudContext || filesTouch || menuTouch ? HUD_BUTTONS : ""); }
+    // (Large Picto Box view: its zoom bar, stick guides and d-pad icons too; the game's d-pad in play
+    // (Shortcut_00: Wind Waker, cannon, salvage arm) while the item ring has them: Flexible style, no
+    // controller connected, ControlsView.dpadInRing)
+    private void applyHudHidden() {
+        Native.setHudHidden((hudContext || filesTouch || menuTouch ? HUD_BUTTONS : "")
+                + (hudPicto ? ",N_Zoom_00,P_LStick_00,P_RStick_00,N_ControlPad_00" : "")
+                + (shortcutHidden ? ",N_Shortcut_00" : "") + slotHidden);
+    }
+
+    // the item buttons' names on the game's HUD and its drop slots, and on the touch buttons (Controls > Item button
+    // names): 0 Auto (no controller: A1 A2 A3; a controller: the button that presses it, InputMapper.shortName), 1 A1 A2
+    // A3, 2 the game's X Y R. A1 is Y (leftmost of the GamePad's drop slots), A2 X, A3 R. An item button a jump took off
+    // (Auto with a controller): hidden there
+    private static final int[] SLOT_WIIU = {2, 3, 5};  // X, Y, R in InputMapper.WIIU
+    private static final String[] SLOT_LETTER = {"X", "Y", "R"}, SLOT_ACTION = {"A2", "A1", "A3"};
+    private String slotLabels = "", slotHidden = "";
+
+    void setSlotLabelMode(int mode) {
+        prefs.edit().putInt("slot_labels", mode).apply();
+        applySlotLabels(controllerConnected());
+    }
+
+    void applySlotLabels(boolean pad) {
+        int mode = prefs.getInt("slot_labels", 0);
+        String[] l = mode == 2 ? SLOT_LETTER.clone() : mode == 1 || !pad ? SLOT_ACTION.clone() : new String[3];
+        StringBuilder hide = new StringBuilder();
+        for (int k = 0; k < 3; k++) {
+            if (l[k] != null) continue;
+            l[k] = InputMapper.shortName(mapper.map[SLOT_WIIU[k]]);
+            if (l[k] != null) continue;
+            l[k] = SLOT_LETTER[k];
+            String c = SLOT_LETTER[k];  // HUD cluster; the drop slot's button, frame and highlight
+            hide.append(",N_").append(c).append("_00,P_").append(c).append("_00,W_").append(c).append("DropSlide_00,W_")
+                    .append(c).append("DropSlideFloat_00,W_").append(c).append("DropSlideSwich_00");
+        }
+        String s = String.join(",", l);
+        if (!s.equals(slotLabels)) {
+            slotLabels = s;
+            Native.setSlotLabels(s);
+            if (controls != null) controls.setSlotLabels(l);
+        }
+        if (!hide.toString().equals(slotHidden)) {
+            slotHidden = hide.toString();
+            applyHudHidden();
+        }
+    }
+
+    private void setShortcutHidden(boolean on) {
+        if (on == shortcutHidden) return;
+        shortcutHidden = on;
+        applyHudHidden();
+    }
 
     /** the game's Options on the GamePad picture (its rows: L_BtnOption_*; targets as of the last frame) */
     private boolean optionsOpen() {
@@ -902,12 +1219,15 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         if (filesBack != null) filesBack.setVisibility(on ? View.VISIBLE : View.GONE);
     }
 
-    private static boolean controllerConnected() {
+    private static boolean controllerConnected() { return firstController() != null; }
+
+    /** the first connected controller, or null */
+    static InputDevice firstController() {
         for (int id : InputDevice.getDeviceIds()) {
             InputDevice d = InputDevice.getDevice(id);
-            if (d != null && !d.isVirtual() && InputMapper.isController(d)) return true;
+            if (d != null && !d.isVirtual() && InputMapper.isController(d)) return d;
         }
-        return false;
+        return null;
     }
 
     // ------------------------------------------------------------------ surface and screen layout
@@ -997,6 +1317,8 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
             drcShown = false;
         }
         controls.setScreenButton(layout == LAYOUT_ON_DEMAND, drcShown);
+        controls.setMenuInInventory(menuInInventory());
+        Native.setItemSheetLeft(menuInInventory());
         // the inset sits between the shoulder buttons, sized to leave them free
         float insetW = Math.min(W * 0.3f, W - 2 * (Math.min(W, H) / 7f * 3.6f));
         RectF inset = new RectF((W - insetW) / 2, 0, (W + insetW) / 2, insetW / DRC_ASPECT);
@@ -1036,18 +1358,56 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         controls.setClimbHud(prefs.getBoolean("mod_climb", false));
         controls.setPerfHud(prefs.getBoolean("perf_hud", false));
         controls.setPerfItems(prefs.getInt("perf_items", ControlsView.PERF_ALL));
-        mapper.loadMap(prefs.getString("pad_map", ""));
+        loadButtonMap();
         controls.perfSettings = this::perfSettingsLines;
         controls.setPerfPosition(prefs.getFloat("perf_x", -1), prefs.getFloat("perf_y", -1));
     }
 
     // ------------------------------------------------------------------ input
+    private ItemRing itemRing;
     private boolean plusHeld;
 
+    void repushInput() { pushInput(); }
+
+    /** the game in play: no event, no pause menu, not the GamePad picture (as ItemRing.eligible) */
+    private boolean padInPlay() {
+        if (drcScreen()) return false;
+        int[] s = Native.touchState();
+        return s[0] != 0 && s[8] == 0 && s[9] == 0;
+    }
+
     private void pushInput() {
+        if (benchRunning) {  // the benchmark's input only (no touch, no controller; the first start's confirm press)
+            Native.setPad(mapper.pulseButtons(), 0, 0, benchCamera ? 1 : 0, 0);
+            return;
+        }
+        if (tour != null) {  // the shader tour's input only
+            Native.setPad(tour.buttons, tour.lx, tour.ly, tour.rx, tour.ry);
+            return;
+        }
         if (controls == null) return;
         // − only swapped the TV and GamePad pictures (the GamePad is the only controller now): never sent
-        int b = (controls.buttons() | mapper.padButtons | mapper.keyButtons) & ~Native.MINUS;
+        int touchB = controls.buttons();
+        int b = (touchB | mapper.padButtons | mapper.keyButtons) & ~Native.MINUS;
+        // an item button on d-pad down (InputMapper.setExtraItem) only in play: elsewhere it is d-pad down
+        int downItem = mapper.downItemBits();
+        if (downItem != 0 && !padInPlay()) b &= ~downItem;
+        // a touch hint (GameHint) shows: a controller's / the keyboard's buttons and stick work its choices, the game
+        // gets none of them (nor the press that closed it, until it is let go)
+        if (controls.hintPad(mapper.padButtons | mapper.keyButtons, pick(0, mapper.ly, mapper.keyLY()))) {
+            Native.setPad(0, 0, 0, 0, 0);
+            return;
+        }
+        // singing the songs: L on a controller holds the mic button (not for the game while Link conducts, or when
+        // no mod of ours uses L)
+        if (songs != null) {
+            boolean padL = songs.buttonShown() && ((mapper.padButtons | mapper.keyButtons) & Native.L) != 0;
+            if (padL != padLHeld) {
+                padLHeld = padL;
+                songs.setHeld(false, padL);
+            }
+            if (padL) b &= ~(songs.conducting() ? Native.L | Native.JUMP | Native.MOON : Native.L);  // (a jump on its button still jumps)
+        }
         // + (touch or controller) shows or hides the full GamePad picture, unless the GamePad has a
         // display of its own: there + goes to the game
         if (!drcOnOwnDisplay() && front != Native.FRONT_OPENING) {  // (the opening: + is the game's skip)
@@ -1059,16 +1419,22 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         boolean focus = focusMode(), ownStick = focus && !Native.drcGameCursor();  // (the game's cursor: the stick is the game's too)
         if (focus) {  // the controller works the GamePad screen through its touch targets (focusTick)
             int pad = mapper.padButtons | mapper.keyButtons;
+            // d-pad down with an item button on it: moves the highlight; with ZL held it puts the item there
+            if (downItem != 0) {
+                boolean zl = (pad & Native.ZL) != 0;
+                pad &= zl ? ~Native.DOWN : ~downItem;
+                if (zl) b &= ~Native.ZL;
+            }
             if (!Native.drcGameCursor()) {  // (where the game has its own cursor, its buttons are the game's)
                 int pressed = pad & ~focusPad;
                 if ((pressed & Native.B) != 0 && touchAt == 0) touchAt = -2;  // B: the game's Back, else back to the game (focusTick)
                 if ((pressed & Native.A) != 0 && touchAt == 0) touchAt = -1;  // A: a tap (focusTick)
                 int slot = (pressed & Native.Y) != 0 ? 0 : (pressed & Native.X) != 0 ? 1 : (pressed & Native.R) != 0 ? 2 : -1;
                 if (slot >= 0 && touchAt == 0) touchSlot = slot;  // Y / X / R: the item onto that button
-                if ((pressed & Native.UP) != 0) focusMove(0, -1);
-                if ((pressed & Native.DOWN) != 0) focusMove(0, 1);
-                if ((pressed & Native.LEFT) != 0) focusMove(-1, 0);
-                if ((pressed & Native.RIGHT) != 0) focusMove(1, 0);
+                if ((pressed & Native.UP) != 0) focusMove(0, -1, true);
+                if ((pressed & Native.DOWN) != 0) focusMove(0, 1, true);
+                if ((pressed & Native.LEFT) != 0) focusMove(-1, 0, true);
+                if ((pressed & Native.RIGHT) != 0) focusMove(1, 0, true);
                 b &= ~(Native.A | Native.B | Native.X | Native.Y | Native.R | Native.UP | Native.DOWN | Native.LEFT | Native.RIGHT);
             }
             focusPad = pad;
@@ -1076,9 +1442,36 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         if (focus || drcScreen()) startFocusTick();
         float lx = ownStick ? 0 : pick(controls.stickX(0), mapper.lx, mapper.keyLX());
         float ly = ownStick ? 0 : pick(controls.stickY(0), mapper.ly, mapper.keyLY());
+        if (itemRing != null) {  // X / Y / R held for the item ring (ItemRing)
+            b = itemRing.filter(b, touchB, pick(0, mapper.lx, mapper.keyLX()), pick(0, mapper.ly, mapper.keyLY()));
+            if (itemRing.takesLeftStick()) lx = ly = 0;
+        }
         float rx = pick(controls.stickX(1), mapper.rx, mapper.keyRX());
         float ry = pick(controls.stickY(1), mapper.ry, mapper.keyRY());
         if (mapper.keyLX() != 0 && mapper.keyLY() != 0) { lx *= 0.7071f; ly *= 0.7071f; }
+        if (controls.conductPads()) {  // conducting by the note pads: the time pad is the stick, the note pad the C stick (ControlsView)
+            int beat = controls.conductTime(), dir = controls.conductNote();
+            lx = pick(beat == 4 ? -1 : beat == 6 ? 1 : 0, mapper.lx, mapper.keyLX());
+            rx = pick(dir == 2 ? 1 : dir == 4 ? -1 : 0, mapper.rx, mapper.keyRX());
+            ry = pick(dir == 1 ? 1 : dir == 3 ? -1 : 0, mapper.ry, mapper.keyRY());
+        }
+        if (songs != null && songs.timeBySwitch()) {  // conducting: the time switch's time (SongListener)
+            int beat = songs.beat();
+            lx = beat == 4 ? -1 : beat == 6 ? 1 : 0;
+            ly = 0;
+            if (songs.conductsByVoice() || songs.nudging()) {  // the mic button held: the note sung (or a song handed over)
+                int dir = songs.cStick();
+                rx = dir == 2 ? 1 : dir == 4 ? -1 : 0;
+                ry = dir == 1 ? 1 : dir == 3 ? -1 : 0;
+            }
+        }
+        if (songs != null && songs.listTime() != 0) {  // a song from the list's play button: its time, the C stick up (SongListener)
+            int beat = songs.listTime();
+            lx = beat == 4 ? -1 : beat == 6 ? 1 : 0;
+            ly = 0;
+            rx = 0;
+            ry = 1;
+        }
         Native.setPad(b, lx, ly, rx, ry);
     }
 
@@ -1114,6 +1507,38 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         for (Target t : targets)
             if (t.name.equals(SLOT_BOXES[i]) && t.x > 0f && t.x < 1f && (best == null || Math.abs(t.x - 0.5f) < Math.abs(best.x - 0.5f))) best = t;
         return best;
+    }
+
+    // a finger held on an item button's drop box (from its touch down) for SLOT_HOLD_MS empties that button: the game
+    // has no way to (a controller: its button on the item already on it, focusFrame)
+    private static final long SLOT_HOLD_MS = 600;
+    private int holdBox = -1;
+    private long holdSince;
+    private boolean holdDone;
+
+    private void slotHold(long ms) {
+        int k = -1;
+        for (int i = 0; i < 3 && k < 0 && ControlsView.fingerDown; i++) {
+            Target b = slotBox(i);
+            if (b != null && inBox(b, ControlsView.fingerX, ControlsView.fingerY) && inBox(b, ControlsView.fingerStartX, ControlsView.fingerStartY)) k = i;
+        }
+        if (k != holdBox) {
+            holdBox = k;
+            holdSince = ms;
+            holdDone = false;
+        } else if (k >= 0 && !holdDone && ms - holdSince >= SLOT_HOLD_MS) {
+            holdDone = true;
+            int[] ring = Native.itemRing();
+            int btn = SLOT_BUTTON[k];
+            if (ring.length > 21 + btn && ring[0] != -1 && ring[21 + btn] != 0xFF) {
+                Native.equipItem(btn, 0xFF);
+                controls.performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS);
+            }
+        }
+    }
+
+    private static boolean inBox(Target t, float x, float y) {
+        return Math.abs(x - t.x) <= t.w / 2 && Math.abs(y - t.y) <= t.h / 2;
     }
 
     /** the game's Back button on the screen now (an open bag or chart: L_BtnBack_00), or null */
@@ -1194,6 +1619,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
             targets.clear();
             targets.add(view);
         }
+        addOptionsArrow();
     }
 
     private boolean backOnly, wasBackOnly;  // readTargets: only the game's Back button (A and B tap it), no highlight
@@ -1250,11 +1676,17 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
 
     private static float dist(float dx, float dy) { return (float) Math.hypot(dx * 16f / 9f, dy); }
 
-    /** the highlight to the next target in direction dx, dy */
-    private void focusMove(int dx, int dy) {
+    /** the highlight to the next target in direction dx, dy; on a page arrow pointing that way, a fresh press (turn:
+     * not a held stick's repeat, which would run on through the pages) turns the page, as A on it */
+    private void focusMove(int dx, int dy, boolean turn) {
         readTargets();
         Target cur = focused();
         if (cur == null) return;
+        boolean left = cur.key.equals(OPTIONS_ARROW) || cur.key.startsWith("L_MenuArrowL_"), right = cur.key.startsWith("L_MenuArrowR_");
+        if (dy == 0 && ((left && dx < 0) || (right && dx > 0))) {
+            if (turn && touchAt == 0) touchAt = -1;
+            return;
+        }
         Target best = null;
         float bs = Float.MAX_VALUE;
         for (Target t : targets) {
@@ -1285,17 +1717,24 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
                 if (controls != null) controls.setFocus(false, 0, 0, 0, 0, false);
                 if (controls == null || !screen) {
                     pauseForMenu(false);
+                    if (controls != null) controls.setOptionsArrow(false, 0, 0, 0, 0);
                     focusTicking = false;
                     return;
                 }
                 pauseForMenu(true);
                 readTargets();  // touch only: still follows the chart views (which square a finger opened)
+                slotHold(now / 1000000);
+                optionsArrow();
+                strayPages();
                 trackView();
                 android.view.Choreographer.getInstance().postFrameCallback(this);
                 return;
             }
             pauseForMenu(true);
             readTargets();
+            slotHold(now / 1000000);
+            optionsArrow();
+            strayPages();
             trackView();
             Target cur = game ? null : focused();
             if (cur != null) setFocused(cur);
@@ -1341,6 +1780,174 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         viewOpen = open != null;
     }
 
+    // ---- the options as a page of the GamePad inventory (Controls > Menu button in the game off): an arrow left of
+    // the items page, where the game's own left arrow sits on the page right of it, opens them; they slide in
+    // from the left and go back to the inventory (OptionsMenu inInventory)
+    private static final String OPTIONS_ARROW = "app/options";
+
+    boolean menuInInventory() { return !prefs.getBoolean("menu_overlay", false) && !drcOnOwnDisplay(); }
+
+    void setMenuOverlay(boolean on) {
+        prefs.edit().putBoolean("menu_overlay", on).apply();
+        if (controls != null) controls.setMenuInInventory(menuInInventory());
+        // (switched on from the options page in the inventory: the paper stays under it until it has slid away)
+        Native.setItemSheetLeft(menuInInventory() || (optionsPage != null && optionsPage.isShowing()));
+    }
+
+    /** the arrow on the items page (the game's right arrow there, no left one): a target too, for the controller
+     * (readTargets, each time it reads them) */
+    private void addOptionsArrow() {
+        Target r = null;
+        boolean leftArrow = false;
+        for (Target t : targets) {
+            if (t.key.startsWith("L_MenuArrowR_")) r = t;
+            if (t.key.startsWith("L_MenuArrowL_") || t.key.startsWith("L_BtnBack_")) leftArrow = true;
+        }
+        if (r == null || leftArrow || Native.drcGameCursor() || !menuInInventory()) return;
+        Target a = new Target();
+        a.key = a.name = OPTIONS_ARROW;
+        a.x = 1f - r.x;  // (the game's arrows sit mirrored: L_MenuArrowL_00 at -686, R at +686)
+        a.y = r.y;
+        a.w = r.w;
+        a.h = r.h;
+        targets.add(a);
+    }
+
+    /** the pages left of the items with no options page there (a save state taken while it was out): back to the items */
+    private void strayPages() {
+        if (Native.itemPageX() > 0.5f && (optionsPage == null || !optionsPage.isShowing()) && !Native.itemPageGliding())
+            Native.setItemPageDrag(2, 0);
+    }
+
+    private void optionsArrow() {
+        for (Target a : targets)  // (it fades as the pages move: gone once the options page is out)
+            if (a.key.equals(OPTIONS_ARROW) && Native.itemPageX() < 1279f) {
+                controls.setOptionsArrow(true, a.x, a.y, a.w, a.h * 148f / 128f);  // (its hit box is 128 of the part's 148 units high)
+                controls.setOptionsArrowAlpha(1f - Math.min(1f, Math.abs(Native.itemPageX()) / 1280f));  // (out as another page comes in)
+                return;
+            }
+        controls.setOptionsArrow(false, 0, 0, 0, 0);
+    }
+
+    private OptionsMenu optionsPage;
+    private boolean pageReady;  // optionsPage is built (prepareOptionsPage) and not shown yet
+
+    // the page is built a moment after the inventory opens (~0.2 s of views on a phone, which held up the arrow's
+    // tap): the tap then only shows it
+    private final Runnable prepareOptionsPage = () -> {
+        if (!drcScreen() || !menuInInventory() || pageReady || (optionsPage != null && optionsPage.isShowing())) return;
+        optionsPage = new OptionsMenu(this, false, true);
+        optionsPage.create();
+        optionsPage.layOutAhead();
+        pageReady = true;
+    };
+
+    ControlsView controlsView() { return controls; }
+
+    private LayoutPresets layoutPresets;
+
+    LayoutPresets layoutPresets() {
+        if (layoutPresets == null) layoutPresets = new LayoutPresets(this);
+        return layoutPresets;
+    }
+
+    @Override
+    public void onOptionsPage() {
+        if (optionsPage != null && optionsPage.isShowing()) return;
+        if (focusTouch) touchTo(false, touchX, touchY);
+        controls.removeCallbacks(prepareOptionsPage);
+        if (!pageReady) optionsPage = new OptionsMenu(this, false, true);
+        pageReady = false;
+        optionsPage.show();
+        optionsPage.slideIn();
+    }
+
+    /** from the options page to the game (an action that shows its effect there: a state loaded...) */
+    void leaveInventory() {
+        if (drcShown && !drcForFiles) onScreenToggle();
+    }
+
+    @Override
+    public boolean pageSwipeFrom(float x, float y) {
+        if (pageArrow("L_MenuArrowR_") == null && pageArrow("L_MenuArrowL_") == null) return false;  // not the item pages
+        if (Native.drcGameCursor() || backButton() != null) return false;  // its Options / Save, an open bag
+        for (Target t : targets)
+            if (Math.abs(x - t.x) <= t.w / 2 && Math.abs(y - t.y) <= t.h / 2) return false;
+        return true;
+    }
+
+    /** the game's page arrow on the screen now (its hit box), or null */
+    private Target pageArrow(String prefix) {
+        for (Target t : targets)
+            if (t.key.startsWith(prefix)) return t;
+        return null;
+    }
+
+    @Override
+    public void onGamePageDrag(float dx) {
+        // (left of the items only to the options page: with the menu button on there is none)
+        if (!menuInInventory() && pageArrow("L_MenuArrowL_") == null) dx = Math.min(0, dx);
+        Native.setItemPageDrag(1, dx);
+    }
+
+    // past a quarter of the screen or flicked, and the game has a page that way: they glide there, then a tap on its
+    // arrow switches the game's state (its slide has nothing left to move); else they glide back
+    @Override
+    public void onGamePageDragEnd(float dx, float v) {
+        boolean go = Math.abs(dx) > 320 || (Math.abs(v) > 1500 && Math.signum(v) == Math.signum(dx));
+        Target t = !go ? null : pageArrow(dx > 0 ? "L_MenuArrowL_" : "L_MenuArrowR_");
+        float base = pageArrow("L_MenuArrowL_") != null ? -1280 : 0;  // (the page right of the items shows the left arrow)
+        Native.setItemPageDrag(2, t == null ? base : dx > 0 ? 0 : -1280);
+        if (t != null) tapWhenArrived(t, android.os.SystemClock.uptimeMillis() + 1000);
+    }
+
+    private void tapWhenArrived(Target t, long until) {
+        if (Native.itemPageGliding() && android.os.SystemClock.uptimeMillis() < until) {
+            controls.postDelayed(() -> tapWhenArrived(t, until), 16);
+            return;
+        }
+        Native.setItemPageDrag(0, 0);
+        Native.setDrcTouch(true, ControlsView.pictureU(t.x), ControlsView.pictureV(t.y));  // a tap on it, long enough for the game to see
+        controls.postDelayed(() -> Native.setDrcTouch(false, ControlsView.pictureU(t.x), ControlsView.pictureV(t.y)), TAP_MS);
+    }
+
+    // a drag to the right on the items page: the pages follow (the options page with them); let go past a quarter of
+    // the screen or flicked, they glide on to it, else back (and the page closes)
+    @Override
+    public void onPageDrag(float dx) {
+        if (optionsPage == null || !optionsPage.isShowing()) {
+            controls.removeCallbacks(prepareOptionsPage);
+            if (!pageReady) prepareOptionsPage.run();
+            if (!pageReady) return;
+            pageReady = false;
+            optionsPage.show();
+        }
+        Native.setItemPageDrag(1, Math.max(0, dx));
+    }
+
+    @Override
+    public void onPageDragEnd(float dx, float v) {
+        if (optionsPage != null && optionsPage.isShowing()) optionsPage.dragEnd(dx > 0 && v >= 0 && (dx > 320 || v > 1500));
+        else Native.setItemPageDrag(2, 0);
+    }
+
+    /** the back key in the + menu, as B there: the game's Options / Save close, else its Back button (an open bag or
+     * chart) is tapped, else back to the game */
+    private void inventoryBack() {
+        if (Native.drcGameCursor()) { controls.pulse(Native.B); return; }
+        Target back = backButton();
+        if (back == null) { onScreenToggle(); return; }
+        Native.setDrcTouch(true, ControlsView.pictureU(back.x), ControlsView.pictureV(back.y));
+        controls.postDelayed(() -> Native.setDrcTouch(false, ControlsView.pictureU(back.x), ControlsView.pictureV(back.y)), TAP_MS);
+    }
+
+    /** the page slid back to the inventory: the next one is built ahead again */
+    void optionsPageClosed() {
+        Native.setItemSheetLeft(menuInInventory());
+        controls.removeCallbacks(prepareOptionsPage);
+        controls.postDelayed(prepareOptionsPage, 400);
+    }
+
     private void focusFrame(boolean game, Target cur) {
         // the left stick: a tilt moves the highlight once, held it repeats
         float x = pick(mapper.lx, mapper.keyLX(), 0), y = pick(mapper.ly, mapper.keyLY(), 0);
@@ -1349,17 +1956,23 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
             if (ms >= stickRepeatAt) {
                 boolean first = stickRepeatAt == 0;
                 stickRepeatAt = ms + (first ? 350 : 140);
-                if (Math.abs(x) > Math.abs(y)) focusMove(x > 0 ? 1 : -1, 0);
-                else focusMove(0, y > 0 ? -1 : 1);
+                if (Math.abs(x) > Math.abs(y)) focusMove(x > 0 ? 1 : -1, 0, first);
+                else focusMove(0, y > 0 ? -1 : 1, first);
                 cur = focused();
             }
         } else {
             stickRepeatAt = 0;
         }
-        // Y / X / R on an item: down on it, hold, slide to the drop box, hold, let go (as a finger)
+        // Y / X / R on an item: down on it, hold, slide to the drop box, hold, let go (as a finger); on the item that
+        // button has already: the button is left empty
         if (touchSlot >= 0 && touchAt == 0) {
             Target box = slotBox(touchSlot);
-            if (cur != null && box != null && cur.key.contains("L_BtnItemIcon")) {
+            int btn = SLOT_BUTTON[touchSlot], inv = cur != null ? itemPageSlot(cur.key) : -1;
+            int[] ring = inv >= 0 ? Native.itemRing() : null;
+            if (ring != null && ring.length > 21 + btn && ring[0] != -1 && ring[21 + btn] == inv) {
+                Native.equipItem(btn, 0xFF);
+                touchSlot = -1;
+            } else if (cur != null && box != null && cur.key.contains("L_BtnItemIcon")) {
                 fromX = cur.x;
                 fromY = cur.y;
                 toX = box.x;
@@ -1384,7 +1997,13 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
             }
         } else if (touchAt == -1) {  // A: a tap on the highlight
             if (cur != null && cur.key.startsWith(TILE)) tile = Integer.parseInt(cur.key.substring(TILE.length()));
-            if (cur != null) {
+            if (cur != null && cur.key.equals(OPTIONS_ARROW)) {
+                touchAt = 0;
+                controls.post(() -> {
+                    onOptionsPage();
+                    if (optionsPage != null) optionsPage.openedByController();
+                });
+            } else if (cur != null) {
                 touchAt = ms;
                 touchTo(true, cur.x, cur.y);
             } else {
@@ -1408,8 +2027,25 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
                 touchSlot = -1;
             }
         }
-        if (cur == null || backOnly) controls.setFocus(false, 0, 0, 0, 0, false);
+        // (the options page out: it has its own cursor, the arrow's would stay under it)
+        if (cur == null || backOnly || (optionsPage != null && optionsPage.isShowing())) controls.setFocus(false, 0, 0, 0, 0, false);
         else controls.setFocus(true, cur.x, cur.y, cur.w, cur.h, focusTouch);
+    }
+
+    // touchSlot (Y, X, R) -> the save's item button (X, Y, R); the item page's slots L_BtnItemIcon_00..18 -> inventory
+    // slots (as aspect.cpp kItemPageSlot)
+    private static final int[] SLOT_BUTTON = {1, 0, 2};
+    private static final int[] ITEM_PAGE_SLOT = {0, 18, 3, 6, 13, 14, 15, 7, 11, 5, 12, 19, 16, 17, 8, 4, 20, 9, 10};
+
+    /** the inventory slot of an item page target ("L_BtnItemIcon_NN/..."), else -1 */
+    private static int itemPageSlot(String key) {
+        if (!key.startsWith("L_BtnItemIcon_") || key.length() < 16) return -1;
+        try {
+            int i = Integer.parseInt(key.substring(14, 16));
+            return i < ITEM_PAGE_SLOT.length ? ITEM_PAGE_SLOT[i] : -1;
+        } catch (NumberFormatException e) {
+            return -1;
+        }
     }
 
     private static float pick(float a, float b, float c) {
@@ -1426,10 +2062,57 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     private Rumble rumble;
     private InputDevice lastController;  // the controller in use, null while playing by touch
 
+    // where they come from (Controls > Motion controls / Rumble, offered while a controller and this device both
+    // have them): automatic (the input in use, as above), this device, a controller (the one in use, else the first
+    // connected that has them; none: this device), both (rumble only)
+    static final int SRC_AUTO = 0, SRC_DEVICE = 1, SRC_CONTROLLER = 2, SRC_BOTH = 3;
+
     private void startMotion() {
         if (motion == null) motion = new MotionInput(this);
-        if (prefs.getBoolean("motion", true)) motion.start(lastController);
+        if (prefs.getBoolean("motion", true)) motion.start(motionController());
         else motion.stop();
+    }
+
+    /** the controller whose sensors aim, or null: this device's */
+    private InputDevice motionController() {
+        switch (prefs.getInt("motion_from", SRC_AUTO)) {
+            case SRC_DEVICE: return null;
+            case SRC_CONTROLLER: return lastController != null && MotionInput.hasMotion(lastController) ? lastController : firstWith(true);
+            default: return lastController;
+        }
+    }
+
+    /** the controller that rumbles (with this device too for SRC_BOTH), or null: this device */
+    private InputDevice rumbleController() {
+        int src = prefs.getInt("rumble_on", SRC_AUTO);
+        if (src == SRC_DEVICE) return null;
+        if (src == SRC_AUTO) return lastController;
+        return lastController != null && ControllerInfo.hasRumble(lastController) ? lastController : firstWith(false);
+    }
+
+    /** the first connected controller with motion sensors (motion) or rumble, or null */
+    private static InputDevice firstWith(boolean motion) {
+        for (InputDevice d : ControllerInfo.connected(null))
+            if (motion ? MotionInput.hasMotion(d) : ControllerInfo.hasRumble(d)) return d;
+        return null;
+    }
+
+    /** a connected controller and this device both have motion sensors (motion) or rumble: the source is a choice */
+    boolean sourceChoice(boolean motion) {
+        if (firstWith(motion) == null) return false;
+        if (!motion) return Rumble.deviceVibrator(this) != null;
+        android.hardware.SensorManager m = (android.hardware.SensorManager) getSystemService(SENSOR_SERVICE);
+        return m.getDefaultSensor(android.hardware.Sensor.TYPE_GYROSCOPE) != null && m.getDefaultSensor(android.hardware.Sensor.TYPE_ACCELEROMETER) != null;
+    }
+
+    void setMotionFrom(int src) {
+        prefs.edit().putInt("motion_from", src).apply();
+        if (started) startMotion();
+    }
+
+    void setRumbleOn(int src) {
+        prefs.edit().putInt("rumble_on", src).apply();
+        rumbler().setController(rumbleController(), src == SRC_BOTH);
     }
 
     void setMotion(boolean on) {
@@ -1447,6 +2130,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         if (rumble == null) {
             rumble = new Rumble(this);
             rumble.enabled = prefs.getBoolean("rumble", true);
+            rumble.setController(rumbleController(), prefs.getInt("rumble_on", SRC_AUTO) == SRC_BOTH);
         }
         return rumble;
     }
@@ -1456,7 +2140,8 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         if (d == lastController || (d != null && lastController != null && d.getId() == lastController.getId())) return;
         if (debuggable()) Log.d(TAG, "input source: " + (d == null ? "touch" : d.getName() + " (motion " + MotionInput.hasMotion(d) + ")"));
         lastController = d;
-        rumbler().setController(d);
+        if (d != null) usePadMap(d);
+        rumbler().setController(rumbleController(), prefs.getInt("rumble_on", SRC_AUTO) == SRC_BOTH);
         if (started) startMotion();
     }
 
@@ -1465,6 +2150,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     private void controllerUsed(InputDevice d) {
         if (d != null && InputMapper.isController(d)) {
             inputSource(d);
+            maybeOfferSetup(d);
             // a controller's sensors can come up after its first input (just connected): check
             // again now and then while the device's sensors stand in for them
             long now = android.os.SystemClock.uptimeMillis();
@@ -1505,6 +2191,11 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         drcShown = !drcShown;
         drcForFiles = false;
         updateLayout();
+        if (controls != null) {
+            controls.removeCallbacks(prepareOptionsPage);
+            if (drcShown) controls.postDelayed(prepareOptionsPage, 400);
+            else if (pageReady) { optionsPage = null; pageReady = false; }  // (never shown: nothing to close)
+        }
         pushInput();  // the switch let go of the touch +: else it still counts as held and the next + is lost
     }
 
@@ -1513,9 +2204,19 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         if (controls != null) controls.setEditing(true);
     }
 
+    // Classic and Flexible each keep their own layout; Flexible starts from the layout both shared before
+    private String controlsLayoutKey() {
+        return NEW_TOUCH_CONTROLS && prefs.getInt("controls_style", 0) == 1 ? "controls_layout_flex" : "controls_layout";
+    }
+
+    private String controlsLayout() {
+        String k = controlsLayoutKey();
+        return prefs.getString(k, k.equals("controls_layout") ? "" : prefs.getString("controls_layout", ""));
+    }
+
     @Override
     public void onLayoutEdited(String layout, float opacity, boolean filled) {
-        prefs.edit().putString("controls_layout", layout).putFloat("controls_opacity", opacity).putBoolean("controls_filled", filled).apply();
+        prefs.edit().putString(controlsLayoutKey(), layout).putFloat("controls_opacity", opacity).putBoolean("controls_filled", filled).apply();
         applyControlsAppearance();
     }
 
@@ -1594,8 +2295,8 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         if (!started) return super.dispatchKeyEvent(e);
         int code = e.getKeyCode();
         boolean controller = InputMapper.isController(e.getDevice()) || KeyEvent.isGamepadButton(code);
-        if (code == KeyEvent.KEYCODE_BACK && !controller) {
-            if (e.getAction() == KeyEvent.ACTION_UP) onMenu();
+        if (code == KeyEvent.KEYCODE_BACK && !controller) {  // the menu's shortcut, in the + menu a step back instead
+            if (e.getAction() == KeyEvent.ACTION_UP) menuOrBack();
             return true;
         }
         if (code == KeyEvent.KEYCODE_VOLUME_UP || code == KeyEvent.KEYCODE_VOLUME_DOWN || code == KeyEvent.KEYCODE_VOLUME_MUTE)
@@ -1606,7 +2307,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
             return true;
         }
         if (controller && code == KeyEvent.KEYCODE_BUTTON_MODE) {  // Home / Guide, where the system passes it on
-            if (e.getAction() == KeyEvent.ACTION_UP) onMenu();
+            if (e.getAction() == KeyEvent.ACTION_UP) menuOrBack();
             return true;
         }
         if (mapper.onKey(e)) {
@@ -1625,8 +2326,14 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     private final Runnable selectHeld = () -> {
         if (!selectDown) return;
         selectOpenedMenu = true;
-        onMenu();
+        menuOrBack();
     };
+
+    /** the menu's shortcuts (back key, Select held, Home / Guide): the options menu; in the + menu a step back */
+    private void menuOrBack() {
+        if (drcScreen()) inventoryBack();
+        else onMenu();
+    }
 
     private void selectButton(KeyEvent e) {
         controllerUsed(e.getDevice());
@@ -1666,8 +2373,14 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
 
     @Override
     public boolean dispatchGenericMotionEvent(MotionEvent e) {
+        // a mouse's wheel (also a touchpad's two-finger scroll): Mods > First person on the mouse wheel (camera.cpp)
+        if (started && e.isFromSource(android.view.InputDevice.SOURCE_MOUSE) && e.getActionMasked() == MotionEvent.ACTION_SCROLL) {
+            float v = e.getAxisValue(MotionEvent.AXIS_VSCROLL);
+            if (v != 0) Native.mouseWheel(v);
+            return true;
+        }
         if (started && mapper.onMotion(e)) {
-            controllerUsed(e.getDevice());
+            if (mapper.motionActive) controllerUsed(e.getDevice());
             pushInput();
             return true;
         }
@@ -1691,9 +2404,12 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     protected void onPause() {
         super.onPause();
         resumed = false;
+        if (itemRing != null) itemRing.cancel();  // a paused game can't save
+        if (songs != null) songs.pause();
         // Android may end the app any time once it's in the background, without a word: the moment it
         // leaves is the last chance for a state (taken now while the game still runs, written after)
-        if (started && prefs.getBoolean("leave_state", false)) Native.saveStateOnLeave();
+        if (started && !benchRunning && tourSlot == 0 && prefs.getBoolean("leave_state", false)) Native.saveStateOnLeave();
+        if (benchRunning) Benchmark.interrupted();
         updateDrcDisplay();
         if (started) Native.setPaused(true);
         if (motion != null) motion.stop();
@@ -1709,6 +2425,9 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
             Native.setPaused(false);
             startMotion();
         }
+        if (controls != null) controls.resumed();
+        if (songs == null) songs = new SongListener(this);
+        songs.resume();
         hideSystemBars();
     }
 
@@ -1736,18 +2455,115 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
 
     void assignButton(int wiiuIndex, int code) {
         mapper.assign(wiiuIndex, code);
-        prefs.edit().putString("pad_map", mapper.mapString()).apply();
+        savePadMap();
+    }
+
+    /** Jump anywhere's / the moon jump's controller button (InputMapper.assignOwn) */
+    void assignOwnButton(int ownIndex, int code, boolean remove) {
+        mapper.assignOwn(ownIndex, code, remove);
+        savePadMap();
+    }
+
+    /** L1 / d-pad down as item button `item` (WIIU index, -1: off; InputMapper.setExtraItem) */
+    void setExtraItem(int code, int item) {
+        mapper.setExtraItem(code, item);
+        savePadMap();
+        pushInput();
+    }
+
+    /** Jump anywhere / the moon jump onto `code`, its item button onto L1 / d-pad down `to` */
+    void assignOwnMovingItem(int ownIndex, int code, int to) {
+        mapper.assignOwnMovingItem(ownIndex, code, to);
+        savePadMap();
+        pushInput();
+    }
+
+    // Each controller keeps its own assignment (pad_map@<InputDevice descriptor>, its name at pad_name@...); one
+    // without starts from pad_map (the one assignment of the builds before, else the default), as does editing with
+    // no controller connected. The map in use is the controller's last used, else the first connected one's.
+    private String padKey;  // the descriptor of the controller whose map is in use; null: pad_map
+
+    // (Mods > ... > Button of the test builds before, a Wii U button: forgotten, L1 again)
+    private void loadButtonMap() {
+        padKey = null;
+        mapper.loadMap(prefs.getString("pad_map", ""));
+        if (prefs.contains("mod_jump_button") || prefs.contains("cheat_moon_button"))
+            prefs.edit().remove("mod_jump_button").remove("cheat_moon_button").apply();
+    }
+
+    /** the assignment of controller d (null: none connected) in use */
+    void usePadMap(InputDevice d) {
+        String key = d != null ? d.getDescriptor() : null;
+        if (java.util.Objects.equals(key, padKey)) return;
+        padKey = key;
+        mapper.loadMap(key == null ? prefs.getString("pad_map", "") : prefs.getString("pad_map@" + key, prefs.getString("pad_map", "")));
+        if (key != null) prefs.edit().putString("pad_name@" + key, d.getName()).apply();
+        pushInput();
+        applySlotLabels(controllerConnected());
+    }
+
+    /** the controller whose assignment is in use (its name for the Controller buttons page); null: none */
+    String padName() { return padKey == null ? null : prefs.getString("pad_name@" + padKey, null); }
+
+    void savePadMap() {
+        prefs.edit().putString(padKey == null ? "pad_map" : "pad_map@" + padKey, mapper.mapString()).apply();
+        applySlotLabels(controllerConnected());
     }
 
     void resetButtons() {
         mapper.loadMap("");
-        prefs.edit().remove("pad_map").apply();
+        savePadMap();
     }
+
+    /** ControllerSetup's choice: the face buttons by letters or position, a preset with Jump anywhere's button; a
+     *  face-button preset switches Jump anywhere on */
+    void applyPadPreset(boolean letters, int preset, int jump) {
+        mapper.preset(letters, preset, jump);
+        savePadMap();
+        pushInput();
+        if (preset != InputMapper.PRESET_ORIGINAL && !prefs.getBoolean("mod_jump", false)) setJumpAnywhere(true);
+    }
+
+    // a controller used for the first time (by its descriptor; pad_asked@... once set up or declined): the setup is
+    // offered once per app start, in play or on the game's screens, not over the menu or another dialog
+    private final java.util.Set<String> setupOffered = new java.util.HashSet<>();
+
+    private void maybeOfferSetup(InputDevice d) {
+        if (!started || ControllerSetup.active || !hasWindowFocus()) return;
+        String k = d.getDescriptor();
+        if (prefs.getBoolean("pad_asked@" + k, false) || !setupOffered.add(k)) return;
+        new ControllerSetup(this, d, null).offer();
+    }
+
+    /** the controller in use while it is connected, else null (Controller details) */
+    InputDevice controllerInUse() {
+        return lastController != null && InputDevice.getDevice(lastController.getId()) != null ? lastController : null;
+    }
+
+    /** Controls > Set up controller: the controller in use, else the first connected; false: none */
+    boolean startControllerSetup(Runnable done) {
+        InputDevice d = lastController != null ? lastController : firstController();
+        if (d == null) return false;
+        new ControllerSetup(this, d, done).start();
+        return true;
+    }
+
+    /** the item ring works (also with a controller): the d-pad's up / left / right may be taken off for a jump */
+    boolean itemRingOn() { return itemRing != null ? itemRing.enabled() : prefs.getBoolean("item_ring", true); }
+
+    /** the game waits (each frame, while ControllerSetup shows) */
+    void holdGame() { if (started) pauseForMenu(true); }
 
     /** inverted camera up/down: 0 off, 1 first person and aiming, 2 always */
     void setInvertCameraY(int mode) {
         prefs.edit().putInt("invert_camera_y_mode", mode).apply();
         Native.setOption("invert_camera_y", mode);
+    }
+
+    /** walking direction while the camera turns: 0 the game's, 1 kept when the player turns it, 2 kept while the stick is held */
+    void setSteerMode(int mode) {
+        prefs.edit().putInt("steer_mode", mode).apply();
+        Native.setOption("steer_mode", mode);
     }
 
     void setBool(String key, boolean v) {
@@ -1766,6 +2582,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     static final float[] SWIPE_SPEEDS = new float[16];
     static { for (int i = 0; i < SWIPE_SPEEDS.length; i++) SWIPE_SPEEDS[i] = (i + 1) * 0.25f; }
     static final float SWIPE_SPEED_DEFAULT = 2f;
+    static final int[] SWIPE_BOAT = {100, 125, 150, 175, 200, 225, 250, 275, 300, 325, 350, 375, 400};  // percent
 
     // render targets switch to the new size as the game next draws into them
     void setResolution(int i) {
@@ -1778,12 +2595,19 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     }
 
     // dynamic resolution's lowest scale in percent (0 = off): the Rendering resolution is its upper limit
-    static final int[] DYN_RES_MINS = {0, 75, 60, 50, 40};
+    static final int[] DYN_RES_MINS = {0, 100, 75, 60, 50, 40};
 
     void setDynResMin(int i) {
         prefs.edit().putInt("dyn_res_min", DYN_RES_MINS[i]).apply();
         Native.setOption("dyn_res_min", DYN_RES_MINS[i]);
         controls.resetPerfAverage();
+    }
+
+    // 0 = 16:9 (original), 1 = the screen's shape
+    void setRenderAspect(int i) {
+        prefs.edit().putInt("render_aspect", i).apply();
+        Native.setOption("render_aspect", i);
+        updateLayout();  // (the GamePad picture of + follows the TV picture's shape)
     }
 
     void setDisplayRes(int i) {
@@ -1827,28 +2651,18 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         if (key.equals("mod_climb")) controls.setClimbHud(on);
     }
 
-    // Mods > Jump anywhere and Mods > Moon jump both use L, so one switches the other off (the moon jump
-    // keeps its cheat_ pref and option names from when it was among the cheats)
+    // Mods > Jump anywhere and Mods > Moon jump: their own inputs (Native.JUMP / MOON), on touch their own buttons, on
+    // a controller a button of their own (L1 by default; InputMapper OWN_JUMP / OWN_MOON). Both on one button: the
+    // moon jump wins, Jump anywhere rests (mods/jump.cpp). (The moon jump keeps its cheat_ pref and option names from
+    // when it was among the cheats.)
     void setJumpAnywhere(boolean on) {
         setMod("mod_jump", on);
-        if (on && prefs.getBoolean("cheat_moon_jump", false)) {
-            setMod("cheat_moon_jump", false);
-            android.widget.Toast.makeText(this, R.string.cheat_moon_jump_off, android.widget.Toast.LENGTH_SHORT).show();
-        }
+        if (controls != null) controls.invalidate();  // (its touch button)
     }
 
     void setMoonJump(boolean on) {
         setMod("cheat_moon_jump", on);
-        if (on && prefs.getBoolean("mod_jump", false)) {
-            setMod("mod_jump", false);
-            android.widget.Toast.makeText(this, R.string.opt_mod_jump_off, android.widget.Toast.LENGTH_SHORT).show();
-        }
-    }
-
-    void setControlsVisible(boolean on) {
-        prefs.edit().putBoolean("controls_visible", on).apply();
-        autoHidden = false;
-        applyControlsAppearance();
+        if (controls != null) controls.invalidate();
     }
 
     void askClearShaders() {
@@ -1942,7 +2756,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     static final int CHEAT_ITEMS = 1, CHEAT_SWORD = 2, CHEAT_STATS = 4, CHEAT_SONGS = 8, CHEAT_TRIFORCE = 16, CHEAT_DUNGEON = 32,
                      CHEAT_KEY = 64, CHEAT_BAGS = 128;
     static final String[] CHEATS_INFINITE = {"cheat_inf_health", "cheat_inf_magic", "cheat_inf_ammo", "cheat_moon_jump", "cheat_moon_nofall", "cheat_moon_anims",
-                                             "cheat_inf_rupees", "cheat_inf_bags", "cheat_inf_breath"};
+                                             "cheat_inf_rupees", "cheat_inf_bags", "cheat_inf_breath", "cheat_one_hit"};
 
     void cheat(int bit, int done) {
         Native.setOption("cheat", bit);
@@ -1950,9 +2764,10 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     }
 
     static final String[] MODS = {"mod_direct_camera", "mod_first_person", "mod_climb", "mod_quick_doors", "mod_fast_scenes",
-                                  "mod_ff_cutscenes", "mod_ff_dialogues"};
+                                  "mod_ff_cutscenes", "mod_ff_dialogues", "mod_song_replay", "mod_picto_pages"};
     static final int[] CAMERA_SPEEDS = {50, 100, 150, 200};
     static final int[] RUN_SPEEDS = {100, 125, 150, 200, 250, 300, 400};  // 100: off
+    static final int[] SWING_DELAYS = {500, 750, 1000, 1250, 1500, 1750, 2000, 2250, 2500, 2750, 3000};  // camera swing wait, ms
     static final int[] MOON_RISE_SPEEDS = {50, 75, 100, 150, 200, 300};  // moon jump rise, percent
     static final int[] MOON_FLY_SPEEDS = new int[20];  // moon jump flight, percent: 50..1000 in steps of 50
     static { for (int i = 0; i < MOON_FLY_SPEEDS.length; i++) MOON_FLY_SPEEDS[i] = 50 * (i + 1); }
@@ -1965,6 +2780,17 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         for (String mod : new String[] {"mod_run", "mod_swim", "mod_climb", "mod_sidle"})
             if (prefs.getInt(mod + "_speed", 100) != 100 && prefs.getBoolean(mod + "_l3", false)) return true;
         return false;
+    }
+
+    /** Native.JUMP / MOON while Jump anywhere / the moon jump is on: their touch buttons show */
+    int jumpInputsInUse() {
+        return (prefs.getBoolean("mod_jump", false) ? Native.JUMP : 0) | (prefs.getBoolean("cheat_moon_jump", false) ? Native.MOON : 0);
+    }
+
+    /** fast forward (ZR) is on for this event mode (mods/turbo.cpp: 1 a dialogue, 2 / 3 a cutscene) */
+    boolean ffInUse(int eventMode) {
+        if (eventMode == 1) return prefs.getBoolean("mod_ff_dialogues", false);
+        return (eventMode == 2 || eventMode == 3) && prefs.getBoolean("mod_ff_cutscenes", false);
     }
 
     int moveMode(String mod) {
@@ -2100,25 +2926,24 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         box.setOrientation(LinearLayout.VERTICAL);
         int pad = (int) (24 * getResources().getDisplayMetrics().density);
         box.setPadding(pad, pad, pad, pad);
-        TextView t = new TextView(this);
-        t.setTextSize(16);
+        TextView t = cardText();
         t.setText(extract ? R.string.extract_running : R.string.compile_running);
         box.addView(t);
         android.widget.ProgressBar bar = new android.widget.ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
         bar.setMax(1000);
         box.addView(bar);
-        TextView detail = new TextView(this);
+        TextView detail = cardText();
         box.addView(detail);
-        Button cancel = new Button(this);
-        cancel.setText(android.R.string.cancel);
-        cancel.setOnClickListener(v -> {  // a compile's parts in progress still finish (up to half a minute)
+        TextView[] cancel = new TextView[1];
+        cancel[0] = cardButton(getText(android.R.string.cancel), v -> {  // a compile's parts in progress still finish (up to half a minute)
             WorkService.Work.markCancelled();
             if (extract) Native.extractCancel();
             else Native.compileCancel();
-            cancel.setEnabled(false);
-            cancel.setText(R.string.compile_stopping);
+            cancel[0].setEnabled(false);
+            cancel[0].setAlpha(0.5f);
+            cancel[0].setText(R.string.compile_stopping);
         });
-        box.addView(cancel, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT));
+        box.addView(cancel[0], cardButtonLp());
         setContentView(seaScreen(box));
         final SeaView mySea = sea;
         mySea.setFrameInterval(66);  // the CPU is for the work (SeaView)
@@ -2154,6 +2979,143 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
             showCompileStopped(err == null || err.equals("cancelled") ? getString(R.string.compile_cancelled) : getString(R.string.compile_failed, err));
         }
     }
+
+    // ------------------------------------------------------------------ songs by microphone (SongListener)
+    private SongListener songs;
+    private boolean padLHeld;
+
+    boolean gameRunning() { return libraryLoaded && started; }
+
+    /** Mods > Sing the songs: on (while Link holds the Wind Waker) or off; asks for the microphone first */
+    /** singing the songs on, after asking Android for the microphone where it isn't allowed yet (StarterQuestions) */
+    void askSingSongs() {
+        if (checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) == android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            prefs.edit().putInt("sing_songs", SongListener.ON).apply();
+            return;
+        }
+        prefs.edit().putInt("sing_songs_wanted", SongListener.ON).apply();
+        requestPermissions(new String[] {android.Manifest.permission.RECORD_AUDIO}, SongListener.PERMISSION_REQUEST);
+    }
+
+    void setSingSongs(int mode) {
+        if (mode != SongListener.OFF && songs != null && !songs.permitted()) {
+            prefs.edit().putInt("sing_songs_wanted", mode).apply();
+            requestPermissions(new String[] {android.Manifest.permission.RECORD_AUDIO}, SongListener.PERMISSION_REQUEST);
+            return;
+        }
+        prefs.edit().putInt("sing_songs", mode).apply();
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int code, String[] perms, int[] results) {
+        super.onRequestPermissionsResult(code, perms, results);
+        if (code != SongListener.PERMISSION_REQUEST) return;
+        boolean ok = results.length > 0 && results[0] == android.content.pm.PackageManager.PERMISSION_GRANTED;
+        prefs.edit().putInt("sing_songs", ok ? prefs.getInt("sing_songs_wanted", SongListener.ON) : SongListener.OFF).apply();
+        if (!ok) new GameDialog(this).title(R.string.opt_sing_songs).message(R.string.sing_songs_no_mic).button(android.R.string.ok, null).show();
+    }
+
+    void showSongBanner(String text) { if (controls != null) controls.showBanner(text); }
+
+    /** the learned songs to show play buttons for on the game's song list (while Link conducts), 0 none */
+    void showSongList(int learned) { if (controls != null) controls.setSongList(learned); }
+
+    /** the song a story scene waits for (a play button for it on the TV picture), -1 none */
+    void showSongWanted(int melody) { if (controls != null) controls.setSongWanted(melody); }
+
+    /** a play button on the song list tapped: back to the TV picture, Link plays the song */
+    @Override
+    public void onSongListPlay(int melody) {
+        if (drcShown && !drcForFiles) onScreenToggle();
+        if (songs != null) songs.playFromList(melody);
+    }
+
+    void showSongListening(boolean on, int notes, boolean button, boolean held, boolean conducting) {
+        if (controls != null) controls.setSongListening(on, notes, button, held, conducting);
+    }
+
+    /** the hint's question "try it first?" answered yes: practice (SongListener) */
+    void startSongPractice() { if (songs != null) songs.startPractice(); }
+
+    /** the touch hint on singing, the first time it can be used (GameHint) */
+    void offerSongHint(int hint) { if (controls != null) controls.offerHint(hint); }
+
+    /** a question about singing (GameHint.ask): each time, hints on or off */
+    void askSong(int question, String text) { if (controls != null) controls.askHint(question, text); }
+
+    /** the mic button pressed / let go on the touch controls */
+    @Override
+    public void onSongMic(boolean down) { if (songs != null) songs.setHeld(true, down); }
+
+    /** the time switch under the mic button tapped */
+    @Override
+    public void onSongBeat() { if (songs != null) songs.nextBeat(); }
+
+    @Override
+    public int songBeat() { return songs != null ? songs.beat() : 3; }
+
+    @Override
+    public SongListener.Take songTake() { return songs != null ? songs.take() : null; }
+
+    @Override
+    public int songCount() { return songs != null ? songs.countNow() : 0; }
+
+    @Override
+    public boolean songPractice() { return songs != null && songs.practicing(); }
+
+    @Override
+    public void onSongPracticeEnd() { if (songs != null) songs.stopPractice(); }
+
+    // ---- the 3D view's zoom (Graphics > Field of view; a pinch on the picture): the field of view's
+    // tangent in percent, 100 = the game's. While the singing panel shows, its own (view_zoom_song, a bit
+    // wider at first: Link conducts close to the camera) and the picture moves down below the panel.
+    static final int[] VIEW_ZOOMS = {100, 115, 130, 150, 175, 200};
+    private static final int VIEW_ZOOM_SONG = 150;
+    private int viewZoom = -1;  // the one in use now (a pinch changes it as the fingers move)
+    private boolean songView;
+
+    /** the game's own (Graphics > Field of view) */
+    int viewZoomPercent() { return prefs.getInt("view_zoom", 100); }
+
+    private String viewZoomKey() { return songView ? "view_zoom_song" : "view_zoom"; }
+
+    private int viewZoomNow() {
+        if (viewZoom < 0) viewZoom = prefs.getInt(viewZoomKey(), songView ? VIEW_ZOOM_SONG : 100);
+        return viewZoom;
+    }
+
+    void setViewZoom(int percent) {
+        prefs.edit().putInt("view_zoom", percent).apply();
+        if (!songView) {
+            viewZoom = percent;
+            Native.setOption("view_zoom", percent);
+        }
+    }
+
+    @Override
+    public float viewZoom() { return viewZoomNow() / 100f; }
+
+    @Override
+    public void onViewZoom(float z, boolean done) {
+        int p = Math.round(z * 100);
+        if (done) prefs.edit().putInt(viewZoomKey(), p).apply();
+        if (p != viewZoom) {
+            viewZoom = p;
+            Native.setOption("view_zoom", p);
+        }
+    }
+
+    @Override
+    public void onSongView(boolean panel) {
+        if (panel == songView) return;
+        songView = panel;
+        viewZoom = -1;
+        Native.setOption("view_zoom", viewZoomNow());
+        Native.setOption("view_shift", panel ? Math.round(SongPanel.VIEW_SHIFT) : 0);
+    }
+
+    /** Mods > Sing the songs > Mic button: hold it while singing (else the microphone listens by itself) */
+    void setSingButton(boolean on) { prefs.edit().putBoolean("sing_button", on).apply(); }
 
     // the progress notification needs the permission on Android 13+ (the work runs without it); asked once
     private void askNotifications() {
@@ -2208,15 +3170,10 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         box.setOrientation(LinearLayout.VERTICAL);
         int pad = (int) (24 * getResources().getDisplayMetrics().density);
         box.setPadding(pad, pad, pad, pad);
-        TextView t = new TextView(this);
-        t.setTextSize(16);
+        TextView t = cardText();
         t.setText(message);
-        t.setTextIsSelectable(true);
         box.addView(t);
-        Button resume = new Button(this);
-        resume.setText(R.string.compile_continue);
-        resume.setOnClickListener(v -> checkAndStart());
-        box.addView(resume, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT));
+        box.addView(cardButton(getText(R.string.compile_continue), v -> checkAndStart()), cardButtonLp());
         setContentView(seaScreen(box));
     }
 
@@ -2294,7 +3251,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         setenv("WWHD_DISPLAY_HZ", String.valueOf(Math.round(hz)));
         setenv("WWHD_FG_MARKER", frameGenMarker(this).getAbsolutePath());
         setenv("WWHD_LSFG_RISK_OK", prefs.getBoolean("fg_risk_ok", false) ? "1" : "0");
-        if (!frameGenOn()) return;
+        if (!frameGenOn() || Benchmark.pending(prefs)) return;  // (the benchmark switches it on itself)
         setenv("WWHD_LSFG_DLL", frameGenDll().getAbsolutePath());
         setenv("WWHD_LSFG_MULTIPLIER", String.valueOf(prefs.getInt("fg_multiplier", 2)));
         setenv("WWHD_LSFG_QUALITY", prefs.getBoolean("fg_quality", false) ? "1" : "0");
@@ -2341,7 +3298,10 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     }
 
     void setFrameGen(String key, boolean v) {
+        // a graphics preset stays the same step, with or without frame generation
+        int preset = key.equals("fg_enabled") ? GraphicsPresets.current(this) : GraphicsPresets.CUSTOM;
         prefs.edit().putBoolean(key, v).commit();
+        if (preset != GraphicsPresets.CUSTOM && preset != GraphicsPresets.current(this)) GraphicsPresets.apply(this, preset);
         if (key.equals("fg_enabled") && !v) {  // the warning comes again next time
             prefs.edit().remove("fg_risk_ok").commit();
             Native.setFrameGenRiskAccepted(false);
@@ -2647,6 +3607,23 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
             }
             return;
         }
+        if (request == LayoutPresets.PICK_EXPORT) {
+            if (result == RESULT_OK && data != null && data.getData() != null) layoutPresets().exportTo(data.getData());
+            else layoutPresets().show();
+            return;
+        }
+        if (request == LayoutPresets.PICK_IMPORT) {
+            List<android.net.Uri> uris = new ArrayList<>();
+            if (result == RESULT_OK && data != null) {
+                if (data.getClipData() != null)
+                    for (int i = 0; i < data.getClipData().getItemCount(); i++) uris.add(data.getClipData().getItemAt(i).getUri());
+                else if (data.getData() != null)
+                    uris.add(data.getData());
+            }
+            if (!uris.isEmpty()) layoutPresets().importFrom(uris);
+            else layoutPresets().show();
+            return;
+        }
         if (request == PICK_PACKS) {
             if (result == RESULT_OK && data != null) {
                 List<android.net.Uri> uris = new ArrayList<>();
@@ -2660,6 +3637,12 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         }
         if (request == PICK_EXPORT && result == RESULT_OK && data != null && data.getData() != null) {
             doExport(data.getData());
+            return;
+        }
+        if (request == PICK_DLL && afterDllPick != null && (result != RESULT_OK || data == null || data.getData() == null)) {
+            Runnable r = afterDllPick;  // no file: back to the benchmark's offer
+            afterDllPick = null;
+            r.run();
             return;
         }
         if (request != PICK_DLL || result != RESULT_OK || data == null || data.getData() == null) return;
@@ -2681,12 +3664,21 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         if (problem != null) {
             //noinspection ResultOfMethodCallIgnored
             tmp.delete();
+            Runnable back = afterDllPick;  // (the benchmark's offer comes back after it)
+            afterDllPick = null;
             new GameDialog(this).title(R.string.fg_title).message(getString(R.string.fg_bad_dll, problem))
-                    .button(R.string.opt_ok, null).show();
+                    .button(R.string.opt_ok, back).show();
             return;
         }
         //noinspection ResultOfMethodCallIgnored
         tmp.renameTo(frameGenDll());
+        if (afterDllPick != null) {  // the benchmark's offer: back to it
+            Runnable r = afterDllPick;
+            afterDllPick = null;
+            prefs.edit().putBoolean("fg_enabled", true).commit();
+            r.run();
+            return;
+        }
         enableFrameGen(() -> {
             if (!frameGenOn()) return;  // (the warning for this GPU declined)
             new GameDialog(this).title(R.string.fg_title)

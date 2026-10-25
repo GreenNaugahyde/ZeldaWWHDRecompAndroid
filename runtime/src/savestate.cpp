@@ -1431,6 +1431,7 @@ SlotInfo slot_info(int slot) {
         char buf[64];
         strftime(buf, sizeof buf, "%b %d %H:%M:%S", &tmv);
         info.when = buf;
+        info.created = (int64_t)h.created;
         h.area[sizeof h.area - 1] = 0;
         if (h.area[0]) info.area = area_label(h.area);
         info.controller = (int)h.controller;
@@ -1540,6 +1541,9 @@ std::string last_message() {
 const release::Data kControllerMgr{0x101F5088};
 const release::Code kSetControllerMode{0x02618094};
 
+static unsigned g_load_count = 0;
+unsigned load_count() { return g_load_count; }
+
 void service(Cpu* c) {
     if (g_to_gamepad && !g_loading) {
         g_to_gamepad = false;
@@ -1626,6 +1630,7 @@ void service(Cpu* c) {
         }
         g_loading = false;
         g_attempts = 0;
+        g_load_count++;
         g_auto_played = 0;  // the next auto save a full interval after a load
         set_start_hold(false);  // loaded, or refused: the game goes on from here
         for (int k = 1; k <= dump; k++)

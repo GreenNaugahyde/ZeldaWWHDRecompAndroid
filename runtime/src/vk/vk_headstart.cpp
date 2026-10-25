@@ -26,6 +26,7 @@
 #include "runtime.h"
 
 namespace gfx {
+bool low_memory();  // vk_draw.cpp
 
 // vk_draw.cpp
 uint64_t headstart_hash(const void* data, size_t n);
@@ -337,6 +338,10 @@ uint64_t fingerprint(const Bytes& templateFile) {
 // cache_load (render thread, before the first draw), after the cache's own records
 void headstart_vk_load(const std::string& dir) {
     if (const char* e = getenv("WWHD_HEADSTART"); e && !strcmp(e, "0")) return;
+    if (low_memory()) {  // its pipelines would take ~400 MB (vk_draw.cpp, low_memory)
+        LOG("[gfx] shader head start: off on a low memory device");
+        return;
+    }
     auto t0 = std::chrono::steady_clock::now();
     Bytes file;
     std::string packPath = dir + "/headstart-programs.bin";

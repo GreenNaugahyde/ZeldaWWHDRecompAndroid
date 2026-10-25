@@ -71,6 +71,12 @@ final class CrashLogs {
      * After a crash, before the game starts: asks whether to share the newest log (once per log).
      * Returns true if it asked; `then` runs when the dialog closes (it starts the game).
      */
+    /** The newest log counts as offered (the shader tour starts without asking). */
+    static void markSeen(Activity a, SharedPreferences prefs) {
+        List<File> logs = list(a, prefs);
+        if (!logs.isEmpty()) prefs.edit().putLong("crash_seen_ms", logs.get(0).lastModified()).remove("crash_seen").apply();
+    }
+
     static boolean offerNew(Activity a, SharedPreferences prefs, Runnable then) {
         List<File> logs = list(a, prefs);
         if (logs.isEmpty()) return false;

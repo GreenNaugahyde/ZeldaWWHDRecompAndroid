@@ -147,6 +147,8 @@ int target_frames() { return kTarget; }
 
 void flush() { g_flush = true; }
 
+void set_muted(bool) {}
+
 void stats(uint64_t& underrun, uint64_t& dropped) {
     underrun = g_underrun;
     dropped = g_dropped;

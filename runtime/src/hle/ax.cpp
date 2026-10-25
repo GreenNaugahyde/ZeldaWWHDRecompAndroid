@@ -17,7 +17,9 @@
 
 #include "../audio_out.h"
 #include "../platform.h"
+#include "../release.h"
 #include "../runtime.h"
+#include "../savestate.h"
 
 namespace interp { const char* phase_name(); }
 
@@ -401,6 +403,20 @@ void output_frame(Cpu* c) {
     audio::push(pcm, kSamples48);
 }
 
+// The game mixes its sound itself (JASVirtualDSP, no AX voices). Its JASDriver::updateDSP times each DSP
+// sub-frame with OSGetTick and kills a channel ("kill DSP channel") when one took longer than the gap before the
+// frame's first sub-frame / 1.1: DSP overload on the console. Here those threads run on the host, and a late
+// audio frame (followed by catch-up frames) reads as overload, so looping ambience (waves, wind) cut off and only
+// came back when the game started it again (issue #23). The threshold (only that function reads it) set to 0
+// never kills; again after a save state brings back the old value. WWHD_DSP_KILL=1: the game's own check.
+void keep_dsp_channels() {
+    static const bool game_check = getenv("WWHD_DSP_KILL") != nullptr;
+    static const release::Data kKillRatio{0x10170030};  // float 1.1
+    if (game_check || ld32(kKillRatio) != 0x3F8CCCCD) return;
+    ss::prepare_host_write(kKillRatio, 4);
+    st32(kKillRatio, 0);
+}
+
 void frame_thread() {
     Cpu* c = threads::make_service_cpu("AX frame", 0x20000);
     platform::set_thread_name("AX frame");
@@ -412,6 +428,7 @@ void frame_thread() {
         double stretch = 1.0 + std::clamp(level * 0.05, -0.05, 0.05);
         next += std::chrono::microseconds((int64_t)(3000 * stretch));
         threads::service_begin();  // a save state waits until the frame is done (voices, callbacks)
+        keep_dsp_channels();
         {
             std::lock_guard<std::mutex> lk(g_ax_mutex);
             process_voices();

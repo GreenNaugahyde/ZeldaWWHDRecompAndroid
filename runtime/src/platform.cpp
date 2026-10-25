@@ -92,6 +92,7 @@ struct Adpf {
 };
 Adpf g_adpf;
 std::mutex g_hint_mu;
+std::atomic<int64_t> g_last_busiest{0};
 std::vector<int32_t> g_hint_tids;  // threads of the session, and those still to add
 std::vector<uint64_t> g_hint_cpu;   // CPU time of each at the last frame, ns
 bool g_hint_changed = false;
@@ -222,6 +223,8 @@ void game_fast_cores(bool on) {
     log_line(msg);
 }
 
+int64_t last_busiest_ns() { return g_last_busiest.load(std::memory_order_relaxed); }
+
 void perf_hint_frame(int framesPerStep) {
     std::lock_guard<std::mutex> lk(g_hint_mu);
     game_fast_cores(framesPerStep > 1);
@@ -277,6 +280,7 @@ void perf_hint_frame(int framesPerStep) {
     }
     g_hint_changed = false;
     if (busiest > 0) g_adpf.reportActual(g_adpf.session, busiest);
+    g_last_busiest = busiest;
     static const bool logIt = getenv("WWHD_PERF_LOG") != nullptr;
     static int64_t sum = 0, n = 0;
     if (!logIt) return;
@@ -314,6 +318,7 @@ void prefer_big_cores(bool game) {
 }
 #else
 void perf_hint_frame(int) {}
+int64_t last_busiest_ns() { return 0; }
 void prefer_big_cores(bool) {}
 #endif
 

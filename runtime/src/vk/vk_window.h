@@ -46,6 +46,18 @@ void set_resolution_scale(float scale);
 // dynamic resolution's lowest scale, 0 = off (vk_dynres.cpp)
 void set_dynamic_resolution_min(float min);
 float dynamic_resolution_min();
+// ---- graphics benchmark (vk_dynres.cpp, the app's preset finder): GPU timestamps stay on while it
+// runs; per frame shown: the GPU's busy time and the busiest game / render thread's CPU time
+void set_benchmark(bool on);
+bool benchmark_on();
+// since the last call (then starts again): {frames shown, seconds, GPU ms per frame, busiest thread ms
+// per frame (0: unknown), worst frame interval ms, draws left out while their pipeline compiled} (any thread)
+constexpr int kBenchStats = 6;
+void benchmark_sample(float out[kBenchStats]);
+int benchmark_frames();  // frames shown since it started (a live count)
+int work_done();         // shaders compiled and pipelines built since the start (the benchmark's boot wait)
+void trim_memory();      // Android runs low on memory: pipelines unused lately are freed (any thread; vk_draw.cpp)
+void set_background_compiles_paused(bool on);  // its measuring windows: no new background compiles
 
 // frame generation settings (the app's menu); applied from the next frame on (any thread)
 void request_frame_generation(bool on, const char* dll, bool quality, float flowScale, int multiplier, bool uiDetection);

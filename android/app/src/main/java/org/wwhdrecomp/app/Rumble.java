@@ -13,7 +13,7 @@ import java.util.ArrayDeque;
 
 /**
  * The GamePad's rumble on the controller in use, or on this device while playing by touch or with a
- * controller without rumble. The game sends patterns of up to one second (VPADControlMotor: one bit
+ * controller without rumble (Controls > Rumble may pick this device, a controller or both: MainActivity.rumbleController). The game sends patterns of up to one second (VPADControlMotor: one bit
  * per 1/120 s); like Cemu, up to five play one after another, in steps of 1/60 s. The Pro Controller's motor is just on or off.
  */
 final class Rumble {
@@ -25,15 +25,17 @@ final class Rumble {
     private final ArrayDeque<long[]> queue = new ArrayDeque<>();
     private boolean playing, holding;
     private InputDevice controller;  // in use, or null (touch)
+    private boolean both;            // this device rumbles with the controller
     boolean enabled = true;
 
     Rumble(Context c) { context = c; }
 
-    /** The controller now in use (null: touch). */
-    void setController(InputDevice d) {
-        if (d == controller) return;
+    /** The controller that rumbles now (null: this device); both: this device as well. */
+    void setController(InputDevice d, boolean both) {
+        if (d == controller && both == this.both) return;
         stop();
         controller = d;
+        this.both = both;
     }
 
     /** From the game: a pattern of `bits` steps (LSB first), or stop (bits == 0). Any thread. */
@@ -52,10 +54,10 @@ final class Rumble {
         main.post(() -> {
             if (on == holding) return;
             holding = on;
-            Vibrator v = vibrator();
-            if (v == null) return;
-            if (on && enabled) v.vibrate(VibrationEffect.createOneShot(HOLD_MS, VibrationEffect.DEFAULT_AMPLITUDE));
-            else v.cancel();
+            for (Vibrator v : vibrators()) {
+                if (on && enabled) v.vibrate(VibrationEffect.createOneShot(HOLD_MS, VibrationEffect.DEFAULT_AMPLITUDE));
+                else v.cancel();
+            }
         });
     }
 
@@ -63,8 +65,7 @@ final class Rumble {
         queue.clear();
         main.removeCallbacksAndMessages(null);
         playing = holding = false;
-        Vibrator v = vibrator();
-        if (v != null) v.cancel();
+        for (Vibrator v : vibrators()) v.cancel();
     }
 
     private void playNext() {
@@ -73,8 +74,7 @@ final class Rumble {
         playing = true;
         long total = 0;
         for (long d : t) total += d;
-        Vibrator v = vibrator();
-        if (v != null && t.length > 1) v.vibrate(VibrationEffect.createWaveform(t, -1));
+        if (t.length > 1) for (Vibrator v : vibrators()) v.vibrate(VibrationEffect.createWaveform(t, -1));
         main.postDelayed(this::playNext, Math.max(total, 1));
     }
 
@@ -105,17 +105,27 @@ final class Rumble {
 
     private static long ms(int steps) { return Math.round(steps * 1000.0 / 60); }
 
-    // the controller's motor if it has one, else this device's (playing by touch, or a controller
-    // without rumble)
-    private Vibrator vibrator() {
+    // the controller's motor if it has one (and this device's too with both), else this device's (playing by touch,
+    // or a controller without rumble)
+    private java.util.List<Vibrator> vibrators() {
+        java.util.List<Vibrator> l = new java.util.ArrayList<>(2);
         if (controller != null) {
             Vibrator v = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S ? controller.getVibratorManager().getDefaultVibrator()
                     : controller.getVibrator();
-            if (v != null && v.hasVibrator()) return v;
+            if (v != null && v.hasVibrator()) l.add(v);
         }
+        if (l.isEmpty() || both) {
+            Vibrator v = deviceVibrator(context);
+            if (v != null) l.add(v);
+        }
+        return l;
+    }
+
+    /** this device's motor, or null */
+    static Vibrator deviceVibrator(Context c) {
         Vibrator v = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
-                ? ((VibratorManager) context.getSystemService(Context.VIBRATOR_MANAGER_SERVICE)).getDefaultVibrator()
-                : (Vibrator) context.getSystemService(Context.VIBRATOR_SERVICE);
+                ? ((VibratorManager) c.getSystemService(Context.VIBRATOR_MANAGER_SERVICE)).getDefaultVibrator()
+                : (Vibrator) c.getSystemService(Context.VIBRATOR_SERVICE);
         return v != null && v.hasVibrator() ? v : null;
     }
 }

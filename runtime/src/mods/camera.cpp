@@ -58,8 +58,10 @@ namespace {
 constexpr uint32_t kCamSpeed = 0x154;   // dCamera_c: eased turning speed (manual camera)
 constexpr uint32_t kCamStickX = 0x170;  // dCamera_c: right stick x as the camera sees it (negated)
 constexpr float kSpeedToDeg = 0.92f;    // manualCamera: yaw degrees per step = speed * 0.92 * f25
+constexpr double kFootF25 = 8.0;         // f25 of the on-foot camera (Outset)
 constexpr uint32_t kCurProc = 0x65F0;   // daPy_lk_c::mCurProc
 constexpr uint32_t kReadyItemBtn = 0x68D9;  // daPy_lk_c::mReadyItemBtn
+constexpr uint32_t kModeFlg = 0x6A70, kModeInShip = 0x2000;  // daPy_lk_c::mModeFlg: sailing (steer.cpp)
 
 std::mutex g_mu;
 float g_dx = 0, g_dy = 0;       // mouse movement not yet used by the camera (points)
@@ -78,6 +80,12 @@ bool in_first_person() { return recent(g_subject_step, 2); }
 uint32_t link_proc() {
     uint32_t l = g_link.load(std::memory_order_relaxed);
     return l ? ld32(l + kCurProc) : 0xFFFFFFFFu;
+}
+// the swipe / mouse camera's degrees per point: the sensitivity, times the boat factor while Link sails
+float swipe_degrees() {
+    uint32_t l = g_link.load(std::memory_order_relaxed);
+    bool ship = l && (ld32(l + kModeFlg) & kModeInShip);
+    return mouse_sensitivity() * (ship ? swipe_boat() : 1.0f);
 }
 bool aiming_item(uint32_t p) { return p == 0x76 || (p >= 0x80 && p <= 0x8D) || p == 0x94 || p == 0x95; }
 
@@ -168,6 +176,8 @@ bool test_mouse() {
 }  // namespace
 
 uint32_t link_actor() { return g_link.load(std::memory_order_relaxed); }
+// the manual camera turns for 4 steps and a tail after the stick is let go
+bool camera_turned_by_player() { return recent(g_manual_step, 8); }
 
 // Inverted camera up/down. Done here, where the pad is read, rather than where the stick values
 // come in, because only here it is known whether the game looks around with the right stick: in
@@ -199,10 +209,13 @@ void mouse_button(int button, bool down) {
 
 // end of input::read(): synthetic right stick for the mouse, R3 pulses for the wheel, left click
 void filter_pad(input::PadState& s) {
-    run_input(s.buttons);  // faster running's L3 (mods.cpp)
+    run_input(s.buttons);  // faster running's L3 (mods.cpp), Jump anywhere's and the moon jump's inputs
+    s.buttons &= ~(input::kJump | input::kMoonJump);  // (not the game's)
     stick_input(s.lx, s.ly);  // the moon jump's steering (cheats.cpp)
     inject_test_mouse();
     test_goto(s);
+    picto_pad(s);
+    postbox_pad(s);
     uint64_t now = step();
     // inverted up/down for the stick (the mouse / swipe camera below flips its own movement)
     const bool look = in_first_person() || aiming_item(link_proc());
@@ -240,6 +253,7 @@ void filter_pad(input::PadState& s) {
         g_synth_step = now;
     } else {
         g_synth = false;
+        steer_pad(s, look);  // steer.cpp: the camera swinging behind Link
     }
     // left click while aiming an item: that item's button
     if (active && g_left) {
@@ -263,8 +277,10 @@ void filter_pad(input::PadState& s) {
         }
     }
     if (now >= g_r3_from && now < g_r3_to) s.buttons |= input::kStickR;
+    minigame_pad(s);
 }
 
+bool first_person_view() { return in_first_person(); }
 }  // namespace mods
 
 using namespace mods;
@@ -283,15 +299,28 @@ static void manual_speed(Cpu* c) {
             g_dx = 0;
         }
     }
-    float speed;
-    if (mouse && mouse_camera()) {
+    float speed, swing;
+    if (!mouse && steer_swing_turn(swing)) {
+        double f25 = c->f[25].ps0;
+        if (!(f25 > 0.01)) f25 = 8.0;
+        speed = (float)(-swing / (kSpeedToDeg * f25));  // stick right = negative speed, as for the mouse
+    } else if (mouse && mouse_camera()) {
         double f25 = c->f[25].ps0;
         if (!(f25 > 0.01)) f25 = 8.0;
         // mouse right = stick right = negative speed (the camera stores stick x negated)
-        speed = (float)(-dx * mouse_sensitivity() / (kSpeedToDeg * f25));
+        speed = (float)(-dx * swipe_degrees() / (kSpeedToDeg * f25));
     } else if (direct_camera()) {
         float x = (float)ldf32(cam + kCamStickX);
-        speed = std::fmax(-1.0f, std::fmin(1.0f, x)) * camera_speed();
+        // f25 (this camera style's turning factor) is 8 on foot; styles with a smaller one (the boat,
+        // reported as very slow) turn as fast as on foot, so the speed setting means the same everywhere
+        double f25 = c->f[25].ps0;
+        static double last_f25 = -1;
+        if (f25 != last_f25) {
+            last_f25 = f25;
+            LOG("[mods] direct camera: turning factor %.2f%s", f25, f25 > 0.01 && f25 < kFootF25 ? " (raised to the on-foot 8)" : "");
+        }
+        const float k = f25 > 0.01 && f25 < kFootF25 ? (float)(kFootF25 / f25) : 1.0f;
+        speed = std::fmax(-1.0f, std::fmin(1.0f, x)) * camera_speed() * k;
     } else {
         return;
     }
@@ -317,7 +346,7 @@ extern "C" void site_0251053C(Cpu* c) {
     if (!(std::fabs(per) > 0.01)) return;
     // mouse down (dy > 0) looks down: V grows, so f28 < 0
     if (invert_y() == 2) dy = -dy;  // inverted: mouse down looks up
-    c->f[28].ps0 = -dy * mouse_sensitivity() / per;
+    c->f[28].ps0 = -dy * swipe_degrees() / per;
 }
 // V smoothing (cSAngle * f1, f1 = [sp+0x18]) and U smoothing (f1 = [sp+0x1C])
 extern "C" void site_02510EA0(Cpu* c) {

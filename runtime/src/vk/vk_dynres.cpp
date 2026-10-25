@@ -9,12 +9,15 @@
 // so the resolution stays. Decisions every half second; going up waits until the last step down is
 // a while ago, and that wait doubles when a step up had to be undone (no swinging back and forth;
 // every change reallocates the screen-sized render targets).
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cmath>
 #include <cstdlib>
+#include <mutex>
 
 #include "interp.h"
+#include "platform.h"
 #include "runtime.h"
 #include "vk.h"
 
@@ -54,8 +57,61 @@ float dynamic_resolution_min() { return g_min; }
 bool dynamic_resolution_on() { return g_min > 0; }
 float dynamic_resolution_busy() { return g_busy_shown; }
 
+namespace {
+std::atomic<bool> g_bench{false};
+std::mutex g_bench_mu;
+double g_bench_gpu_ns = 0, g_bench_cpu_ns = 0, g_bench_worst = 0;
+int g_bench_frames = 0;
+std::atomic<int> g_bench_total{0};  // frames shown since the benchmark started (not reset by a sample)
+clk::time_point g_bench_t0{}, g_bench_last{};
+}  // namespace
+
 // a command buffer's GPU time (vk_profile.cpp, render thread)
-void dynres_gpu_busy(double ns) { g_busy_ns += ns; }
+void dynres_gpu_busy(double ns) {
+    g_busy_ns += ns;
+    if (g_bench.load(std::memory_order_relaxed)) {
+        std::lock_guard<std::mutex> lk(g_bench_mu);
+        g_bench_gpu_ns += ns;
+    }
+}
+
+void set_benchmark(bool on) {
+    g_bench = on;
+    LOG("[bench] %s", on ? "on" : "off");
+}
+bool benchmark_on() { return g_bench.load(std::memory_order_relaxed); }
+int benchmark_frames() { return g_bench_total.load(std::memory_order_relaxed); }
+
+void benchmark_frame() {
+    if (!g_bench.load(std::memory_order_relaxed)) return;
+    clk::time_point now = clk::now();
+    std::lock_guard<std::mutex> lk(g_bench_mu);
+    if (g_bench_last != clk::time_point{})
+        g_bench_worst = std::max(g_bench_worst, std::chrono::duration<double, std::milli>(now - g_bench_last).count());
+    g_bench_last = now;
+    if (g_bench_t0 == clk::time_point{}) g_bench_t0 = now;
+    g_bench_frames++;
+    g_bench_total++;
+    g_bench_cpu_ns += (double)platform::last_busiest_ns();
+}
+
+void benchmark_sample(float out[6]) {
+    std::lock_guard<std::mutex> lk(g_bench_mu);
+    clk::time_point now = clk::now();
+    int n = g_bench_frames;
+    out[0] = (float)n;
+    out[1] = g_bench_t0 == clk::time_point{} ? 0.0f : (float)std::chrono::duration<double>(now - g_bench_t0).count();
+    out[2] = n ? (float)(g_bench_gpu_ns / n / 1e6) : 0.0f;
+    out[3] = n ? (float)(g_bench_cpu_ns / n / 1e6) : 0.0f;
+    out[4] = (float)g_bench_worst;
+    static uint64_t skipped_before = 0;
+    uint64_t skipped = skipped_compiling();
+    out[5] = (float)(skipped - skipped_before);
+    skipped_before = skipped;
+    g_bench_gpu_ns = g_bench_cpu_ns = g_bench_worst = 0;
+    g_bench_frames = 0;
+    g_bench_t0 = now;
+}
 
 // once per frame at the swap (render thread): the scale for the next frame, `setting` or lower
 float dynres_scale(float setting) {

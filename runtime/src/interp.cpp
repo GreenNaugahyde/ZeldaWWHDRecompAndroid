@@ -33,6 +33,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include "aspect.h"
 #include "interp_pacing.h"
 #include "guest_addr.h"
 #include <ctime>
@@ -356,6 +357,16 @@ std::atomic<uint32_t> g_last_camera{0};
 uint32_t last_camera() { return g_last_camera.load(std::memory_order_relaxed); }
 }  // namespace interp
 
+// the original camera_draw (with the Picto Box's bigger finder: zoomed as for a photo, aspect.cpp)
+static void camera_draw_orig(Cpu* c) {
+    bool zoom = aspect::picto_zoom_begin();
+    uint32_t cam = c->r[3];
+    float fovy = aspect::view_zoom_begin(cam);
+    f_024FFC40_orig(c);
+    aspect::view_zoom_end(cam, fovy);
+    aspect::picto_zoom_end(zoom);
+}
+
 // camera_draw(camera_process_class*)
 extern "C" void hook_024FFC40(Cpu* c) {
     using namespace interp;
@@ -376,7 +387,7 @@ extern "C" void hook_024FFC40(Cpu* c) {
         // (also on a snap: the sound listener keeps following only the record pass's camera)
         g_cam_blended = p->valid;
         cam_trace(cam, "blended");
-        f_024FFC40_orig(c);
+        camera_draw_orig(c);
         g_cam_blended = false;
         write_cam(cam, cur);
         return;
@@ -389,7 +400,7 @@ extern "C" void hook_024FFC40(Cpu* c) {
     if (g_hold && true60::enabled()) {  // true 60: the half pass's camera is a preview (true60.cpp)
         p->drawn_pass = ~0ull;  // (drawn with the preview: the stars keep the camera as it is)
         true60::camera_draw_preview(true);
-        f_024FFC40_orig(c);
+        camera_draw_orig(c);
         true60::camera_draw_preview(false);
         return;
     }
@@ -400,7 +411,7 @@ extern "C" void hook_024FFC40(Cpu* c) {
         static int n = 0;
         const uint32_t lo = GD(0x10100000), hi = 0x10500000;
         before.assign((uint32_t*)ppc_ptr(lo), (uint32_t*)ppc_ptr(hi));
-        f_024FFC40_orig(c);
+        camera_draw_orig(c);
         const uint32_t* cur = (const uint32_t*)ppc_ptr(lo);
         for (size_t i = 0; i < before.size(); i++)
             if (cur[i] != before[i]) cnt[lo + 4 * (uint32_t)i]++;
@@ -419,7 +430,7 @@ extern "C" void hook_024FFC40(Cpu* c) {
         }
         return;
     }
-    f_024FFC40_orig(c);
+    camera_draw_orig(c);
 }
 
 // Models. J3DModel::calc (027F4D5C, actor Execute or Draw) writes the world (joint) matrices:
@@ -898,7 +909,7 @@ static void after_pass(int phase) {
 }
 }  // namespace interp
 
-namespace mods { void cheats_service(); void warp_service(); }  // mods/cheats.cpp, mods/warp.cpp
+namespace mods { void cheats_service(); void warp_service(); void pace_service(); void song_dump_service(Cpu* c); void picto_pages_service(Cpu* c); void clothes_service(Cpu* c); void postbox_service(Cpu* c); }  // mods/cheats.cpp, mods/warp.cpp, mods/songs.cpp, mods/picto_pages.cpp, mods/clothes.cpp
 
 // debug: WWHD_INTERP_PASS_STATS=1 adds to the 300-step log the main thread's CPU time per pass
 // (thread CPU time, so waits for the vsync and the GPU are left out): logic passes, blended hold
@@ -947,7 +958,12 @@ extern "C" void hook_0203593C(Cpu* c) {
     fx_pass_start();
     ss::service(c);  // save states: exact values are back in guest memory, all other threads idle
     mods::cheats_service();
+    mods::pace_service();  // the item ring: slow motion or paused
     mods::warp_service();
+    mods::picto_pages_service(c);
+    mods::clothes_service(c);
+    mods::postbox_service(c);
+    mods::song_dump_service(c);
     // debug: WWHD_CRASH_TEST=n crashes the game thread after n steps (to check the crash log; "a<n>":
     // abort() instead, as a GPU driver does)
     static const char* crashEnv = getenv("WWHD_CRASH_TEST");

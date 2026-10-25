@@ -196,6 +196,7 @@ void after_execute(Cpu* c, uint32_t execute_fn) {
         trace("overlap (fade) %s", ovl ? "starts" : "ends");
     }
     touch_state_step();
+    minigame_step();
     static int mode = 0;
     if (event_mode() != mode) {
         mode = event_mode();

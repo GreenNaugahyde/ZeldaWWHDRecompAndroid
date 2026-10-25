@@ -17,6 +17,7 @@
 #include "../disc/wua.h"
 #include "../crash_info.h"
 #include "../hud.h"
+#include "link_icons.h"
 #include "ui_icons.h"
 #include "warp_catalog.h"
 #include "../gx2/gx2.h"
@@ -41,6 +42,8 @@ int ao_mode();
 void set_ao_mode(int m);
 bool aniso_enabled();
 void set_aniso(bool v);
+bool vsync();
+void set_vsync(bool v);
 int upscale_mode();
 void set_upscale_mode(int m);
 bool ao_hires_enabled();
@@ -125,7 +128,10 @@ extern "C" JNIEXPORT jint JNI_OnLoad(JavaVM* vm, void*) {
 
 #define JNI_FN(ret, name) extern "C" JNIEXPORT ret JNICALL Java_org_wwhdrecomp_app_Native_##name
 
+namespace gx2 { void set_clock_rate(double rate); }  // gx2_core.cpp
+
 // null if `gameDir` holds the executable this build was recompiled from, else a message
+
 JNI_FN(jstring, checkGame)(JNIEnv* env, jclass, jstring gameDir) {
     std::string path = jstr(env, gameDir) + "/code/cking.rpx";
     FILE* f = fopen(path.c_str(), "rb");
@@ -170,21 +176,87 @@ JNI_FN(void, setTouchSwipeCamera)(JNIEnv*, jclass, jboolean on) {
 }
 // a swipe on the right side: movement in density-independent pixels (+y down)
 JNI_FN(void, cameraSwipe)(JNIEnv*, jclass, jfloat dx, jfloat dy) { mods::mouse_add(dx, dy); }
+// a mouse wheel (notches, + forward): Mods > First person on the mouse wheel
+JNI_FN(void, mouseWheel)(JNIEnv*, jclass, jfloat dy) { mods::mouse_wheel(dy); }
 
 // context-aware touch controls: the game's state (mods/touch_state.cpp) and the hidden HUD parts (hud.h)
+// the item ring (ItemRing.java): its state, and an inventory slot put on X / Y / R
+JNI_FN(jintArray, itemRing)(JNIEnv* env, jclass) {
+    int32_t v[mods::kItemRingLen];
+    mods::item_ring_state(v);
+    jintArray a = env->NewIntArray(mods::kItemRingLen);
+    env->SetIntArrayRegion(a, 0, mods::kItemRingLen, (const jint*)v);
+    return a;
+}
+JNI_FN(void, equipItem)(JNIEnv*, jclass, jint button, jint slot) { mods::request_equip(button, slot); }
+JNI_FN(void, conductWith)(JNIEnv*, jclass, jint button, jint slot) { mods::request_conduct(button, slot); }
+JNI_FN(void, setGamePace)(JNIEnv*, jclass, jint mode) { mods::set_game_pace(mode); }
+// the message window's box (hud.h hud_msg_window): {shown, x, y, half width, half height} in layout units
+JNI_FN(jintArray, msgWindow)(JNIEnv* env, jclass) {
+    int32_t v[5];
+    hud_msg_window(v);
+    jintArray a = env->NewIntArray(5);
+    env->SetIntArrayRegion(a, 0, 5, (const jint*)v);
+    return a;
+}
+// the wind compass after the Wind's Requiem (hud.h hud_wind_compass): {shown, x, y} in layout units
+JNI_FN(jintArray, windCompass)(JNIEnv* env, jclass) {
+    int32_t v[3] = {0, 0, 0};
+    v[0] = hud_wind_compass(v + 1);
+    jintArray a = env->NewIntArray(3);
+    env->SetIntArrayRegion(a, 0, 3, (const jint*)v);
+    return a;
+}
+// minigames played by touch (mods/minigames.cpp)
+JNI_FN(jint, minigameMode)(JNIEnv*, jclass) { return mods::minigame_mode(); }
+JNI_FN(void, minigameTouch)(JNIEnv*, jclass, jint action, jfloat x, jfloat y) { mods::minigame_touch(action, x, y); }
+JNI_FN(jfloatArray, minigameMarks)(JNIEnv* env, jclass) {
+    float v[2 * mods::kMinigameMarks];
+    int n = mods::minigame_marks(v);
+    jfloatArray a = env->NewFloatArray(2 * n);
+    env->SetFloatArrayRegion(a, 0, 2 * n, v);
+    return a;
+}
+JNI_FN(jintArray, songState)(JNIEnv* env, jclass) {
+    int32_t v[mods::kSongStateLen];
+    mods::song_state(v);
+    jintArray a = env->NewIntArray(mods::kSongStateLen);
+    env->SetIntArrayRegion(a, 0, mods::kSongStateLen, (const jint*)v);
+    return a;
+}
+JNI_FN(void, playSong)(JNIEnv*, jclass, jint melody) { mods::play_song(melody); }
+JNI_FN(void, countBeat)(JNIEnv*, jclass, jint time, jboolean last) { mods::count_beat(time, last); }
+JNI_FN(jintArray, actionTexts)(JNIEnv* env, jclass) {
+    int32_t v[mods::kActionCodes];
+    bool ok = mods::action_texts(v);
+    jintArray a = env->NewIntArray(ok ? mods::kActionCodes : 0);
+    if (ok) env->SetIntArrayRegion(a, 0, mods::kActionCodes, (const jint*)v);
+    return a;
+}
 JNI_FN(jintArray, touchState)(JNIEnv* env, jclass) {
-    int32_t v[12];
+    int32_t v[mods::kTouchStateLen];
     mods::touch_state(v);
-    jintArray a = env->NewIntArray(12);
-    env->SetIntArrayRegion(a, 0, 12, (const jint*)v);
+    jintArray a = env->NewIntArray(mods::kTouchStateLen);
+    env->SetIntArrayRegion(a, 0, mods::kTouchStateLen, (const jint*)v);
     return a;
 }
 JNI_FN(void, setHudHidden)(JNIEnv* env, jclass, jstring names) { hud_set_hidden(jstr(env, names)); }
+JNI_FN(void, setSlotLabels)(JNIEnv* env, jclass, jstring labels) { hud_set_slot_labels(jstr(env, labels)); }
 JNI_FN(void, setHudFade)(JNIEnv*, jclass, jint which, jboolean on) {
     if (which >= 0 && which < kFadeCount) hud_set_fade_auto(which, on);
 }
+JNI_FN(jboolean, extractUiFont)(JNIEnv* env, jclass, jstring gameDir, jstring outDir, jstring font) {
+    return ui_icons::extract_font(jstr(env, gameDir), jstr(env, outDir), jstr(env, font));
+}
+JNI_FN(jboolean, extractUiTexts)(JNIEnv* env, jclass, jstring gameDir, jstring outFile, jstring layout) {
+    return ui_icons::extract_texts(jstr(env, gameDir), jstr(env, outFile), jstr(env, layout));
+}
 JNI_FN(jint, dumpUiTextures)(JNIEnv* env, jclass, jstring gameDir, jstring outDir) {
     return ui_icons::dump_all(jstr(env, gameDir), jstr(env, outDir));
+}
+// Link in his own poses for the touch controls as outDir/link_*.rgba (link_icons.cpp): how many were written
+JNI_FN(jint, renderLinkIcons)(JNIEnv* env, jclass, jstring gameDir, jstring outDir) {
+    return link_icons::render_buttons(jstr(env, gameDir), jstr(env, outDir));
 }
 // textures from the game's 2D pack as outDir/<texture>.rgba (ui_icons.cpp): how many were written
 JNI_FN(jint, extractUiTextures)(JNIEnv* env, jclass, jstring gameDir, jstring outDir, jobjectArray layouts, jobjectArray textures) {
@@ -493,6 +565,10 @@ JNI_FN(void, setTouch)(JNIEnv*, jclass, jboolean down, jfloat x, jfloat y) { inp
 // the GamePad picture on a second display: its shape (0 = 16:9), and touches on it (u, v in 0..1 of
 // the picture; aspect.cpp maps them to the game's 16:9 touch screen)
 JNI_FN(void, setDrcAspect)(JNIEnv*, jclass, jfloat a) { aspect::set_drc_aspect(a); }
+JNI_FN(void, setItemPageDrag)(JNIEnv*, jclass, jint mode, jfloat dx) { aspect::item_page_drag(mode, dx); }
+JNI_FN(jboolean, itemPageGliding)(JNIEnv*, jclass) { return aspect::item_page_gliding(); }
+JNI_FN(jfloat, itemPageX)(JNIEnv*, jclass) { return aspect::item_page_x(); }
+JNI_FN(void, setItemSheetLeft)(JNIEnv*, jclass, jboolean on) { aspect::set_item_sheet_left(on); }
 JNI_FN(float, drcPictureAspect)(JNIEnv*, jclass) { return gfx::drc_picture_aspect(); }
 JNI_FN(void, setDrcTouch)(JNIEnv*, jclass, jboolean down, jfloat u, jfloat v) {
     float x = u, y = v;
@@ -522,9 +598,15 @@ JNI_FN(void, setOption)(JNIEnv* env, jclass, jstring name, jint value) {
     if (n == "ao_mode") gfx::set_ao_mode(value);
     else if (n == "ao_hires") gfx::set_ao_hires(value != 0);
     else if (n == "aniso") gfx::set_aniso(value != 0);
+    else if (n == "vsync") gfx::set_vsync(value != 0);
+    else if (n == "trim_memory") gfx::trim_memory();
     else if (n == "upscale") gfx::set_upscale_mode(value);
     else if (n == "pro_controller") input::set_pro_controller(value != 0);
     else if (n == "invert_camera_y") mods::set_invert_y(value);
+    else if (n == "steer_mode") mods::set_steer_mode(value);
+    else if (n == "steer_swing") mods::set_steer_swing(value != 0);
+    else if (n == "steer_swing_delay") mods::set_steer_swing_delay(value);
+    else if (n == "steer_resync") mods::set_steer_resync(value);
     else if (n == "capture") gfx::request_capture();
     else if (n == "res_scale") gfx::set_resolution_scale(value / 100.0f);
     // dynamic resolution's lowest scale in percent, 0 = off (vk_dynres.cpp)
@@ -533,6 +615,12 @@ JNI_FN(void, setOption)(JNIEnv* env, jclass, jstring name, jint value) {
     }
     else if (n == "tv_aspect") gfx::set_tv_aspect(value);
     // aspect ratio the game renders at (aspect.cpp): 0 = 16:9 (original), 1 = the screen's shape
+    else if (n == "picto_big") aspect::set_picto_big(value != 0);
+    else if (n == "ring_no_baton") mods::set_ring_no_baton(value != 0);
+    // the 3D view zoomed out: the field of view's tangent in percent, 100 = the game's (aspect.cpp)
+    else if (n == "view_zoom") aspect::set_view_zoom(value / 100.0f);
+    // the 3D picture's centre moved down by layout units of 720 (the singing panel above it)
+    else if (n == "view_shift") aspect::set_view_shift((float)value);
     else if (n == "render_aspect") {
         if (!getenv("WWHD_ASPECT")) aspect::set_mode(value == 1 ? aspect::kWindow : aspect::kOriginal);  // debug: the env wins
     }
@@ -544,6 +632,7 @@ JNI_FN(void, setOption)(JNIEnv* env, jclass, jstring name, jint value) {
     // gameplay mods (runtime/src/mods)
     else if (n == "mod_direct_camera") mods::set_direct_camera(value != 0);
     else if (n == "mod_camera_speed") mods::set_camera_speed(value / 100.0f);
+    else if (n == "swipe_boat") mods::set_swipe_boat(value / 100.0f);
     else if (n == "mod_first_person") mods::set_first_person_wheel(value != 0);
     else if (n == "mod_climb") mods::set_climb_enabled(value != 0);
     else if (n == "mod_jump") mods::set_jump_anywhere(value != 0);
@@ -553,6 +642,13 @@ JNI_FN(void, setOption)(JNIEnv* env, jclass, jstring name, jint value) {
     else if (n == "mod_fast_scenes") mods::set_fast_scenes(value != 0);
     else if (n == "mod_ff_cutscenes") mods::set_ff_cutscenes(value != 0);
     else if (n == "mod_ff_dialogues") mods::set_ff_dialogues(value != 0);
+    else if (n == "mod_song_replay") mods::set_song_replay(value != 0);
+    else if (n == "mod_picto_pages") mods::set_picto_pages(value != 0);
+    else if (n == "link_clothes") mods::set_link_clothes(value);
+    else if (n == "postbox_mail") mods::set_postbox_mail(value != 0);
+    else if (n == "postbox_same_day") mods::set_postbox_same_day(value != 0);
+    else if (n == "postbox_present") mods::postbox_present();
+    else if (n == "picto_page") mods::picto_page_request(value);
     else if (n == "mod_run_speed") mods::set_run_speed(value / 100.0f);
     else if (n == "mod_run_mode") mods::set_run_mode(value);
     else if (n == "mod_swim_mode") mods::set_swim_mode(value);
@@ -569,6 +665,7 @@ JNI_FN(void, setOption)(JNIEnv* env, jclass, jstring name, jint value) {
     else if (n == "cheat_inf_rupees") mods::set_infinite(mods::kInfRupees, value != 0);
     else if (n == "cheat_inf_bags") mods::set_infinite(mods::kInfBags, value != 0);
     else if (n == "cheat_inf_breath") mods::set_infinite(mods::kInfBreath, value != 0);
+    else if (n == "cheat_one_hit") mods::set_infinite(mods::kOneHit, value != 0);
     else if (n == "cheat_moon_jump") mods::set_infinite(mods::kMoonJump, value != 0);
     else if (n == "cheat_moon_nofall") mods::set_infinite(mods::kMoonNoFall, value != 0);
     else if (n == "cheat_moon_anims") mods::set_infinite(mods::kMoonAllAnims, value != 0);
@@ -576,6 +673,19 @@ JNI_FN(void, setOption)(JNIEnv* env, jclass, jstring name, jint value) {
     else if (n == "cheat_moon_fly") mods::set_moon_jump_speeds(mods::moon_jump_rise(), value);
     // auto save states (savestate.cpp): the interval in minutes, 0 off
     else if (n == "auto_state") ss::set_auto_interval(value);
+    // the graphics benchmark (GraphicsPresets): GPU timing on, no sound, warps from the title screen
+    else if (n == "benchmark") {
+        gfx::set_benchmark(value != 0);
+        audio::set_muted(value != 0);
+        mods::set_warp_from_title(value != 0);
+    }
+    // the benchmark's measuring windows: the game's clock runs `value` times as fast (as fast forward
+    // does), so the GPU works flat out at its full clocks and the frame rate shows what the device can do
+    else if (n == "benchmark_quiet") gfx::set_background_compiles_paused(value != 0);
+    else if (n == "benchmark_speed") {
+        gx2::set_clock_rate(value > 1 ? value : 1.0);
+        gfx::set_fast_forward(value > 1);
+    }
 }
 
 // a mod pack for the menu (packs.h)
@@ -589,15 +699,22 @@ JNI_FN(jint, getOption)(JNIEnv* env, jclass, jstring name) {
     if (n == "auto_state") return ss::auto_interval();
     if (n == "ao_hires") return gfx::ao_hires_enabled();
     if (n == "aniso") return gfx::aniso_enabled();
+    if (n == "vsync") return gfx::vsync();
     if (n == "upscale") return gfx::upscale_mode();
     if (n == "pro_controller") return input::pro_controller();
     if (n == "invert_camera_y") return mods::invert_y();
+    if (n == "steer_mode") return mods::steer_mode();
+    if (n == "steer_swing") return mods::steer_swing();
     if (n == "tv_aspect") return gfx::tv_aspect();
+    if (n == "bench_frames") return gfx::benchmark_frames();
+    if (n == "work_done") return gfx::work_done();
+    if (n == "boot_message") return hud_boot_message() ? 1 : 0;
     if (n == "dyn_res_min") return (int)lroundf(gfx::dynamic_resolution_min() * 100);
     if (n == "render_aspect") return aspect::mode() == aspect::kWindow ? 1 : 0;
     if (n == "interp_fps") return interp::mode() == 1 ? interp::fps() : 0;
     if (n == "mod_direct_camera") return mods::direct_camera();
     if (n == "mod_camera_speed") return (int)lroundf(mods::camera_speed() * 100);
+    if (n == "swipe_boat") return (int)lroundf(mods::swipe_boat() * 100);
     if (n == "mod_first_person") return mods::first_person_wheel();
     if (n == "mod_climb") return mods::climb_enabled();
     if (n == "mod_jump") return mods::jump_anywhere();
@@ -607,6 +724,18 @@ JNI_FN(jint, getOption)(JNIEnv* env, jclass, jstring name) {
     if (n == "mod_fast_scenes") return mods::fast_scenes();
     if (n == "mod_ff_cutscenes") return mods::ff_cutscenes();
     if (n == "mod_ff_dialogues") return mods::ff_dialogues();
+    if (n == "mod_picto_pages") return mods::picto_pages();
+    if (n == "link_clothes") return mods::link_clothes();
+    if (n == "postbox_mail") return mods::postbox_mail();
+    if (n == "postbox_same_day") return mods::postbox_same_day();
+    if (n == "postbox_notice") return mods::postbox_notice();
+    if (n == "postbox_offer") return mods::postbox_offer();
+    if (n == "postbox_near") return mods::postbox_near();
+    if (n == "picto_page") return mods::picto_page_current();
+    if (n == "picto_pages") return mods::picto_page_count();
+    if (n == "picto_page_used") return mods::picto_page_used();
+    if (n == "picto_subject") return mods::picto_subject();
+    if (n == "picto_album") return mods::picto_album_shown();
     if (n == "mod_run_speed") return (int)lroundf(mods::run_speed() * 100);
     if (n == "mod_run_mode") return mods::run_mode();
     if (n == "mod_swim_mode") return mods::swim_mode();
@@ -621,6 +750,7 @@ JNI_FN(jint, getOption)(JNIEnv* env, jclass, jstring name) {
     if (n == "cheat_inf_rupees") return mods::infinite(mods::kInfRupees);
     if (n == "cheat_inf_bags") return mods::infinite(mods::kInfBags);
     if (n == "cheat_inf_breath") return mods::infinite(mods::kInfBreath);
+    if (n == "cheat_one_hit") return mods::infinite(mods::kOneHit);
     if (n == "cheat_moon_jump") return mods::infinite(mods::kMoonJump);
     if (n == "cheat_moon_nofall") return mods::infinite(mods::kMoonNoFall);
     if (n == "cheat_moon_anims") return mods::infinite(mods::kMoonAllAnims);
@@ -651,6 +781,8 @@ JNI_FN(jboolean, warpPreset)(JNIEnv* env, jclass, jbyteArray story, jstring stag
     env->GetByteArrayRegion(story, 0, (jsize)b.size(), (jbyte*)b.data());
     return mods::request_warp(jstr(env, stage).c_str(), room, spawn, layer, b.data(), b.size());
 }
+// the next warp puts Link at x, y, z facing angle (s16) once it has loaded
+JNI_FN(void, warpPlace)(JNIEnv*, jclass, jfloat x, jfloat y, jfloat z, jint angle) { mods::set_warp_place(x, y, z, angle); }
 // the live save's story part (for a preset), null outside the game
 JNI_FN(jbyteArray, storyBlock)(JNIEnv* env, jclass) {
     std::vector<uint8_t> b = mods::story_block();
@@ -676,12 +808,13 @@ JNI_FN(jstring, warpWhere)(JNIEnv* env, jclass) { return env->NewStringUTF(mods:
 // {used, compatible, time, area, controller ("", "gamepad" or "pro")} of slot 1..8
 JNI_FN(jobjectArray, saveSlotInfo)(JNIEnv* env, jclass, jint slot) {
     ss::SlotInfo i = ss::slot_info(slot);
-    jobjectArray a = env->NewObjectArray(5, env->FindClass("java/lang/String"), nullptr);
+    jobjectArray a = env->NewObjectArray(6, env->FindClass("java/lang/String"), nullptr);
     env->SetObjectArrayElement(a, 0, env->NewStringUTF(i.used ? "1" : "0"));
     env->SetObjectArrayElement(a, 1, env->NewStringUTF(i.compatible ? "1" : "0"));
     env->SetObjectArrayElement(a, 2, env->NewStringUTF(i.when.c_str()));
     env->SetObjectArrayElement(a, 3, env->NewStringUTF(i.area.c_str()));
     env->SetObjectArrayElement(a, 4, env->NewStringUTF(i.controller == 2 ? "pro" : i.controller == 1 ? "gamepad" : ""));
+    env->SetObjectArrayElement(a, 5, env->NewStringUTF(std::to_string(i.created).c_str()));
     return a;
 }
 JNI_FN(void, saveState)(JNIEnv*, jclass, jint slot) { ss::request_save(slot); }
@@ -719,6 +852,15 @@ JNI_FN(void, applyFrameGen)(JNIEnv* env, jclass, jboolean on, jstring dll, jbool
 // performance overlay: {game fps, frame time avg ms, worst ms, presented fps, frame generation GPU ms,
 // game frames so far, their time in seconds (without pauses), resolution scale, 3D view width, height,
 // dynamic resolution's minimum (0 = off), its GPU busy share (-1 = off)}
+// the graphics benchmark's numbers since the last call (gfx::benchmark_sample)
+JNI_FN(jfloatArray, benchmarkSample)(JNIEnv* env, jclass) {
+    float v[gfx::kBenchStats];
+    gfx::benchmark_sample(v);
+    jfloatArray a = env->NewFloatArray(gfx::kBenchStats);
+    env->SetFloatArrayRegion(a, 0, gfx::kBenchStats, v);
+    return a;
+}
+
 JNI_FN(jfloatArray, perfStats)(JNIEnv* env, jclass) {
     float v[gfx::kPerfStats];
     gfx::perf_stats(v);
