@@ -30,6 +30,13 @@ void hud_zoom_bar(int32_t out[6]);
 // the message window's choices, in layout units: out[0] shown (drawn in the last moments), [1] how many
 // (2 or 3), [2] / [3] their window's centre, [4] the cursor's y (on the chosen line)
 void hud_choice(int32_t out[5]);
+// the choice box not drawn for the next ms (0: drawn again); hud_choice still sees it: a shop's item put back by
+// a tap off it answers its question's "no" unseen (mods/minigames.cpp)
+void hud_hide_choice(int ms);
+// the message's "go on" icon (L_KeyIcon_00) is shown (also under an open choice)
+bool hud_msg_key_icon();
+// ms since the "go on" icon was last drawn
+int64_t hud_msg_key_icon_age();
 // the message's number entry (P_SelNumber_00: the auction's bid) is shown
 bool hud_number_entry();
 // the message window's box (P_MsgWindow_00) in layout units: out[0] shown (drawn in the last moments), [1] / [2] its
@@ -39,6 +46,8 @@ void hud_msg_window(int32_t out[5]);
 bool hud_wind_compass(int32_t out[2]);
 // the Picto Box's own screen (aiming, the photo's yes / no): its finder was drawn in the last moments
 bool hud_picto_screen();
+// the picto album is shown (its pictos' row): the Picto Box's own (ZR) or the chooser when showing one to someone
+bool hud_album_screen();
 // the boot layout shows a message with one button (the first start's "save data created")
 bool hud_boot_message();
 
@@ -61,3 +70,7 @@ float hud_fade_alpha(int which);
 // fully faded out: the element isn't drawn at all (parts that don't inherit the alpha would stay
 // faintly visible)
 bool hud_fade_gone(int which);
+// the rupee counter's twinkle is a particle, not part of the layout: it is as visible as the counter
+// (aspect.cpp notes each frame the counter is drawn; interp_fx.cpp's emitter hook applies the factor)
+void hud_rupees_drawn();
+float hud_rupee_twinkle_alpha();

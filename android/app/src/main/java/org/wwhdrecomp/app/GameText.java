@@ -179,6 +179,7 @@ final class GameText {
             case 0x11: return "Grab";
             case 0x12: return "Jump";
             case 0x13: return "Stop";
+            case 0x14: return "Set sail";
             case 0x17: return "Choose";
             case 0x19: return "Next";
             case 0x1A: return "Parry";

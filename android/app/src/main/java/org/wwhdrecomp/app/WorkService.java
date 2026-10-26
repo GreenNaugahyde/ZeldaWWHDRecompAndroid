@@ -119,7 +119,7 @@ public final class WorkService extends Service {
         boolean extract = Work.running() == Work.EXTRACT;
         long[] p = extract ? Native.extractProgress() : Native.compileProgress();
         long s = Work.elapsedSeconds();
-        String text = p[1] <= 0 ? "" : extract
+        String text = p[1] <= 0 ? (extract ? "" : getString(R.string.compile_detail_split, s / 60, s % 60)) : extract
                 ? getString(R.string.extract_detail_short, p[0] / 1048576, p[1] / 1048576)
                 : getString(R.string.compile_detail, p[0], p[1], s / 60, s % 60);
         Intent open = new Intent(this, MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);

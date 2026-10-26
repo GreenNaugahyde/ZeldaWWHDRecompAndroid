@@ -147,6 +147,11 @@ constexpr int kMinigameMarks = 72;  // 64 squares + the cursor's
 int minigame_marks(float* xy);
 // filter_pad (camera.cpp): the minigame's stick pushes and button presses
 void minigame_pad(input::PadState& s);
+// a finger held on the picture in a talk (the app, flexible touch): A each time the message waits for it; with its
+// fast forward on, the event runs fast forward while held (turbo.cpp)
+void set_talk_hold(bool on);
+void set_talk_hold_ff(bool on);
+bool talk_hold_ff();
 // (ids 0xFF: none; all 0 but [15..19] when not in a game: title screen, file select)
 // [0] in play, [1] A action, [2] sword, [3..5] X / Y / R item, [6] B action, [7] ZR action,
 // [8] event mode, [9] pause menu, [10] has the Wind Waker, [11] shield, [12] / [13] Link's mode bits
@@ -155,8 +160,9 @@ void minigame_pad(input::PadState& s);
 // Picto Box / telescope (hud_zoom_bar, hud.h), [29] the item in Link's hand, [30] targets defeated while
 // locked on (a count: the lock ended with the enemy dead), [31] locked on now, [32] targets in reach,
 // [33] a fade / wipe is under way (scene change, also on the title screen), [34] the attention type A acts on
-// (fopAc_Attn_TYPE: 5 a door, 6 a chest; -1 none)
-constexpr int kTouchStateLen = 35;
+// (fopAc_Attn_TYPE: 5 a door, 6 a chest; -1 none), [35] A's Jump is the jump attack (1; the side hop / back flip 0),
+// [36] Link's mode flags (daPy_lk_c::mModeFlg: 0x400000 on a ladder), [37] has the Swift Sail
+constexpr int kTouchStateLen = 38;
 void touch_state(int32_t out[kTouchStateLen]);
 // the item ring: {21 inventory item ids (0xFF empty), X / Y / R inventory slots, item in Link's hand,
 // the bags' 3 x 8 items (slots 24.., 36.., 48..)} (all -1 outside the game); request_equip puts an

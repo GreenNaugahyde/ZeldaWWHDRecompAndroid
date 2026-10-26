@@ -784,6 +784,15 @@ final class GameUi {
             return GameFont.MSG.isReady(getContext(), () -> { laidOutFor = -1; requestLayout(); invalidate(); });
         }
 
+        // a new text is measured and drawn again: TextView's setText does that only through its own layout, which
+        // this view never makes (the preparation card stayed at "0 of 0 parts (0:00)" while its bar moved)
+        @Override
+        protected void onTextChanged(CharSequence text, int start, int lengthBefore, int lengthAfter) {
+            super.onTextChanged(text, start, lengthBefore, lengthAfter);
+            requestLayout();
+            invalidate();
+        }
+
         // the font's cell (50 high) to the text size: a little larger than the system font's (its letters are small
         // in their cell: at the system font's size it read too small)
         private float scale() { return getTextSize() * 1.62f / GameFont.MSG.height(); }

@@ -183,6 +183,7 @@ struct Bone {
 struct Vertex {
     V3 p, n;
     float u = 0, v = 0;
+    float c = 1;  // vertex colour (red; baked shading on the ladder)
     int idx[4] = {0, 0, 0, 0};
     float w[4] = {1, 0, 0, 0};
 };
@@ -195,6 +196,8 @@ struct Shape {
     const Texture* tex = nullptr;   // _a0
     const Texture* tex2 = nullptr;  // _a1 (the eyes' pupil)
     bool overlay = false;           // eyes and brows: drawn over the hair, as the game does
+    bool fromDark = false;          // the ladder: from the material's dark colour to the texture by the vertex colour
+    V3 dark;
 };
 
 // a model of the file: Link's body, or an item hung on one of its joints
@@ -207,7 +210,15 @@ struct Part {
     int joint = -1;  // an item: the body's joint it hangs on and its place there
     M34 offset;
     int joint2 = -1;  // a carried thing: held midway between joint and this one (his hands), upright
+    int hand = -1;    // his sword and shield: the hand that holds it drawn (Request.sword)
+    bool drawnOnly = false;  // the blade: only in his hand (the scabbard hides it)
     std::string tag;  // a thing that goes with him (Request.with)
+    std::string variant;  // ... drawn only with this Request.withVariant (hasVariant)
+    bool hasVariant = false;
+    int onPart = -1;  // a part of another thing (the boat's head, its sail): that part's pose ...
+    int onJoint = -1;  // ... at this joint of it (its own bones at rest from there); -1: skinned to that part's bones
+    std::string poseAnim;  // ... in this animation of its file (at poseFrame), not at rest
+    float poseFrame = 0;
 };
 
 struct Model {
@@ -338,7 +349,7 @@ bool load_model(const Res& r, const char* name, Model& m, Part& p) {
             s.tex = texture(mats[mat].tex0, mats[mat].samp0);
             if (mats[mat].tex1 == "ZBtoonEX") {
                 if (!m.ramp) m.ramp = texture("ZBtoonEX", 2 | 2 << 3);
-            } else {
+            } else if (mats[mat].tex1.find("toon") == std::string::npos) {  // (the objects' toon ramps, ZAtoon, toonEX: not a second colour)
                 s.tex2 = texture(mats[mat].tex1, 2 | 2 << 3);
             }
         }
@@ -361,6 +372,7 @@ bool load_model(const Res& r, const char* name, Model& m, Part& p) {
                 if (an == "_p0") vx.p = {x[0], x[1], x[2]};
                 else if (an == "_n0") vx.n = {x[0], x[1], x[2]};
                 else if (an == "_u0") { vx.u = x[0]; vx.v = x[1]; }
+                else if (an == "_c0") vx.c = x[0];
                 else if (an == "_i0") for (int k = 0; k < 4; k++) vx.idx[k] = k < n ? (int)x[k] : 0;
                 else if (an == "_w0") {
                     float sum = 0;
@@ -601,6 +613,12 @@ void draw(Raster& ras, const Camera& cam, const Model& m, const Shape& s, const 
                     for (int k = 0; k < 3; k++) tc[k] *= pc[k];
                 }
                 if (tc[3] < 0.5f) continue;
+                if (s.fromDark) {
+                    float vc = v0.c * w0 + v1.c * w1 + v2.c * w2;
+                    tc[0] = s.dark.x + (tc[0] - s.dark.x) * vc;
+                    tc[1] = s.dark.y + (tc[1] - s.dark.y) * vc;
+                    tc[2] = s.dark.z + (tc[2] - s.dark.z) * vc;
+                }
                 V3 n = norm(pv[i0].n * w0 + pv[i1].n * w1 + pv[i2].n * w2);
                 if (back) n = n * -1;
                 float l = dot(n, light) * 0.5f + 0.5f, shade = 1;
@@ -676,27 +694,30 @@ int render(const std::string& gameDir, const std::string& outDir, const std::vec
         return 0;
     }
     // his sword (its grip: the blade is in the scabbard) and shield on his back, placed on the scabbard's joint
-    // as daPy_lk_c::setItemModel does
-    int podA = -1;
-    for (size_t i = 0; i < m.parts[0].bones.size(); i++)
+    // as daPy_lk_c::setItemModel does; drawn (Request.sword), the grip and the blade swa on his left hand, the
+    // shield on his right, right on the joints
+    int podA = -1, lhand = -1, rhand = -1;
+    for (size_t i = 0; i < m.parts[0].bones.size(); i++) {
         if (m.parts[0].bones[i].name == "cl_podA") podA = (int)i;
-    struct Gear { const char* model; V3 t; float rz; };
-    static const Gear kGear[] = {{"swgripa", {-11.25f, 4.5f, 0.45f}, -40}, {"sha", {15.5f, 4.75f, 0}, -90}};
+        if (m.parts[0].bones[i].name == "cl_LhandA") lhand = (int)i;
+        if (m.parts[0].bones[i].name == "cl_RhandA") rhand = (int)i;
+    }
+    struct Gear { const char* model; V3 t; float rz; bool left, drawnOnly; };
+    static const Gear kGear[] = {{"swgripa", {-11.25f, 4.5f, 0.45f}, -40, true, false},
+                                 {"swa", {0, 0, 0}, 0, true, true},
+                                 {"sha", {15.5f, 4.75f, 0}, -90, false, false}};
     for (const Gear& g : kGear) {
         Part p;
         if (podA < 0 || !load_model(link, g.model, m, p)) continue;
         p.joint = podA;
         p.offset = srt({1, 1, 1}, {0, 0, g.rz * (float)M_PI / 180}, g.t);
+        p.hand = g.left ? lhand : rhand;
+        p.drawnOnly = g.drawnOnly;
         m.parts.push_back(std::move(p));
     }
     // the things that go with him (Request.with): the small pot he carries midway between his hands, as
     // daPy_lk_c places the grabbed actor; a chest and a door (their files also hold the animations they move in
     // with his: boxopenshortbox / boxopenshortlink, dooropenadoor / dooropenalink); a Bokoblin's stick; a block
-    int lhand = -1, rhand = -1;
-    for (size_t i = 0; i < m.parts[0].bones.size(); i++) {
-        if (m.parts[0].bones[i].name == "cl_LhandA") lhand = (int)i;
-        if (m.parts[0].bones[i].name == "cl_RhandA") rhand = (int)i;
-    }
     // (root: a name for the model's root bone, the one its animation moves: the house door door_c hangs on the
     // knob doors' DoorDummy)
     struct Thing { const char* tag; const char* arc; const char* file; const char* model; const char* root; };
@@ -704,20 +725,29 @@ int render(const std::string& gameDir, const std::string& outDir, const std::vec
                                     {"chest", "Dalways.szs", "Dalways.bfres", "boxa", nullptr},
                                     {"door", "Knob.szs", "Knob.bfres", "door_c", "DoorDummy"},
                                     {"stick", "Boko.szs", "Boko.bfres", "boko", nullptr},
-                                    {"postbox", "Toripost.szs", "Toripost.bfres", "vpost", nullptr}};
-    // (the postbox is in the first pack, the others in the 3D pack)
-    Bytes firstPack;
+                                    {"postbox", "Toripost.szs", "Toripost.bfres", "vpost", nullptr},
+                                    {"ladder", "Mhsg.szs", "Mhsg.bfres", "mhsg4h", nullptr},
+                                    {"ledge", "Osiblk.szs", "Osiblk.bfres", "obm_osihikiblk1", nullptr},
+                                    {"ship", "Ship.szs", "Ship.bfres", "fn_body", nullptr}};
+    // (the postbox is in the first pack, the ladder and the stone block (a ledge) in szs_permanent0, the others in the 3D pack)
+    Bytes firstPack, objPack;
     game_archive::read_file(gameDir + "/content/Common/Pack/first_szs_permanent.pack", firstPack);
+    game_archive::read_file(gameDir + "/content/Common/Pack/szs_permanent0.pack", objPack);
     std::map<std::string, Res> thingRes;
     for (const Thing& t : kThings) {
         Part p;
         Res& r = thingRes[t.tag];
-        const Bytes& from = std::string(t.tag) == "postbox" ? firstPack : pack;
+        const Bytes& from = std::string(t.tag) == "postbox" ? firstPack : std::string(t.tag) == "ladder" || std::string(t.tag) == "ledge" || std::string(t.tag) == "ship" ? objPack : pack;
         if (!load_res(from, t.arc, t.file, r) || !load_model(r, t.model, m, p)) {
             LOG("[link_icons] %s (%s) not loaded", t.model, t.arc);
             continue;
         }
         p.tag = t.tag;
+        if (p.tag == "ladder")  // (the material's konst1, a dark brown, by the vertex colours to the yellow wood texture)
+            for (Shape& sh : p.shapes) {
+                sh.fromDark = true;
+                sh.dark = {0.359f, 0.101f, 0};
+            }
         if (t.root && !p.bones.empty()) p.bones[0].name = t.root;
         if (p.tag == "pot") {
             if (lhand < 0 || rhand < 0) continue;
@@ -726,8 +756,111 @@ int render(const std::string& gameDir, const std::string& outDir, const std::vec
         }
         m.parts.push_back(std::move(p));
     }
+    // the boat's head on its body (d_a_ship: at j_fn_gattai) and its sail: the game's sail is cloth it moves itself
+    // (d_a_sail); here a sheet curved a little in the wind, its foot on the boom (j_fn_sail1 .. j_fn_sail_e) and its
+    // head up the mast (j_fn_mast), so the mast's animations raise and lower it too; the normal sail (new_ho1) and the
+    // Swift Sail (new_ho2) as variants "" / "swift"
+    for (size_t si = 0; si < m.parts.size(); si++) {
+        if (m.parts[si].tag != "ship") continue;
+        Res& r = thingRes["ship"];
+        auto bone = [&](const char* n) {
+            for (size_t b = 0; b < m.parts[si].bones.size(); b++)
+                if (m.parts[si].bones[b].name == n) return (int)b;
+            return -1;
+        };
+        int gattai = bone("j_fn_gattai"), mast = bone("j_fn_mast"), sail1 = bone("j_fn_sail1");
+        Part head;
+        if (gattai >= 0 && load_model(r, "fn_head_h", m, head)) {
+            head.tag = "ship";
+            head.onPart = (int)si;
+            head.onJoint = gattai;
+            head.poseAnim = "fn_talk_a";  // (its bind pose is a tangle: the game always plays one of its animations)
+            m.parts.push_back(std::move(head));
+        }
+        if (mast < 0 || sail1 < 0) break;
+        for (int v = 0; v < 2; v++) {
+            Texture t;
+            const char* tn = v ? "new_ho2" : "new_ho1";
+            if (!load_texture(r, tn, t)) continue;
+            Part sail;
+            sail.tag = "ship";
+            sail.variant = v ? "swift" : "";
+            sail.hasVariant = true;
+            sail.onPart = (int)si;
+            sail.matrixBone = {sail1, mast};
+            Shape sh;
+            sh.skin = 1;
+            sh.tex = &(m.textures[tn] = std::move(t));
+            // a grid: x along the boom (0 .. L, sail1's space), y up the mast; the foot's points on the boom, the others
+            // on the mast at 110 (the boom's place on it) + y, out along the boom's direction (the mast's +z); bellied
+            // out sideways (-y of sail1, +y of the mast) the more the further from the edges
+            const float L = 300, belly = 40;
+            const int N = 6;
+            for (int j = 0; j <= N; j++)
+                for (int i = 0; i <= N; i++) {
+                    float x = L * i / N, y = L * j / N;
+                    float b = belly * std::sin((float)M_PI * i / N) * std::sin((float)M_PI * (0.25f + 0.75f * j / N));
+                    Vertex vx;
+                    if (j == 0) {
+                        vx.p = {x, -b, 0};
+                        vx.idx[0] = 0;
+                    } else {
+                        vx.p = {110 + y, b, x};
+                        vx.idx[0] = 1;
+                    }
+                    vx.n = {0, 1, 0};
+                    vx.u = (float)i / N;
+                    vx.v = 1 - (float)j / N;
+                    sh.verts.push_back(vx);
+                }
+            for (int j = 0; j < N; j++)
+                for (int i = 0; i < N; i++) {
+                    uint32_t a = j * (N + 1) + i, c = a + N + 1;
+                    sh.tris.insert(sh.tris.end(), {a, a + 1, c + 1, a, c + 1, c});
+                }
+            sail.shapes.push_back(std::move(sh));
+            m.parts.push_back(std::move(sail));
+        }
+        break;
+    }
+    // a wall of climbing vines ("ivy"): a square of the vine net texture of Dragon Roost's and the Wind Temple's
+    // climbable walls (a room's own texture: from Dragon Roost Cavern's room 15), facing him (-z): a strip a bit wider
+    // than him, 8 m high
+    {
+        Bytes room, sarc;
+        Res r;
+        Texture t;
+        if (game_archive::read_file(gameDir + "/content/Common/Stage/M_Dai_Room15.szs", room) && game_archive::yaz0(room, sarc) &&
+            game_archive::sarc_file(sarc, "Room15.bfres", r.d) && load_texture(r, "Txm_GDR0ftuta_matu", t)) {
+            Part p;
+            p.tag = "ivy";
+            p.bones.resize(1);
+            p.rest.resize(1);
+            p.invBind.resize(1);
+            Shape sh;
+            const float w = 50, h = 400, rep = 200;  // (the texture repeats every rep units)
+            const float xy[4][2] = {{-w, -h}, {w, -h}, {w, h}, {-w, h}};
+            for (const auto& c : xy) {
+                Vertex v;
+                v.p = {c[0], c[1], 0};
+                v.n = {0, 0, -1};
+                v.c = 0.7f;  // (a little in the shade, behind him: his green stands out)
+                v.u = c[0] / rep;
+                v.v = -c[1] / rep;
+                sh.verts.push_back(v);
+            }
+            sh.tris = {0, 1, 2, 0, 2, 3};
+            sh.fromDark = true;
+            sh.tex = &(m.textures["Txm_GDR0ftuta_matu"] = std::move(t));
+            p.shapes.push_back(std::move(sh));
+            m.parts.push_back(std::move(p));
+        } else {
+            LOG("[link_icons] the vine wall (M_Dai_Room15) not loaded");
+        }
+    }
     pack.clear();
     firstPack.clear();
+    objPack.clear();
     int written = 0;
     for (const Request& rq : requests) {
         Anim a;
@@ -737,6 +870,16 @@ int render(const std::string& gameDir, const std::string& outDir, const std::vec
         }
         Anim from;  // a pose to blend from (frames 0: none)
         if (!rq.from.empty() && !load_anim(anims, rq.from, from)) LOG("[link_icons] animation %s not found", rq.from.c_str());
+        std::map<std::string, Anim> extraAnims;  // (Request.extraAnim)
+        for (const std::string& n : rq.extraAnim)
+            if (!n.empty() && !extraAnims.count(n) && !load_anim(anims, n, extraAnims[n])) LOG("[link_icons] animation %s not found", n.c_str());
+        std::map<size_t, std::vector<M34>> partPoses;  // (Part.poseAnim)
+        for (size_t pi = 0; pi < m.parts.size(); pi++) {
+            const Part& p = m.parts[pi];
+            Anim pa;
+            if (!p.poseAnim.empty() && p.tag == rq.with && load_anim(thingRes[p.tag], p.poseAnim, pa))
+                partPoses[pi] = pose(p, pa, p.poseFrame, false);
+        }
         Anim withAnim;  // the thing's own animation (frames 0: none)
         if (!rq.withAnim.empty() && !load_anim(thingRes[rq.with], rq.withAnim, withAnim))
             LOG("[link_icons] animation %s not found", rq.withAnim.c_str());
@@ -762,23 +905,55 @@ int render(const std::string& gameDir, const std::string& outDir, const std::vec
                 float w = std::min(1.f, std::max(0.f, fr));
                 w = w * w * (3 - 2 * w);
                 body = blend(m.parts[0], locals(m.parts[0], from, rq.fromFrame, rq.inPlace), locals(m.parts[0], a, rq.toFrame, rq.inPlace), w);
+                if (rq.drop > 0) {  // falling: down by drop, faster and faster, as the blend goes on
+                    float d = std::max(0.f, fr);
+                    for (M34& b : body) b.m[7] -= rq.drop * d * d;
+                }
             } else {
-                body = pose(m.parts[0], a, fr, rq.inPlace);
+                size_t x = i - rq.frames;
+                bool other = i >= rq.frames && x < rq.extraAnim.size() && !rq.extraAnim[x].empty();
+                body = pose(m.parts[0], other ? extraAnims[rq.extraAnim[x]] : a, fr, rq.inPlace);
+            }
+            int pics = rq.frames + (int)rq.extra.size();
+            if (i > rq.moveFrom && pics - 1 > rq.moveFrom) {  // moving along a path (and a hop)
+                float t = (float)(i - rq.moveFrom) / (pics - 1 - rq.moveFrom);
+                for (M34& b : body) {
+                    b.m[3] += rq.move[0] * t;
+                    b.m[7] += rq.move[1] * t + rq.hop * 4 * t * (1 - t);
+                    b.m[11] += rq.move[2] * t;
+                }
             }
             Frame f;
+            std::vector<std::vector<M34>> worlds(m.parts.size());  // (the parts on other parts use theirs)
             for (size_t pi = 0; pi < m.parts.size(); pi++) {
                 const Part& p = m.parts[pi];
-                if (!p.tag.empty() ? p.tag != rq.with : rq.noLink || (pi > 0 && !rq.gear)) {
+                bool drawn = p.tag.empty() && pi > 0 && rq.sword && p.hand >= 0;
+                if (!p.tag.empty() ? p.tag != rq.with || (p.hasVariant && p.variant != rq.withVariant)
+                                   : rq.noLink || (pi > 0 && (!rq.gear || (p.drawnOnly && !drawn)))) {
                     f.parts.emplace_back();
                     continue;
                 }
-                std::vector<M34> world = body;
-                if (!p.tag.empty() && p.joint < 0) {  // standing in front of him, in its own animation (or at rest)
+                std::vector<M34>& world = worlds[pi];
+                world = body;
+                if (p.onPart >= 0 && p.onJoint < 0) {
+                    world = worlds[p.onPart];
+                } else if (p.onPart >= 0) {
+                    M34 base = p.onJoint < (int)worlds[p.onPart].size() ? worlds[p.onPart][p.onJoint] : M34();
+                    auto pa = partPoses.find(pi);
+                    const std::vector<M34>& own = pa != partPoses.end() ? pa->second : p.rest;
+                    world.resize(own.size());
+                    for (size_t b = 0; b < own.size(); b++) world[b] = mul(base, own[b]);
+                } else if (!p.tag.empty() && p.joint < 0) {  // standing in front of him, in its own animation (or at rest)
                     M34 at = srt({1, 1, 1}, {0, rq.withYaw * (float)M_PI / 180, 0}, {rq.withAt[0], rq.withAt[1], rq.withAt[2]});
-                    world = withAnim.frames > 0 ? pose(p, withAnim, fr, false) : p.rest;
+                    if (rq.withRock != 0) {  // rocking on the waves: once round over the pictures
+                        float t = rq.frames > 0 ? (float)i / rq.frames : 0;
+                        float a = rq.withRock * (float)M_PI / 180 * std::sin(2 * (float)M_PI * t);
+                        at = mul(at, srt({1, 1, 1}, {a, 0, 0}, {0, 0, 0}));  // (bow up and down)
+                    }
+                    world = withAnim.frames > 0 ? pose(p, withAnim, rq.withFrame >= 0 ? rq.withFrame : fr, false) : p.rest;
                     for (M34& w : world) w = mul(at, w);
                 } else if (p.joint >= 0) {
-                    M34 base = mul(body[p.joint], p.offset);
+                    M34 base = drawn ? body[p.hand] : mul(body[p.joint], p.offset);
                     if (p.joint2 >= 0) {
                         base = p.offset;
                         for (int k = 3; k < 12; k += 4) base.m[k] += (body[p.joint].m[k] + body[p.joint2].m[k]) / 2;
@@ -789,6 +964,7 @@ int render(const std::string& gameDir, const std::string& outDir, const std::vec
                 std::vector<std::vector<Posed>> shapes;
                 for (const Shape& s : p.shapes) {
                     shapes.push_back(skin(p, s, world));
+                    if (rq.fitLink && !p.tag.empty()) continue;  // (the thing may go past the picture's edges)
                     for (const Posed& v : shapes.back()) {
                         float x = dot(v.p, cam.right), y = dot(v.p, cam.up);
                         f.lo[0] = std::min(f.lo[0], x), f.hi[0] = std::max(f.hi[0], x);
@@ -802,11 +978,17 @@ int render(const std::string& gameDir, const std::string& outDir, const std::vec
         }
         const int ss = 4, n = rq.size * ss;
         float margin = rq.size / 16.f * ss;  // room for the outline
+        Frame all;  // (fixedFrame: all frames' bounds, one place for all)
+        for (const Frame& f : frames)
+            for (int k = 0; k < 2; k++) all.lo[k] = std::min(all.lo[k], f.lo[k]), all.hi[k] = std::max(all.hi[k], f.hi[k]);
+        if (rq.fixedFrame) extent = std::max(all.hi[0] - all.lo[0], all.hi[1] - all.lo[1]);
+        extent *= 1 + rq.fitMore;
         cam.scale = (n - 2 * margin) / std::max(extent, 1e-3f);
         for (size_t i = 0; i < frames.size(); i++) {
             const Frame& f = frames[i];
-            cam.cx = n / 2.f - (f.lo[0] + f.hi[0]) / 2 * cam.scale;
-            cam.cy = n / 2.f + (f.lo[1] + f.hi[1]) / 2 * cam.scale;
+            const Frame& at = rq.fixedFrame ? all : f;
+            cam.cx = n / 2.f - (at.lo[0] + at.hi[0]) / 2 * cam.scale;
+            cam.cy = n / 2.f + (at.lo[1] + at.hi[1]) / 2 * cam.scale;
             Raster ras(n, n);
             for (int overlay = 0; overlay < 2; overlay++)
                 for (size_t pi = 0; pi < m.parts.size(); pi++)
@@ -956,6 +1138,166 @@ int render_buttons(const std::string& gameDir, const std::string& outDir) {
     box.with = "postbox";
     box.withAnim = "post_get";
     rq.push_back(box);
+    // A Jump while locked on with the sword drawn (the jump attack): the sword in his hand, facing right as the others; the
+    // leap with the blade raised and the cut down (jattack 0..13; later its frames hold a pose the game blends out of),
+    // the landing's lunge (jattackland), and last, as the button keeps it, in the air with the blade raised
+    Request jat;
+    jat.name = "link_jattack";
+    jat.anim = "jattack";
+    jat.last = 13;
+    jat.frames = 10;
+    jat.extra = {0, 6};
+    jat.extraAnim = {"jattackland", ""};
+    jat.yaw = -75;
+    jat.sword = true;
+    rq.push_back(jat);
+    // A Let go on a ladder: holding on (3 pictures), then letting go into the fall's pose (jmpeds, what procFall plays)
+    // and dropping; the ladder (fitted to him, so it slides up past him), seen from behind, on his right
+    Request lad;
+    lad.name = "link_ladder";
+    lad.from = "ladderltor";
+    lad.anim = "jmpeds";
+    lad.first = -0.3f;
+    lad.last = 1;
+    lad.frames = 10;
+    lad.drop = 120;
+    lad.yaw = -135;
+    lad.with = "ladder";
+    lad.withAt[1] = -200;
+    lad.withAt[2] = 20;
+    lad.fitLink = true;
+    rq.push_back(lad);
+    // ... on a wall of vines (climbing ivy: the same animations), a strip of it behind him
+    Request ivy = lad;
+    ivy.name = "link_ivy";
+    ivy.with = "ivy";
+    ivy.withAt[1] = 0;
+    rq.push_back(ivy);
+    // A Let go hanging from a ledge: hanging (procHangWait: vjmpcha held at its start), then letting go into the fall
+    // as on the ladder; a stone block (the push block) as the ledge, its top at his hands; one framing for all, so
+    // the ledge stays and he drops away from it (the hang's pose hangs low under his place: the drop makes up for it)
+    Request hang;
+    hang.name = "link_hang";
+    hang.from = "vjmpcha";
+    hang.anim = "jmpeds";
+    hang.first = -0.3f;
+    hang.last = 1;
+    hang.frames = 10;
+    hang.drop = 240;
+    hang.yaw = -125;
+    hang.pitch = 15;
+    hang.with = "ledge";
+    hang.withAt[1] = -140;
+    hang.withAt[2] = 90;
+    hang.fitLink = true;
+    hang.fixedFrame = true;
+    rq.push_back(hang);
+    // the boat (the King of Red Lions, only him), facing right: R / A Set sail, the mast rising with the sail
+    // (fn_mast_on2), Put away while sailing, it going down (fn_mast_off2); with the normal sail and the Swift Sail (the
+    // _swift_ ones); and the Swift Sail's Fast / Normal: sailing, the bow rocking up and down (once round, 8 pictures)
+    for (int v = 0; v < 2; v++) {
+        static const char* const kSail[2][2] = {{"link_sailup", "fn_mast_on2"}, {"link_saildown", "fn_mast_off2"}};
+        for (const auto& k : kSail) {
+            Request b;
+            b.name = std::string(k[0]) + (v ? "_swift" : "");
+            b.anim = "wait";
+            b.noLink = true;
+            b.with = "ship";
+            b.withAnim = k[1];
+            b.withVariant = v ? "swift" : "";
+            b.frames = 10;
+            b.yaw = -60;
+            b.pitch = 15;
+            b.fixedFrame = true;
+            rq.push_back(b);
+        }
+    }
+    Request sailing;
+    sailing.name = "link_sailing";
+    sailing.anim = "wait";
+    sailing.noLink = true;
+    sailing.with = "ship";
+    sailing.withAnim = "fn_mast_on2";
+    sailing.withVariant = "swift";
+    sailing.first = sailing.last = 60;  // (the mast up)
+    sailing.frames = 8;
+    sailing.withRock = 8;
+    sailing.yaw = -60;
+    sailing.pitch = 15;
+    sailing.fixedFrame = true;
+    rq.push_back(sailing);
+    // Stop (A, the sail down while the boat still moves): drifting, the mast down (fn_mast_on2 0), rocking less
+    Request drifting = sailing;
+    drifting.name = "link_drifting";
+    drifting.withVariant = "";
+    drifting.first = drifting.last = 0;
+    drifting.withRock = 5;
+    rq.push_back(drifting);
+    // A Get in: hanging from the boat's side and climbing in (vjmpcl, procShipReady; he holds the side at l_ship_redge
+    // (-57, 35, -35), the boat's middle ahead of him), seen from behind him, the boat (mast down) facing right, framed
+    // on him with some of it around
+    Request in;
+    in.name = "link_getin";
+    in.anim = "vjmpcl";
+    in.frames = 10;
+    in.inPlace = false;
+    in.with = "ship";
+    in.withAnim = "fn_mast_on2";
+    in.withFrame = 0;
+    in.withAt[0] = -35;
+    in.withAt[1] = -35;
+    in.withAt[2] = 57;
+    in.withYaw = -90;
+    in.yaw = -150;
+    in.pitch = 20;
+    in.fitLink = true;
+    in.fitMore = 0.5f;
+    in.fixedFrame = true;
+    rq.push_back(in);
+    // A Get out: in the boat's middle (l_ship_offset), the jump's start (jmpst, procShipGetOff), then out over its
+    // side in the fall's pose (jmpeds), an arc down to the water; seen from his front, the boat facing right
+    Request out = in;
+    out.name = "link_getout";
+    out.anim = "jmpst";
+    out.inPlace = true;
+    out.frames = 6;
+    out.extra = {0, 0, 0, 0};
+    out.extraAnim = {"jmpeds", "jmpeds", "jmpeds", "jmpeds"};
+    out.withAt[0] = 35;
+    out.withAt[1] = -15;
+    out.withAt[2] = 0;
+    out.withYaw = 90;
+    out.move[1] = -100;
+    out.move[2] = 150;
+    out.hop = 90;
+    out.moveFrom = 3;
+    out.yaw = 30;
+    out.fitMore = 0.3f;
+    rq.push_back(out);
+    // A Speak: talking (talka, his hand going with his words), facing right as the others (GameIcons adds the balloon)
+    Request talk;
+    talk.name = "link_talk";
+    talk.anim = "talka";
+    talk.frames = 12;
+    talk.yaw = -45;
+    rq.push_back(talk);
+    // B leaving a shop: one step of his walk, seen from behind (GameIcons puts him in a doorway, going away)
+    Request away;
+    away.name = "link_walkaway";
+    away.anim = "walk";
+    away.frames = 12;
+    away.yaw = 170;
+    away.pitch = 15;
+    rq.push_back(away);
+    // A Check / Look: leaning forward to peer at something (waitq's first half), facing right as the others
+    // (GameIcons adds the magnifying glass at his eye)
+    Request look;
+    look.name = "link_check";
+    look.anim = "waitq";
+    look.last = 30;
+    look.frames = 12;
+    look.yaw = -45;
+    rq.push_back(look);
     for (Request& r : rq) r.size = 160;
     return render(gameDir, outDir, rq);
 }

@@ -687,12 +687,20 @@ final class OptionsMenu extends Dialog {
     /** built ahead (MainActivity.prepareOptionsPage): measured and laid out too, at the window's size and with the
      * cutout's padding it will get, so showing it has only to draw */
     void layOutAhead() {
+        // (without it a visible 3-button navigation bar gets the legacy bar background, and the decor's layout asks
+        // for the window's ViewRootImpl, which a dialog not shown yet doesn't have: crash on Android 13, issue #58;
+        // Android 15+ sets it itself for edge-to-edge)
+        getWindow().addFlags(android.view.WindowManager.LayoutParams.FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS);
         View d = getWindow().getDecorView();
         WindowInsets in = a.getWindow().getDecorView().getRootWindowInsets();
         if (in != null) d.dispatchApplyWindowInsets(in);
         android.graphics.Rect b = a.getWindowManager().getCurrentWindowMetrics().getBounds();
         d.measure(View.MeasureSpec.makeMeasureSpec(b.width(), View.MeasureSpec.EXACTLY), View.MeasureSpec.makeMeasureSpec(b.height(), View.MeasureSpec.EXACTLY));
-        d.layout(0, 0, b.width(), b.height());
+        try {
+            d.layout(0, 0, b.width(), b.height());
+        } catch (RuntimeException e) {  // (the decor's own work after its children's layout: done again when shown)
+            android.util.Log.w("wwhd", "options page laid out ahead: " + e);
+        }
     }
 
     private int arrowW;  // the page arrow's width (onCreate)
@@ -1725,6 +1733,21 @@ final class OptionsMenu extends Dialog {
                 a.prefs.edit().putBoolean("item_tap_focus", on).apply();
                 a.applyControlsAppearance();
             });
+        }
+        // a talk held by touch (flexible with context buttons: a tap goes on there): goes on up to a question; fast forward with it
+        if (a.prefs.getInt("controls_style", 0) == 1 && a.prefs.getBoolean("context_buttons", false) && a.prefs.getBoolean("minigame_touch", true)) {
+            boolean hold = a.prefs.getBoolean("talk_hold", true);
+            toggle(R.string.opt_talk_hold, R.string.opt_talk_hold_hint, hold, on -> {
+                a.prefs.edit().putBoolean("talk_hold", on).apply();
+                a.applyControlsAppearance();
+            });
+            if (hold) {
+                indentNext = true;
+                toggle(R.string.opt_talk_hold_ff, R.string.opt_talk_hold_ff_hint, a.prefs.getBoolean("talk_hold_ff", false), on -> {
+                    a.prefs.edit().putBoolean("talk_hold_ff", on).apply();
+                    a.applyControlsAppearance();
+                });
+            }
         }
         toggle(R.string.opt_link_poses, R.string.opt_link_poses_hint, a.prefs.getBoolean("link_poses", true), on -> {
             a.prefs.edit().putBoolean("link_poses", on).apply();

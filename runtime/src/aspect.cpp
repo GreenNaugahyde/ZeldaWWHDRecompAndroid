@@ -972,7 +972,10 @@ static void draw_pane(Cpu* c) {
     // hearts faded out completely; not their container N_Default_00, which holds the magic bar too (Main_00.bflyt)
     if (hud_fade_gone(kFadeHearts) && name_is(pane, "L_HeartAll_00")) return skipped("hearts");
     if (hud_fade_gone(kFadeMagic) && name_is(pane, "L_MagicBar_00")) return skipped("magic");
-    if (hud_fade_gone(kFadeRupees) && name_is(pane, "L_Rupy_00")) return skipped("rupees");     // rupees too
+    if (name_is(pane, "L_Rupy_00")) {  // rupees too; their twinkle goes by the counter (hud.h)
+        if (hud_fade_gone(kFadeRupees)) return skipped("rupees");
+        hud_rupees_drawn();
+    }
     if (ld32(pane + kPaneParent)) note_drc_pane(pane);
     if (uint32_t pp = ld32(pane + kPaneParent)) {  // the inventory's pages (app swipes, the options page)
         if (!ld32(pp + kPaneParent)) {

@@ -207,6 +207,10 @@
     <string name="opt_cheats_hint">アイテム、ハート、ライフ無限…プレイ中のセーブデータに</string>
     <string name="opt_context_buttons">コンテキストボタン</string>
     <string name="opt_context_buttons_hint">A、B、X、Y、R、ZRは、できることがあるときに現れて内容を表示します。ゲームのボタン表示は隠れます</string>
+    <string name="opt_talk_hold">長おしで会話を進める</string>
+    <string name="opt_talk_hold_hint">画面のどこかを指でおしたままにすると 会話の文章がページごとに自動で進み 質問で止まります。オフ：タップごとに1回進みます</string>
+    <string name="opt_talk_hold_ff">長おし中は早送り</string>
+    <string name="opt_talk_hold_ff_hint">おしたままの会話を早送りします（最大4倍、この端末の描画の速さまで）</string>
     <string name="opt_controls">そうさ</string>
     <string name="opt_controls_edit">画面上の配置を編集</string>
     <string name="opt_controls_edit_hint">各ボタンの移動、サイズ変更、非表示。不透明度とスタイル（ふちどりか塗りつぶし）</string>
@@ -668,6 +672,7 @@
     <string name="extract_failed">取り出しに失敗しました：%1$s</string>
     <string name="compile_running">この端末用にゲームのコードを準備しています…\n\n最初の一度だけで、プロセッサーにより時間がかかります：速い端末で数分、遅い端末ではもっと長く。その間アプリを離れてもかまいません：バックグラウンドで続き（通知を参照）、閉じられても止まったところから続きます。</string>
     <string name="compile_detail">%2$d中%1$d（%3$d:%4$02d）</string>
+    <string name="compile_detail_split">ゲームのコードを分割中（%1$d:%2$02d）</string>
     <string name="compile_failed">ゲームのコードの準備に失敗しました：%1$s</string>
     <string name="menu_about">このアプリとライセンス</string>
     <string name="compile_continue">つづける</string>

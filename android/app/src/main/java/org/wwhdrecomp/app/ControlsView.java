@@ -1014,6 +1014,12 @@ final class ControlsView extends View {
             putAwaySince = -1;
             return true;
         }
+        // A offers something else (facing someone to talk to, a postbox): wait for its Put away rather than B, which
+        // would swing the sword at them
+        if (state[1] != 0 && state[1] != 0x07 && state[1] != 0x08) {
+            putAwaySince = now;
+            return false;
+        }
         if (now - putAwaySince > PUT_AWAY_MS) {  // not offered: the game's B
             putAwaySince = -1;
             pulse(Native.B);
@@ -1107,7 +1113,9 @@ final class ControlsView extends View {
             }
             boolean l3 = MainActivity.instance != null && MainActivity.instance.l3InUse();
             int l = MainActivity.instance != null ? MainActivity.instance.jumpInputsInUse() : 0;
-            if (!java.util.Arrays.equals(s, state) || l3 != l3InUse || l != jumpBits) {
+            boolean as = context && Native.getOption("album_screen") != 0;
+            if (!java.util.Arrays.equals(s, state) || l3 != l3InUse || l != jumpBits || as != albumScreen) {
+                albumScreen = as;
                 state = s;
                 // the Picto Box's or the telescope's view closed (B, R): the game leaves the item in Link's hand
                 // (A: Put away); by tap it goes away at once, as B's Put away
@@ -1172,6 +1180,21 @@ final class ControlsView extends View {
                 listener.onControlsChanged();
                 invalidate();
             }
+            // a talk: its buttons stay away TALK_HOLD_MS after it (the event mode drops for a moment between two parts of
+            // a talk: A showed Next then)
+            if (talkNow()) talkSeenAt = t;
+            boolean held = talking() && !talkNow();
+            if (held != talkHeld) {
+                talkHeld = held;
+                invalidate();
+            }
+            String talkLog = contextActive() ? state[8] + " msg " + msg + " text " + sceneText + " mg " + minigame + " quiet " + quietScene + " held " + held : "";
+            if (!talkLog.equals(lastTalkLog)) {  // (what the buttons go by in an event: for the gaps of a talk)
+                if (!talkLog.isEmpty() && (state[8] != 0 || !lastTalkLog.isEmpty() && !lastTalkLog.startsWith("0 ")))
+                    android.util.Log.i("wwhd", "touch talk: event " + talkLog);
+                lastTalkLog = talkLog;
+            }
+            noteNewAction();
             if (padsLaid != conductPads()) {  // (B's place while conducting by the note pads)
                 layoutControls(getWidth(), getHeight());
                 invalidate();
@@ -1225,6 +1248,21 @@ final class ControlsView extends View {
     private float[] minigameMarks = new float[0];  // debug marks (Native.minigameMarks)
 
     private boolean minigameOn = true;  // the option (Controls > Minigames by touch)
+
+    // a talk held by touch (Controls > Minigames & hints > Hold to go on): while the finger stays down, the game side
+    // (mods/minigames.cpp talk_hold_step) presses A each time the text waits for it, up to a question; with its fast
+    // forward on, the talk also runs fast forward while held
+    private boolean talkHold = true;
+    private int talkPointer = -1;
+
+    void setTalkHold(boolean on, boolean ff) {
+        talkHold = on;
+        Native.setOption("talk_hold_ff", on && ff ? 1 : 0);
+        if (!on && talkPointer >= 0) {
+            talkPointer = -1;
+            Native.setOption("talk_hold", 0);
+        }
+    }
 
     void setMinigameTouch(boolean on) {
         minigameOn = on;
@@ -1362,7 +1400,7 @@ final class ControlsView extends View {
         }
     };
 
-    private boolean albumSwipe() { return pictoBig && album() && state[1] != 0x17; }
+    private boolean albumSwipe() { return pictoBig && album() && (state[1] != 0x17 || chooser()); }
 
     private void albumMove(float x) {
         float step = 60 * getResources().getDisplayMetrics().density;
@@ -1448,6 +1486,20 @@ final class ControlsView extends View {
         // a cutscene without text: nothing to press (the game's own A does nothing there)
         if (quietScene && !editing && (c.kind == KIND_BUTTON || c.kind == KIND_DPAD) && !c.pressed)
             return c.bit == Native.ZR && fastForward();  // but fast forward, while it is on
+        // a talk or a scene's text: A goes on (B does the same in the game's message box, d_msg.cpp; it showed the sword),
+        // ZR fast forwards while that is on; the items, the d-pad, + and the jumps do nothing there. A tap anywhere is A
+        // there (talkTap), so A itself goes too
+        if (talking() && (c.kind == KIND_BUTTON || c.kind == KIND_DPAD) && !c.pressed)
+            return c.bit == Native.A && !talkTap() || c.bit == Native.ZR && fastForward();
+        // a choice, number entry or a shop's item choice (all inside a talk): A takes it, B leaves the shop. Not in a choice
+        // (any, not only a shop's): a tap on a line answers (choice_step), no A, no B (B's cancel didn't take in Zunari's yes / no). The chosen item up close and the shop's
+        // later lines up to its goodbye (all minigame mode 12): no A, a tap on the item is A, elsewhere B (turns the page
+        // as A does). The
+        // game reads no item, d-pad, jump or + there (+ showed the GamePad picture, empty in a talk). Selling to Beedle
+        // (spoils, the Complimentary ID, the Fill-Up Coupon) is X / Y / R facing him before the talk: normal play
+        if (shopTalk() && (c.kind == KIND_BUTTON || c.kind == KIND_DPAD) && !c.pressed)
+            return c.bit == Native.A && minigame != MINIGAME_CHOICE && minigame != MINIGAME_SHOP && minigame != MINIGAME_SHOP_HELD || c.bit == Native.B && minigame != MINIGAME_CHOICE && minigame != MINIGAME_SHOP_HELD
+                    || c.bit == Native.ZR && fastForward();
         // a minigame played by touch: only B (the game's Cancel / Quit; not the sword) and + stay
         if (minigame != 0 && minigame < MINIGAME_CHOICE && contextActive()) {
             if (c.kind == KIND_DPAD) return c.dpadBits != 0;
@@ -1469,7 +1521,7 @@ final class ControlsView extends View {
         // Box or the telescope
         if (c.kind == KIND_BUTTON && (c.bit & (Native.JUMP | Native.MOON)) != 0 && !c.pressed)
             return (c.bit & jumpInputs()) != 0 && (!contextActive() || state[8] == 0 && !pictoMode() && !telescope()
-                    && !(swimming() && c.bit == Native.JUMP));  // Jump anywhere doesn't jump out of water (mods/jump.cpp); the moon jump does
+                    && !(swimming() && c.bit == Native.JUMP) && !climbing());  // Jump anywhere doesn't jump out of water (mods/jump.cpp); the moon jump does
         if (c.kind == KIND_DPAD) return dpadMask() != 0 || c.dpadBits != 0;
         // the left stick only zooms in the Picto Box / telescope: dragging the zoom bar does that
         if (c.kind == KIND_STICK && c == controls.get(5) && pinchMode() && pointers.indexOfValue(c) < 0) return false;
@@ -1480,7 +1532,7 @@ final class ControlsView extends View {
         if (tapMode() && stowsItself() && c.bit == Native.A && aAction() == 0x08) return false;  // goes away by itself
         if (tapMode() && c.bit == Native.A && leafFlying()) return false;  // the leaf's button closes it
         if (c.bit == Native.A) return aAction() != 0 || state[8] != 0;  // in events A always continues; 0x44 (album) does nothing
-        if (c.bit == Native.B && swimming()) return false;  // no sword in water (the game still shows it there)
+        if (c.bit == Native.B && (swimming() || climbing())) return false;  // no sword in water, on a ladder (the game still shows it there)
         if (c.bit == Native.B) return state[6] != 0 && state[6] != 0x3E && !dimmed(18);  // 0x3E: the game hides B
         if (c.bit == Native.X) return itemShown(0);
         if (c.bit == Native.Y) return itemShown(1);
@@ -1494,7 +1546,7 @@ final class ControlsView extends View {
         // no menu while Link aims an item (bow, boomerang, hookshot, grappling hook) or looks in first person
         if (c.bit == Native.PLUS && (state[12] & (ST0_AIMS | ST0_FIRST_PERSON)) != 0) return false;
         if ((c.bit == Native.ZL || c.bit == Native.STICK_R || c.bit == Native.PLUS) && telescope()) return false;  // no targeting, no first person, no menu
-        if (c.bit == Native.STICK_R && swimming()) return false;  // no first person in water
+        if (c.bit == Native.STICK_R && (swimming() || climbing())) return false;  // no first person in water, on a ladder
         if (c.bit == Native.STICK_L) return l3InUse;  // our faster running / swimming (the game itself: not seen to use L3)
         return true;
     }
@@ -1541,12 +1593,21 @@ final class ControlsView extends View {
     /** Link swims (the game dims the items itself; A only shows for an action it offers) */
     private boolean swimming() { return context && (state[12] & ST0_SWIM) != 0; }
 
+    /** Link is on a ladder, climbs ivy or hangs from a ledge (touch state 36, daPy_lk_c::mModeFlg: LADDER, CLIMB, HANG; HANG
+     *  but in the boat: getting ready to sail): no sword, first person, Wind Waker or jumps there (the game still shows them) */
+    private boolean climbing() {
+        if (!context || state.length <= 36) return false;
+        int mode = state[36];
+        return (mode & (MODE_LADDER | MODE_CLIMB | MODE_HANG)) != 0 && (mode & MODE_IN_SHIP) == 0;
+    }
+    private static final int MODE_HANG = 0x20, MODE_IN_SHIP = 0x2000, MODE_CLIMB = 0x10000, MODE_LADDER = 0x400000;
+
     /** looking through the telescope: only its zoom, R (puts it away) and B are of use */
     private boolean telescope() { return context && (state[12] & ST0_TELESCOPE) != 0; }
 
     /** the Picto Box (aiming, or its album: ZR 0x49 / 0x48 switches between them) */
     private boolean pictoMode() {
-        return context && ((state[13] & ST1_PICTO) != 0 || state[7] == 0x48 || state[7] == 0x49);
+        return context && ((state[13] & ST1_PICTO) != 0 || state[7] == 0x48 || state[7] == 0x49 || albumScreen);
     }
 
     /** Link carries something (A throws it or ZR drops it; with a Bokoblin's club B shows the club) */
@@ -1573,14 +1634,19 @@ final class ControlsView extends View {
 
     /** a yes / no question of the Picto Box (keep the photo? delete it?): A chooses, B says no */
     private boolean pictoChoice() {
-        return context && ((state[13] & ST1_PICTO) != 0 || album() || state[7] == 0x49) && state[1] == 0x17 && state[6] == 0x07;
+        return context && ((state[13] & ST1_PICTO) != 0 || album() || state[7] == 0x49) && state[1] == 0x17 && state[6] == 0x07 && !chooser();
     }
 
     /** aiming the Picto Box (ZR opens the album) */
     private boolean pictoAim() { return context && state[7] == 0x49; }
 
-    /** the Picto Box's album (ZR goes back to the Picto Box) */
-    private boolean album() { return context && state[7] == 0x48; }
+    /** the Picto Box's album (ZR goes back to the Picto Box), or the album as the chooser of a picto shown to someone */
+    private boolean album() { return context && (state[7] == 0x48 || albumScreen); }
+
+    /** the album as the game's picto chooser (the Picto Box shown to Carlov, Lenzo, a postbox): A chooses, B goes back;
+     *  the game's touch state has no sign of it (no ZR action, no event), its album layout drawn tells it (pollState) */
+    private boolean chooser() { return context && albumScreen && state[7] != 0x48; }
+    private boolean albumScreen;
 
     /** whether the game lets Link use this item (X / Y / R) now: the HUD's rules (dMeter_xyAlpha in the
      *  decompilation; the game dims the item buttons it doesn't allow) */
@@ -1608,8 +1674,8 @@ final class ControlsView extends View {
     private int dpadMask() {
         int all = Native.UP | Native.DOWN | Native.LEFT | Native.RIGHT;
         if (!contextActive()) return dpadInRing() && !editing && state[0] != 0 && state[9] == 0 ? 0 : all;
-        if (album() && state[1] != 0x17) return pictoBig ? 0 : Native.LEFT | Native.RIGHT;  // the album: browse the photos (large view: by swiping)
-        if (pictoMode() || telescope() || swimming()) return 0;  // no Wind Waker in water (the game still shows it there)
+        if (album() && (state[1] != 0x17 || chooser())) return pictoBig ? 0 : Native.LEFT | Native.RIGHT;  // the album: browse the photos (large view: by swiping)
+        if (pictoMode() || telescope() || swimming() || climbing()) return 0;  // no Wind Waker in water, on a ladder (the game still shows it there)
         if (clusterHidden()) return 0;  // the game's buttons are faded out (fading in after a door, events)
         // up: the Wind Waker
         boolean ringOpens = dpadInRing() && (itemShown(0) || itemShown(1) || itemShown(2));
@@ -1625,6 +1691,11 @@ final class ControlsView extends View {
         if (!contextActive() || c.kind != KIND_BUTTON) return null;
         String t = null;
         if (c.bit == Native.B && pictoChoice()) t = "#cross";  // keep the photo / delete it? B: no
+        // a choice / number entry: A chooses, B cancels (number entry); the shop's items: B leaves.
+        // (the game's bytes there: Next on A, the sword on B)
+        else if (c.bit == Native.A && shopTalk()) t = actionIcon(minigame == MINIGAME_SHOP_HELD ? 0x19 : 0x17);  // (held up: its price, Next)
+        else if (c.bit == Native.B && shopTalk())  // (the shop's items: Link walking out of its door)
+            t = minigame != MINIGAME_SHOP ? "#cross" : GameIcons.linkPoses ? "#exit:" + GameIcons.LINK_WALKAWAY + "*" : actionIcon(0x07);
         else if (c.bit == Native.B && minigame == MINIGAME_CONDUCT) t = "#putaway:" + GameIcons.itemTexture(0x22);  // ends conducting: the baton down
         else if (c.bit == Native.B && tapMode() && (itemInHand() || viewStows())) t = actionIcon(0x08);  // item buttons by tap: Put away
         else if (c == aimBtn && tapMode() && slotOf(c) >= 0) t = "#shoot:" + GameIcons.itemTexture(state[3 + slotOf(c)]);
@@ -1722,6 +1793,27 @@ final class ControlsView extends View {
         // Open: Link opening a door or a chest (the game's attention entry tells which; touch state 34)
         if (GameIcons.linkPoses && code == 0x0B && state.length > 34 && (state[34] == 5 || state[34] == 6))
             return (state[34] == 5 ? GameIcons.LINK_DOOR : GameIcons.LINK_CHEST) + "*";
+        // Jump with the sword in hand, locked on, stick idle or forward: the jump attack (touch state 35), Link leaping
+        // with the sword (not the side hop's / back flip's jump)
+        if (GameIcons.linkPoses && code == 0x12 && state.length > 35 && state[35] != 0) return GameIcons.LINK_JATTACK + "*";
+        // the boat (touch state 37: the Swift Sail or the sail): Set sail (0x14, the decompilation's はる; HD's text
+        // "Set sail", also 0x2C Cruise), the mast rising with the sail; Put away while sailing (no item in Link's hand,
+        // the sail's 0x77 / 0x78 aside), it going down; Stop (the sail down, the boat still moving): it drifting, an arrow
+        // into a bar; the Swift Sail's Fast / Normal: sailing, two arrows / one
+        boolean swift = state.length > 37 && state[37] != 0;
+        // Get in / Get out: Link climbing into the boat from its side / jumping out of it
+        if (GameIcons.linkPoses && (code == 0x1C || code == 0x1D)) return (code == 0x1C ? GameIcons.LINK_GETIN : GameIcons.LINK_GETOUT) + "*";
+        if (code == 0x13 && (state[12] & ST0_SHIP) != 0) return "#stop:" + GameIcons.DRIFTING + "*";
+        if (code == 0x14 || code == 0x2C) return (swift ? GameIcons.SAIL_UP_SWIFT : GameIcons.SAIL_UP) + "*";
+        if (code == 0x08 && (state[12] & ST0_SHIP) != 0 && (state[29] < 0 || state[29] >= 0xFF || state[29] == 0x77 || state[29] == 0x78))
+            return (swift ? GameIcons.SAIL_DOWN_SWIFT : GameIcons.SAIL_DOWN) + "*";
+        if (code == 0x41 || code == 0x42) return "#sailing:" + GameIcons.SAILING + "*:" + (code == 0x41 ? 2 : 1);
+        // Let go on a ladder, on a wall of vines, hanging from a ledge (touch state 36: Link's mode flags): Link letting go
+        // and falling
+        if (GameIcons.linkPoses && code == 0x06 && climbing()) {
+            int mode = state[36];
+            return ((mode & MODE_LADDER) != 0 ? GameIcons.LINK_LADDER : (mode & MODE_CLIMB) != 0 ? GameIcons.LINK_IVY : GameIcons.LINK_HANG) + "*";
+        }
         if (code == 0x08 && state.length > 29 && state[29] == 0x22) return "#putaway:" + GameIcons.itemTexture(0x22);
         if (code == 0x08 && state.length > 29 && state[29] >= 0 && state[29] < 0xFF) {
             String item = GameIcons.itemTexture(state[29]);
@@ -2013,6 +2105,8 @@ final class ControlsView extends View {
         for (Control c : controls) release(c);
         pointers.clear();
         titlePointer = -1;
+        if (talkPointer >= 0) Native.setOption("talk_hold", 0);
+        talkPointer = -1;
         swipePointer = -1;
         zoomPointer = pinchFirst = albumPointer = -1;
         endPinch();
@@ -2448,6 +2542,22 @@ final class ControlsView extends View {
                     changed = true;
                     break;
                 }
+                if (c == null && titlePointer < 0 && talkPointer < 0 && controlsVisible && talkTap() && talkHold) {
+                    // held: a tap of A, then the game side goes on each time the text waits (setTalkHold)
+                    talkPointer = id;
+                    Native.setOption("talk_hold", 1);
+                    pulse(Native.A);
+                    changed = true;
+                    break;
+                }
+                if (c == null && titlePointer < 0 && controlsVisible && talkTap()) {  // a talk's text: a touch anywhere goes on (A)
+                    titlePointer = id;
+                    titleBit = Native.A;
+                    titleAUntil = SystemClock.uptimeMillis() + TITLE_A_MS;
+                    postDelayed(listener::onControlsChanged, TITLE_A_MS + 10);
+                    changed = true;
+                    break;
+                }
                 if (c == null && viewPinchStart(id, x, y)) break;
                 if (c != null && tapMode() && c.kind == KIND_BUTTON) {  // item buttons by tap (above)
                     if (c == aimBtn) {  // Shoot
@@ -2773,6 +2883,10 @@ final class ControlsView extends View {
                     titlePointer = -1;
                     changed = true;
                 }
+                if (id == talkPointer) {
+                    talkPointer = -1;
+                    Native.setOption("talk_hold", 0);
+                }
                 if (id == leafPointer) {  // the Deku Leaf's button while gliding (above)
                     leafPointer = -1;
                     removeCallbacks(leafWave);
@@ -2952,6 +3066,89 @@ final class ControlsView extends View {
     // the game's own time bar and note row
     private boolean micShown, micHeld, songConducting;
     private boolean msgShown;  // the game's message box, while Link conducts or in an event (pollState): A shows
+
+    /** an event that has shown text (a talk, a scene's lines; the gaps between them too), not a choice, number entry,
+     *  shop or song (minigame); also a talk's start before its box opens (event mode 1, as the quiet scene's grace) and
+     *  TALK_HOLD_MS after one (the event mode drops for a moment between two parts of a talk) */
+    private boolean talking() {
+        if (!contextActive() || minigame != 0 || singing() || conductPads()) return false;
+        return talkNow() || SystemClock.uptimeMillis() - talkSeenAt < TALK_HOLD_MS;
+    }
+    private boolean talkNow() {
+        return contextActive() && state[8] != 0 && (sceneText || state[8] == 1 && !quietScene) && minigame == 0 && !singing() && !conductPads();
+    }
+    // ---- a new action on A in play (Open, Lift, Speak, ...): A pops up and two rings spread from it (aFlash) for
+    // A_FLASH_MS, once when it changes to it; not the roll (A while running) or Put away (after each swing), not when the same action showed
+    // A_FLASH_AGAIN_MS before (running past a door flips Roll / Open). Only in play: not in events, talks, minigames,
+    // the Picto Box or the telescope, and not right after one (a talk's Next turning back into Speak)
+    private static final long A_FLASH_MS = 900, A_FLASH_RING_MS = 600, A_FLASH_AGAIN_MS = 2500;
+    private int aSeen;
+    private boolean aPlayWas;
+    private long aFlashAt = -A_FLASH_MS;
+    private final android.util.SparseLongArray aFlashedAt = new android.util.SparseLongArray();
+
+    /** pollState: A's action now */
+    private void noteNewAction() {
+        boolean play = contextActive() && state[8] == 0 && minigame == 0 && !talking() && !pictoMode() && !album()
+                && !telescope() && !quietScene && controlsVisible;
+        Control a = null;
+        for (Control c : controls)
+            if (c.kind == KIND_BUTTON && c.bit == Native.A) a = c;
+        int code = a != null && play && !a.hidden && shown(a) ? aAction() : 0;
+        long now = SystemClock.uptimeMillis();
+        if (code != aSeen && code != 0 && code != 0x0C && code != 0x08 && play && aPlayWas
+                && now - aFlashedAt.get(code, -A_FLASH_AGAIN_MS) >= A_FLASH_AGAIN_MS) {
+            aFlashAt = now;
+            android.util.Log.i("wwhd", "touch A: new action 0x" + Integer.toHexString(code));
+            invalidate();
+        }
+        if (code != 0) aFlashedAt.put(code, now);  // (while it shows: its next showing counts from its end)
+        aSeen = code;
+        aPlayWas = play;
+    }
+
+    /** 0..1 through A's highlight, or -1 */
+    private float aFlash() {
+        long t = SystemClock.uptimeMillis() - aFlashAt;
+        if (t < 0 || t >= A_FLASH_MS) return -1;
+        tickIn(16);
+        return t / (float) A_FLASH_MS;
+    }
+
+    /** A's highlight: rings spreading from the button (gold, fading), the second one A_FLASH_MS - A_FLASH_RING_MS later */
+    private void drawAFlash(Canvas canvas, float x, float y, float r, float f) {
+        for (int k = 0; k < 2; k++) {
+            float t = (f * A_FLASH_MS - k * (A_FLASH_MS - A_FLASH_RING_MS)) / A_FLASH_RING_MS;
+            if (t < 0 || t >= 1) continue;
+            flashPaint.setStyle(Paint.Style.STROKE);
+            flashPaint.setStrokeWidth(r * 0.16f * (1 - t * 0.6f));
+            flashPaint.setColor(0xFFFFE27A);
+            flashPaint.setAlpha((int) (230 * (1 - t) * (1 - t)));
+            canvas.drawCircle(x, y, r * (1.0f + 0.65f * t), flashPaint);
+        }
+    }
+    private final Paint flashPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+
+    /** A's size during its highlight: a pop to 1.15 and back in the first third */
+    private static float aPop(float f) {
+        return f < 0 || f >= 0.33f ? 1f : 1f + 0.15f * (float) Math.sin(Math.PI * f / 0.33f);
+    }
+
+    private static final long TALK_HOLD_MS = 500;
+    private long talkSeenAt = -TALK_HOLD_MS;
+    private boolean talkHeld;
+    private String lastTalkLog = "";
+    /** a talk's text by touch: a tap anywhere (but on ZR's fast forward) is A, like on the title screen. Not with Minigames
+     *  by touch off: a choice is a plain talk then and needs the stick. Not in the hold after it (a tap would start
+     *  the talk again) */
+    private boolean talkTap() { return talkNow() && minigameOn && !quietScene; }
+    /** a message choice, number entry, a shop's item choice or its chosen item up close: only A / B do anything */
+    private boolean shopTalk() {
+        return contextActive() && (minigame >= MINIGAME_CHOICE && minigame <= MINIGAME_SHOP || minigame == MINIGAME_SHOP_HELD)
+                && !singing() && !conductPads();
+    }
+    private static final int MINIGAME_SHOP = 8;
+    private static final int MINIGAME_SHOP_HELD = 12;  // the chosen item up close: a tap on it goes on, elsewhere puts it back
     private boolean quietScene;  // an event without text, or a fade / wipe (pollState): no buttons, no d-pad
     private long textSeenAt;
     private boolean sceneText;  // this event has shown a message
@@ -3521,7 +3718,9 @@ final class ControlsView extends View {
             return;
         }
         String t = getContext().getString(R.string.picto_page, pageCur + 1, pageCount);
-        boolean last = pageCur >= pageCount - 1, canBack = pageCur > 0, canOn = !last || pageUsed > 0;  // (a new page only after one with pictos)
+        // (a new page only after one with pictos, and not in the picto chooser: there the last page ends the bar)
+        boolean last = pageCur >= pageCount - 1 && !chooser(), canBack = pageCur > 0,
+                canOn = pageCur < pageCount - 1 || last && pageUsed > 0;
         if (gameLook() && GameFont.MSG.hasAll(t)) {
             float k = tv.height() / 720f, scale = BOX_TEXT * k / GameFont.MSG.height(), h = BOX_H * k, a = BOX_ARROW * k;
             float w = gameTextWidth(t, scale) + 2 * (a + 2 * BOX_PAD * k), cx = tv.centerX(), top = tv.top + 10 * k;
@@ -3642,6 +3841,10 @@ final class ControlsView extends View {
             }
             default: {
                 if (contextActive() && c.round && drawGameButton(canvas, c, a)) break;
+                if (contextActive() && c.kind == KIND_BUTTON && c.bit == Native.A) {
+                    float flash = aFlash();
+                    if (flash >= 0) drawAFlash(canvas, c.cx, c.cy, Math.min(c.w, c.h) / 2, flash);
+                }
                 float inner = c.shape == SHAPE_DIAMOND ? 0.62f : 1f;  // the icon / name's room: a diamond's is smaller
                 if (c.shape == SHAPE_HEX || c.shape == SHAPE_DIAMOND) {
                     drawPolygon(canvas, c);
@@ -3698,7 +3901,9 @@ final class ControlsView extends View {
         android.graphics.Bitmap base = GameIcons.get(getContext(), star ? GameIcons.BASE_STAR : GameIcons.BASE_ROUND,
                 () -> post(this::invalidate));
         if (base == null) return false;
-        float r = Math.min(c.w, c.h) / 2, k = c.pressed ? 0.9f : 1f;
+        float flash = c.bit == Native.A ? aFlash() : -1;
+        float r = Math.min(c.w, c.h) / 2, k = (c.pressed ? 0.9f : 1f) * aPop(flash);
+        if (flash >= 0) drawAFlash(canvas, c.cx, c.cy, r, flash);
         float bs = r * 2 * (star ? 1.32f : 1.14f) * k;  // the base's shadow and points reach past the circle
         // the base's face (its shadow hangs below): icon, pictogram and name go on its centre
         float fx = c.cx + bs * (0.49f - 0.5f), fy = c.cy + bs * ((star ? 0.485f : 0.46f) - 0.5f);

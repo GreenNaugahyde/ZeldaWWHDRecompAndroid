@@ -87,6 +87,15 @@ float hud_fade_alpha(int which) {
 
 bool hud_fade_gone(int which) { return g_fade[which].autoOn.load() && g_fade[which].alpha <= 0.0f; }
 
+namespace {
+std::atomic<int64_t> g_rupees_ms{0};
+}
+void hud_rupees_drawn() { g_rupees_ms = now_ms(); }
+float hud_rupee_twinkle_alpha() {
+    if (now_ms() - g_rupees_ms.load() > 250) return 0.0f;  // the counter wasn't drawn (faded out, hidden)
+    return g_fade[kFadeRupees].autoOn.load() ? g_fade[kFadeRupees].alpha : 1.0f;
+}
+
 void hud_set_hidden(const std::string& names) {
     std::vector<std::string> v;
     parse(names, v);
@@ -239,11 +248,14 @@ constexpr uint32_t kPaneGlobal = 0x48;
 std::atomic<int> g_zoom_y{0}, g_zoom_x{0}, g_zoom_kind{0}, g_zoom_handle{0};
 std::atomic<int64_t> g_zoom_ms{0};
 std::atomic<int64_t> g_finder_ms{0};  // PictographBox_00's N_Finder_00 last drawn
+std::atomic<int64_t> g_album_ms{0};   // the picto album's N_PictographAll_00 last drawn
 float global_x(uint32_t p) { return ldf32(p + kPaneGlobal + 0xC); }
 float global_y(uint32_t p) { return ldf32(p + kPaneGlobal + 0x1C); }
 void note_zoom(uint32_t pane, const char* n) {
     if (!strncmp(n, "N_Finder_00", 24)) {
         g_finder_ms = now_ms();
+    } else if (!strncmp(n, "N_PictographAll_00", 24)) {
+        g_album_ms = now_ms();
     } else if (!strncmp(n, "N_Zoom_00", 24)) {
         uint32_t first = ld32(pane + kChildren);
         if (!first || first == pane + kChildren) return;
@@ -266,6 +278,8 @@ namespace {
 // (W_Cursor_00), as last drawn
 std::atomic<int> g_choice_n{0}, g_choice_x{0}, g_choice_y{0}, g_cursor_y{0};
 std::atomic<int64_t> g_choice_ms{0}, g_cursor_ms{0};
+std::atomic<int64_t> g_hide_choice_until{0};  // hud_hide_choice
+std::atomic<int64_t> g_key_icon_ms{0};  // the message's "go on" icon (L_KeyIcon_00, under the text)
 std::atomic<int64_t> g_number_ms{0};  // P_SelNumber_00 (the message's number entry: the auction's bid) shown
 // the message window's box (P_MsgWindow_00 of MsgWindowMain_00: 900 x 280, normally centred 200 below the middle),
 // as last drawn: its centre and half size (the global matrix's scale), layout units
@@ -293,7 +307,9 @@ void note_choice(uint32_t pane, const char* n) {
         }
         return;
     }
-    if (!strncmp(n, "W_Cursor_00", 24)) {
+    if (!strncmp(n, "L_KeyIcon_00", 24)) {
+        if (pane_alpha(pane)) g_key_icon_ms = now_ms();
+    } else if (!strncmp(n, "W_Cursor_00", 24)) {
         if (!pane_alpha(pane)) return;
         g_cursor_y = (int)global_y(pane);
         g_cursor_ms = now_ms();
@@ -306,6 +322,11 @@ void note_choice(uint32_t pane, const char* n) {
     }
 }
 }  // namespace
+
+void hud_hide_choice(int ms) { g_hide_choice_until = ms > 0 ? now_ms() + ms : 0; }
+
+bool hud_msg_key_icon() { return now_ms() - g_key_icon_ms.load() < 250; }
+int64_t hud_msg_key_icon_age() { return now_ms() - g_key_icon_ms.load(); }
 
 bool hud_number_entry() { return now_ms() - g_number_ms.load() < 250; }
 
@@ -337,6 +358,7 @@ void hud_choice(int32_t out[5]) {
 }
 
 bool hud_picto_screen() { return now_ms() - g_finder_ms.load(std::memory_order_relaxed) < 250; }
+bool hud_album_screen() { return now_ms() - g_album_ms.load(std::memory_order_relaxed) < 250; }
 
 // a system message with its one centred button (N_Msg_00 + L_BtnSeqenceC_00 drawn): on the very first start "save data
 // created" with OK (the app confirms it there, MainActivity.firstStartMessage)
@@ -380,7 +402,17 @@ bool hud_hidden(uint32_t pane) {
     }
     if (n[0] == 'T' && n[1] == '_' && n[3] == '_') slot_label(pane, n);
     if (n[0] == 'N') note_zoom(pane, n);
-    if (n[0] == 'W' || n[0] == 'P') note_choice(pane, n);
+    if (n[0] == 'W' || n[0] == 'P' || n[0] == 'L') note_choice(pane, n);
+    // the choice box kept out of sight (hud_hide_choice): noted as drawn (hud_choice) but not drawn; its parts are
+    // looked up under N_SubWindow_00 (not drawn either, so not reached by this hook)
+    if (now_ms() < g_hide_choice_until.load(std::memory_order_relaxed)) {
+        if (n[0] == 'N' && !strncmp(n, "N_SubWindow_00", 24)) {
+            for (const char* part : {"W_Choise2_00", "W_Choise3_00", "W_Cursor_00"})
+                if (uint32_t f = find_pane(pane, part, 4)) note_choice(f, part);
+            return true;
+        }
+        if (n[0] == 'W' && (!strncmp(n, "W_Cursor_00", 24) || !strncmp(n, "W_Choise", 8))) return true;
+    }
     if (n[0] == 'N' || n[0] == 'P')
         for (int i = 0; i < kClusterCount; i++)
             if (!strncmp(n, kClusterNames[i], 24)) {

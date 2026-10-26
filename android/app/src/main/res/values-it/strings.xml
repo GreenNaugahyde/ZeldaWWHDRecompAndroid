@@ -207,6 +207,10 @@
     <string name="opt_cheats_hint">Oggetti, cuori, energia infinita… per il salvataggio che giochi</string>
     <string name="opt_context_buttons">Tasti contestuali</string>
     <string name="opt_context_buttons_hint">A, B, X, Y, R e ZR compaiono quando c\'è qualcosa da fare e dicono cosa; la visualizzazione dei tasti del gioco è nascosta</string>
+    <string name="opt_talk_hold">Tieni premuto per andare avanti nei dialoghi</string>
+    <string name="opt_talk_hold_hint">Un dito tenuto in un punto qualsiasi dell\'immagine fa scorrere da solo il testo di un dialogo, pagina per pagina, e si ferma a una domanda. No: ogni tocco va avanti una volta</string>
+    <string name="opt_talk_hold_ff">Avanti veloce tenendo premuto</string>
+    <string name="opt_talk_hold_ff_hint">Il dialogo tenuto premuto va anche avanti veloce (fino a 4×, alla velocità con cui questo dispositivo disegna)</string>
     <string name="opt_controls">Comandi</string>
     <string name="opt_controls_edit">Modifica la disposizione su schermo</string>
     <string name="opt_controls_edit_hint">Sposta, ridimensiona e nascondi ogni tasto; opacità e stile (contorno o pieno)</string>
@@ -668,6 +672,7 @@
     <string name="extract_failed">Estrazione non riuscita: %1$s</string>
     <string name="compile_running">Preparazione del codice del gioco per questo dispositivo…\n\nSuccede una volta sola e richiede un po\' di tempo a seconda del processore: qualche minuto sui dispositivi veloci, di più su quelli lenti. Nel frattempo puoi lasciare l\'app: continua in background (vedi la notifica) e, se viene chiusa, riprende da dove si era fermata.</string>
     <string name="compile_detail">%1$d di %2$d parti (%3$d:%4$02d)</string>
+    <string name="compile_detail_split">Suddivisione del codice del gioco in parti (%1$d:%2$02d)</string>
     <string name="compile_failed">Preparazione del codice del gioco non riuscita: %1$s</string>
     <string name="menu_about">Informazioni e licenze</string>
     <string name="compile_continue">Continua</string>

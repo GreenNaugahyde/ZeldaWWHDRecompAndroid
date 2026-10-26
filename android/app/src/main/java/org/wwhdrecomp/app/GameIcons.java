@@ -21,7 +21,7 @@ import java.util.Map;
  */
 final class GameIcons {
     private static final String DIR = "game_icons";
-    private static final int VERSION = 26;  // bump to rebuild after a change of the list
+    private static final int VERSION = 35;  // bump to rebuild after a change of the list
     private static final String ITEMS = "BtnItemIcon_00", COLLECT = "BtnCollectIcon_00";
     private static final Map<String, Bitmap> cache = new HashMap<>();
     private static volatile boolean building;
@@ -191,16 +191,25 @@ final class GameIcons {
     // Link in poses of his own animations, drawn from the game's model (Native.renderLinkIcons): jump, crouch,
     // standing (stand up), seen from behind (third person), sidling (a step), crouching down and standing up, the roll's LINK_ROLL_FRAMES pictures (LINK_ROLL + frame)
     // and its resting one, carrying a pot: lifting, throwing, setting it down (the lift backwards), opening a door, a
-    // chest, pushing (grab), picking up a Bokoblin's stick; linkPoses off: the pictograms (behind: MapLinkFace).
+    // chest, pushing (grab), picking up a Bokoblin's stick, the jump attack (sword in hand), letting go of a ladder, a wall of vines, a ledge; the boat raising / lowering its sail and sailing (the King of
+    // Red Lions' own model, also with linkPoses off); linkPoses off: the pictograms (behind: MapLinkFace).
     // Animated ones (ANIMATED: prefix and pictures) are named with '*' for the picture in icon keys
     // (ControlsView plays them, then keeps the last)
     static final String LINK_JUMP = "link_jump_0", LINK_CROUCH = "link_crouch_0", LINK_STAND = "link_stand_0", LINK_BACK = "link_back_0",
             LINK_SIDLE = "link_sidle_", LINK_ROLL = "link_roll_", LINK_LIFT = "link_lift_", LINK_THROW = "link_throw_",
             LINK_DROP = "link_drop_", LINK_DOOR = "link_door_", LINK_CHEST = "link_chest_", LINK_PUSH = "link_push_",
-            LINK_PICKUP = "link_pickup_", LINK_KNEEL = "link_kneel_", LINK_RISE = "link_rise_", POSTBOX = "link_postbox_";
+            LINK_PICKUP = "link_pickup_", LINK_KNEEL = "link_kneel_", LINK_RISE = "link_rise_", POSTBOX = "link_postbox_",
+            LINK_JATTACK = "link_jattack_", LINK_LADDER = "link_ladder_", LINK_IVY = "link_ivy_", LINK_HANG = "link_hang_",
+            SAIL_UP = "link_sailup_", SAIL_UP_SWIFT = "link_sailup_swift_", SAIL_DOWN = "link_saildown_",
+            SAIL_DOWN_SWIFT = "link_saildown_swift_", SAILING = "link_sailing_", DRIFTING = "link_drifting_",
+            LINK_GETIN = "link_getin_", LINK_GETOUT = "link_getout_", LINK_TALK = "link_talk_", LINK_WALKAWAY = "link_walkaway_",
+            LINK_CHECK = "link_check_";
     static final int LINK_ROLL_FRAMES = 12, LINK_ROLL_REST = 12;
     private static final Object[][] ANIMATED = {{LINK_SIDLE, 16}, {LINK_LIFT, 8}, {LINK_THROW, 8}, {LINK_DROP, 8},
-            {LINK_DOOR, 12}, {LINK_CHEST, 10}, {LINK_PUSH, 12}, {LINK_PICKUP, 8}, {LINK_KNEEL, 8}, {LINK_RISE, 8}, {POSTBOX, 10}};
+            {LINK_DOOR, 12}, {LINK_CHEST, 10}, {LINK_PUSH, 12}, {LINK_PICKUP, 8}, {LINK_KNEEL, 8}, {LINK_RISE, 8}, {POSTBOX, 10},
+            {LINK_JATTACK, 12}, {LINK_LADDER, 10}, {LINK_IVY, 10}, {LINK_HANG, 10},
+            {SAIL_UP, 10}, {SAIL_UP_SWIFT, 10}, {SAIL_DOWN, 10}, {SAIL_DOWN_SWIFT, 10}, {SAILING, 8}, {DRIFTING, 8},
+            {LINK_GETIN, 10}, {LINK_GETOUT, 10}, {LINK_TALK, 12}, {LINK_WALKAWAY, 12}, {LINK_CHECK, 12}};
 
     /** how many pictures the animation in an icon key ("...link_x_*...") has, 0 for a still icon */
     static int pictures(String key) {
@@ -235,7 +244,8 @@ final class GameIcons {
         if (b == null) return false;
         for (Map.Entry<String, Bitmap> e : cache.entrySet())
             if (e.getValue() == b) return e.getKey().startsWith("link_") || e.getKey().startsWith("#sidle:") || e.getKey().startsWith("#carry:")
-                        || e.getKey().startsWith("#grab:");
+                        || e.getKey().startsWith("#grab:") || e.getKey().startsWith("#sailing:") || e.getKey().startsWith("#stop:")
+                        || e.getKey().startsWith("#speak:") || e.getKey().startsWith("#exit:") || e.getKey().startsWith("#check:");
         return false;
     }
 
@@ -252,8 +262,8 @@ final class GameIcons {
         String sw = swordTexture(sword);
         if (sw == null) sw = SWORD_DEFAULT;
         switch (code) {
-            case 0x01: case 0x0A: return "MiiverseZoomIcon_00^t";  // look, check
-            case 0x02: return "SubmarineBalloon_00^t";             // speak
+            case 0x01: case 0x0A: return linkPoses ? "#check:" + LINK_CHECK + "*" : "#lens";  // look, check: Link peering through a magnifying glass
+            case 0x02: return linkPoses ? "#speak:" + LINK_TALK + "*" : "SubmarineBalloon_00^t";  // speak: Link talking, a balloon
             case 0x03: case 0x30: return "MapBtn_00^l";             // (sea) chart
             case 0x04: return linkPoses ? "#carry:" + LINK_LIFT + "*:180" : "#arrow:180";  // lift: Link lifting a pot, arrow up
             case 0x05: return "#arrow:180";                         // climb: up
@@ -275,7 +285,7 @@ final class GameIcons {
             case 0x22: return "#arrows";                            // swap modes (arrow types)
             case 0x23: return "Icon128_22^l";                       // fly: the Deku Leaf
             case 0x25: return "AuctionIcon_00^l";                   // bid
-            case 0x2C: return "CollectIcon118_06^l";                // cruise: the sail
+            case 0x2C: return "CollectIcon118_06^l";                // cruise: the sail (ControlsView: the boat setting sail)
             case 0x2F: return "Icon128_11^l";                       // swing: the grappling hook
             case 0x35: return sw;                                   // the sword
             case 0x36: return shield == 0x3C ? "CollectIcon118_05^l" : "CollectIcon118_04^l";  // defend
@@ -425,6 +435,82 @@ final class GameIcons {
                 if (link == null || moon == null) return null;
                 place(cv, link, 0, 0.42f, 0.56f, 0.86f);
                 place(cv, moon, 0, 0.78f, 0.22f, 0.38f);
+                return out;
+            }
+            case "sailing": {  // the boat sailing and one arrow ahead (Normal) or two (Fast): #sailing:<picture>:<arrows>
+                String[] p = k[1].split(":");
+                Bitmap ship = get(c, p[0], whenReady), a = arrow(c, whenReady);
+                if (ship == null || a == null) return null;
+                place(cv, ship, 0, 0.4f, 0.5f, 0.86f);
+                if (p[1].equals("2")) {
+                    place(cv, a, 90, 0.74f, 0.72f, 0.34f);
+                    place(cv, a, 90, 0.88f, 0.72f, 0.34f);
+                } else {
+                    place(cv, a, 90, 0.82f, 0.72f, 0.34f);
+                }
+                return out;
+            }
+            case "stop": {  // the boat drifting, the sail down, and an arrow ahead into a bar: Stop (#stop:<picture>)
+                Bitmap ship = get(c, k[1], whenReady), a = arrow(c, whenReady);
+                if (ship == null || a == null) return null;
+                place(cv, ship, 0, 0.42f, 0.4f, 0.8f);
+                place(cv, a, 90, 0.7f, 0.8f, 0.26f);
+                android.graphics.Paint bar = new android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG);
+                android.graphics.RectF r = new android.graphics.RectF(0.83f * SIZE, 0.68f * SIZE, 0.88f * SIZE, 0.92f * SIZE);
+                float e = SIZE * 0.02f, rr = SIZE * 0.015f;
+                bar.setColor(0xFF0A0A14);
+                cv.drawRoundRect(new android.graphics.RectF(r.left - e, r.top - e, r.right + e, r.bottom + e), rr + e, rr + e, bar);
+                bar.setColor(0xFFFFFFFF);
+                cv.drawRoundRect(r, rr, rr, bar);
+                return out;
+            }
+            case "speak": {  // Link talking and the speech balloon at his face popping up, its dots coming one by one (#speak:<picture>)
+                Bitmap link = get(c, k[1], whenReady), src = get(c, "SubmarineBalloon_00^t", whenReady);
+                if (link == null || src == null) return null;
+                int i = Integer.parseInt(k[1].substring(k[1].lastIndexOf('_') + 1)), n = pictures(LINK_TALK + "*");
+                android.graphics.Matrix flip = new android.graphics.Matrix();
+                flip.setScale(-1, 1);  // (its tail to the left, down to him)
+                Bitmap b = outlined(Bitmap.createBitmap(src, 0, 0, src.getWidth(), src.getHeight(), flip, true), 0xFF0A0A14, 0, 3, 2);
+                android.graphics.Canvas bc = new android.graphics.Canvas(b);
+                android.graphics.Paint dot = new android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG);
+                dot.setColor(0xFF0A0A14);
+                int dots = Math.min(3, i * 4 / n);  // (none while it pops up, then one more each quarter)
+                for (int d = 0; d < dots; d++)
+                    bc.drawCircle(b.getWidth() * (0.5f + (d - 1) * 0.24f), b.getHeight() * 0.25f, b.getWidth() * 0.075f, dot);
+                place(cv, link, 0, 0.34f, 0.6f, 0.86f);
+                place(cv, b, 0, 0.7f, 0.32f, 0.62f * (0.6f + 0.4f * Math.min(1, (i + 1) / 3f)));
+                return out;
+            }
+            case "exit": {  // a doorway out into the daylight, Link walking away into it (#exit:<picture>): leaving
+                Bitmap link = get(c, k[1], whenReady);
+                if (link == null) return null;
+                int i = Integer.parseInt(k[1].substring(k[1].lastIndexOf('_') + 1)), n = pictures(LINK_WALKAWAY + "*");
+                android.graphics.Paint p = new android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG);
+                android.graphics.RectF door = new android.graphics.RectF(0.2f * SIZE, 0.08f * SIZE, 0.8f * SIZE, 0.92f * SIZE);
+                float e = SIZE * 0.025f, rr = SIZE * 0.15f, fw = SIZE * 0.07f;
+                p.setColor(0xFF0A0A14);
+                cv.drawRoundRect(new android.graphics.RectF(door.left - e, door.top - e, door.right + e, door.bottom + e), rr + e, rr + e, p);
+                p.setColor(0xFF7A5430);  // the wooden frame
+                cv.drawRoundRect(door, rr, rr, p);
+                android.graphics.RectF light = new android.graphics.RectF(door.left + fw, door.top + fw, door.right - fw, door.bottom);
+                p.setShader(new android.graphics.LinearGradient(0, light.top, 0, light.bottom, 0xFFBEE1FF, 0xFFFAFAD7, android.graphics.Shader.TileMode.CLAMP));
+                cv.drawRoundRect(light, rr - fw * 0.6f, rr - fw * 0.6f, p);
+                cv.drawRect(light.left, light.bottom - rr, light.right, light.bottom, p);  // (square at the floor)
+                float t = n > 1 ? (float) i / (n - 1) : 0;  // going away: smaller, higher up
+                place(cv, link, 0, 0.5f, 0.62f - 0.08f * t, 0.8f - 0.25f * t);
+                return out;
+            }
+            case "check": {  // Link leaning in to peer through a magnifying glass, it sweeping once to his eye, a glint crossing it (#check:<picture>)
+                Bitmap link = get(c, k[1], whenReady);
+                if (link == null) return null;
+                int i = Integer.parseInt(k[1].substring(k[1].lastIndexOf('_') + 1)), n = pictures(LINK_CHECK + "*");
+                float t = n > 1 ? (float) i / (n - 1) : 1;
+                place(cv, link, 0, 0.36f, 0.58f, 0.86f);
+                lens(cv, 0.72f + 0.05f * (float) Math.sin(t * 2 * Math.PI), 0.36f - 0.04f * t, 0.17f, t > 0.15f ? t * 1.4f - 0.2f : -1);
+                return out;
+            }
+            case "lens": {  // the magnifying glass alone (Link's poses off)
+                lens(cv, 0.6f, 0.4f, 0.26f, -1);
                 return out;
             }
             case "ff": {  // two arrows to the right, as Next's: fast forward
@@ -629,6 +715,51 @@ final class GameIcons {
     }
 
     /** draws b rotated by deg (counter-clockwise, as the mockup), centred at (fx, fy), longest side = fs */
+    /** a magnifying glass (golden rim, light blue glass, wooden handle down to the left, a dark edge) centred at
+     *  (fx, fy) with radius fr (in SIZE); glint 0..1: a white streak crossing the glass, < 0 none */
+    private static void lens(android.graphics.Canvas cv, float fx, float fy, float fr, float glint) {
+        float cx = fx * SIZE, cy = fy * SIZE, r = fr * SIZE, e = r * 0.16f, ri = r * 0.8f, hw = r * 0.36f;
+        double a = Math.toRadians(125);
+        float hx0 = cx + (float) Math.cos(a) * r * 0.95f, hy0 = cy + (float) Math.sin(a) * r * 0.95f;
+        float hx1 = cx + (float) Math.cos(a) * r * 2.05f, hy1 = cy + (float) Math.sin(a) * r * 2.05f;
+        android.graphics.Paint p = new android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG);
+        p.setStrokeCap(android.graphics.Paint.Cap.ROUND);
+        p.setColor(0xFF0A0A14);
+        p.setStrokeWidth(hw + 2 * e);
+        cv.drawLine(hx0, hy0, hx1, hy1, p);
+        cv.drawCircle(cx, cy, r + e, p);
+        p.setColor(0xFF7A5430);  // the handle: wood, as the doorway's frame
+        p.setStrokeWidth(hw);
+        cv.drawLine(hx0, hy0, hx1, hy1, p);
+        p.setColor(0xFFFAD65A);  // the rim
+        cv.drawCircle(cx, cy, r, p);
+        p.setColor(0xFF0A0A14);
+        cv.drawCircle(cx, cy, ri + e * 0.5f, p);
+        p.setColor(0xFFC8E8FF);  // the glass
+        cv.drawCircle(cx, cy, ri, p);
+        cv.save();
+        android.graphics.Path clip = new android.graphics.Path();
+        clip.addCircle(cx, cy, ri, android.graphics.Path.Direction.CW);
+        cv.clipPath(clip);
+        if (glint >= 0) {
+            float off = (glint * 2.6f - 1.3f) * ri, w = ri * 0.32f;
+            android.graphics.Path g = new android.graphics.Path();
+            g.moveTo(cx + off - 2 * ri, cy + 2 * ri);
+            g.lineTo(cx + off - 2 * ri + w, cy + 2 * ri);
+            g.lineTo(cx + off + 2 * ri + w, cy - 2 * ri);
+            g.lineTo(cx + off + 2 * ri, cy - 2 * ri);
+            g.close();
+            p.setColor(0xE6FFFFFF);
+            cv.drawPath(g, p);
+        }
+        cv.restore();
+        p.setStyle(android.graphics.Paint.Style.STROKE);  // a small fixed shine at its top left
+        p.setStrokeWidth(r * 0.12f);
+        p.setColor(0xFFFFFFFF);
+        float s = ri * 0.7f;
+        cv.drawArc(new android.graphics.RectF(cx - s, cy - s, cx + s, cy + s), 200, 50, false, p);
+    }
+
     private static void place(android.graphics.Canvas cv, Bitmap b, float deg, float fx, float fy, float fs) {
         float sc = fs * SIZE / Math.max(b.getWidth(), b.getHeight());
         android.graphics.Matrix m = new android.graphics.Matrix();

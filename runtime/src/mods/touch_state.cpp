@@ -207,6 +207,18 @@ void touch_state(int32_t out[kTouchStateLen]) {
     out[32] = g_lock_reach;
     uint32_t e = link ? ld32(link + kLinkAttnEntryA) : 0;
     out[34] = e >= 0x10000000 && e < 0x50000000 ? (int32_t)ld32(e + 8) : -1;
+    // A's Jump is the jump attack: the game shows Jump (0x12) while locked on for the side hop, the back flip and,
+    // with the sword in his hand and the stick idle or forward, the jump attack (daPy_lk_c::setDoStatus: dActStts
+    // 0x43, shown as Jump); forward as getDirectionFromShapeAngle: m34E8 (+0x6930, steer.cpp) - shape_angle.y (+0x32A) within
+    // +-0x2000, mStickDistance (+0x6A08) <= 0.05 idle
+    if (link && out[1] == 0x12 && out[29] == 0x103) {
+        int16_t dir = (int16_t)(ld16(link + 0x6930) - ld16(link + 0x32A));
+        float dist = u32_as_f32(ld32(link + 0x6A08));
+        out[35] = dist <= 0.05f || (dir > -0x2000 && dir < 0x2000);
+    }
+    out[36] = link ? (int32_t)ld32(link + 0x6A70) : 0;  // daPy_lk_c::mModeFlg (0x400000 on a ladder, 0x10000 climbing, 0x20 hanging)
+    for (int i = 0; i < 21; i++)  // the Swift Sail (HD, 0x77) in place of the sail (0x78)
+        if (ld8(s + kInventory + i) == 0x77) out[37] = 1;
 }
 
 bool inventory(uint8_t out[21]) {
@@ -356,7 +368,7 @@ void conduct_step() {
 
 // The Picto Box lent to a button for the postbox (postbox.cpp: the game's picto handover reads the shown item from
 // X / Y / R): the button's own item comes back once the postbox has answered the picto (lend_return), or after
-// 20 s without (the chooser cancelled; its album screen isn't an event)
+// 20 s without (the chooser cancelled; its album screen isn't an event, so the wait goes on while it is drawn)
 std::atomic<int> g_lend_req{-1};
 std::atomic<bool> g_lend_back{false};
 struct {
@@ -382,7 +394,7 @@ void lend_step() {
     }
     const bool back = g_lend_back.exchange(false);
     if (back) g_lend.started = true;
-    if (!back && (++g_lend.steps < 600 || event_mode_now() != 0)) return;
+    if (!back && (++g_lend.steps < 600 || event_mode_now() != 0 || hud_album_screen())) return;
     uint8_t now = inv_item(s, ld8(s + kSelectItems + g_lend.btn));
     if (now == 0x23 || now == 0x26) equip(g_lend.btn, g_lend.old);  // (unless something else was put there meanwhile)
     LOG("[postbox] %c: the Picto Box lent %s, slot %02X back", "XYR"[g_lend.btn], g_lend.started ? "and shown" : "but not shown", g_lend.old);

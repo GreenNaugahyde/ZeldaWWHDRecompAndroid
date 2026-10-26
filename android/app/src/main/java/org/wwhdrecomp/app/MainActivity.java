@@ -1119,6 +1119,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         controls.setContext(context);
         controls.setPictoBig(pictoBig);
         controls.setMinigameTouch(nw && prefs.getBoolean("minigame_touch", true));
+        controls.setTalkHold(prefs.getBoolean("talk_hold", true), prefs.getBoolean("talk_hold_ff", false));
         controls.setConductPads(prefs.getBoolean("conduct_pads", true));
         controls.setStickFollows(prefs.getBoolean("stick_follows", true));
         controls.setAfterDefeat(nw ? prefs.getInt("zl_after_defeat", 0) : 0);
@@ -2960,8 +2961,10 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
                 }
                 if (extract) {
                     if (p[1] > 0) detail.setText(getString(R.string.extract_detail, p[0] / 1048576, p[1] / 1048576, s > 0 ? p[0] / 1048576.0 / s : 0));
-                } else {
+                } else if (p[1] > 0) {
                     detail.setText(getString(R.string.compile_detail, p[0], p[1], s / 60, s % 60));
+                } else {  // (the first seconds, before the recompiler knows its parts: no "0 of 0")
+                    detail.setText(getString(R.string.compile_detail_split, s / 60, s % 60));
                 }
                 h.postDelayed(this, 500);
             }

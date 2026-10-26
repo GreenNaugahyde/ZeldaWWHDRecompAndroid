@@ -642,6 +642,8 @@ JNI_FN(void, setOption)(JNIEnv* env, jclass, jstring name, jint value) {
     else if (n == "mod_fast_scenes") mods::set_fast_scenes(value != 0);
     else if (n == "mod_ff_cutscenes") mods::set_ff_cutscenes(value != 0);
     else if (n == "mod_ff_dialogues") mods::set_ff_dialogues(value != 0);
+    else if (n == "talk_hold") mods::set_talk_hold(value != 0);
+    else if (n == "talk_hold_ff") mods::set_talk_hold_ff(value != 0);
     else if (n == "mod_song_replay") mods::set_song_replay(value != 0);
     else if (n == "mod_picto_pages") mods::set_picto_pages(value != 0);
     else if (n == "link_clothes") mods::set_link_clothes(value);
@@ -709,6 +711,7 @@ JNI_FN(jint, getOption)(JNIEnv* env, jclass, jstring name) {
     if (n == "bench_frames") return gfx::benchmark_frames();
     if (n == "work_done") return gfx::work_done();
     if (n == "boot_message") return hud_boot_message() ? 1 : 0;
+    if (n == "album_screen") return hud_album_screen() ? 1 : 0;
     if (n == "dyn_res_min") return (int)lroundf(gfx::dynamic_resolution_min() * 100);
     if (n == "render_aspect") return aspect::mode() == aspect::kWindow ? 1 : 0;
     if (n == "interp_fps") return interp::mode() == 1 ? interp::fps() : 0;

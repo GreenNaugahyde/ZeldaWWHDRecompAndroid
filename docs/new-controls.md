@@ -1,7 +1,8 @@
-# Controls guide (0.9.6)
+# Controls guide (0.9.7)
 
-Version 0.9.6 brings new on-screen controls, a setup for game controllers, an item ring, touch
-controls for the minigames and new ways to conduct the Wind Waker's songs. This page explains every
+Version 0.9.6 brought new on-screen controls, a setup for game controllers, an item ring, touch
+controls for the minigames and new ways to conduct the Wind Waker's songs; 0.9.7 adds talks, answers
+and shops by touch without buttons and more animated button icons. This page explains every
 option and how they work together. Everything here can be changed at any time, and almost
 everything can be switched back to the game's original behaviour.
 
@@ -115,7 +116,11 @@ In both styles:
 - **Link in the button icons** (Controls › Touch, on by default): the Jump, Crouch, Stand up and Roll
   buttons show Link himself in that pose, drawn from the game's own model on your device (the roll
   plays). Sidle, Lift, Throw, Put down, Open (a door or a chest), Grab / Push and Pick up show him
-  doing it, animated, with the pot, chest, door or block. Off: plain pictograms.
+  doing it, animated, with the pot, chest, door or block. So do Speak (Link talking, a speech balloon
+  popping up beside him), Check / Look (Link peering through a magnifying glass), the jump attack
+  (a leap with the sword drawn), Let go (from a ladder, a wall of vines or a ledge), leaving a shop
+  (Link walking out through a doorway) and the boat: Set sail, the sail going down, Fast / Normal,
+  Stop, Get in and Get out, with the King of Red Lions. Off: plain pictograms.
 
 ## Context buttons
 
@@ -131,8 +136,18 @@ How they behave in the main situations:
 - **Walking**: the sword on B, the items on X / Y / R, A only when there is something to do, the
   d-pad's up (Wind Waker) while Link has it. ZL targets; tapped once it latches (stays on) until you
   tap it again.
-- **Talking, reading, cutscenes**: A becomes **Next**. In cutscenes without text and during doors
-  and fades all buttons hide; with Game › Fast forward cutscenes on, ZR stays to fast forward.
+- **Talking, reading, cutscenes**: with Minigames by touch on (the default), no button shows in a
+  talk: **tap anywhere** on the picture to go on. **Hold to go on in talks** (Controls › Touch, on):
+  keep the finger down and the talk goes on by itself, page by page, and stops at a question;
+  **Fast forward while held** (off) also speeds the talk up while the finger is down. Answers are
+  given by touching the line (no A or B shows there); number entry keeps its A. With Minigames by
+  touch off, A becomes **Next**. In cutscenes without text and during doors and fades all buttons
+  hide; with Game › Fast forward cutscenes on, ZR stays to fast forward.
+- **A new action**: when A offers something it didn't show just before (Open, Lift, Speak, Check,
+  Throw ...), it pops up with two golden rings, so you notice it. Not for rolling or putting the
+  sword away, and not in talks, cutscenes, minigames or shops.
+- **On a ladder, a wall of vines or a ledge**: A lets go; the Wind Waker, first person, the sword and
+  the jump buttons hide.
 - **Carrying** something: A throws, B drops.
 - **Swimming**: only ZL and + (and A when the game offers an action); the sword, items, first person
   and jumps can't be used in water and hide.
@@ -300,13 +315,19 @@ touchable where the Wii U had buttons:
 | **Auction** | tap anywhere to raise your bid |
 | **Number entry** | swipe up / down to change a digit, left / right to pick another, tap to confirm |
 | **Answers** in a message | touch the line you want to say |
-| **Shops** | touch an item to look at it, touch it again to buy |
+| **Shops** | touch an item to take it up (straight there, also from far away), touch it again to buy |
 | **Nintendo Gallery figures** | drag to turn a figure, pinch to look closer |
 | **Wind compass** (Wind's Requiem) | drag the blue arrow round the compass, then the green button |
 | **Item pages** (+) | swipe sideways to turn the pages |
 | **Conducting** | see below |
 
 Off: the stick and buttons only, as in the original.
+
+**Shops** (Beedle, Masked Beedle, Zunari) by touch show only B, which leaves the shop (Link walking
+out through a doorway). Items off the picture (the Windfall shop's long shelf) come into view by
+themselves. With an item held up, a touch on it buys, a touch anywhere else puts it back. The
+question "buy it?" opens by itself after the price; answer it by touching a line. With a controller,
+B at that question answers "no".
 
 **Touch hints** (on by default): the first time you play one of these by touch, a message in the
 look of the game's own explains how. "Don't show these again" turns them off; switching the option on
@@ -466,8 +487,8 @@ These are on the **Game** tab.
   game's gold medal and its name in gold; otherwise the label says what is missing (black and white,
   turned away, partly hidden).
 - **Mail pictos at postboxes** (on): at any Island Postal Service postbox, once you have the Picto
-  Box and pictos, the postbox asks whether to send a picto to Carlov. Choose one in the game's own picto chooser (or show the postbox the
-  Picto Box yourself): Carlov takes the order as he does at the Nintendo Gallery, with the same
+  Box and pictos, the postbox asks whether to send a picto to Carlov. Choose one in the game's own
+  picto chooser (with album pages, its bar turns the pages there too): Carlov takes the order as he does at the Nintendo Gallery, with the same
   checks (a colour picto of a gallery subject, not made or ordered yet, at most 12 orders). The
   figurine is put in the gallery the next day, no visit needed. If the Picto Box is on no button, it
   is lent to Y for the handover and Y's item comes back afterwards.
@@ -484,7 +505,8 @@ Defaults in brackets.
 - Touch controls (Classic) · Edit on-screen layout · Motion controls (on) · Rumble (on)
 - **Touch**: On-screen controls size (100 %) · Menu button in the game (off) · Left stick follows the
   thumb (on) · *Flexible only*: Show sticks (on), Context buttons (off), Item buttons (Tap), Only
-  aiming buttons while aiming (on) · Link in the button icons (on) · ZL when the target is defeated
+  aiming buttons while aiming (on), Hold to go on in talks (on), Fast forward while held (off) · Link
+  in the button icons (on) · ZL when the target is defeated
   (Let go)
 - **Item ring**: Item ring (on) · While the ring is open (Slow motion) · Item button names (Auto)
 - **Camera**: Invert camera up/down (off) · Direct right-stick camera (off), Direct camera speed (1×)

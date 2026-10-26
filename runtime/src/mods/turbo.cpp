@@ -114,6 +114,7 @@ int event_mode_now() { return event_mode(); }
 namespace {
 // fast forward applies to the event running now
 bool ff_now() {
+    if (talk_hold_ff()) return event_mode() != 0;  // a talk held by touch, its fast forward on (minigames.cpp)
     if (!ff_button()) return false;
     int m = event_mode();
     return m == 1 ? ff_dialogues() : (m == 2 || m == 3) ? ff_cutscenes() : false;

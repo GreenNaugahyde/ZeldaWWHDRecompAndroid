@@ -208,6 +208,10 @@
     <string name="opt_cheats_hint">Items, hearts, infinite health… for the save file you play</string>
     <string name="opt_context_buttons">Context buttons</string>
     <string name="opt_context_buttons_hint">A, B, X, Y, R and ZR appear when there is something to do and say what; the game\'s own button display is hidden</string>
+    <string name="opt_talk_hold">Hold to go on in talks</string>
+    <string name="opt_talk_hold_hint">A finger held anywhere on the picture goes on through a talk\'s text by itself, page by page, and stops at a question. Off: each tap goes on once</string>
+    <string name="opt_talk_hold_ff">Fast forward while held</string>
+    <string name="opt_talk_hold_ff_hint">The held talk also runs fast forward (up to 4×, as fast as this device draws)</string>
     <string name="opt_controls">Controls</string>
     <string name="opt_controls_edit">Edit on-screen layout</string>
     <string name="opt_controls_edit_hint">Move, resize and hide each button; opacity and style (outline or filled)</string>
@@ -677,6 +681,7 @@ If the picker doesn\'t show your files, put them directly into Download and open
     <string name="extract_failed">Extraction failed: %1$s</string>
     <string name="compile_running">Preparing the game code for this device…\n\nThis happens once and takes a while, depending on this device\'s processor: a few minutes on fast devices, longer on slower ones. You can leave the app meanwhile: it continues in the background (see the notification), and if it is closed, it continues where it stopped.</string>
     <string name="compile_detail">%1$d of %2$d parts (%3$d:%4$02d)</string>
+    <string name="compile_detail_split">Dividing the game code into parts (%1$d:%2$02d)</string>
     <string name="compile_failed">Preparing the game code failed: %1$s</string>
     <string name="menu_about">About and licenses</string>
     <string name="compile_continue">Continue</string>

@@ -98,9 +98,10 @@ The original project (macOS, the 60 fps modes, decompilation tools) is described
   what with the game's own icons; items aimed and shot by tapping; an item ring (hold X, Y or R);
   a layout editor with a grid, button shapes, opacity and saved layouts; Link drawn in the button
   icons; a large Picto Box view. They hide while a controller is in use.
-- **Minigames and menus by touch**: Sploosh Kaboom, the picture puzzles, mail sorting, the cannon,
-  the auction, shops, the gallery's figures, the wind compass, answers and number entry, with a first
-  time hint in the game's message style.
+- **Minigames, talks and menus by touch**: Sploosh Kaboom, the picture puzzles, mail sorting, the
+  cannon, the auction, shops, the gallery's figures, the wind compass, answers and number entry, with
+  a first time hint in the game's message style. Talks go on with a tap anywhere (or by holding a
+  finger down), answers by touching the line, shops without buttons.
 - **The songs**: conducting by note pads, play buttons in the song list and in the story scenes that
   wait for a song, and (experimental) singing, humming or whistling a song into the microphone.
 - **Controller setup**: face buttons by position or by letters, ready-made layouts for Jump anywhere,
@@ -149,6 +150,32 @@ The original project (macOS, the 60 fps modes, decompilation tools) is described
 - **No internet access**: the app doesn't request it, and its manifest explicitly excludes it.
 
 ## Version history
+
+**0.9.7**
+
+- Talks by touch (Flexible with context buttons): no buttons in a talk, a tap anywhere goes on;
+  holding a finger down goes on by itself up to a question (Controls › Touch › Hold to go on in
+  talks), optionally in fast forward. Answers by touching a line, no A or B shown there.
+- Shops by touch: only B (leave) shows; a touch jumps straight to an item, items off the picture
+  come into view by themselves, a touch off the held item puts it back, the "buy it?" question opens
+  by itself; with a controller, B at the question answers "no".
+- More animated Link icons: Speak, Check / Look (with a magnifying glass), leaving a shop, the jump
+  attack, Let go (ladder, vines, ledge) and the boat (set sail, sail down, fast / normal, stop, get
+  in, get out). On a ladder, vines or a ledge the buttons that can't be used there hide.
+- A pops up with golden rings when it offers a new action.
+- Album pages in the picto chooser (Carlov, Lenzo, a postbox); the chooser has only A and B and
+  browses by swiping in the large view. The Picto Box facing a postbox aims instead of handing it
+  over (the chat's "choose a picto" sends one).
+- Fixed: the app closed when opening the options page with + on Android 13 or older with the 3-button
+  navigation bar (issue #58).
+- Fixed: on tall phones the buttons of some cards were cut off, so the best-settings test's offer at
+  the first start couldn't be answered (issue #59). Switches in cards now stay in view too.
+- Fixed: the game code preparation card stayed at "0 of 0 parts (0:00)" while its bar moved; it now
+  counts the parts (and says when it is still dividing the code into them).
+- Fixed: showing an item to a postbox closed the game.
+- Fixed: swiping the camera on the boat turned it only by half or not at all.
+- Fixed: the rupee counter's twinkle kept appearing at the lower right while the counter was faded
+  out or the HUD hidden.
 
 **0.9.6**
 
@@ -396,7 +423,8 @@ Everything about the controls, with every option explained, is in the
 - **Touch**: Classic (a fixed on-screen GamePad) or Flexible (the sticks appear where the thumbs land,
   with optional context buttons that show only what can be done). − is left out: the game uses it
   only to swap the TV and GamePad pictures, which + does here. The controls hide while a game
-  controller is in use and come back on the next touch. On the title screen a touch anywhere presses A.
+  controller is in use and come back on the next touch. On the title screen and in talks a touch
+  anywhere presses A.
 - **Game controllers** map by button position, as the game uses them: the bottom face button is the
   Wii U's B, the right one A, the left one Y and the top one X; Start is +. When a controller is first
   used the app offers a setup (by position or by letters, layouts for Jump anywhere). Under

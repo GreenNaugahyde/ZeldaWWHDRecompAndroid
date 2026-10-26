@@ -43,6 +43,7 @@
 
 #include "mods.h"
 #include "../guest_addr.h"
+#include "../hud.h"
 #include "../input.h"
 #include "../release.h"
 #include "../runtime.h"
@@ -73,6 +74,13 @@ std::atomic<int> g_cur_shown{-1}, g_count_shown{0}, g_used_shown{0};
 std::atomic<int> g_reopen{0};
 // the press that took a picto into a full album only made the new page: A pressed again (picto_pad)
 std::atomic<bool> g_press_a{false};
+
+// the album as the game's picto chooser (the Picto Box shown to Carlov, Lenzo, a postbox): its layout drawn (hud.h)
+// without the Picto Box album's ZR action. It has no way back to the Picto Box, so a page switch there sets the
+// viewer's counter itself: the new count and its last picto, then "next" pressed once (picto_pad), which wraps to the
+// first and has the game lay out the pictos and the counter's text again (switch_to)
+bool in_chooser() { return g_on && r_action() != 0x48 && hud_album_screen(); }
+std::atomic<bool> g_press_next{false};
 
 struct Page {
     bool loaded = false;  // data holds the page (else only on disk)
@@ -307,7 +315,9 @@ void drop_empty(int k) {
 void switch_to(Cpu* c, int to) {
     uint32_t w = working();
     int from = g.cur;
+    const bool chooser = in_chooser();
     if (to < 0 || to > (int)g.pages.size() || to == from) return;
+    if (chooser && to == (int)g.pages.size()) return;  // (no new, empty page to choose from)
     g.pages[from] = capture(w);
     if (to == (int)g.pages.size()) {
         if (!g.pages[from].used) return;  // already on an empty page
@@ -322,6 +332,17 @@ void switch_to(Cpu* c, int to) {
     drop_empty(from);
     write_pages(false);
     refresh_textures();
+    if (chooser) {  // the viewer's counter (+0x880 the number shown, 1 .. count; +0x881 the count): the new page's first
+        uint32_t mgr = ld32(kTextures);
+        uint32_t ui = mgr ? ld32(mgr + 0x1D8) : 0;
+        if (ui >= 0x10000000 && ui < 0x50000000) {
+            uint8_t n = ld8(w + kCount);
+            LOG("[picto] chooser: counter %u / %u -> %u / %u, then next", ld8(ui + 0x880), ld8(ui + 0x881), n, n);
+            st8(ui + 0x881, n);
+            st8(ui + 0x880, n);
+            if (n) g_press_next = true;
+        }
+    }
     LOG("[picto] page %d -> %d of %zu (%d pictos)", from + 1, g.cur + 1, g.pages.size(), g.pages[g.cur].used);
     publish();
 }
@@ -381,7 +402,7 @@ void set_picto_pages(bool on) {
 void picto_page_request(int dir) { g_request = dir; }
 bool picto_album_open() { return g_on && r_action() == 0x48; }
 int picto_count() { return save_object() ? ld8(working() + kCount) : 0; }
-bool picto_album_shown() { return save_object() && r_action() == 0x48; }
+bool picto_album_shown() { return save_object() && (r_action() == 0x48 || hud_album_screen()); }
 
 // The picto the album shows and what it caught (the gold medal, "BestShotMark_00"): the album viewer (the texture
 // cache object above) keeps its counter's number at +0x880 and the count at +0x881; the slot is the order's entry
@@ -390,7 +411,7 @@ bool picto_album_shown() { return save_object() && r_action() == 0x48; }
 // 1 turned away / out of view, 2 partly hidden), +7 a colour picto. The album shows the medal for a gallery
 // subject in colour without flaws (026C5D84). Returns subject | flaws << 8 | colour << 16, or -1 (no album / picto).
 int picto_subject() {
-    if (r_action() != 0x48 || !save_object()) return -1;
+    if (!picto_album_shown()) return -1;
     uint32_t mgr = ld32(kTextures);
     uint32_t ui = mgr ? ld32(mgr + 0x1D8) : 0;
     if (ui < 0x10000000 || ui >= 0x50000000) return -1;
@@ -422,6 +443,15 @@ void picto_pad(input::PadState& s) {
         else if (ms < 160) s.buttons |= input::kA;
         else g_press_a = false, a_on = false;
     }
+    static clk::time_point next_since;
+    static bool next_on = false;
+    if (g_press_next) {  // the same for "next" (d-pad right) in the chooser
+        if (!next_on) next_on = true, next_since = clk::now();
+        float ms = std::chrono::duration<float, std::milli>(clk::now() - next_since).count();
+        if (ms < 60) s.buttons &= ~input::kRight;
+        else if (ms < 160) s.buttons |= input::kRight;
+        else g_press_next = false, next_on = false;
+    }
     int r = g_reopen.load();
     if (r) {
         if (r != step) step = r, since = clk::now();
@@ -438,7 +468,7 @@ void picto_pad(input::PadState& s) {
     step = 0;
     static uint32_t held = 0;
     const uint32_t keys = input::kZL | input::kL;
-    if (!picto_album_open()) {
+    if (!picto_album_open() && !in_chooser()) {
         held = 0;
         return;
     }
@@ -459,7 +489,7 @@ void picto_pages_service(Cpu* c) {
     int dir = g_request.exchange(0);
     if (!g_on || !save_object()) return;
     if (g.file >= 0 && g.loads != ss::load_count()) detach();  // a save state loaded: read again when needed
-    if (g.file < 0 && (dir || picto_album_open())) ensure_attached();
+    if (g.file < 0 && (dir || picto_album_open() || in_chooser())) ensure_attached();
     if (dir && g.file >= 0) switch_to(c, g.cur + dir);
 }
 
@@ -471,9 +501,17 @@ extern "C" void hook_026C1974(Cpu* c) {
     using namespace mods;
     if (g_on && save_object() && shot_into_full_album()) {
         uint32_t r3 = c->r[3];
-        LOG("[picto] picto taken into a full album (buttons %08X): a new page", ld32(ld32(kAimPad) + 0x18));
         ensure_attached();
-        if (g.file >= 0) switch_to(c, (int)g.pages.size());
+        // a page with room (the last such: the newest pictos), else a new one
+        int to = (int)g.pages.size();
+        for (int k = (int)g.pages.size() - 1; k >= 0 && g.file >= 0; k--)
+            if (k != g.cur && g.pages[k].used < (int)kSlots) {
+                to = k;
+                break;
+            }
+        LOG("[picto] picto taken into a full album (buttons %08X): %s page %d", ld32(ld32(kAimPad) + 0x18),
+            to == (int)g.pages.size() ? "a new" : "to", to + 1);
+        if (g.file >= 0) switch_to(c, to);
         if (g.file >= 0 && ld8(working() + kCount) < kSlots) g_press_a = true;
         c->r[3] = r3;
     }

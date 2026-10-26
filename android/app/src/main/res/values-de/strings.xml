@@ -207,6 +207,10 @@
     <string name="opt_cheats_hint">Items, Herzen, unendlich Energie… für den Spielstand, den du spielst</string>
     <string name="opt_context_buttons">Kontext-Tasten</string>
     <string name="opt_context_buttons_hint">A, B, X, Y, R und ZR erscheinen, wenn es etwas zu tun gibt, und sagen was; die Tastenanzeige des Spiels ist ausgeblendet</string>
+    <string name="opt_talk_hold">Halten blättert Gespräche weiter</string>
+    <string name="opt_talk_hold_hint">Ein Finger, der irgendwo auf dem Bild bleibt, blättert den Text eines Gesprächs von selbst Seite für Seite weiter und hält bei einer Frage an. Aus: jedes Tippen blättert einmal</string>
+    <string name="opt_talk_hold_ff">Beim Halten vorspulen</string>
+    <string name="opt_talk_hold_ff_hint">Das gehaltene Gespräch läuft dabei auch im Schnelldurchlauf (bis 4×, so schnell dieses Gerät zeichnet)</string>
     <string name="opt_controls">Steuerung</string>
     <string name="opt_controls_edit">Bildschirm-Layout bearbeiten</string>
     <string name="opt_controls_edit_hint">Jede Taste verschieben, in der Größe ändern und ausblenden; Deckkraft und Stil (Umriss oder gefüllt)</string>
@@ -668,6 +672,7 @@
     <string name="extract_failed">Entpacken fehlgeschlagen: %1$s</string>
     <string name="compile_running">Der Spielcode wird für dieses Gerät vorbereitet…\n\nDas passiert einmal und dauert je nach Prozessor eine Weile: einige Minuten auf schnellen Geräten, länger auf langsameren. Du kannst die App solange verlassen: Es geht im Hintergrund weiter (siehe Benachrichtigung), und wird sie geschlossen, geht es dort weiter, wo es aufgehört hat.</string>
     <string name="compile_detail">%1$d von %2$d Teilen (%3$d:%4$02d)</string>
+    <string name="compile_detail_split">Der Spielcode wird in Teile aufgeteilt (%1$d:%2$02d)</string>
     <string name="compile_failed">Vorbereiten des Spielcodes fehlgeschlagen: %1$s</string>
     <string name="menu_about">Info und Lizenzen</string>
     <string name="compile_continue">Weiter</string>

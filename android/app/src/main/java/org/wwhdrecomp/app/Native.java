@@ -43,6 +43,7 @@ final class Native {
     static native void setGamePace(int mode);
     /** The minigame played by touch now (runtime/src/mods/minigames.cpp): 0 none, else which (MINIGAME_*). */
     static native int minigameMode();
+    /** A shop's yes / no (minigame 6 while buying or selling): a tap on its lines answers, no A drawn. */
     /** A finger on the TV picture during a minigame: action 0 down, 1 moved, 2 up; x, y in the game's layout units
      *  (720 across the picture's height, 0 at its centre, +y up). */
     static native void minigameTouch(int action, float x, float y);

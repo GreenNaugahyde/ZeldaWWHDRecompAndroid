@@ -31,6 +31,7 @@
 
 #include "mods.h"
 #include "../guest_addr.h"
+#include "../hud.h"
 #include "../input.h"
 #include "../release.h"
 #include "../runtime.h"
@@ -50,10 +51,20 @@ constexpr uint32_t kStatusContinues = 0x0F, kStatusEnds = 0x10;
 std::atomic<bool> g_on{true}, g_same_day{false};
 std::atomic<bool> g_offer_pending{false}, g_offer_ready{false};
 std::atomic<int> g_present{0};   // the app's Yes: 1 equip / wait, 2 pressing (input thread)
+// the postbox takes pictos only from the app's Yes in its chat on: the Picto Box used near it otherwise is the
+// Picto Box (aiming), not the chooser. Armed by the Yes, disarmed once the handover is over (hook_023A4BB0)
+std::atomic<bool> g_armed{false};
+// The Picto Box's own button pressed facing a postbox otherwise: the game would show it to the postbox (its talk
+// target takes shown items, letters; daPy_lk_c::orderTalk: a SPEAK target, or TALK when locked on) and the postbox
+// spits it out as a letter it can't take, which crashed. The press is held back (1) until the postbox's execute has
+// taken its talk attention away (kAttnTalk; g_block_applied), then let through (2), the attention given back after (3)
+constexpr uint32_t kAttnTalk = 0x0000000A;  // fopAc_Attn_LOCKON_TALK | fopAc_Attn_ACTION_SPEAK
+std::atomic<int> g_block{0};
+std::atomic<bool> g_block_applied{false};
 constexpr uint32_t kMsgWhat = 0xCE7;  // "Welcome to the Island Postal Service! What do you have for delivery?"
 // postboxes seen in their execute lately (where they are) and Link facing one
 std::mutex g_box_mu;
-struct Box { uint32_t actor; float x, y, z; uint64_t frame; };
+struct Box { uint32_t actor; float x, y, z; uint64_t frame; uint32_t talk_bits; };
 std::vector<Box> g_boxes;
 uint64_t g_frames = 0;
 std::atomic<bool> g_near{false};
@@ -118,7 +129,7 @@ bool take_picto(Cpu* c) {
 
 bool postbox_mail() { return g_on; }
 int postbox_offer() { return g_offer_ready.exchange(false) ? 1 : 0; }
-void postbox_present() { g_present = 1; LOG("[postbox] the app's Yes: the Picto Box is shown"); }
+void postbox_present() { g_armed = true; g_present = 1; LOG("[postbox] the app's Yes: the Picto Box is shown"); }
 bool postbox_near() { return g_on && g_near; }
 
 // filter_pad: the app's Yes presses the Picto Box's button (lent to Y for the handover if it is on none), Link still facing
@@ -127,7 +138,35 @@ void postbox_pad(input::PadState& s) {
     using clk = std::chrono::steady_clock;
     static clk::time_point since;
     static int step = 0;
+    const uint32_t bits[3] = {input::kX, input::kY, input::kR};
     int p = g_present.load();
+    {  // the Picto Box used facing a postbox, not from its chat: aimed, not shown (g_block above)
+        static uint32_t prev = 0;
+        static clk::time_point block_since;
+        int pb = p ? -1 : picto_box_button();
+        uint32_t bit = pb >= 0 ? bits[pb] : 0;
+        bool down = bit && (s.buttons & bit) && !(prev & bit);
+        prev = s.buttons;
+        int blk = g_block.load();
+        if (!blk && down && g_on && g_near && !g_armed && event_mode_now() == 0 && !hud_picto_screen()) {
+            g_block_applied = false;
+            g_block = blk = 1;
+            block_since = clk::now();
+            LOG("[postbox] the Picto Box on %c facing a postbox: used, not shown", "XYR"[pb]);
+        }
+        if (blk) {
+            float ms = std::chrono::duration<float, std::milli>(clk::now() - block_since).count();
+            if (blk == 1) {
+                if (bit) s.buttons &= ~bit;
+                if (g_block_applied || ms > 200) g_block = 2, block_since = clk::now();
+            } else if (blk == 2) {
+                if (bit) s.buttons |= bit;  // (the finger may be up already: the press is the player's)
+                if (ms > 100) g_block = 3, block_since = clk::now();
+            } else if (ms > 400) {
+                g_block = 0;
+            }
+        }
+    }
     if (!p) {
         step = 0;
         return;
@@ -150,7 +189,6 @@ void postbox_pad(input::PadState& s) {
         g_present = 2;
         return;
     }
-    const uint32_t bits[3] = {input::kX, input::kY, input::kR};
     // (after the question the game needs a moment before Link can show something again)
     static bool pressed = false;
     if (ms < 1200) pressed = false;
@@ -207,7 +245,32 @@ extern "C" void f_023A4BB0_orig(Cpu* c);
 extern "C" void hook_023A4BB0(Cpu* c) {
     uint32_t box = c->r[3];
     if (mods::postbox_mail()) {
-        st32(box + mods::kAttnFlags, ld32(box + mods::kAttnFlags) | mods::kAttnPhoto);
+        // the photo event's flag only while the app's Yes shows the Picto Box, its chooser is open or its talk runs;
+        // a second without any of them ends it
+        static int idle = 0;
+        if (mods::g_armed) {
+            bool busy = mods::g_present != 0 || hud_album_screen() || mods::event_mode_now() != 0;
+            idle = busy ? 0 : idle + 1;
+            if (idle > 30) mods::g_armed = false, idle = 0, LOG("[postbox] handover over: the postbox no longer takes pictos");
+        }
+        uint32_t flags = ld32(box + mods::kAttnFlags);
+        flags = mods::g_armed ? flags | mods::kAttnPhoto : flags & ~mods::kAttnPhoto;
+        {  // the Picto Box used facing it: no talk target for that press (g_block), given back after
+            std::lock_guard<std::mutex> lk(mods::g_box_mu);
+            for (auto& b : mods::g_boxes)
+                if (b.actor == box) {
+                    if (mods::g_block != 0 && !mods::g_armed) {
+                        b.talk_bits |= flags & mods::kAttnTalk;
+                        flags &= ~mods::kAttnTalk;
+                        mods::g_block_applied = true;
+                    } else if (b.talk_bits) {
+                        flags |= b.talk_bits;
+                        LOG("[postbox] talk attention %08X given back", b.talk_bits);
+                        b.talk_bits = 0;
+                    }
+                }
+        }
+        st32(box + mods::kAttnFlags, flags);
         {
             std::lock_guard<std::mutex> lk(mods::g_box_mu);
             bool found = false;
@@ -215,7 +278,7 @@ extern "C" void hook_023A4BB0(Cpu* c) {
                 if (b.actor == box) found = true, b.frame = mods::g_frames;
             if (!found) {
                 if (mods::g_boxes.size() > 8) mods::g_boxes.erase(mods::g_boxes.begin());
-                mods::g_boxes.push_back({box, 0, 0, 0, mods::g_frames});
+                mods::g_boxes.push_back({box, 0, 0, 0, mods::g_frames, 0});
             }
             for (auto& b : mods::g_boxes)
                 if (b.actor == box) {
@@ -270,6 +333,7 @@ extern "C" void hook_023A5570(Cpu* c) {
         c->r[3] = taken ? kMsgAccepted : kMsgRefused;
         return;
     }
+    c->r[3] = box;  // (the guest_call above left the play object in r3: an item shown went to it, crashed in its spit-out)
     f_023A5570_orig(c);
 }
 

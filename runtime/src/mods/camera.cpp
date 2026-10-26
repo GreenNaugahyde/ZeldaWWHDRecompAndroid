@@ -25,8 +25,8 @@
 //   stick-as-button threshold) is fed to the game (filter_pad) to keep it in the manual mode.
 //   In first person (dCamera_c::subjectCamera 025071FC ran) the mouse drives both right-stick axes
 //   instead (rate control), which the game uses to look around / aim.
-//   Left click: while Link aims an item (bow, boomerang, hookshot, rope; procedures 0x76, 0x80-0x8D,
-//   0x94-0x95) it presses the item's button (daPy_lk_c+0x68D9 mReadyItemBtn: 0 X, 1 Y, 2 R; read
+//   Left click: while Link aims an item (bow, boomerang, hookshot, rope; procedures 0x76, 0x80-0x85,
+//   0x8B-0x8D, 0x94-0x95) it presses the item's button (daPy_lk_c+0x68D9 mReadyItemBtn: 0 X, 1 Y, 2 R; read
 //   from daPy_lk_c::itemTrigger 023EAB40). Otherwise left click does nothing.
 // First person: R3 already toggles the game's first-person look (measured: R3 at rest -> camera
 //   distance 250 -> 20 in 7 steps, R3 again -> back). The mod adds the mouse wheel: forward enters
@@ -87,7 +87,12 @@ float swipe_degrees() {
     bool ship = l && (ld32(l + kModeFlg) & kModeInShip);
     return mouse_sensitivity() * (ship ? swipe_boat() : 1.0f);
 }
-bool aiming_item(uint32_t p) { return p == 0x76 || (p >= 0x80 && p <= 0x8D) || p == 0x94 || p == 0x95; }
+// rope 0x76, boomerang 0x80-0x82, hookshot 0x83-0x85, from the boat 0x8B-0x8D, bow 0x94-0x95; not the
+// sailing procedures in between (0x86-0x8A: ready, jump on, steer, paddle, telescope), where the
+// swipe turned into a stick deflection the boat camera never used
+bool aiming_item(uint32_t p) {
+    return p == 0x76 || (p >= 0x80 && p <= 0x85) || (p >= 0x8B && p <= 0x8D) || p == 0x94 || p == 0x95;
+}
 
 // test aid: WWHD_TEST_MOUSE=2-3:5:0,... moves the mouse by (dx, dy) points per logic step from 2 s
 // to 3 s of game time (full logic steps / 30, from boot);

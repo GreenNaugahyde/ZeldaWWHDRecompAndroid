@@ -188,7 +188,7 @@ final class GameDialog extends Dialog {
             card.addView(t, lp);
         }
 
-        // message, content and toggles scroll together when they don't fit
+        // message and content scroll together when they don't fit; the toggles and the buttons stay in view below
         LinearLayout body = new LinearLayout(c);
         body.setOrientation(LinearLayout.VERTICAL);
         if (message != null) {
@@ -200,15 +200,20 @@ final class GameDialog extends Dialog {
             body.addView(m, new LinearLayout.LayoutParams(-1, -2));
         }
         if (content != null) body.addView(content, new LinearLayout.LayoutParams(-1, -2));
-        for (Object[] t : toggles) body.addView(toggleRow(t));
         ScrollView scroll = new ScrollView(c) {
             @Override
             protected void onMeasure(int wSpec, int hSpec) {  // at most 55% of the screen
-                super.onMeasure(wSpec, MeasureSpec.makeMeasureSpec((int) (screenH * 0.55f), MeasureSpec.AT_MOST));
+                // (less when the card shrinks it to keep the buttons in view: a tall 20:9 phone at its default
+                // display size pushed them out of the card, issue #59)
+                int cap = (int) (screenH * 0.55f);
+                if (MeasureSpec.getMode(hSpec) == MeasureSpec.UNSPECIFIED || MeasureSpec.getSize(hSpec) > cap)
+                    hSpec = MeasureSpec.makeMeasureSpec(cap, MeasureSpec.AT_MOST);
+                super.onMeasure(wSpec, hSpec);
             }
         };
         scroll.addView(body);
         card.addView(scroll, new LinearLayout.LayoutParams(-1, -2, 1));
+        for (Object[] t : toggles) card.addView(toggleRow(t));
 
         if (!buttons.isEmpty()) {
             LinearLayout row = new LinearLayout(c);

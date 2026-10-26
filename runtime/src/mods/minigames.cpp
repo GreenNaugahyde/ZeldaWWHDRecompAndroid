@@ -16,6 +16,7 @@
 // and marks the targets on the TV picture (ControlsView), to find and check the fields.
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
@@ -522,21 +523,46 @@ int choice_line(const int32_t c[5], float y) {
     return (int)std::lround((first - y) / kChoiceLine);
 }
 
+// the cursor to line `to`, then A
+void choice_take(const int32_t c[5], int to) {
+    int from = std::clamp(choice_line(c, (float)c[4]), 0, c[1] - 1);
+    for (int i = from; i != to; i += to > from ? 1 : -1) {
+        push(0, 0, to > from ? -1.0f : 1.0f, 2);
+        push(0, 0, 0, 2);
+    }
+    push(input::kA, 0, 0, 2);
+    push(0, 0, 0, 2);
+}
+
+bool g_shop_talk = false, g_shop_cancel = false;
+bool in_shop();
+std::atomic<bool> g_pad_no{false};  // B pressed at a shop's question (minigame_pad)
+bool shop_on_held(float x, float y);
+
 void choice_step() {
     int32_t c[5];
     hud_choice(c);
+    // a shop's chosen item put back (a tap off it, shop_held_step / below): its question's last line ("no"; B
+    // doesn't cancel there, d_msg takes it only where the shop set B to Cancel)
+    if (!g_shop_talk) g_shop_cancel = false;
+    if (g_pad_no.exchange(false) && c[0] && !pushing()) choice_take(c, c[1] - 1);
+    if (g_shop_cancel && c[0] && !pushing()) {
+        g_shop_cancel = false;
+        choice_take(c, c[1] - 1);
+        hud_hide_choice(1500);  // (until it has closed)
+    }
     for (const Touch& t : take_touches()) {
         if (t.action != 2 || std::isnan(t.x) || !c[0] || pushing()) continue;
-        if (std::fabs(t.x - c[2]) > 240) continue;
         int to = choice_line(c, t.y);
-        if (to < 0 || to >= c[1] || std::fabs(t.y - (c[3] + kChoiceLine * ((c[1] - 1) / 2.0f - to))) > kChoiceLine * 0.75f) continue;
-        int from = std::clamp(choice_line(c, (float)c[4]), 0, c[1] - 1);
-        for (int i = from; i != to; i += to > from ? 1 : -1) {
-            push(0, 0, to > from ? -1.0f : 1.0f, 2);
-            push(0, 0, 0, 2);
+        if (std::fabs(t.x - c[2]) > 240 || to < 0 || to >= c[1]
+                || std::fabs(t.y - (c[3] + kChoiceLine * ((c[1] - 1) / 2.0f - to))) > kChoiceLine * 0.75f) {
+            if (g_shop_talk && !shop_on_held(t.x, t.y)) {  // in a shop: off the lines and the item puts it back
+                choice_take(c, c[1] - 1);
+                hud_hide_choice(1500);
+            }
+            continue;
         }
-        push(input::kA, 0, 0, 2);
-        push(0, 0, 0, 2);
+        choice_take(c, to);
     }
     if (g_watch && c[0]) {
         std::lock_guard<std::mutex> lk(g_mark_mu);
@@ -602,6 +628,20 @@ int g_shop_target = -1, g_shop_pushes = 0;
 
 bool shop_open() { return g_shop && g_shop_step + 3 >= now(); }
 
+// a shop's goods are out (their actors run): talks there are the shop's, buying or selling (spoils shown to Beedle)
+bool in_shop() {
+    for (const ShopItem& it : g_shop_items)
+        if (it.actor && it.step + 3 >= now()) return true;
+    return false;
+}
+
+// the item choice has run in this talk (cleared when the talk ends): after it, A brought the chosen item up
+// close and its price shows (then the yes / no, mode 6; a cancel goes back to the choice)
+bool shop_held() {
+    if (!shop_open() && event_mode_now() == 0) g_shop_talk = false;
+    return g_shop_talk && !shop_open();
+}
+
 // the shop item actor of slot i, or 0
 uint32_t shop_item(int i) {
     uint32_t id = ld32(g_shop + 4 + 4 * i);
@@ -615,8 +655,56 @@ bool shop_item_xy(int i, float& x, float& y) {
     return a && project(ldv(a + kPos), x, y);
 }
 
+// the item next to `target` on the way from (sx, sy) (along x or y), or -1: none between
+std::atomic<int> g_shop_from{-1};
+std::atomic<bool> g_pad_pushed{false};  // minigame_pad gave the game a stick push in this read
+int shop_next_to(int target, bool horizontal, float sx, float sy, float tx, float ty) {
+    int best = -1;
+    float bd = 0;
+    for (int i = 0; i < 8; i++) {
+        float x, y;
+        if (i == target || !shop_item_xy(i, x, y)) continue;
+        float along = horizontal ? x : y, across = horizontal ? y - ty : x - tx;
+        float from = horizontal ? sx : sy, to = horizontal ? tx : ty;
+        float d = std::fabs(to - along);
+        if ((along - from) * (to - along) <= 0 || std::fabs(along - from) < 10 || d < 10 || std::fabs(across) >= d) continue;
+        if (best < 0 || d < bd) best = i, bd = d;
+    }
+    return best;
+}
+
+// the item choice opened for the first time in this talk: items out of view (the Windfall
+// shop shows only part of its shelf) are brought in by one stick push towards them, as the stick would
+uint64_t g_shop_peek = 0;  // the step it opened, 0: done
+bool g_shop_peeked = false;  // in this talk
+
+void shop_peek() {
+    if (!g_shop_peek || pushing()) return;
+    if (now() > g_shop_peek + 30) {  // (no items seen)
+        g_shop_peek = 0;
+        return;
+    }
+    float far = 0, fx = 0, fy = 0;
+    int seen = 0;
+    for (int i = 0; i < 8; i++) {
+        float x, y;
+        if (!shop_item_xy(i, x, y)) continue;
+        seen++;
+        float out = std::max(std::fabs(x) / 600.0f, std::fabs(y) / 330.0f);  // (layout units: 1280 x 720 around the centre)
+        if (out > 1 && out > far) far = out, fx = x, fy = y;
+    }
+    if (!seen) return;
+    g_shop_peek = 0;
+    if (far == 0) return;
+    if (g_watch) LOG("[mg] shop: an item out of view at %.0f, %.0f: one push", fx, fy);
+    bool horizontal = std::fabs(fx) / 600.0f >= std::fabs(fy) / 330.0f;
+    push(0, horizontal ? (fx > 0 ? 1.0f : -1.0f) : 0, horizontal ? 0 : (fy > 0 ? 1.0f : -1.0f), 2);
+    push(0, 0, 0, 3);
+}
+
 void shop_step() {
     int sel = (int16_t)ld16(g_shop);
+    shop_peek();
     for (const Touch& t : take_touches()) {
         if (t.action != 2 || std::isnan(t.x)) continue;
         int best = -1;
@@ -646,6 +734,9 @@ void shop_step() {
             if (sel < 0 || !shop_item_xy(sel, sx, sy)) sx = sy = 0;  // nothing chosen yet: from the middle
             float dx = tx - sx, dy = ty - sy;
             bool horizontal = std::fabs(dx) >= std::fabs(dy);
+            // an item between: the push starts from the one next to the target (hook_025BB698), so the cursor doesn't
+            // stop on the ones on the way
+            g_shop_from = sel >= 0 ? shop_next_to(g_shop_target, horizontal, sx, sy, tx, ty) : -1;
             push(0, horizontal ? (dx > 0 ? 1.0f : -1.0f) : 0, horizontal ? 0 : (dy > 0 ? 1.0f : -1.0f), 2);
             push(0, 0, 0, 3);
             g_shop_pushes++;
@@ -658,6 +749,45 @@ void shop_step() {
         if (sel >= 0 && shop_item_xy(sel, x, y)) g_marks.insert(g_marks.end(), {x, y});
         for (int i = 0; i < 8; i++)
             if (shop_item_xy(i, x, y)) g_marks.insert(g_marks.end(), {x, y});
+    }
+}
+
+// the chosen item held up close (mode 12, its price before the yes / no): a tap on it goes on (A); anywhere else puts
+// it back: B up to the question (B finishes the text and turns the page like A, d_msg, but never takes "yes"), then
+// its "no" (choice_step)
+bool shop_on_held(float tx, float ty) {
+    int sel = g_shop ? (int16_t)ld16(g_shop) : -1;
+    float x, y;
+    return sel >= 0 && shop_item_xy(sel, x, y) && std::hypot(x - tx, y - ty) < 150;
+}
+
+// an item just chosen: its price text's "go on" waits for A before the yes / no; A for it (the second one only when the
+// first finished the typing: no choice drawn half a second later; never more, so no A reaches the open question)
+int g_shop_ask = 0;
+uint64_t g_shop_ask_at = 0;
+
+void shop_held_step() {
+    if (g_shop_ask > 0 && !g_shop_cancel && !pushing() && hud_msg_key_icon() && now() >= g_shop_ask_at + 15) {
+        g_shop_ask--;
+        g_shop_ask_at = now();
+        push(input::kA, 0, 0, 2);
+        push(0, 0, 0, 2);
+    }
+    for (const Touch& t : take_touches()) {
+        if (t.action != 2 || std::isnan(t.x) || pushing()) continue;
+        if (shop_on_held(t.x, t.y)) {
+            push(input::kA, 0, 0, 2);
+            push(0, 0, 0, 2);
+        } else {
+            g_shop_cancel = true;
+            hud_hide_choice(5000);  // the question comes after the text: unseen until its "no" (choice_step)
+        }
+    }
+    static uint64_t last_b = 0;
+    if (g_shop_cancel && !pushing() && now() >= last_b + 20) {
+        last_b = now();
+        push(input::kB, 0, 0, 2);
+        push(0, 0, 0, 2);
     }
 }
 
@@ -741,12 +871,59 @@ bool choice_shown() {
     return c[0] && c[1] >= 2;
 }
 
+// ==== a talk held by touch (the app's Hold to go on, flexible touch controls): while a finger stays on the picture in a
+// talk, A each time the message waits for it (its "go on" icon, L_KeyIcon_00, drawn kTalkIconMs on end; not under a
+// choice, which the icon also shows under: a choice or number entry stops it, minigame_mode). Never during the typing,
+// so a question's text runs out and waits. With its fast forward on, the event runs fast forward while held (turbo.cpp)
+namespace {
+std::atomic<bool> g_talk_hold{false}, g_talk_hold_ff{false};
+std::atomic<int> g_talk_a{0};  // logic steps A stays down
+constexpr int64_t kTalkIconMs = 120;
+int64_t g_talk_icon_ms = 0;    // the icon shown since (ms of its drawn time, 0: not shown)
+uint64_t g_talk_a_at = 0;
+
+int64_t wall_ms() {
+    return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+}
+
+void talk_hold_step() {
+    if (g_talk_a.load() > 0) {
+        g_talk_a--;
+        return;
+    }
+    int64_t t = wall_ms();
+    bool icon = hud_msg_key_icon_age() < 80;  // drawn now (the last frames, 20 fps too)
+    if (!icon) g_talk_icon_ms = 0;
+    else if (!g_talk_icon_ms) g_talk_icon_ms = t;
+    if (!g_talk_hold.load() || event_mode_now() == 0 || minigame_mode() != 0 || !icon) return;
+    if (t - g_talk_icon_ms < kTalkIconMs || now() < g_talk_a_at + 6) return;
+    g_talk_a = 2;
+    g_talk_a_at = now();
+    g_talk_icon_ms = 0;  // (the next page's icon from its own start)
+    LOG("[mg] talk held: A");
+}
+}  // namespace
+
+void set_talk_hold(bool on) {
+    if (on != g_talk_hold.exchange(on)) LOG("[mg] talk hold %s", on ? "down" : "up");
+}
+void set_talk_hold_ff(bool on) { g_talk_hold_ff = on; }
+bool talk_hold_ff() { return g_talk_hold.load() && g_talk_hold_ff.load() && minigame_mode() == 0; }
+
 void minigame_step() {
     if (g_watch) debug_place();
     static int last_mode = 0;
     int mode = minigame_mode();
+    if (event_mode_now() == 0) g_shop_peeked = false;  // (the talk is over)
     if (mode != last_mode) {  // touches from before don't carry over
         if (g_watch) LOG("[mg] mode %d -> %d (minigame type %u)", last_mode, mode, minigame_type());
+        g_shop_ask = mode == 12 && last_mode == 8 ? 2 : 0;  // an item chosen: on to its question (shop_held_step)
+        g_shop_ask_at = now();
+        g_shop_peek = 0;
+        if (mode == 8 && !g_shop_peeked) {  // (shop_peek: once a talk; a "no" comes back to the items through the choice)
+            g_shop_peek = now();
+            g_shop_peeked = true;
+        }
         last_mode = mode;
         if (g_wind_finger.exchange(false)) input::set_touch(false, 0.5f, 0.5f);  // (the compass closed under it)
         take_touches();
@@ -755,11 +932,13 @@ void minigame_step() {
         std::lock_guard<std::mutex> lk(g_mark_mu);
         g_marks.clear();
     }
+    talk_hold_step();
     if (mode == 6) choice_step();
     if (mode == 7) number_step();
     if (mode == 8) shop_step();
     if (mode == 9) figure_step();
     if (mode == 10) conduct_step();
+    if (mode == 12) shop_held_step();
     if (mode != 9 && mode != 10) {
         std::lock_guard<std::mutex> lk(g_hold_mu);
         g_hold = {};
@@ -784,6 +963,16 @@ void minigame_step() {
 }
 
 void minigame_pad(input::PadState& s) {
+    // B (a controller, the keyboard) at a question in a shop (buying, selling): its last line, "no" (choice_step); the game
+    // takes B in a choice only where the shop forced B to Cancel (d_msg)
+    static bool b_was = false;
+    bool b = s.buttons & input::kB;
+    if (b && in_shop() && minigame_mode() == 6) {
+        if (!b_was) g_pad_no = true;
+        s.buttons &= ~input::kB;
+    }
+    b_was = b;
+    if (g_talk_a.load() > 0) s.buttons |= input::kA;  // a talk held (talk_hold_step)
     {
         std::lock_guard<std::mutex> lk(g_hold_mu);
         if (g_hold.on) {
@@ -804,6 +993,7 @@ void minigame_pad(input::PadState& s) {
     s.buttons |= p.buttons;
     s.lx = p.lx;
     s.ly = p.ly;
+    if (p.lx != 0 || p.ly != 0) g_pad_pushed = true;
 }
 
 bool wind_compass() {
@@ -816,6 +1006,7 @@ int minigame_mode() {
     if (wind_compass()) return 11;
     if (hud_number_entry()) return 7;
     if (shop_open()) return 8;
+    if (shop_held()) return 12;
     if (figure_view()) return 9;
     if (conducting()) return 10;
     if (alive(kBoard) && board_playing(g_seen[kBoard].actor)) return 1;
@@ -914,6 +1105,14 @@ extern "C" void hook_025BB698(Cpu* c) {
     if (!g_shop_step || g_shop != c->r[4]) LOG("[mg] shop items at %08X", c->r[4]);
     g_shop = c->r[4];
     g_shop_step = now();
+    g_shop_talk = true;  // (shop_held)
+    if (g_shop_cancel) hud_hide_choice(0);  // (back to the items: a question from here on shows)
+    // the steering's push reaches the game in this step: it moves on from the item next to the target (shop_step)
+    if (g_pad_pushed.exchange(false)) {
+        int from = g_shop_from.exchange(-1);
+        if (from >= 0) st16(g_shop, (uint16_t)from);
+    }
+    g_shop_cancel = false;
     take_view();
     f_025BB698_orig(c);
 }

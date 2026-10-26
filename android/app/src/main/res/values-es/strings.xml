@@ -207,6 +207,10 @@
     <string name="opt_cheats_hint">Objetos, corazones, vida infinita… para la partida que juegas</string>
     <string name="opt_context_buttons">Botones contextuales</string>
     <string name="opt_context_buttons_hint">A, B, X, Y, R y ZR aparecen cuando hay algo que hacer y dicen qué; la indicación de botones del juego se oculta</string>
+    <string name="opt_talk_hold">Mantener para avanzar diálogos</string>
+    <string name="opt_talk_hold_hint">Un dedo mantenido en cualquier parte de la imagen avanza solo el texto de un diálogo, página a página, y se detiene en una pregunta. No: cada toque avanza una vez</string>
+    <string name="opt_talk_hold_ff">Avance rápido al mantener</string>
+    <string name="opt_talk_hold_ff_hint">El diálogo mantenido también va en avance rápido (hasta 4×, tan rápido como dibuja este dispositivo)</string>
     <string name="opt_controls">Controles</string>
     <string name="opt_controls_edit">Editar la disposición en pantalla</string>
     <string name="opt_controls_edit_hint">Mover, cambiar de tamaño y ocultar cada botón; opacidad y estilo (contorno o relleno)</string>
@@ -668,6 +672,7 @@
     <string name="extract_failed">Error al extraer: %1$s</string>
     <string name="compile_running">Preparando el código del juego para este dispositivo…\n\nOcurre una sola vez y tarda un rato según el procesador: unos minutos en dispositivos rápidos, más en los lentos. Mientras tanto puedes salir de la app: sigue en segundo plano (mira la notificación) y, si se cierra, continúa donde se quedó.</string>
     <string name="compile_detail">%1$d de %2$d partes (%3$d:%4$02d)</string>
+    <string name="compile_detail_split">Dividiendo el código del juego en partes (%1$d:%2$02d)</string>
     <string name="compile_failed">Error al preparar el código del juego: %1$s</string>
     <string name="menu_about">Acerca de y licencias</string>
     <string name="compile_continue">Continuar</string>

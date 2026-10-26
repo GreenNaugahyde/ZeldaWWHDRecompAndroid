@@ -42,6 +42,7 @@
 #include <vector>
 
 #include "guest_addr.h"
+#include "hud.h"
 #include "interp_pacing.h"
 #include "mods/mods.h"
 #include "runtime.h"
@@ -889,6 +890,17 @@ extern "C" void hook_0282167C(Cpu* c) {
 // JPABaseEmitter::calc: the emitter's centre and scale (static emitter info) after its step
 extern "C" void hook_0281FE40(Cpu* c) {
     uint32_t e = c->r[3];
+    // the rupee counter's twinkle (dPa_control_c::set from 026CA714: ID +0x260 0x2D in group +0x262 7,
+    // the 2D foreground) plays while the counter is on, also when the counter isn't drawn (rupees only
+    // when they change, a hidden HUD): stray stars in the lower right. Its global alpha (+0x247, 0xFF
+    // from the game and never set again) follows the counter
+    if (ld16(e + 0x260) == 0x2D && ld8(e + 0x262) == 7) {
+        uint8_t a = (uint8_t)(255.0f * hud_rupee_twinkle_alpha());
+        static uint8_t last = 0xFF;
+        if ((a == 0) != (last == 0)) LOG("[hud] rupee twinkle %s (emitter %08X)", a ? "shown" : "hidden", e);
+        last = a;
+        st8(e + 0x247, a);
+    }
     f_0281FE40_orig(c);
     if (!interp::enabled()) return;
     EmtrRec& r = g_emtr[e];
