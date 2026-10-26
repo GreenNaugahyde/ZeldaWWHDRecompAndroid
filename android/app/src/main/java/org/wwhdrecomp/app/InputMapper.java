@@ -247,6 +247,15 @@ final class InputMapper {
     /** the face buttons go by their letters (A presses the Wii U's A), not by position */
     boolean byLetters() { return map[0] == KeyEvent.KEYCODE_BUTTON_A && map[1] == KeyEvent.KEYCODE_BUTTON_B; }
 
+    /** the app's menus and dialogs: the controller button that selects (the Wii U's A: the right face button, or
+     *  the A button with the Wii U's A on it, by letters; issue #61), and the one that goes back */
+    static int menuSelect() {
+        MainActivity a = MainActivity.instance;
+        return a != null && a.inputMapper().map[0] == KeyEvent.KEYCODE_BUTTON_A ? KeyEvent.KEYCODE_BUTTON_A : KeyEvent.KEYCODE_BUTTON_B;
+    }
+
+    static int menuBack() { return menuSelect() == KeyEvent.KEYCODE_BUTTON_A ? KeyEvent.KEYCODE_BUTTON_B : KeyEvent.KEYCODE_BUTTON_A; }
+
     /** a PlayStation controller (Sony's vendor id, or its name): its face buttons have symbols, not letters */
     static boolean isSony(InputDevice d) {
         if (d == null) return false;

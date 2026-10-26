@@ -875,8 +875,14 @@ bool choice_shown() {
 // talk, A each time the message waits for it (its "go on" icon, L_KeyIcon_00, drawn kTalkIconMs on end; not under a
 // choice, which the icon also shows under: a choice or number entry stops it, minigame_mode). Never during the typing,
 // so a question's text runs out and waits. With its fast forward on, the event runs fast forward while held (turbo.cpp)
+// A held on a controller (the keyboard, the on-screen A) does the same (Game > Hold to go on in talks, talk_hold_pad): its press
+// goes on once as usual; held kPadHoldSteps in a talk, the game no longer sees it (it waits for a new press) and the steps
+// above press A for it, until it is let go (also past a question: a choice that opens under the held A gets no press)
 namespace {
 std::atomic<bool> g_talk_hold{false}, g_talk_hold_ff{false};
+std::atomic<bool> g_talk_hold_pad{true}, g_pad_holding{false};
+constexpr int kPadHoldSteps = 10;  // (a touch's own A lasts 120 ms, ~4)
+uint64_t g_pad_a_since = 0;        // the step A went down (0: up)
 std::atomic<int> g_talk_a{0};  // logic steps A stays down
 constexpr int64_t kTalkIconMs = 120;
 int64_t g_talk_icon_ms = 0;    // the icon shown since (ms of its drawn time, 0: not shown)
@@ -895,7 +901,7 @@ void talk_hold_step() {
     bool icon = hud_msg_key_icon_age() < 80;  // drawn now (the last frames, 20 fps too)
     if (!icon) g_talk_icon_ms = 0;
     else if (!g_talk_icon_ms) g_talk_icon_ms = t;
-    if (!g_talk_hold.load() || event_mode_now() == 0 || minigame_mode() != 0 || !icon) return;
+    if (!(g_talk_hold.load() || g_pad_holding.load()) || event_mode_now() == 0 || minigame_mode() != 0 || !icon) return;
     if (t - g_talk_icon_ms < kTalkIconMs || now() < g_talk_a_at + 6) return;
     g_talk_a = 2;
     g_talk_a_at = now();
@@ -908,7 +914,8 @@ void set_talk_hold(bool on) {
     if (on != g_talk_hold.exchange(on)) LOG("[mg] talk hold %s", on ? "down" : "up");
 }
 void set_talk_hold_ff(bool on) { g_talk_hold_ff = on; }
-bool talk_hold_ff() { return g_talk_hold.load() && g_talk_hold_ff.load() && minigame_mode() == 0; }
+void set_talk_hold_pad(bool on) { g_talk_hold_pad = on; }
+bool talk_hold_ff() { return (g_talk_hold.load() || g_pad_holding.load()) && g_talk_hold_ff.load() && minigame_mode() == 0; }
 
 void minigame_step() {
     if (g_watch) debug_place();
@@ -972,6 +979,19 @@ void minigame_pad(input::PadState& s) {
         s.buttons &= ~input::kB;
     }
     b_was = b;
+    // A held in a talk (talk_hold_step goes on for it)
+    if (!(s.buttons & input::kA)) {
+        g_pad_a_since = 0;
+        if (g_pad_holding.exchange(false)) LOG("[mg] talk hold A up");
+    } else {
+        if (!g_pad_a_since) g_pad_a_since = now();
+        if (!g_pad_holding.load() && g_talk_hold_pad.load() && event_mode_now() != 0 && minigame_mode() == 0
+                && now() >= g_pad_a_since + kPadHoldSteps) {
+            g_pad_holding = true;
+            LOG("[mg] talk hold A down");
+        }
+        if (g_pad_holding.load()) s.buttons &= ~input::kA;
+    }
     if (g_talk_a.load() > 0) s.buttons |= input::kA;  // a talk held (talk_hold_step)
     {
         std::lock_guard<std::mutex> lk(g_hold_mu);

@@ -170,7 +170,7 @@
     <string name="cs_jump_not_item">%1$s pulsa el %2$s del juego, no un botón de objeto: no se puede quitar.</string>
     <string name="cs_jump_not_menu">%1$s abre menús. Elige otro botón.</string>
     <string name="cs_try_title">Probar</string>
-    <string name="cs_try_text">Pulsa los botones del mando: cada uno se ilumina con lo que hace en el juego. Mantén Start / Options para terminar. Botones sueltos: Controles › Botones del mando.</string>
+    <string name="cs_try_text">Pulsa los botones del mando: cada uno se ilumina con lo que hace en el juego. Mantén %1$s para terminar (Listo), %2$s para cambiar (Cambiar). Botones sueltos: Controles › Botones del mando.</string>
     <string name="cs_change">Cambiar</string>
     <string name="cs_done">Listo</string>
     <string name="cs_nothing">nada</string>
@@ -208,7 +208,7 @@
     <string name="opt_context_buttons">Botones contextuales</string>
     <string name="opt_context_buttons_hint">A, B, X, Y, R y ZR aparecen cuando hay algo que hacer y dicen qué; la indicación de botones del juego se oculta</string>
     <string name="opt_talk_hold">Mantener para avanzar diálogos</string>
-    <string name="opt_talk_hold_hint">Un dedo mantenido en cualquier parte de la imagen avanza solo el texto de un diálogo, página a página, y se detiene en una pregunta. No: cada toque avanza una vez</string>
+    <string name="opt_talk_hold_hint">Al mantener, el texto de un diálogo avanza solo, página a página, y se detiene en una pregunta: A en un mando, o un dedo en cualquier parte de la imagen (Flexible con botones contextuales). No: cada pulsación avanza una vez</string>
     <string name="opt_talk_hold_ff">Avance rápido al mantener</string>
     <string name="opt_talk_hold_ff_hint">El diálogo mantenido también va en avance rápido (hasta 4×, tan rápido como dibuja este dispositivo)</string>
     <string name="opt_controls">Controles</string>
@@ -255,6 +255,8 @@
     <string name="opt_item_ring_pace">Mientras la rueda está abierta</string>
     <string name="opt_language">Idioma del juego</string>
     <string name="opt_language_hint">Los idiomas de tu copia del juego; se aplica tras reiniciar</string>
+    <string name="opt_menu_language">Idioma de los menús</string>
+    <string name="opt_menu_language_hint">El idioma de los menús, consejos y diálogos de la app; se aplica tras reiniciar</string>
     <string name="opt_last_slot">Última sesión</string>
     <string name="opt_layout">Disposición de pantalla</string>
     <string name="opt_leave_state">Guardar estado al salir de la app</string>
@@ -302,6 +304,10 @@
     <string name="postbox_ask_no">No</string>
     <string name="opt_link_clothes">Ropa de Link</string>
     <string name="opt_link_clothes_hint">La ropa de héroe o su ropa de diario (la camiseta de la langosta) en cualquier momento; un cambio se ve como una nube de humo. Como en la historia: decide el juego</string>
+    <string name="opt_gamepad_sounds">Sonidos del GamePad</string>
+    <string name="opt_gamepad_sounds_hint">Los sonidos que la Wii U reproduce solo en el altavoz del GamePad: sus menús, cambiar objetos, guardar; también los sonidos del menú de opciones</string>
+    <string name="opt_l_drc_pages">L pasa la página del GamePad</string>
+    <string name="opt_l_drc_pages_hint">Al jugar, L cambia la pantalla del GamePad entre objetos y mapa, como en Wii U (para la imagen del GamePad en una segunda pantalla); desactivado: no al jugar</string>
     <string name="clothes_story">Como en la historia</string>
     <string name="clothes_hero">Ropa de héroe</string>
     <string name="clothes_casual">Ropa de diario</string>
@@ -333,6 +339,7 @@
     <string name="opt_mods">Mods</string>
     <string name="opt_motion">Control por movimiento</string>
     <string name="opt_motion_hint">Apunta inclinando el dispositivo, o un mando con sensores de movimiento</string>
+    <string name="opt_motion_hint_missing">Apunta inclinando este dispositivo: los sensores de movimiento de %1$s no llegan a las apps aquí (por qué: Mando &gt; Detalles del mando)</string>
     <string name="opt_off">NO</string>
     <string name="opt_on">SÍ</string>
     <string name="opt_page_touch">Táctil</string>
@@ -426,6 +433,9 @@
     <string name="cd_no">No</string>
     <string name="cd_none">Ninguno</string>
     <string name="cd_none_reported">Ninguno informado</string>
+    <string name="cd_why_motion">Por qué ninguno: Android pasa los sensores de movimiento de un mando a las apps solo si el kernel Linux del dispositivo maneja el mando con un controlador propio, para este %1$s. El kernel de este dispositivo (%2$s) no lo tiene, así que el mando funciona como un simple mando HID: botones y palancas van, pero Android no obtiene sensores de movimiento de él (ningún dispositivo de entrada \"Motion Sensors\"). Una app no puede evitarlo: por Bluetooth el sistema se guarda los datos en bruto del mando. Una actualización del sistema o un kernel con el controlador (en una ROM personalizada: pregunta a su autor) los trae; hasta entonces, los controles de movimiento usan los sensores de este dispositivo.</string>
+    <string name="cd_why_rumble">Por qué ninguno: Android pasa los motores de vibración de un mando a las apps solo si el kernel Linux del dispositivo maneja el mando con un controlador propio, para este %1$s. El kernel de este dispositivo (%2$s) no lo tiene, así que el mando funciona como un simple mando HID: botones y palancas van, pero Android no obtiene vibración (force feedback) para él. Una app no puede evitarlo: por Bluetooth el sistema se guarda el mando. Una actualización del sistema o un kernel con el controlador (en una ROM personalizada: pregunta a su autor) la trae; hasta entonces vibra este dispositivo.</string>
+    <string name="cd_why_motion_android">Por qué ninguno: Android pasa los sensores de movimiento de un mando a las apps a partir de Android 12; este dispositivo tiene Android %1$s. Los controles de movimiento usan los sensores de este dispositivo.</string>
     <string name="cd_unknown">Desconocido</string>
     <string name="opt_page_res">Resolución y escalado</string>
     <string name="opt_page_res_hint">Resolución dinámica, escalado, resolución de pantalla</string>
@@ -437,6 +447,8 @@
     <string name="opt_page_advanced_hint">Controlador de GPU, VSync, hilo de grabación, caché de shaders</string>
     <string name="opt_page_songs">Canciones</string>
     <string name="opt_page_songs_hint">Repetir, cantar al micrófono, botones de reproducción</string>
+    <string name="opt_onscreen">Controles en pantalla</string>
+    <string name="opt_onscreen_hint">Desactivado: sin botones ni sticks en la pantalla, solo el botón del menú (para jugar solo con un mando)</string>
     <string name="opt_onscreen_size">Tamaño de los controles en pantalla</string>
     <string name="opt_packs">Paquetes de mods</string>
     <string name="opt_packs_hint">Paquetes gráficos de Cemu y mods de archivos del juego, importados de archivos .zip y .rar</string>
@@ -476,6 +488,7 @@
     <string name="opt_resolution">Resolución de renderizado</string>
     <string name="opt_rumble">Vibración</string>
     <string name="opt_rumble_hint">En el mando, o en este dispositivo si el mando no vibra o mientras juegas en táctil</string>
+    <string name="opt_rumble_hint_missing">En este dispositivo: la vibración de %1$s no llega a las apps aquí (por qué: Mando &gt; Detalles del mando)</string>
     <string name="opt_rupees_change">Rupias solo cuando cambian</string>
     <string name="opt_rupees_change_hint">El contador de rupias aparece al conseguir o gastar rupias, y desaparece tras unos segundos</string>
     <string name="opt_saves">Partidas</string>
@@ -765,6 +778,7 @@
     <string name="packs_nothing">Nada que este port pueda usar</string>
     <string name="packs_restart_ask">Los cambios en los paquetes de mods solo tienen efecto tras reiniciar. ¿Reiniciar el juego ahora? Se pierde el progreso desde tu último guardado.</string>
     <string name="language_restart">El juego usará el nuevo idioma tras reiniciar.</string>
+    <string name="menu_language_restart">Los menús usarán el nuevo idioma tras reiniciar.</string>
     <string name="cache_loading">Cargando la caché de shaders…</string>
     <string name="cache_loading_detail">%1$,d variantes de shaders preparadas</string>
     <string name="headstart_building">Buscando los shaders del juego en tus archivos… (solo esta vez)</string>

@@ -170,7 +170,7 @@
     <string name="cs_jump_not_item">%1$s preme %2$s del gioco, non un tasto oggetto: non si può togliere.</string>
     <string name="cs_jump_not_menu">%1$s apre i menu. Scegli un altro tasto.</string>
     <string name="cs_try_title">Prova</string>
-    <string name="cs_try_text">Premi i tasti del controller: ognuno si illumina con quello che fa nel gioco. Tieni premuto Start / Options per finire. Singoli tasti: Comandi › Tasti del controller.</string>
+    <string name="cs_try_text">Premi i tasti del controller: ognuno si illumina con quello che fa nel gioco. Tieni premuto %1$s per finire (Fatto), %2$s per cambiare (Cambia). Singoli tasti: Comandi › Tasti del controller.</string>
     <string name="cs_change">Cambia</string>
     <string name="cs_done">Fatto</string>
     <string name="cs_nothing">niente</string>
@@ -208,7 +208,7 @@
     <string name="opt_context_buttons">Tasti contestuali</string>
     <string name="opt_context_buttons_hint">A, B, X, Y, R e ZR compaiono quando c\'è qualcosa da fare e dicono cosa; la visualizzazione dei tasti del gioco è nascosta</string>
     <string name="opt_talk_hold">Tieni premuto per andare avanti nei dialoghi</string>
-    <string name="opt_talk_hold_hint">Un dito tenuto in un punto qualsiasi dell\'immagine fa scorrere da solo il testo di un dialogo, pagina per pagina, e si ferma a una domanda. No: ogni tocco va avanti una volta</string>
+    <string name="opt_talk_hold_hint">Tenendo premuto, il testo di un dialogo scorre da solo pagina per pagina e si ferma a una domanda: A su un controller, o un dito in un punto qualsiasi dell\'immagine (Flessibile con tasti contestuali). No: ogni pressione va avanti una volta</string>
     <string name="opt_talk_hold_ff">Avanti veloce tenendo premuto</string>
     <string name="opt_talk_hold_ff_hint">Il dialogo tenuto premuto va anche avanti veloce (fino a 4×, alla velocità con cui questo dispositivo disegna)</string>
     <string name="opt_controls">Comandi</string>
@@ -255,6 +255,8 @@
     <string name="opt_item_ring_pace">Mentre la ruota è aperta</string>
     <string name="opt_language">Lingua del gioco</string>
     <string name="opt_language_hint">Le lingue della tua copia del gioco; si applica dopo un riavvio</string>
+    <string name="opt_menu_language">Lingua dei menu</string>
+    <string name="opt_menu_language_hint">La lingua di menu, suggerimenti e finestre dell\'app; si applica dopo un riavvio</string>
     <string name="opt_last_slot">Ultima sessione</string>
     <string name="opt_layout">Disposizione dello schermo</string>
     <string name="opt_leave_state">Stato all\'uscita dall\'app</string>
@@ -302,6 +304,10 @@
     <string name="postbox_ask_no">No</string>
     <string name="opt_link_clothes">Abiti di Link</string>
     <string name="opt_link_clothes_hint">La tunica dell\'eroe o i suoi abiti di tutti i giorni (la maglia con l\'aragosta) in qualsiasi momento; un cambio appare con una nuvola di fumo. Come nella storia: decide il gioco</string>
+    <string name="opt_gamepad_sounds">Suoni del GamePad</string>
+    <string name="opt_gamepad_sounds_hint">I suoni che la Wii U riproduce solo dall\'altoparlante del GamePad: i suoi menu, il cambio di oggetti, il salvataggio; anche i suoni del menu delle opzioni</string>
+    <string name="opt_l_drc_pages">L gira la pagina del GamePad</string>
+    <string name="opt_l_drc_pages_hint">Durante il gioco L passa lo schermo del GamePad tra oggetti e mappa, come su Wii U (per l\'immagine del GamePad su un secondo schermo); disattivato: non durante il gioco</string>
     <string name="clothes_story">Come nella storia</string>
     <string name="clothes_hero">Tunica dell\'eroe</string>
     <string name="clothes_casual">Abiti di tutti i giorni</string>
@@ -333,6 +339,7 @@
     <string name="opt_mods">Mod</string>
     <string name="opt_motion">Comandi di movimento</string>
     <string name="opt_motion_hint">Mira inclinando il dispositivo, o un controller con sensori di movimento</string>
+    <string name="opt_motion_hint_missing">Mira inclinando questo dispositivo: i sensori di movimento di %1$s qui non arrivano alle app (perché: Controller &gt; Dettagli del controller)</string>
     <string name="opt_off">NO</string>
     <string name="opt_on">SÌ</string>
     <string name="opt_page_touch">Touch</string>
@@ -426,6 +433,9 @@
     <string name="cd_no">No</string>
     <string name="cd_none">Nessuno</string>
     <string name="cd_none_reported">Nessuno segnalato</string>
+    <string name="cd_why_motion">Perché nessuno: Android passa i sensori di movimento di un controller alle app solo se il kernel Linux del dispositivo gestisce il controller con un proprio driver, per questo %1$s. Il kernel di questo dispositivo (%2$s) non ne ha uno, quindi il controller funziona come un semplice gamepad HID: tasti e levette vanno, ma Android non ne ricava sensori di movimento (nessun dispositivo di input \"Motion Sensors\"). Un\'app non può aggirarlo: via Bluetooth il sistema tiene per sé i dati grezzi del controller. Un aggiornamento di sistema o un kernel con il driver (con una ROM personalizzata: chiedi a chi la crea) li porta; fino ad allora i comandi di movimento usano i sensori di questo dispositivo.</string>
+    <string name="cd_why_rumble">Perché nessuno: Android passa i motori di vibrazione di un controller alle app solo se il kernel Linux del dispositivo gestisce il controller con un proprio driver, per questo %1$s. Il kernel di questo dispositivo (%2$s) non ne ha uno, quindi il controller funziona come un semplice gamepad HID: tasti e levette vanno, ma Android non riceve vibrazione (force feedback) per esso. Un\'app non può aggirarlo: via Bluetooth il sistema tiene per sé il controller. Un aggiornamento di sistema o un kernel con il driver (con una ROM personalizzata: chiedi a chi la crea) la porta; fino ad allora vibra questo dispositivo.</string>
+    <string name="cd_why_motion_android">Perché nessuno: Android passa i sensori di movimento di un controller alle app solo da Android 12; questo dispositivo ha Android %1$s. I comandi di movimento usano i sensori di questo dispositivo.</string>
     <string name="cd_unknown">Sconosciuto</string>
     <string name="opt_page_res">Risoluzione e upscaling</string>
     <string name="opt_page_res_hint">Risoluzione dinamica, upscaling, risoluzione dello schermo</string>
@@ -437,6 +447,8 @@
     <string name="opt_page_advanced_hint">Driver GPU, VSync, thread di registrazione, cache degli shader</string>
     <string name="opt_page_songs">Melodie</string>
     <string name="opt_page_songs_hint">Ripeti, canta nel microfono, tasti di riproduzione</string>
+    <string name="opt_onscreen">Comandi su schermo</string>
+    <string name="opt_onscreen_hint">Disattivati: niente pulsanti né levette sullo schermo, solo il pulsante del menu (per giocare solo con un controller)</string>
     <string name="opt_onscreen_size">Dimensione dei comandi su schermo</string>
     <string name="opt_packs">Pacchetti mod</string>
     <string name="opt_packs_hint">Pacchetti grafici Cemu e mod dei file del gioco, importati da file .zip e .rar</string>
@@ -476,6 +488,7 @@
     <string name="opt_resolution">Risoluzione di rendering</string>
     <string name="opt_rumble">Vibrazione</string>
     <string name="opt_rumble_hint">Sul controller, o su questo dispositivo se il controller non vibra o mentre giochi con il touch</string>
+    <string name="opt_rumble_hint_missing">Su questo dispositivo: la vibrazione di %1$s qui non arriva alle app (perché: Controller &gt; Dettagli del controller)</string>
     <string name="opt_rupees_change">Rupie solo quando cambiano</string>
     <string name="opt_rupees_change_hint">Il contatore delle rupie compare quando raccogli o spendi rupie, e scompare dopo qualche secondo</string>
     <string name="opt_saves">Salvataggi</string>
@@ -765,6 +778,7 @@
     <string name="packs_nothing">Niente che questo port possa usare</string>
     <string name="packs_restart_ask">Le modifiche ai pacchetti mod hanno effetto solo dopo un riavvio. Riavviare il gioco ora? I progressi dall\'ultimo salvataggio vanno persi.</string>
     <string name="language_restart">Il gioco usa la nuova lingua dopo un riavvio.</string>
+    <string name="menu_language_restart">I menu usano la nuova lingua dopo un riavvio.</string>
     <string name="cache_loading">Caricamento della cache degli shader…</string>
     <string name="cache_loading_detail">%1$,d varianti di shader preparate</string>
     <string name="headstart_building">Ricerca degli shader del gioco nei tuoi file… (solo questa volta)</string>

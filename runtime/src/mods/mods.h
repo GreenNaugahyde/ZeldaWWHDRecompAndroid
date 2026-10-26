@@ -151,6 +151,7 @@ void minigame_pad(input::PadState& s);
 // fast forward on, the event runs fast forward while held (turbo.cpp)
 void set_talk_hold(bool on);
 void set_talk_hold_ff(bool on);
+void set_talk_hold_pad(bool on);  // A held does it too (Game > Hold to go on in talks)
 bool talk_hold_ff();
 // (ids 0xFF: none; all 0 but [15..19] when not in a game: title screen, file select)
 // [0] in play, [1] A action, [2] sword, [3..5] X / Y / R item, [6] B action, [7] ZR action,

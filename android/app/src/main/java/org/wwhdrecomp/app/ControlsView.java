@@ -189,10 +189,19 @@ final class ControlsView extends View {
         invalidate();
     }
 
+    // Controls > On-screen controls off: the menu button is the way to the menu in play too (+ isn't shown)
+    private boolean menuAlone;
+
+    void setMenuAlone(boolean on) {
+        if (on == menuAlone) return;
+        menuAlone = on;
+        invalidate();
+    }
+
     /** whether a control is part of the current screen mode */
     private boolean inMode(Control c) {
         if (front != 0) return c.kind == KIND_MENU;
-        if (c.kind == KIND_MENU && menuInInventory) return false;
+        if (c.kind == KIND_MENU && menuInInventory && !menuAlone) return false;
         if (c.kind == KIND_SCREEN) return screenButton;
         return !drcMode || (c.kind == KIND_BUTTON && c.bit == Native.PLUS);
     }
@@ -927,6 +936,7 @@ final class ControlsView extends View {
                                      // hand since: LEAF_STOW_MS / SWORD_STOW_MS later it goes
     private static final int DEKU_LEAF = 0x34, SWORD = 0x103;
     private static final long LEAF_STOW_MS = 3000, SWORD_STOW_MS = 5000;
+    private boolean padPlay;         // a controller in use (MainActivity.inputSource): A puts the item away, as on the Wii U
     private boolean viewWas;         // the Picto Box's or the telescope's view was open: closed, the item goes away
     private static final int ST0_AIMS = 0x1000 | 0x4000 | 0x20000 | 0x80000, ST0_ITEM_OUT = 0x40000;
     private static final long TAP_MAX_MS = 380, SHOOT_GAP_MS = 100, AIM_WAIT_MS = 1000, REAIM_GAP_MS = 80, PUT_AWAY_MS = 1200;
@@ -1051,8 +1061,24 @@ final class ControlsView extends View {
     /** gliding with the Deku Leaf (Link's hand then reads 0x102, not the leaf) */
     private boolean leafFlying() { return context && (state[13] & ST1_LEAF_FLY) != 0; }
 
-    /** the Deku Leaf or the sword in Link's hand: by tap it goes away by itself (handStow), A's Put away is hidden */
-    private boolean stowsItself() { return state.length > 29 && (state[29] == DEKU_LEAF || state[29] == SWORD); }
+    /** the Deku Leaf or the sword in Link's hand: by tap it goes away by itself (handStow), A's Put away is hidden;
+     *  not while a controller is in use (its A puts it away) */
+    private boolean stowsItself() { return !padPlay && state.length > 29 && (state[29] == DEKU_LEAF || state[29] == SWORD); }
+
+    /** a controller in use (true) or playing by touch again (false): the hand's item goes away by itself only by touch;
+     *  back to touch its time starts anew (pollState only looks again when the game's state changes) */
+    void setPadPlay(boolean on) {
+        if (on == padPlay) return;
+        padPlay = on;
+        removeCallbacks(handStow);
+        stowSince = -1;
+        if (!on && tapMode() && stowsItself()) {
+            stowSince = SystemClock.uptimeMillis();
+            stowBusy = false;
+            if (aAction() == 0x08) postDelayed(handStow, state[29] == SWORD ? SWORD_STOW_MS : LEAF_STOW_MS);
+        }
+        invalidate();
+    }
 
     // the Deku Leaf or the sword held while Link stood still for LEAF_STOW_MS / SWORD_STOW_MS: A, the game's Put away
     private final Runnable handStow = new Runnable() {

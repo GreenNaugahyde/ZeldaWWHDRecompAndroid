@@ -170,7 +170,7 @@
     <string name="cs_jump_not_item">%1$s drückt %2$s des Spiels, keine Item-Taste: Sie lässt sich nicht ablegen.</string>
     <string name="cs_jump_not_menu">%1$s öffnet Menüs. Wähle eine andere Taste.</string>
     <string name="cs_try_title">Ausprobieren</string>
-    <string name="cs_try_text">Drücke die Tasten des Controllers: Jede leuchtet mit dem auf, was sie im Spiel tut. Start / Options halten zum Beenden. Einzelne Tasten: Steuerung › Controller-Tasten.</string>
+    <string name="cs_try_text">Drücke die Tasten des Controllers: Jede leuchtet mit dem auf, was sie im Spiel tut. %1$s halten zum Beenden (Fertig), %2$s zum Ändern (Ändern). Einzelne Tasten: Steuerung › Controller-Tasten.</string>
     <string name="cs_change">Ändern</string>
     <string name="cs_done">Fertig</string>
     <string name="cs_nothing">nichts</string>
@@ -208,7 +208,7 @@
     <string name="opt_context_buttons">Kontext-Tasten</string>
     <string name="opt_context_buttons_hint">A, B, X, Y, R und ZR erscheinen, wenn es etwas zu tun gibt, und sagen was; die Tastenanzeige des Spiels ist ausgeblendet</string>
     <string name="opt_talk_hold">Halten blättert Gespräche weiter</string>
-    <string name="opt_talk_hold_hint">Ein Finger, der irgendwo auf dem Bild bleibt, blättert den Text eines Gesprächs von selbst Seite für Seite weiter und hält bei einer Frage an. Aus: jedes Tippen blättert einmal</string>
+    <string name="opt_talk_hold_hint">Gehalten blättert der Text eines Gesprächs von selbst Seite für Seite weiter und hält bei einer Frage an: A auf einem Controller oder ein Finger irgendwo auf dem Bild (Flexibel mit Kontext-Tasten). Aus: jeder Druck blättert einmal</string>
     <string name="opt_talk_hold_ff">Beim Halten vorspulen</string>
     <string name="opt_talk_hold_ff_hint">Das gehaltene Gespräch läuft dabei auch im Schnelldurchlauf (bis 4×, so schnell dieses Gerät zeichnet)</string>
     <string name="opt_controls">Steuerung</string>
@@ -255,6 +255,8 @@
     <string name="opt_item_ring_pace">Während der Ring offen ist</string>
     <string name="opt_language">Spielsprache</string>
     <string name="opt_language_hint">Die Sprachen deiner Kopie des Spiels; gilt nach einem Neustart</string>
+    <string name="opt_menu_language">Menüsprache</string>
+    <string name="opt_menu_language_hint">Die Sprache der Menüs, Hinweise und Dialoge der App; gilt nach einem Neustart</string>
     <string name="opt_last_slot">Letzte Sitzung</string>
     <string name="opt_layout">Bildschirm-Layout</string>
     <string name="opt_leave_state">Speicherstand beim Verlassen der App</string>
@@ -302,6 +304,10 @@
     <string name="postbox_ask_no">Nein</string>
     <string name="opt_link_clothes">Links Kleidung</string>
     <string name="opt_link_clothes_hint">Heldenkleidung oder seine Alltagskleidung (das Hummer-Shirt) jederzeit; ein Wechsel zeigt sich als Rauchwolke. Wie in der Geschichte: das Spiel entscheidet</string>
+    <string name="opt_gamepad_sounds">GamePad-Töne</string>
+    <string name="opt_gamepad_sounds_hint">Töne, die die Wii U nur über den Lautsprecher des GamePads spielt: seine Menüs, Items wechseln, Speichern; auch die Töne des Optionsmenüs</string>
+    <string name="opt_l_drc_pages">L blättert das GamePad um</string>
+    <string name="opt_l_drc_pages_hint">Im Spiel wechselt L den GamePad-Bildschirm zwischen Items und Karte, wie auf der Wii U (für ein GamePad-Bild auf einem zweiten Bildschirm); aus: nicht im Spiel</string>
     <string name="clothes_story">Wie in der Geschichte</string>
     <string name="clothes_hero">Heldenkleidung</string>
     <string name="clothes_casual">Alltagskleidung</string>
@@ -333,6 +339,7 @@
     <string name="opt_mods">Mods</string>
     <string name="opt_motion">Bewegungssteuerung</string>
     <string name="opt_motion_hint">Zielen durch Neigen des Geräts oder eines Controllers mit Bewegungssensoren</string>
+    <string name="opt_motion_hint_missing">Zielen durch Neigen dieses Geräts: Die Bewegungssensoren von %1$s erreichen hier keine Apps (warum: Controller &gt; Controller-Details)</string>
     <string name="opt_off">AUS</string>
     <string name="opt_on">AN</string>
     <string name="opt_page_touch">Touch</string>
@@ -426,6 +433,9 @@
     <string name="cd_no">Nein</string>
     <string name="cd_none">Keine</string>
     <string name="cd_none_reported">Keine gemeldet</string>
+    <string name="cd_why_motion">Warum keine: Android gibt die Bewegungssensoren eines Controllers nur an Apps weiter, wenn der Linux-Kernel des Geräts den Controller mit einem eigenen Treiber betreibt, bei diesem %1$s. Der Kernel dieses Geräts (%2$s) hat keinen dafür, also läuft der Controller als einfaches HID-Gamepad: Tasten und Sticks gehen, aber Android macht keine Bewegungssensoren daraus (kein Eingabegerät \"Motion Sensors\"). Eine App kommt daran nicht vorbei: Über Bluetooth behält das System die Rohdaten des Controllers für sich. Ein System-Update oder ein Kernel mit dem Treiber (bei einem Custom-ROM: dessen Macher fragen) bringt sie; bis dahin nutzt die Bewegungssteuerung die Sensoren dieses Geräts.</string>
+    <string name="cd_why_rumble">Warum keine: Android gibt die Vibrationsmotoren eines Controllers nur an Apps weiter, wenn der Linux-Kernel des Geräts den Controller mit einem eigenen Treiber betreibt, bei diesem %1$s. Der Kernel dieses Geräts (%2$s) hat keinen dafür, also läuft der Controller als einfaches HID-Gamepad: Tasten und Sticks gehen, aber Android bekommt keine Vibration (Force Feedback) dafür. Eine App kommt daran nicht vorbei: Über Bluetooth behält das System den Controller für sich. Ein System-Update oder ein Kernel mit dem Treiber (bei einem Custom-ROM: dessen Macher fragen) bringt sie; bis dahin vibriert dieses Gerät.</string>
+    <string name="cd_why_motion_android">Warum keine: Android gibt die Bewegungssensoren eines Controllers erst ab Android 12 an Apps weiter; dieses Gerät hat Android %1$s. Die Bewegungssteuerung nutzt die Sensoren dieses Geräts.</string>
     <string name="cd_unknown">Unbekannt</string>
     <string name="opt_page_res">Auflösung &amp; Hochskalierung</string>
     <string name="opt_page_res_hint">Dynamische Auflösung, Hochskalierung, Anzeigeauflösung</string>
@@ -437,6 +447,8 @@
     <string name="opt_page_advanced_hint">GPU-Treiber, VSync, Aufzeichnungs-Thread, Shader-Cache</string>
     <string name="opt_page_songs">Lieder</string>
     <string name="opt_page_songs_hint">Wiederholen, ins Mikrofon singen, Abspieltasten</string>
+    <string name="opt_onscreen">Bildschirm-Steuerung</string>
+    <string name="opt_onscreen_hint">Aus: keine Tasten und Sticks auf dem Bildschirm, nur die Menütaste (nur mit Controller spielen)</string>
     <string name="opt_onscreen_size">Größe der Bildschirm-Steuerung</string>
     <string name="opt_packs">Mod-Pakete</string>
     <string name="opt_packs_hint">Cemu-Grafikpakete und Mods für Spieldateien, importiert aus .zip- und .rar-Dateien</string>
@@ -476,6 +488,7 @@
     <string name="opt_resolution">Renderauflösung</string>
     <string name="opt_rumble">Vibration</string>
     <string name="opt_rumble_hint">Am Controller, oder an diesem Gerät, wenn der Controller nicht vibriert oder per Touch gespielt wird</string>
+    <string name="opt_rumble_hint_missing">An diesem Gerät: Die Vibration von %1$s erreicht hier keine Apps (warum: Controller &gt; Controller-Details)</string>
     <string name="opt_rupees_change">Rubine nur bei Änderung</string>
     <string name="opt_rupees_change_hint">Die Rubinanzeige blendet ein, wenn du Rubine sammelst oder ausgibst, und nach ein paar Sekunden wieder aus</string>
     <string name="opt_saves">Speichern</string>
@@ -765,6 +778,7 @@
     <string name="packs_nothing">Nichts, was diese Portierung nutzen kann</string>
     <string name="packs_restart_ask">Deine Änderungen an Mod-Paketen wirken erst nach einem Neustart. Das Spiel jetzt neu starten? Fortschritt seit deinem letzten Speichern geht verloren.</string>
     <string name="language_restart">Das Spiel nutzt die neue Sprache nach einem Neustart.</string>
+    <string name="menu_language_restart">Die Menüs nutzen die neue Sprache nach einem Neustart.</string>
     <string name="cache_loading">Shader-Cache wird geladen…</string>
     <string name="cache_loading_detail">%1$,d Shader-Varianten vorbereitet</string>
     <string name="headstart_building">Die Shader des Spiels werden in deinen Spieldateien gesucht… (nur dieses eine Mal)</string>

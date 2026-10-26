@@ -145,6 +145,9 @@ final class GameDialog extends Dialog {
 
     private final List<View> buttonViews = new ArrayList<>();
 
+    /** the button at `index` (in the order added) once shown, else null */
+    View buttonView(int index) { return index < buttonViews.size() ? buttonViews.get(index) : null; }
+
     private int px(float v) { return GameUi.px(getContext(), v); }
 
     @Override
@@ -293,11 +296,11 @@ final class GameDialog extends Dialog {
     @Override
     public boolean onKeyUp(int code, KeyEvent e) {
         if ((code == KeyEvent.KEYCODE_BUTTON_A || code == KeyEvent.KEYCODE_BUTTON_B) && !downHere.remove(code)) return true;
-        if (code == KeyEvent.KEYCODE_BUTTON_A) {  // bottom button: cancel
+        if (code == InputMapper.menuBack()) {  // the Wii U's B (by position the bottom button): cancel
             if (cancelable) cancel();
             return true;
         }
-        if (code == KeyEvent.KEYCODE_BUTTON_B) {  // right button: the selected button or row
+        if (code == InputMapper.menuSelect()) {  // the Wii U's A (by position the right button): the selected button or row
             View f = getCurrentFocus();
             if (f != null) f.performClick();
             return true;

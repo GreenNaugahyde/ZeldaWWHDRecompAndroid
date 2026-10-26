@@ -170,7 +170,7 @@
     <string name="cs_jump_not_item">%1$s actionne le %2$s du jeu, pas un bouton d\'objet : il ne peut pas être retiré.</string>
     <string name="cs_jump_not_menu">%1$s ouvre les menus. Choisissez un autre bouton.</string>
     <string name="cs_try_title">Essayer</string>
-    <string name="cs_try_text">Appuyez sur les boutons de la manette : chacun s\'allume avec ce qu\'il fait dans le jeu. Maintenez Start / Options pour terminer. Boutons un par un : Commandes › Boutons de la manette.</string>
+    <string name="cs_try_text">Appuyez sur les boutons de la manette : chacun s\'allume avec ce qu\'il fait dans le jeu. Maintenez %1$s pour terminer (Terminé), %2$s pour modifier (Modifier). Boutons un par un : Commandes › Boutons de la manette.</string>
     <string name="cs_change">Modifier</string>
     <string name="cs_done">Terminé</string>
     <string name="cs_nothing">rien</string>
@@ -208,7 +208,7 @@
     <string name="opt_context_buttons">Boutons contextuels</string>
     <string name="opt_context_buttons_hint">A, B, X, Y, R et ZR apparaissent quand il y a quelque chose à faire et indiquent quoi ; l\'affichage des boutons du jeu est masqué</string>
     <string name="opt_talk_hold">Maintenir pour avancer les dialogues</string>
-    <string name="opt_talk_hold_hint">Un doigt maintenu n\'importe où sur l\'image fait défiler seul le texte d\'un dialogue, page par page, et s\'arrête à une question. Désactivé : chaque toucher avance d\'une page</string>
+    <string name="opt_talk_hold_hint">Maintenu, le texte d\'un dialogue défile seul, page par page, et s\'arrête à une question : A sur une manette, ou un doigt n\'importe où sur l\'image (Flexible avec boutons contextuels). Désactivé : chaque appui avance d\'une page</string>
     <string name="opt_talk_hold_ff">Avance rapide en maintenant</string>
     <string name="opt_talk_hold_ff_hint">Le dialogue maintenu passe aussi en avance rapide (jusqu\'à 4×, aussi vite que cet appareil affiche)</string>
     <string name="opt_controls">Commandes</string>
@@ -255,6 +255,8 @@
     <string name="opt_item_ring_pace">Pendant que l\'anneau est ouvert</string>
     <string name="opt_language">Langue du jeu</string>
     <string name="opt_language_hint">Les langues de votre copie du jeu ; s\'applique après un redémarrage</string>
+    <string name="opt_menu_language">Langue des menus</string>
+    <string name="opt_menu_language_hint">La langue des menus, astuces et dialogues de l\'appli ; s\'applique après un redémarrage</string>
     <string name="opt_last_slot">Dernière session</string>
     <string name="opt_layout">Disposition de l\'écran</string>
     <string name="opt_leave_state">État en quittant l\'application</string>
@@ -302,6 +304,10 @@
     <string name="postbox_ask_no">Non</string>
     <string name="opt_link_clothes">Tenue de Link</string>
     <string name="opt_link_clothes_hint">La tenue de héros ou ses vêtements de tous les jours (le t-shirt au homard) à tout moment ; un changement se fait dans un nuage de fumée. Comme dans l\'histoire : le jeu décide</string>
+    <string name="opt_gamepad_sounds">Sons du GamePad</string>
+    <string name="opt_gamepad_sounds_hint">Les sons que la Wii U joue sur le seul haut-parleur du GamePad : ses menus, le changement d\'objets, la sauvegarde ; aussi les sons du menu des options</string>
+    <string name="opt_l_drc_pages">L tourne la page du GamePad</string>
+    <string name="opt_l_drc_pages_hint">En jeu, L fait passer l\'écran du GamePad des objets à la carte, comme sur Wii U (pour l\'image du GamePad sur un second écran) ; désactivé : pas en jeu</string>
     <string name="clothes_story">Comme dans l\'histoire</string>
     <string name="clothes_hero">Tenue de héros</string>
     <string name="clothes_casual">Tenue de tous les jours</string>
@@ -333,6 +339,7 @@
     <string name="opt_mods">Mods</string>
     <string name="opt_motion">Détection de mouvements</string>
     <string name="opt_motion_hint">Visez en inclinant l\'appareil, ou une manette dotée de capteurs de mouvement</string>
+    <string name="opt_motion_hint_missing">Visez en inclinant cet appareil : les capteurs de mouvement de %1$s n\'arrivent pas aux applis ici (pourquoi : Manette &gt; Détails de la manette)</string>
     <string name="opt_off">NON</string>
     <string name="opt_on">OUI</string>
     <string name="opt_page_touch">Tactile</string>
@@ -426,6 +433,9 @@
     <string name="cd_no">Non</string>
     <string name="cd_none">Aucun</string>
     <string name="cd_none_reported">Aucun signalé</string>
+    <string name="cd_why_motion">Pourquoi aucun : Android ne transmet les capteurs de mouvement d\'une manette aux applis que si le noyau Linux de l\'appareil gère la manette avec son propre pilote, pour celle-ci %1$s. Le noyau de cet appareil (%2$s) n\'en a pas, la manette fonctionne donc comme une simple manette HID : boutons et sticks marchent, mais Android n\'en tire aucun capteur de mouvement (pas de périphérique d\'entrée « Motion Sensors »). Une appli ne peut pas contourner cela : en Bluetooth, le système garde les données brutes de la manette pour lui. Une mise à jour du système ou un noyau avec le pilote (sur une ROM personnalisée : demandez à son auteur) les apporte ; d\'ici là, les commandes par mouvement utilisent les capteurs de cet appareil.</string>
+    <string name="cd_why_rumble">Pourquoi aucun : Android ne transmet les moteurs de vibration d\'une manette aux applis que si le noyau Linux de l\'appareil gère la manette avec son propre pilote, pour celle-ci %1$s. Le noyau de cet appareil (%2$s) n\'en a pas, la manette fonctionne donc comme une simple manette HID : boutons et sticks marchent, mais Android n\'obtient aucune vibration (retour de force) pour elle. Une appli ne peut pas contourner cela : en Bluetooth, le système garde la manette pour lui. Une mise à jour du système ou un noyau avec le pilote (sur une ROM personnalisée : demandez à son auteur) l\'apporte ; d\'ici là, c\'est cet appareil qui vibre.</string>
+    <string name="cd_why_motion_android">Pourquoi aucun : Android ne transmet les capteurs de mouvement d\'une manette aux applis qu\'à partir d\'Android 12 ; cet appareil a Android %1$s. Les commandes par mouvement utilisent les capteurs de cet appareil.</string>
     <string name="cd_unknown">Inconnu</string>
     <string name="opt_page_res">Résolution et mise à l\'échelle</string>
     <string name="opt_page_res_hint">Résolution dynamique, mise à l\'échelle, résolution d\'affichage</string>
@@ -437,6 +447,8 @@
     <string name="opt_page_advanced_hint">Pilote GPU, VSync, thread d\'enregistrement, cache des shaders</string>
     <string name="opt_page_songs">Chants</string>
     <string name="opt_page_songs_hint">Rejouer, chanter dans le micro, boutons de lecture</string>
+    <string name="opt_onscreen">Commandes à l\'écran</string>
+    <string name="opt_onscreen_hint">Désactivé : ni boutons ni sticks à l\'écran, seulement le bouton du menu (pour jouer uniquement à la manette)</string>
     <string name="opt_onscreen_size">Taille des commandes à l\'écran</string>
     <string name="opt_packs">Packs de mods</string>
     <string name="opt_packs_hint">Packs graphiques Cemu et mods de fichiers du jeu, importés depuis des fichiers .zip et .rar</string>
@@ -476,6 +488,7 @@
     <string name="opt_resolution">Résolution de rendu</string>
     <string name="opt_rumble">Vibrations</string>
     <string name="opt_rumble_hint">Sur la manette, ou sur cet appareil si la manette ne vibre pas ou en jouant au toucher</string>
+    <string name="opt_rumble_hint_missing">Sur cet appareil : la vibration de %1$s n\'arrive pas aux applis ici (pourquoi : Manette &gt; Détails de la manette)</string>
     <string name="opt_rupees_change">Rubis seulement quand ils changent</string>
     <string name="opt_rupees_change_hint">Le compteur de rubis apparaît quand vous gagnez ou dépensez des rubis, puis disparaît après quelques secondes</string>
     <string name="opt_saves">Sauvegardes</string>
@@ -765,6 +778,7 @@
     <string name="packs_nothing">Rien que ce portage puisse utiliser</string>
     <string name="packs_restart_ask">Vos changements de packs de mods ne prennent effet qu\'après un redémarrage. Redémarrer le jeu maintenant ? La progression depuis votre dernière sauvegarde est perdue.</string>
     <string name="language_restart">Le jeu utilise la nouvelle langue après un redémarrage.</string>
+    <string name="menu_language_restart">Les menus utilisent la nouvelle langue après un redémarrage.</string>
     <string name="cache_loading">Chargement du cache des shaders…</string>
     <string name="cache_loading_detail">%1$,d variantes de shaders préparées</string>
     <string name="headstart_building">Recherche des shaders du jeu dans vos fichiers… (une seule fois)</string>

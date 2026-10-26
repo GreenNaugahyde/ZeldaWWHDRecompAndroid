@@ -129,6 +129,7 @@ extern "C" JNIEXPORT jint JNI_OnLoad(JavaVM* vm, void*) {
 #define JNI_FN(ret, name) extern "C" JNIEXPORT ret JNICALL Java_org_wwhdrecomp_app_Native_##name
 
 namespace gx2 { void set_clock_rate(double rate); }  // gx2_core.cpp
+namespace ax { void set_gamepad_sounds(bool on); bool gamepad_sounds(); }  // hle/ax.cpp
 
 // null if `gameDir` holds the executable this build was recompiled from, else a message
 
@@ -644,10 +645,12 @@ JNI_FN(void, setOption)(JNIEnv* env, jclass, jstring name, jint value) {
     else if (n == "mod_ff_dialogues") mods::set_ff_dialogues(value != 0);
     else if (n == "talk_hold") mods::set_talk_hold(value != 0);
     else if (n == "talk_hold_ff") mods::set_talk_hold_ff(value != 0);
+    else if (n == "talk_hold_pad") mods::set_talk_hold_pad(value != 0);
     else if (n == "mod_song_replay") mods::set_song_replay(value != 0);
     else if (n == "mod_picto_pages") mods::set_picto_pages(value != 0);
     else if (n == "link_clothes") mods::set_link_clothes(value);
     else if (n == "postbox_mail") mods::set_postbox_mail(value != 0);
+    else if (n == "gamepad_sounds") ax::set_gamepad_sounds(value != 0);
     else if (n == "postbox_same_day") mods::set_postbox_same_day(value != 0);
     else if (n == "postbox_present") mods::postbox_present();
     else if (n == "picto_page") mods::picto_page_request(value);
@@ -730,6 +733,7 @@ JNI_FN(jint, getOption)(JNIEnv* env, jclass, jstring name) {
     if (n == "mod_picto_pages") return mods::picto_pages();
     if (n == "link_clothes") return mods::link_clothes();
     if (n == "postbox_mail") return mods::postbox_mail();
+    if (n == "gamepad_sounds") return ax::gamepad_sounds();
     if (n == "postbox_same_day") return mods::postbox_same_day();
     if (n == "postbox_notice") return mods::postbox_notice();
     if (n == "postbox_offer") return mods::postbox_offer();

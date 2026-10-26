@@ -170,7 +170,7 @@
     <string name="cs_jump_not_item">%1$s はゲームの %2$s をおします。アイテムボタンではないので、はずせません。</string>
     <string name="cs_jump_not_menu">%1$s はメニューを開きます。ほかのボタンをえらんでください。</string>
     <string name="cs_try_title">ためしにおす</string>
-    <string name="cs_try_text">コントローラーのボタンをおすと、ゲームでの働きといっしょに光ります。Start / Optionsを長おしで終了。ボタンひとつずつは「そうさ › コントローラーのボタン」で。</string>
+    <string name="cs_try_text">コントローラーのボタンをおすと、ゲームでの働きといっしょに光ります。%1$sを長おしで終了（完了）、%2$sで変更（変える）。ボタンひとつずつは「そうさ › コントローラーのボタン」で。</string>
     <string name="cs_change">変える</string>
     <string name="cs_done">完了</string>
     <string name="cs_nothing">なし</string>
@@ -208,7 +208,7 @@
     <string name="opt_context_buttons">コンテキストボタン</string>
     <string name="opt_context_buttons_hint">A、B、X、Y、R、ZRは、できることがあるときに現れて内容を表示します。ゲームのボタン表示は隠れます</string>
     <string name="opt_talk_hold">長おしで会話を進める</string>
-    <string name="opt_talk_hold_hint">画面のどこかを指でおしたままにすると 会話の文章がページごとに自動で進み 質問で止まります。オフ：タップごとに1回進みます</string>
+    <string name="opt_talk_hold_hint">おしたままにすると 会話の文章がページごとに自動で進み 質問で止まります：コントローラーのA、または画面のどこかを指で（フレキシブル＋コンテキストボタン）。オフ：おすごとに1回進みます</string>
     <string name="opt_talk_hold_ff">長おし中は早送り</string>
     <string name="opt_talk_hold_ff_hint">おしたままの会話を早送りします（最大4倍、この端末の描画の速さまで）</string>
     <string name="opt_controls">そうさ</string>
@@ -255,6 +255,8 @@
     <string name="opt_item_ring_pace">リングを開いている間</string>
     <string name="opt_language">ゲームの言語</string>
     <string name="opt_language_hint">お持ちのゲームの言語。再起動後に適用されます</string>
+    <string name="opt_menu_language">メニューの言語</string>
+    <string name="opt_menu_language_hint">アプリのメニュー・ヒント・ダイアログの言語。再起動後に適用されます</string>
     <string name="opt_last_slot">前回のセッション</string>
     <string name="opt_layout">画面レイアウト</string>
     <string name="opt_leave_state">アプリを離れるときにステートを保存</string>
@@ -302,6 +304,10 @@
     <string name="postbox_ask_no">いいえ</string>
     <string name="opt_link_clothes">リンクの服</string>
     <string name="opt_link_clothes_hint">勇者の服か普段着(エビのシャツ)をいつでも選べます。着替えるとけむりが出ます。ストーリーどおり:ゲームが決めます</string>
+    <string name="opt_gamepad_sounds">Wii U GamePadの音</string>
+    <string name="opt_gamepad_sounds_hint">Wii UがGamePadのスピーカーだけで鳴らす音:メニュー、アイテムの切り替え、セーブ。オプションメニューの音も</string>
+    <string name="opt_l_drc_pages">LでGamePadのページ切り替え</string>
+    <string name="opt_l_drc_pages_hint">プレイ中にLでGamePad画面をアイテムとマップで切り替えます(Wii Uと同じ。2画面目のGamePad画像向け)。オフ:プレイ中は切り替えません</string>
     <string name="clothes_story">ストーリーどおり</string>
     <string name="clothes_hero">勇者の服</string>
     <string name="clothes_casual">普段着</string>
@@ -333,6 +339,7 @@
     <string name="opt_mods">Mod</string>
     <string name="opt_motion">ジャイロ操作</string>
     <string name="opt_motion_hint">端末、またはジャイロ付きコントローラーをかたむけてねらいます</string>
+    <string name="opt_motion_hint_missing">この端末をかたむけてねらいます：%1$s のモーションセンサーはこの端末ではアプリに届きません（理由：コントローラー &gt; コントローラーの詳細）</string>
     <string name="opt_off">オフ</string>
     <string name="opt_on">オン</string>
     <string name="opt_page_touch">タッチ</string>
@@ -426,6 +433,9 @@
     <string name="cd_no">いいえ</string>
     <string name="cd_none">なし</string>
     <string name="cd_none_reported">報告なし</string>
+    <string name="cd_why_motion">ない理由：Android がコントローラーのモーションセンサーをアプリに渡すのは、端末の Linux カーネルがそのコントローラー専用のドライバー（このコントローラーなら %1$s）で動かしているときだけです。この端末のカーネル（%2$s）にはそれがないため、コントローラーは汎用の HID ゲームパッドとして動きます。ボタンとスティックは使えますが、Android はモーションセンサーを作りません（「Motion Sensors」入力デバイスなし）。アプリからは回避できません。Bluetooth ではシステムがコントローラーの生データを渡さないためです。システムアップデートか、ドライバー入りのカーネル（カスタム ROM なら作者に相談）で使えるようになります。それまではこの端末のセンサーを使います。</string>
+    <string name="cd_why_rumble">ない理由：Android がコントローラーの振動モーターをアプリに渡すのは、端末の Linux カーネルがそのコントローラー専用のドライバー（このコントローラーなら %1$s）で動かしているときだけです。この端末のカーネル（%2$s）にはそれがないため、コントローラーは汎用の HID ゲームパッドとして動きます。ボタンとスティックは使えますが、Android は振動（フォースフィードバック）を得られません。アプリからは回避できません。Bluetooth ではシステムがコントローラーを渡さないためです。システムアップデートか、ドライバー入りのカーネル（カスタム ROM なら作者に相談）で使えるようになります。それまではこの端末が振動します。</string>
+    <string name="cd_why_motion_android">ない理由：Android がコントローラーのモーションセンサーをアプリに渡すのは Android 12 からです。この端末は Android %1$s です。この端末のセンサーを使います。</string>
     <string name="cd_unknown">不明</string>
     <string name="opt_page_res">解像度とアップスケール</string>
     <string name="opt_page_res_hint">動的解像度、アップスケール、表示解像度</string>
@@ -437,6 +447,8 @@
     <string name="opt_page_advanced_hint">GPUドライバー、VSync、記録スレッド、シェーダーキャッシュ</string>
     <string name="opt_page_songs">歌</string>
     <string name="opt_page_songs_hint">もう一度演奏、マイクで歌う、再生ボタン</string>
+    <string name="opt_onscreen">画面上の操作</string>
+    <string name="opt_onscreen_hint">オフ:画面にボタンやスティックを出さず、メニューボタンだけ(コントローラーだけで遊ぶとき)</string>
     <string name="opt_onscreen_size">画面上の操作の大きさ</string>
     <string name="opt_packs">Modパック</string>
     <string name="opt_packs_hint">Cemuのグラフィックパックとゲームファイルのmod。.zipと.rarファイルから読み込みます</string>
@@ -476,6 +488,7 @@
     <string name="opt_resolution">レンダリング解像度</string>
     <string name="opt_rumble">振動</string>
     <string name="opt_rumble_hint">コントローラーで。振動しないコントローラーやタッチでのプレイ中はこの端末で</string>
+    <string name="opt_rumble_hint_missing">この端末で振動：%1$s の振動はこの端末ではアプリに届きません（理由：コントローラー &gt; コントローラーの詳細）</string>
     <string name="opt_rupees_change">ルピーは変わったときだけ</string>
     <string name="opt_rupees_change_hint">ルピーを手に入れたり使ったりすると数が現れ、数秒後にまた消えます</string>
     <string name="opt_saves">セーブ</string>
@@ -765,6 +778,7 @@
     <string name="packs_nothing">この移植で使えるものがありません</string>
     <string name="packs_restart_ask">Modパックの変更は再起動後に有効になります。今ゲームを再起動しますか？最後のセーブ以降の進み具合は失われます。</string>
     <string name="language_restart">ゲームは再起動後に新しい言語を使います。</string>
+    <string name="menu_language_restart">メニューは再起動後に新しい言語になります。</string>
     <string name="cache_loading">シェーダーキャッシュを読み込み中…</string>
     <string name="cache_loading_detail">%1$,d個のシェーダーのバリエーションを準備しました</string>
     <string name="headstart_building">ゲームファイルからゲームのシェーダーを探しています…（この一度だけ）</string>

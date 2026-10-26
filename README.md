@@ -71,7 +71,8 @@ The original project (macOS, the 60 fps modes, decompilation tools) is described
   places in each (`tools/recomp/port_addresses.py` matches the executables; the address maps it
   writes are in `tools/recomp/release_eur.txt` and `release_jpn.txt`).
 - **Game language**: the languages of your copy (USA: English, French, Spanish; Europe: also German
-  and Italian; Japan: Japanese), by default the device's language setting is used.
+  and Italian; Japan: Japanese), by default the device's language setting is used. The app's own
+  menus have a language of their own (Menu language: English by default, or one of your copy's).
 - **Custom GPU drivers** on Adreno GPUs (see below): Mesa Turnip or newer Qualcomm drivers.
 - **Widescreen**: the game renders at the screen's shape and shows more to the sides; the HUD keeps
   its proportions at the screen edges.
@@ -150,6 +151,28 @@ The original project (macOS, the 60 fps modes, decompilation tools) is described
 - **No internet access**: the app doesn't request it, and its manifest explicitly excludes it.
 
 ## Version history
+
+**0.9.8**
+
+- Game › Menu language: the app's menus have their own language, English by default, or one of your
+  copy's languages (issue #62).
+- GamePad sounds: the sounds the Wii U plays on the GamePad speaker alone (its menus, switching items,
+  saving) are heard, and the options menu uses the GamePad menus' own sounds (issue #64; Game ›
+  GamePad sounds).
+- Controls › On-screen controls is back: switched off, only the menu button shows and a touch
+  doesn't bring the controls back (issue #63).
+- Fixed: a controller's own button assignment (from the setup or single rebinds) was replaced by the
+  shared one after the next layout refresh (issue #61). The menus now follow the Wii U's A and B: with
+  them by letters, A selects and B goes back.
+- Hold to go on in talks moved to the Game tab and works with a controller too: hold A and the talk
+  goes on by itself up to a question.
+- With a controller the sword and the Deku Leaf stay in Link's hand until A puts them away, as on the
+  Wii U; by touch they still go away by themselves.
+- Controls › Controller › L turns the GamePad page (off): in play L no longer flips the game's GamePad
+  screen between Items and Map.
+- The controller setup can be finished with the controller: hold Start for Done, Select for Change.
+- When a controller's motion sensors or rumble don't reach apps on this device (no kernel driver for
+  it), the menu says so and Controller details explains why.
 
 **0.9.7**
 
@@ -451,7 +474,9 @@ The game keeps running while the menu is open, and changes apply at once.
 **With a controller** the game's bracket cursor shows where you are: L / R switch tabs, the D-pad
 moves and changes values, pressing toward a big page arrow turns the page, and as in the game the
 **right** face button selects and the **bottom** one goes back. (On an Xbox-style controller that is
-B to select and A to go back; on a PlayStation controller Circle selects and Cross goes back.)
+B to select and A to go back; on a PlayStation controller Circle selects and Cross goes back. With
+the Wii U's A and B swapped (the setup's "by their letters", or in Controller buttons), the menus
+swap too.)
 
 **The tabs**
 
@@ -462,11 +487,15 @@ B to select and A to go back; on a PlayStation controller Circle selects and Cro
   2, 5 or 10 minutes, two slots), the "Last session" state, and what happens at start (the intro, the
   save states to choose from, or the last session at once). Exporting saves as one backup file and
   importing it, or a GameCube save (`.gci`). An imported game save restarts the game.
-- **Game**: the game language (the languages of your copy; applies after a restart), quick doors,
+- **Game**: the game language (the languages of your copy; applies after a restart), the menu language
+  (English by default, or one of your copy's languages; applies after a restart), quick doors,
   fast scene changes, fast forward of cutscenes and of dialogues (faster while ZR is held; text boxes
-  still wait for your button), album pages, picto subjects, mailing pictos at postboxes (and same day
-  delivery), Link's clothes, and the **Songs** page (replay conducted songs, singing into the
-  microphone, play buttons).
+  still wait for your button), hold to go on in talks (A held on a controller, or a finger held with
+  the Flexible touch controls: the talk goes on by itself up to a question, optionally fast forward),
+  album pages, picto subjects, mailing pictos at postboxes (and same day delivery), Link's clothes,
+  GamePad sounds (the sounds the Wii U plays on the GamePad speaker alone: its menus, switching items,
+  saving; also used by the options menu), and the **Songs** page (replay conducted songs, singing
+  into the microphone, play buttons).
 - **Graphics**: a **preset** (Lowest to High) and **Find the best settings** (a 2-minute test of the
   device), rendering resolution, frame rate (30 fps, or 60/120 fps by frame interpolation) and frame
   generation, then pages:
@@ -489,7 +518,8 @@ B to select and A to go back; on a PlayStation controller Circle selects and Cro
   hit kills, and story cheats (save to a spare file first; they can change story events). **Mod packs**: import,
   turn on and off, choose a pack's presets; changes apply after a restart, which the menu offers when
   you leave it.
-- **Controls**: the touch style and the layout editor, motion controls and rumble (and where from),
+- **Controls**: on-screen controls on or off (off: only the menu button, for playing with a
+  controller), the touch style and the layout editor, motion controls and rumble (and where from),
   and the pages Touch, Item ring, Camera, Minigames & hints, Screen (HUD) and Controller, all
   explained in the [controls guide](docs/new-controls.md).
 

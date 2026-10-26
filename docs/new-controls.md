@@ -137,9 +137,9 @@ How they behave in the main situations:
   d-pad's up (Wind Waker) while Link has it. ZL targets; tapped once it latches (stays on) until you
   tap it again.
 - **Talking, reading, cutscenes**: with Minigames by touch on (the default), no button shows in a
-  talk: **tap anywhere** on the picture to go on. **Hold to go on in talks** (Controls › Touch, on):
-  keep the finger down and the talk goes on by itself, page by page, and stops at a question;
-  **Fast forward while held** (off) also speeds the talk up while the finger is down. Answers are
+  talk: **tap anywhere** on the picture to go on. **Hold to go on in talks** (Game, on):
+  keep the finger down (or hold A on a controller) and the talk goes on by itself, page by page, and
+  stops at a question; **Fast forward while held** (off) also speeds the talk up while held. Answers are
   given by touching the line (no A or B shows there); number entry keeps its A. With Minigames by
   touch off, A becomes **Next**. In cutscenes without text and during doors and fades all buttons
   hide; with Game › Fast forward cutscenes on, ZR stays to fast forward.
@@ -189,6 +189,9 @@ Also with Tap:
   button waves the leaf (a gust).
 
 **Hold** works exactly as in the game.
+
+With a controller in use, nothing goes away by itself: the sword and the leaf stay in Link's hand
+until A puts them away, as on the Wii U. A touch on the screen brings the automatic put-away back.
 
 ## The item ring
 
@@ -427,7 +430,8 @@ Don't ask). Run it any time from Controls › Controller › **Set up controller
      item button. Switches Jump anywhere on.
 4. **Button for jumping** (for the last two): press the button that should jump.
 5. **Try it**: press any button and it lights up with what it does in the game. Hold Start /
-   Options to finish.
+   Options to finish (Done), hold Select / View / Create to go back and change it (Change), so the
+   setup works without touching the screen.
 
 ### Single buttons
 
@@ -445,6 +449,13 @@ with the source:
 - **Gyro aiming from**: *Automatic* (the controller while you play with it, this device while you
   play by touch), *This device*, or *Controller*.
 - **Rumble on**: *Automatic*, *This device*, *Controller*, or *Both* at once.
+
+Some controllers have motion sensors or rumble that Android doesn't hand to apps on every device: a
+DualSense needs the Linux kernel driver hid-playstation (Linux 5.12 or newer), Nintendo controllers
+hid-nintendo (5.16 or newer); without it the controller works as a plain gamepad, buttons and sticks
+only. The hint under Motion controls / Rumble then names the controller, and Controller details
+explains what is missing on this device. No app can get past that; a system update or a kernel with
+the driver brings them.
 
 ### Controller details
 
@@ -502,10 +513,10 @@ Defaults in brackets.
 
 **Controls**
 
-- Touch controls (Classic) · Edit on-screen layout · Motion controls (on) · Rumble (on)
+- On-screen controls (on) · Touch controls (Classic) · Edit on-screen layout · Motion controls (on) · Rumble (on)
 - **Touch**: On-screen controls size (100 %) · Menu button in the game (off) · Left stick follows the
   thumb (on) · *Flexible only*: Show sticks (on), Context buttons (off), Item buttons (Tap), Only
-  aiming buttons while aiming (on), Hold to go on in talks (on), Fast forward while held (off) · Link
+  aiming buttons while aiming (on) · Link
   in the button icons (on) · ZL when the target is defeated
   (Let go)
 - **Item ring**: Item ring (on) · While the ring is open (Slow motion) · Item button names (Auto)
@@ -516,11 +527,11 @@ Defaults in brackets.
 - **Minigames & hints**: Minigames by touch (on) · Note pads for conducting (on) · Touch hints (on)
 - **Screen (HUD)**: Hearts only in combat (off) · Rupees only when they change (off) · Large Picto
   Box view (on)
-- **Controller**: Set up controller · Controller buttons · Controller details
+- **Controller**: Set up controller · Controller buttons · L turns the GamePad page (off) · Controller details
 
-**Game**: Game language · Quick doors · Fast scene changes · Fast forward cutscenes · Fast forward
-dialogues · Album pages (off) · Picto subjects (on) · Mail pictos at postboxes (on), Same day delivery
-(off) · Link's clothes (As in the story) · **Songs**: Replay conducted songs (off), Sing the songs (off), Mic button (on), Play
+**Game**: Game language · Menu language (English) · Quick doors · Fast scene changes · Fast forward cutscenes · Fast forward
+dialogues · Hold to go on in talks (on), Fast forward while held (off) · Album pages (off) · Picto subjects (on) · Mail pictos at postboxes (on), Same day delivery
+(off) · Link's clothes (As in the story) · GamePad sounds (on) · **Songs**: Replay conducted songs (off), Sing the songs (off), Mic button (on), Play
 buttons in the song list (on), Play button in song scenes (on)
 
 **Mods**: Jump anywhere (Controller button, Double jump, No automatic ledge jumps) · Moon jump

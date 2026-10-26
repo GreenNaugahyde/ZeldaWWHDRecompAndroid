@@ -194,7 +194,6 @@ final class ControllerSetup {
 
     // ---- try it: the picture and a list of what each button does, the pressed one lit
     private final java.util.Set<Integer> held = new java.util.HashSet<>();
-    private long startDown;
 
     private void tryIt() {
         InputMapper m = a.inputMapper();
@@ -228,13 +227,25 @@ final class ControllerSetup {
             box.addView(r);
         }
         held.clear();
-        GameDialog d = dialog().title(R.string.cs_try_title).message(R.string.cs_try_text).content(box)
+        GameDialog d = dialog().title(R.string.cs_try_title)
+                .message(s(R.string.cs_try_text, markName(KeyEvent.KEYCODE_BUTTON_START), markName(KeyEvent.KEYCODE_BUTTON_SELECT)))
+                .content(box)
                 .button(R.string.cs_change, then(askLetters ? this::faceButtons : this::presets))
                 .button(R.string.cs_done, null);
+        // every button is being tried here, so the bar's buttons are pressed by holding one: Start Done, Select Change
+        // (shown pressed while held; 0.8 s)
+        Runnable[] hold = {null};
         d.watchKeys((code, down) -> {
-            if (code == KeyEvent.KEYCODE_BUTTON_START) {
-                if (down) startDown = android.os.SystemClock.uptimeMillis();
-                else if (android.os.SystemClock.uptimeMillis() - startDown > 800) { d.dismiss(); return; }
+            int bar = code == KeyEvent.KEYCODE_BUTTON_START ? 1 : code == KeyEvent.KEYCODE_BUTTON_SELECT ? 0 : -1;
+            if (bar >= 0) {
+                View v = d.buttonView(bar);
+                if (hold[0] != null) pic.removeCallbacks(hold[0]);
+                hold[0] = null;
+                if (v != null) v.setPressed(down);
+                if (down && v != null) {
+                    hold[0] = () -> { v.setPressed(false); d.press(bar); };
+                    pic.postDelayed(hold[0], 800);
+                }
             }
             if (down) held.add(code);
             else held.remove(code);

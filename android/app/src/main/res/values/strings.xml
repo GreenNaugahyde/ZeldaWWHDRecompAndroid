@@ -171,7 +171,7 @@
     <string name="cs_jump_not_item">%1$s presses the game\'s %2$s, not an item button: it can\'t be taken off.</string>
     <string name="cs_jump_not_menu">%1$s opens menus. Choose another button.</string>
     <string name="cs_try_title">Try it</string>
-    <string name="cs_try_text">Press the controller\'s buttons: each one lights up with what it does in the game. Hold Start / Options to finish. Single buttons: Controls › Controller buttons.</string>
+    <string name="cs_try_text">Press the controller\'s buttons: each one lights up with what it does in the game. Hold %1$s to finish (Done), %2$s to change (Change). Single buttons: Controls › Controller buttons.</string>
     <string name="cs_change">Change</string>
     <string name="cs_done">Done</string>
     <string name="cs_nothing">nothing</string>
@@ -209,7 +209,7 @@
     <string name="opt_context_buttons">Context buttons</string>
     <string name="opt_context_buttons_hint">A, B, X, Y, R and ZR appear when there is something to do and say what; the game\'s own button display is hidden</string>
     <string name="opt_talk_hold">Hold to go on in talks</string>
-    <string name="opt_talk_hold_hint">A finger held anywhere on the picture goes on through a talk\'s text by itself, page by page, and stops at a question. Off: each tap goes on once</string>
+    <string name="opt_talk_hold_hint">Held, a talk\'s text goes on by itself, page by page, and stops at a question: A on a controller, or a finger anywhere on the picture (Flexible with context buttons). Off: each press goes on once</string>
     <string name="opt_talk_hold_ff">Fast forward while held</string>
     <string name="opt_talk_hold_ff_hint">The held talk also runs fast forward (up to 4×, as fast as this device draws)</string>
     <string name="opt_controls">Controls</string>
@@ -256,6 +256,8 @@
     <string name="opt_item_ring_pace">While the ring is open</string>
     <string name="opt_language">Game language</string>
     <string name="opt_language_hint">The languages of your copy of the game; applies after a restart</string>
+    <string name="opt_menu_language">Menu language</string>
+    <string name="opt_menu_language_hint">The language of the app\'s menus, hints and dialogs; applies after a restart</string>
     <string name="opt_last_slot">Last session</string>
     <string name="opt_layout">Screen layout</string>
     <string name="opt_leave_state">Save state when leaving the app</string>
@@ -303,6 +305,10 @@
     <string name="postbox_ask_no">No</string>
     <string name="opt_link_clothes">Link\'s clothes</string>
     <string name="opt_link_clothes_hint">Hero\'s clothes or his casual clothes (the lobster shirt) at any time; a change shows as a puff of smoke. As in the story: the game decides</string>
+    <string name="opt_gamepad_sounds">GamePad sounds</string>
+    <string name="opt_gamepad_sounds_hint">Sounds the Wii U plays on the GamePad speaker alone: its menus, switching items, saving; also the options menu\'s sounds</string>
+    <string name="opt_l_drc_pages">L turns the GamePad page</string>
+    <string name="opt_l_drc_pages_hint">In play L switches the GamePad screen between Items and Map, as on the Wii U (for a GamePad picture on a second screen); off: not in play</string>
     <string name="clothes_story">As in the story</string>
     <string name="clothes_hero">Hero\'s clothes</string>
     <string name="clothes_casual">Casual clothes</string>
@@ -334,6 +340,7 @@
     <string name="opt_mods">Mods</string>
     <string name="opt_motion">Motion controls</string>
     <string name="opt_motion_hint">Aim by tilting the device, or a controller with motion sensors</string>
+    <string name="opt_motion_hint_missing">Aim by tilting this device: %1$s\'s motion sensors don\'t reach apps on it (why: Controller &gt; Controller details)</string>
     <string name="opt_off">OFF</string>
     <string name="opt_on">ON</string>
     <string name="opt_page_touch">Touch</string>
@@ -427,6 +434,9 @@
     <string name="cd_no">No</string>
     <string name="cd_none">None</string>
     <string name="cd_none_reported">None reported</string>
+    <string name="cd_why_motion">Why none: Android hands a controller\'s motion sensors to apps only when the device\'s Linux kernel drives the controller with its own driver, for this one %1$s. This device\'s kernel (%2$s) has none for it, so the controller runs as a plain HID gamepad: buttons and sticks work, but Android makes no motion sensors of it (no \"Motion Sensors\" input device). An app can\'t get past that: over Bluetooth the system keeps the controller\'s raw data to itself. A system update or a kernel with the driver (on a custom ROM: ask its maker) brings them; until then motion controls use this device\'s sensors.</string>
+    <string name="cd_why_rumble">Why none: Android hands a controller\'s rumble motors to apps only when the device\'s Linux kernel drives the controller with its own driver, for this one %1$s. This device\'s kernel (%2$s) has none for it, so the controller runs as a plain HID gamepad: buttons and sticks work, but Android gets no rumble (force feedback) for it. An app can\'t get past that: over Bluetooth the system keeps the controller to itself. A system update or a kernel with the driver (on a custom ROM: ask its maker) brings it; until then this device rumbles.</string>
+    <string name="cd_why_motion_android">Why none: Android hands a controller\'s motion sensors to apps from Android 12 on; this device has Android %1$s. Motion controls use this device\'s sensors.</string>
     <string name="cd_unknown">Unknown</string>
     <string name="opt_page_res">Resolution &amp; upscaling</string>
     <string name="opt_page_res_hint">Dynamic resolution, upscaling, display resolution</string>
@@ -438,6 +448,8 @@
     <string name="opt_page_advanced_hint">GPU driver, VSync, recording thread, shader cache</string>
     <string name="opt_page_songs">Songs</string>
     <string name="opt_page_songs_hint">Replay, sing into the microphone, play buttons</string>
+    <string name="opt_onscreen">On-screen controls</string>
+    <string name="opt_onscreen_hint">Off: no buttons or sticks on the screen, only the menu button (for playing with a controller only)</string>
     <string name="opt_onscreen_size">On-screen controls size</string>
     <string name="opt_packs">Mod packs</string>
     <string name="opt_packs_hint">Cemu graphic packs and game file mods, imported from .zip and .rar files</string>
@@ -477,6 +489,7 @@
     <string name="opt_resolution">Rendering resolution</string>
     <string name="opt_rumble">Rumble</string>
     <string name="opt_rumble_hint">On the controller, or this device if the controller has no rumble or while playing by touch</string>
+    <string name="opt_rumble_hint_missing">On this device: %1$s\'s rumble doesn\'t reach apps on it (why: Controller &gt; Controller details)</string>
     <string name="opt_rupees_change">Rupees only when they change</string>
     <string name="opt_rupees_change_hint">The rupee count fades in when you collect or spend rupees, and out again after a few seconds</string>
     <string name="opt_saves">Saves</string>
@@ -774,6 +787,7 @@ If the picker doesn\'t show your files, put them directly into Download and open
     <string name="packs_nothing">Nothing this port can use</string>
     <string name="packs_restart_ask">Your mod pack changes only take effect after a restart. Restart the game now? Progress since your last save is lost.</string>
     <string name="language_restart">The game uses the new language after a restart.</string>
+    <string name="menu_language_restart">The menus use the new language after a restart.</string>
     <string name="cache_loading">Loading the shader cache…</string>
     <string name="cache_loading_detail">%1$,d shader variants prepared</string>
     <string name="headstart_building">Finding the game\'s shaders in your game files… (only this once)</string>

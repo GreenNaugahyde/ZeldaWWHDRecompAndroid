@@ -85,6 +85,12 @@ uint32_t g_aux_cb[kAuxBuses] = {}, g_aux_user[kAuxBuses] = {};
 uint16_t g_aux_return[kAuxBuses] = {0x8000, 0x8000, 0x8000};
 uint32_t g_upsample_stage[3] = {};  // 0 = before final mix (final mix sees 48 kHz)
 std::atomic<bool> g_running{false};
+// GamePad device mix, main bus left/right only, per voice: the GamePad isn't output, but sounds the game plays
+// on the GamePad alone (its menus, item switching, saving: nw::snd effects from c_king.bfsar, issue #64) are
+// mixed into the main output (upstream 0f6c3752, #218). Host state, outside Voice: save states hold Voice's bytes.
+ChMix g_drc_main[kMaxVoices][2];
+bool g_drc_logged[kMaxVoices];  // (WWHD_AX_GAMEPAD_TRACE)
+std::atomic<bool> g_gamepad_sounds{true};
 
 // ------------------------------------------------------------------ offsets
 uint32_t base_units(uint16_t fmt, uint32_t samples_ptr) {
@@ -212,6 +218,8 @@ void apply_lpf(Voice& v, float* s) {
 
 // ------------------------------------------------------------------ mixing
 float g_tv_bus[kBuses][kTvChannels][kSamples];
+float g_gamepad_only[2][kSamples];  // this frame's GamePad-only voices (main L/R)
+float g_gamepad_only_hist[2] = {};
 double g_sfx_energy = 0;   // stats: output of non-stream voices
 uint32_t g_sfx_started = 0;
 
@@ -257,6 +265,7 @@ void log_stats() {
 void process_voices() {
     log_stats();
     memset(g_tv_bus, 0, sizeof g_tv_bus);
+    memset(g_gamepad_only, 0, sizeof g_gamepad_only);
     float buf[kSamples];
     for (Voice& v : g_voices) {
         if (!v.acquired || v.state != 1) continue;
@@ -269,9 +278,24 @@ void process_voices() {
             for (int ch = 0; ch < 2; ch++) tv += v.tv[ch][0].vol / 32768.0f;
             for (int i = 0; i < kSamples; i++) g_sfx_energy += std::fabs(buf[i] / 256.0f) * tv;
         }
+        bool on_tv = false;
         for (int c = 0; c < kTvChannels; c++)
             for (int b = 0; b < kBuses; b++)
-                if (v.tv[c][b].vol || v.tv[c][b].delta) mix_into(buf, g_tv_bus[b][c], v.tv[c][b]);
+                if (v.tv[c][b].vol || v.tv[c][b].delta) {
+                    on_tv = true;
+                    mix_into(buf, g_tv_bus[b][c], v.tv[c][b]);
+                }
+        // on the GamePad alone: into the output too (a sound on both isn't doubled)
+        ChMix* pad = g_drc_main[&v - g_voices];
+        if (!on_tv && (pad[0].vol || pad[0].delta || pad[1].vol || pad[1].delta)) {
+            // debug: WWHD_AX_GAMEPAD_TRACE=1 logs each GamePad-only voice once
+            static const bool trace = getenv("WWHD_AX_GAMEPAD_TRACE") != nullptr;
+            if (trace && !g_drc_logged[&v - g_voices]) {
+                g_drc_logged[&v - g_voices] = true;
+                LOG("[ax-pad] voice %d samples %08X format %u vol %u/%u", int(&v - g_voices), v.samples, v.format, pad[0].vol, pad[1].vol);
+            }
+            for (int ch = 0; ch < 2; ch++) mix_into(buf, g_gamepad_only[ch], pad[ch]);
+        }
         if (!v.state) st32(v.vpb + kVpbState, 0);
         st32(v.vpb + kVpbOffsets + 0xC, v.cur_abs - base_units(v.format, v.samples));
     }
@@ -396,9 +420,17 @@ void output_frame(Cpu* c) {
             upsample(in, lr[ch], hist2[ch], 0);
         }
     }
+    // GamePad-only sounds (own resampling history, kept going while off: switching on leaks no old tail)
+    int32_t pad[2][kSamples48];
+    for (int ch = 0; ch < 2; ch++) {
+        int32_t in[kSamples];
+        for (int i = 0; i < kSamples; i++) in[i] = (int32_t)std::clamp(g_gamepad_only[ch][i], -2147483648.0f, 2147483520.0f);
+        upsample(in, pad[ch], g_gamepad_only_hist[ch], 8);
+    }
+    const bool with_pad = g_gamepad_sounds.load(std::memory_order_relaxed);
     for (int i = 0; i < kSamples48; i++) {
-        pcm[i * 2] = (int16_t)std::clamp(lr[0][i], -32768, 32767);
-        pcm[i * 2 + 1] = (int16_t)std::clamp(lr[1][i], -32768, 32767);
+        pcm[i * 2] = (int16_t)std::clamp(lr[0][i] + (with_pad ? pad[0][i] : 0), -32768, 32767);
+        pcm[i * 2 + 1] = (int16_t)std::clamp(lr[1][i] + (with_pad ? pad[1][i] : 0), -32768, 32767);
     }
     audio::push(pcm, kSamples48);
 }
@@ -502,6 +534,8 @@ void ax_ss_load(ss::Reader& r) {
     if (G.tv48 && g.tv48 != G.tv48) LOG("[savestate] AX buffers moved (%08X -> %08X)", g.tv48, G.tv48);
     g_aux_frame = (int)r.u32() & 1;
     memset(g_up_hist, 0, sizeof g_up_hist);
+    memset(g_drc_main, 0, sizeof g_drc_main);
+    memset(g_gamepad_only_hist, 0, sizeof g_gamepad_only_hist);
     audio::flush();
 }
 
@@ -597,6 +631,8 @@ static FILE* sound_trace_file() {  // g_ax_mutex held
     return g_sound_trace;
 }
 namespace ax {
+void set_gamepad_sounds(bool on) { g_gamepad_sounds = on; }
+bool gamepad_sounds() { return g_gamepad_sounds; }
 void start_sound_trace(const char* path, double seconds) {
     std::lock_guard<std::mutex> lk(g_sound_trace_mutex);
     if (g_sound_trace) fclose(g_sound_trace);
@@ -693,6 +729,8 @@ HLE(snd_core, AXAcquireVoiceEx) {
         if (v.acquired) continue;
         uint32_t vpb = v.vpb;
         v = Voice{};
+        memset(g_drc_main[&v - g_voices], 0, sizeof g_drc_main[0]);
+        g_drc_logged[&v - g_voices] = false;
         v.vpb = vpb;
         v.acquired = true;
         st32(vpb + kVpbState, 0);
@@ -847,6 +885,12 @@ HLE(snd_core, AXSetVoiceDeviceMix) {
                 v->tv[ch][b].vol = ld16(e);
                 v->tv[ch][b].delta = (int16_t)ld16(e + 2);
             }
+    if (dev == 1 && idx == 0)  // the GamePad: its main bus, left and right
+        for (int ch = 0; ch < 2; ch++) {
+            uint32_t e = mix + 4 * (ch * kBuses);
+            g_drc_main[v - g_voices][ch].vol = ld16(e);
+            g_drc_main[v - g_voices][ch].delta = (int16_t)ld16(e + 2);
+        }
     ret(c, 0);
 }
 HLE(snd_core, AXSetVoiceAdpcm) {

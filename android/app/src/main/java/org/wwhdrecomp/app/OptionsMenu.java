@@ -66,7 +66,7 @@ final class OptionsMenu extends Dialog {
     private static final GameUi.Palette[] TAB_COLORS = {GameUi.GREEN, GameUi.VIOLET, GameUi.BLUE, GameUi.AMBER, GameUi.CORAL};
     private final TextView[] tabs = new TextView[TABS];
 
-    private String languageAtOpen;  // the game language when the menu opened: a change asks for a restart on closing
+    private String languageAtOpen, menuLanguageAtOpen;  // the game / menu language when the menu opened: a change asks for a restart on closing
 
     // the picker at start (MainActivity.offerStartStates): only the save states and Start game; the
     // game waits before its intro until a state is loaded or the picker is closed
@@ -181,6 +181,8 @@ final class OptionsMenu extends Dialog {
         this.inInventory = inInventory;
         gameStyle = true;  // (the picker at start too)
         languageAtOpen = a.gameLanguage();
+        menuLanguageAtOpen = a.menuLanguage();
+        MenuSounds.prepare(a);
         dp = a.getResources().getDisplayMetrics().density;
         tab = lastTab;
         android.graphics.Rect win = a.getWindowManager().getCurrentWindowMetrics().getBounds();
@@ -298,7 +300,7 @@ final class OptionsMenu extends Dialog {
             v.setGravity(Gravity.CENTER);
             v.setPadding(px(26), px(6), px(26), px(8));
             v.setFocusable(true);
-            v.setOnClickListener(x -> selectTab(t));
+            v.setOnClickListener(x -> { if (t != tab) sound(MenuSounds.TAB); selectTab(t); });
             tabs[i] = v;
             LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-2, -2);
             lp.rightMargin = px(10);
@@ -469,14 +471,34 @@ final class OptionsMenu extends Dialog {
         else padOpened = true;
     }
 
+    // the GamePad menus' sounds (Game > GamePad sounds)
+    private void sound(int s) { MenuSounds.play(a, s); }
+
+    // a controller's cursor move sounds as on the GamePad's menus
+    @Override
+    public boolean dispatchKeyEvent(KeyEvent e) {
+        int code = e.getKeyCode();
+        boolean dpad = e.getAction() == KeyEvent.ACTION_DOWN && (code == KeyEvent.KEYCODE_DPAD_UP || code == KeyEvent.KEYCODE_DPAD_DOWN
+                || code == KeyEvent.KEYCODE_DPAD_LEFT || code == KeyEvent.KEYCODE_DPAD_RIGHT);
+        View before = dpad ? getCurrentFocus() : null;
+        boolean r = super.dispatchKeyEvent(e);
+        if (before != null && getCurrentFocus() != before) sound(MenuSounds.CURSOR);
+        return r;
+    }
+
     @Override
     public boolean onKeyDown(int code, KeyEvent e) {
         switch (code) {
-            case KeyEvent.KEYCODE_BUTTON_L1: if (!atStart) selectTab((tab + TABS - 1) % TABS); return true;
-            case KeyEvent.KEYCODE_BUTTON_R1: if (!atStart) selectTab((tab + 1) % TABS); return true;
-            // by position, as in the game: the bottom button (Android's A) is the Wii U's B, back;
-            // the right button (Android's B) is the Wii U's A, select
-            case KeyEvent.KEYCODE_BUTTON_A: onBackPressed(); return true;
+            case KeyEvent.KEYCODE_BUTTON_L1: if (!atStart) { sound(MenuSounds.TAB); selectTab((tab + TABS - 1) % TABS); } return true;
+            case KeyEvent.KEYCODE_BUTTON_R1: if (!atStart) { sound(MenuSounds.TAB); selectTab((tab + 1) % TABS); } return true;
+            // as the Wii U's B (back) and A (select) are set (InputMapper.menuSelect): by position the bottom
+            // button (Android's A) is back, the right one (Android's B) selects; by letters the other way round
+            case KeyEvent.KEYCODE_BUTTON_A: case KeyEvent.KEYCODE_BUTTON_B: {
+                if (code == InputMapper.menuBack()) { onBackPressed(); return true; }
+                View f = getCurrentFocus();
+                if (f != null) f.performClick();
+                return true;
+            }
             case KeyEvent.KEYCODE_BUTTON_MODE: return true;  // closes on release (below): the game opens on release
             case KeyEvent.KEYCODE_BUTTON_START:  // + : as in the inventory, back to the game
                 if (!inInventory) return super.onKeyDown(code, e);
@@ -487,11 +509,6 @@ final class OptionsMenu extends Dialog {
                 // menu may still be held, its repeats arrive here)
                 if (e.getRepeatCount() == 0) rows.postDelayed(selectHeld, 600);
                 return true;
-            case KeyEvent.KEYCODE_BUTTON_B: {
-                View f = getCurrentFocus();
-                if (f != null) f.performClick();
-                return true;
-            }
             default: return super.onKeyDown(code, e);
         }
     }
@@ -515,6 +532,7 @@ final class OptionsMenu extends Dialog {
         else if (onPacksPage && a.askRestartForPacks(this::onBackPressed)) {
             // asked to restart for the pack changes; "Later" comes back here and leaves the page
         } else if (page != null) {
+            sound(MenuSounds.CANCEL);
             page = pageStack.poll();
             fill();
         } else {
@@ -526,6 +544,7 @@ final class OptionsMenu extends Dialog {
     // restart offer it first, once per change
     private void closeToGame() {
         if (!atStart && a.askRestartForPacks(this::closeToGame)) return;
+        if (!atStart) sound(MenuSounds.CLOSE);
         if (inInventory && !backToInventory) {  // slides back out to the left, the inventory stays
             slideOut();
             return;
@@ -582,6 +601,7 @@ final class OptionsMenu extends Dialog {
     @Override
     protected void onStart() {
         super.onStart();
+        if (!atStart) sound(MenuSounds.OPEN);
         ((android.hardware.input.InputManager) a.getSystemService(Context.INPUT_SERVICE)).registerInputDeviceListener(devices, null);
         if (!inInventory || following) return;
         following = true;
@@ -880,9 +900,11 @@ final class OptionsMenu extends Dialog {
 
     @Override
     public void dismiss() {
-        if (!a.gameLanguage().equals(languageAtOpen)) {
+        boolean game = !a.gameLanguage().equals(languageAtOpen), menu = !a.menuLanguage().equals(menuLanguageAtOpen);
+        if (game || menu) {
             languageAtOpen = a.gameLanguage();
-            a.askRestartForLanguage();
+            menuLanguageAtOpen = a.menuLanguage();
+            a.askRestartForLanguage(game);
         }
         rows.removeCallbacks(selectHeld);
         if (atStart && !loadChosen) Native.setStartHold(false);  // the game starts as usual
@@ -1215,7 +1237,8 @@ final class OptionsMenu extends Dialog {
             submenu(R.string.opt_capture, R.string.opt_capture_hint, "", () -> Native.setOption("capture", 1));
     }
 
-    // the game itself: its language (the release's languages; applies after a restart)
+    // the game itself: its language (the release's languages; applies after a restart) and the menus' language
+    // (English or one of the release's: the game's font has only their letters)
     private void game() {
         int[] langs = a.gameLanguages();
         String[] names = new String[langs.length];
@@ -1225,10 +1248,35 @@ final class OptionsMenu extends Dialog {
             if (MainActivity.LANGUAGES[langs[i]].equals(a.gameLanguage())) curLang = i;
         }
         choice(R.string.opt_language, R.string.opt_language_hint, names, curLang, i -> a.setGameLanguage(MainActivity.LANGUAGES[langs[i]]));
+        java.util.List<Integer> menuLangs = new java.util.ArrayList<>();
+        menuLangs.add(0);  // English
+        for (int l : langs) if (l != 0) menuLangs.add(l);
+        String[] menuNames = new String[menuLangs.size()];
+        int curMenu = 0;
+        for (int i = 0; i < menuNames.length; i++) {
+            menuNames[i] = MainActivity.LANGUAGE_NAMES[menuLangs.get(i)];
+            if (MainActivity.LANGUAGES[menuLangs.get(i)].equals(a.menuLanguage())) curMenu = i;
+        }
+        choice(R.string.opt_menu_language, R.string.opt_menu_language_hint, menuNames, curMenu,
+                i -> a.setMenuLanguage(MainActivity.LANGUAGES[menuLangs.get(i)]));
         modToggle(3, R.string.opt_mod_quick_doors, R.string.opt_mod_speed_hint);
         modToggle(4, R.string.opt_mod_fast_scenes, R.string.opt_mod_speed_hint);
         modToggle(5, R.string.opt_mod_ff_cutscenes, R.string.opt_mod_ff_hint);
         modToggle(6, R.string.opt_mod_ff_dialogues, R.string.opt_mod_ff_hint);
+        // a talk held (a finger where a tap goes on there: Flexible with context buttons; A held on a controller): goes on
+        // up to a question; fast forward with it
+        boolean hold = a.prefs.getBoolean("talk_hold", true);
+        toggle(R.string.opt_talk_hold, R.string.opt_talk_hold_hint, hold, on -> {
+            a.prefs.edit().putBoolean("talk_hold", on).apply();
+            a.applyControlsAppearance();
+        });
+        if (hold) {
+            indentNext = true;
+            toggle(R.string.opt_talk_hold_ff, R.string.opt_talk_hold_ff_hint, a.prefs.getBoolean("talk_hold_ff", false), on -> {
+                a.prefs.edit().putBoolean("talk_hold_ff", on).apply();
+                a.applyControlsAppearance();
+            });
+        }
         modToggle(8, R.string.opt_mod_picto_pages, R.string.opt_mod_picto_pages_hint);
         toggle(R.string.opt_picto_subject, R.string.opt_picto_subject_hint, a.prefs.getBoolean("picto_subject", true),
                 on -> a.prefs.edit().putBoolean("picto_subject", on).apply());
@@ -1245,6 +1293,10 @@ final class OptionsMenu extends Dialog {
         choice(R.string.opt_link_clothes, R.string.opt_link_clothes_hint, clothes, a.prefs.getInt("link_clothes", 0), i -> {
             a.prefs.edit().putInt("link_clothes", i).apply();
             clothesChoice = i;  // (applied once the menu is closed: the game runs behind it, the puff would go unseen)
+        });
+        toggle(R.string.opt_gamepad_sounds, R.string.opt_gamepad_sounds_hint, a.prefs.getBoolean("gamepad_sounds", true), on -> {
+            a.prefs.edit().putBoolean("gamepad_sounds", on).apply();
+            Native.setOption("gamepad_sounds", on ? 1 : 0);
         });
         submenu(R.string.opt_page_songs, R.string.opt_page_songs_hint, "", () -> openPage(this::songsPage));
     }
@@ -1630,6 +1682,7 @@ final class OptionsMenu extends Dialog {
     // the Controls tab: the touch style and the layout editor, then a page per topic (no on/off for the touch
     // controls: a controller in use hides them, a touch brings them back, MainActivity.controllerUsed)
     private void controls() {
+        toggle(R.string.opt_onscreen, R.string.opt_onscreen_hint, a.prefs.getBoolean("onscreen_controls", true), a::setOnscreenControls);
         if (MainActivity.NEW_TOUCH_CONTROLS) {
             String[] styles = {a.getString(R.string.controls_classic), a.getString(R.string.controls_flexible)};
             choice(R.string.opt_controls_style, R.string.opt_controls_style_hint, styles, a.prefs.getInt("controls_style", 0), i -> {
@@ -1644,9 +1697,11 @@ final class OptionsMenu extends Dialog {
         // (touch and controller alike: the device's or the controller's sensors and motors)
         // (a page with the source while a controller and this device both have them)
         if (a.sourceChoice(true)) submenu(R.string.opt_motion, R.string.opt_motion_hint, sourceValue("motion", "motion_from"), () -> openPage(this::motionPage));
-        else toggle(R.string.opt_motion, R.string.opt_motion_hint, a.prefs.getBoolean("motion", true), a::setMotion);
+        else toggle(sourceRow(R.string.opt_motion, R.string.opt_motion_hint, R.string.opt_motion_hint_missing, true),
+                a.prefs.getBoolean("motion", true), a::setMotion);
         if (a.sourceChoice(false)) submenu(R.string.opt_rumble, R.string.opt_rumble_hint, sourceValue("rumble", "rumble_on"), () -> openPage(this::rumblePage));
-        else toggle(R.string.opt_rumble, R.string.opt_rumble_hint, a.prefs.getBoolean("rumble", true), a::setRumble);
+        else toggle(sourceRow(R.string.opt_rumble, R.string.opt_rumble_hint, R.string.opt_rumble_hint_missing, false),
+                a.prefs.getBoolean("rumble", true), a::setRumble);
         submenu(R.string.opt_page_touch, R.string.opt_page_touch_hint, "", () -> openPage(this::touchPage));
         if (MainActivity.NEW_TOUCH_CONTROLS)
             submenu(R.string.opt_item_ring, R.string.opt_page_ring_hint,
@@ -1657,6 +1712,13 @@ final class OptionsMenu extends Dialog {
             submenu(R.string.opt_page_hud, R.string.opt_page_hud_hint, "", () -> openPage(this::hudPage));
         }
         submenu(R.string.opt_page_controller, R.string.opt_page_controller_hint, "", () -> openPage(this::controllerPage));
+    }
+
+    /** Motion controls / Rumble without a source choice: a controller known to have them whose Android doesn't hand
+     *  them to apps here (an older kernel's driver) says so, the why in Controller details (ControllerInfo.whyNone) */
+    private LinearLayout sourceRow(int label, int hint, int missing, boolean motion) {
+        InputDevice d = ControllerInfo.firstNotPassedOn(motion);
+        return rowText(a.getString(label), d == null ? a.getString(hint) : a.getString(missing, d.getName()));
     }
 
     private String[] sources(boolean both) {
@@ -1733,21 +1795,6 @@ final class OptionsMenu extends Dialog {
                 a.prefs.edit().putBoolean("item_tap_focus", on).apply();
                 a.applyControlsAppearance();
             });
-        }
-        // a talk held by touch (flexible with context buttons: a tap goes on there): goes on up to a question; fast forward with it
-        if (a.prefs.getInt("controls_style", 0) == 1 && a.prefs.getBoolean("context_buttons", false) && a.prefs.getBoolean("minigame_touch", true)) {
-            boolean hold = a.prefs.getBoolean("talk_hold", true);
-            toggle(R.string.opt_talk_hold, R.string.opt_talk_hold_hint, hold, on -> {
-                a.prefs.edit().putBoolean("talk_hold", on).apply();
-                a.applyControlsAppearance();
-            });
-            if (hold) {
-                indentNext = true;
-                toggle(R.string.opt_talk_hold_ff, R.string.opt_talk_hold_ff_hint, a.prefs.getBoolean("talk_hold_ff", false), on -> {
-                    a.prefs.edit().putBoolean("talk_hold_ff", on).apply();
-                    a.applyControlsAppearance();
-                });
-            }
         }
         toggle(R.string.opt_link_poses, R.string.opt_link_poses_hint, a.prefs.getBoolean("link_poses", true), on -> {
             a.prefs.edit().putBoolean("link_poses", on).apply();
@@ -1909,6 +1956,8 @@ final class OptionsMenu extends Dialog {
         submenu(R.string.opt_buttons, R.string.opt_buttons_hint,
                 a.getString(a.inputMapper().isDefaultMap() ? R.string.opt_buttons_default : R.string.opt_buttons_custom),
                 () -> openPage(this::buttonsPage));
+        toggle(R.string.opt_l_drc_pages, R.string.opt_l_drc_pages_hint, a.prefs.getBoolean("l_drc_pages", false),
+                on -> a.prefs.edit().putBoolean("l_drc_pages", on).apply());
         if (!ControllerInfo.connected(null).isEmpty())
             submenu(R.string.cd_title, R.string.cd_hint, "", () -> openPage(detailsPage));
     }
@@ -1925,7 +1974,10 @@ final class OptionsMenu extends Dialog {
             if (pads.size() > 1) heading(d.getName(), true);
             for (ControllerInfo.Section s : ControllerInfo.describe(a, d, inUse != null && d.getId() == inUse.getId())) {
                 heading(s.title, false);
-                for (String[] r : s.rows) rowText(r[0], r[1]);
+                for (String[] r : s.rows) {
+                    if (r[0] == null) note(r[1]);
+                    else rowText(r[0], r[1]);
+                }
             }
         }
     }
@@ -2117,7 +2169,7 @@ final class OptionsMenu extends Dialog {
         TextView pill = GameUi.pill(getContext(), on, gameStyle);
         sp(pill, 16);
         r.addView(pill, new LinearLayout.LayoutParams(px(gameStyle ? 104 : 92), px(gameStyle ? 46 : 38)));
-        r.setOnClickListener(v -> { set.set(!on); fill(); });
+        r.setOnClickListener(v -> { sound(MenuSounds.SWITCH); set.set(!on); fill(); });
     }
 
     private void choice(int label, int hint, String[] values, int cur, IntSetter set) {
@@ -2147,8 +2199,8 @@ final class OptionsMenu extends Dialog {
         r.addView(prev, new LinearLayout.LayoutParams(px(40), px(40)));
         r.addView(value, new LinearLayout.LayoutParams(-2, -2));
         r.addView(next, new LinearLayout.LayoutParams(px(40), px(40)));
-        Runnable dec = () -> { set.set((idx + values.length - 1) % values.length); fill(); };
-        Runnable inc = () -> { set.set((idx + 1) % values.length); fill(); };
+        Runnable dec = () -> { sound(MenuSounds.SWITCH); set.set((idx + values.length - 1) % values.length); fill(); };
+        Runnable inc = () -> { sound(MenuSounds.SWITCH); set.set((idx + 1) % values.length); fill(); };
         prev.setOnClickListener(v -> dec.run());
         next.setOnClickListener(v -> inc.run());
         r.setOnClickListener(v -> inc.run());
@@ -2187,12 +2239,15 @@ final class OptionsMenu extends Dialog {
             v.setMinHeight(px(44));
             v.setMinWidth(px(76));
             r.addView(v, new LinearLayout.LayoutParams(-2, -2));
-            r.setOnClickListener(x -> v.animate().translationX(px(10)).setDuration(70).withEndAction(() ->
-                    v.animate().translationX(0).setDuration(90).withEndAction(open).start()).start());
+            r.setOnClickListener(x -> {
+                sound(MenuSounds.DECIDE);
+                v.animate().translationX(px(10)).setDuration(70).withEndAction(() ->
+                        v.animate().translationX(0).setDuration(90).withEndAction(open).start()).start();
+            });
             return;
         }
         r.addView(v, new LinearLayout.LayoutParams(-2, -2));
-        r.setOnClickListener(x -> open.run());
+        r.setOnClickListener(x -> { sound(MenuSounds.DECIDE); open.run(); });
     }
 
     /** a controller's press in the direction of the view's arrow presses it, as the right button does (a held

@@ -22,7 +22,7 @@ import java.util.Locale;
  * aren't public; SELinux keeps apps out of /proc/bus/input/devices.)
  */
 final class ControllerInfo {
-    /** a heading and its rows (label, value) */
+    /** a heading and its rows (label, value; a null label: a paragraph of explanation) */
     static final class Section {
         final String title;
         final List<String[]> rows = new ArrayList<>();
@@ -54,10 +54,8 @@ final class ControllerInfo {
         s.add(c.inApp(inUse));
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) s.add(c.battery());
         s.add(c.rumble());
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            s.add(c.motion());
-            s.add(c.lights());
-        }
+        s.add(c.motion());
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) s.add(c.lights());
         s.add(c.buttons());
         s.add(c.axes());
         return s;
@@ -128,6 +126,39 @@ final class ControllerInfo {
         return s;
     }
 
+    /** the Linux kernel driver that hands this controller's motion sensors / rumble to Android, or null: none known
+     *  (a controller this app doesn't know to have them) */
+    static String driver(InputDevice d, boolean motion) {
+        if (InputMapper.isSony(d))  // DualSense / DualSense Edge: hid-playstation; DualShock 4 (and 3): hid-sony
+            return d.getProductId() == 0x0CE6 || d.getProductId() == 0x0DF2 ? "hid-playstation (Linux 5.12+)" : "hid-sony";
+        if (InputMapper.isNintendo(d)) return "hid-nintendo (Linux 5.16+)";
+        if (!motion && d.getVendorId() == 0x045E) return "xpad / hid-microsoft";  // Xbox: rumble, no motion sensors
+        return null;
+    }
+
+    /** a controller known to have motion sensors / rumble, whose Android doesn't hand them to apps on this device */
+    static boolean notPassedOn(InputDevice d, boolean motion) {
+        return d != null && driver(d, motion) != null && (motion ? !MotionInput.hasMotion(d) : !hasRumble(d));
+    }
+
+    /** the first connected controller whose motion sensors / rumble don't reach apps here (Controls tab hint), or null */
+    static InputDevice firstNotPassedOn(boolean motion) {
+        for (InputDevice d : connected(null))
+            if (notPassedOn(d, motion)) return d;
+        return null;
+    }
+
+    // why a controller known to have them shows none: Android before 12 (motion sensors) or the kernel's driver
+    private void whyNone(Section s, boolean motion) {
+        if (!notPassedOn(d, motion)) return;
+        if (motion && Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
+            s.add(null, str(R.string.cd_why_motion_android, Build.VERSION.RELEASE));
+            return;
+        }
+        String kernel = System.getProperty("os.version", "?");
+        s.add(null, str(motion ? R.string.cd_why_motion : R.string.cd_why_rumble, driver(d, motion), kernel));
+    }
+
     static boolean hasRumble(InputDevice d) {
         Vibrator v = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S ? d.getVibratorManager().getDefaultVibrator() : d.getVibrator();
         return v != null && v.hasVibrator();
@@ -152,6 +183,7 @@ final class ControllerInfo {
             motors.add(d.getVibrator());
         }
         s.add(str(R.string.cd_motors), motors.isEmpty() ? str(R.string.cd_none_reported) : String.valueOf(motors.size()));
+        if (motors.isEmpty()) whyNone(s, false);
         for (int i = 0; i < motors.size(); i++) {
             Vibrator v = motors.get(i);
             StringBuilder b = new StringBuilder(str(v.hasAmplitudeControl() ? R.string.cd_amplitude : R.string.cd_on_off_only));
@@ -176,6 +208,7 @@ final class ControllerInfo {
         List<Sensor> list = m != null ? m.getSensorList(Sensor.TYPE_ALL) : new ArrayList<>();
         if (list.isEmpty()) {
             s.add(str(R.string.cd_sensors), str(R.string.cd_none_reported));
+            whyNone(s, true);
             return s;
         }
         for (Sensor x : list) {

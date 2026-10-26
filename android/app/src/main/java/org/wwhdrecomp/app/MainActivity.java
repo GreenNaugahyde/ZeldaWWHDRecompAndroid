@@ -173,15 +173,12 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     private float bufRequested = 1;  // what was last asked for (setFixedSize)
     private float renderScale = 1;   // the rendering resolution setting (the 3D view is 720 lines at 1x)
 
-    // the app's own texts in the game's language (res/values-xx; what isn't translated stays English)
+    // the app's own texts in the menu language (Game > Menu language, English by default, #62;
+    // res/values-xx, what isn't translated stays English)
     @Override
     protected void attachBaseContext(android.content.Context base) {
-        String l = base.getSharedPreferences("settings", MODE_PRIVATE).getString("language", "");
-        if (l.isEmpty()) l = java.util.Locale.getDefault().getLanguage();
-        boolean known = false;
-        for (String s : LANGUAGES) known |= s.equals(l);
         android.content.res.Configuration c = new android.content.res.Configuration(base.getResources().getConfiguration());
-        c.setLocale(new java.util.Locale(known ? l : "en"));
+        c.setLocale(new java.util.Locale(menuLanguage(base.getSharedPreferences("settings", MODE_PRIVATE))));
         super.attachBaseContext(base.createConfigurationContext(c));
     }
 
@@ -270,6 +267,21 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         prefs.edit().putString("language", l).commit();
     }
 
+    /** the language of the app's own texts (menus, hints, dialogs): its own setting, English unless chosen;
+     *  only English or one of the release's languages (Menu language), whose letters the game's font has */
+    static String menuLanguage(android.content.SharedPreferences p) {
+        String l = p.getString("menu_language", "en");
+        for (String s : LANGUAGES)
+            if (s.equals(l)) return l;
+        return "en";
+    }
+
+    String menuLanguage() { return menuLanguage(prefs); }
+
+    void setMenuLanguage(String l) {
+        prefs.edit().putString("menu_language", l).commit();
+    }
+
     // the command recording thread applies from the next start
     void setRecordThread(int mode) {
         if (mode == prefs.getInt("record_thread", 0)) return;
@@ -279,9 +291,10 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
                 .button(R.string.res_restart_now, this::restartApp).show();
     }
 
-    /** after the options menu closed with another language than it opened with */
-    void askRestartForLanguage() {
-        new GameDialog(this).title(R.string.opt_language).message(R.string.language_restart)
+    /** after the options menu closed with another game language (game) or menu language than it opened with */
+    void askRestartForLanguage(boolean game) {
+        new GameDialog(this).title(game ? R.string.opt_language : R.string.opt_menu_language)
+                .message(game ? R.string.language_restart : R.string.menu_language_restart)
                 .button(R.string.gpu_driver_later, null)
                 .button(R.string.res_restart_now, this::restartApp).show();
     }
@@ -790,6 +803,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
 
     private void showGame() {
         sea = null;
+        MenuSounds.prepare(this);  // (the options menu's sounds, from the game's sound archive)
         FrameLayout root = new FrameLayout(this);
         surface = new SurfaceView(this);
         surface.getHolder().addCallback(this);
@@ -803,6 +817,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         controls = new ControlsView(this, this);
         itemRing = new ItemRing(this, controls);
         controls.setItemRing(itemRing);
+        controls.setPadPlay(lastController != null);
         root.addView(controls, new FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT,
                 Gravity.CENTER));
         // the file select's Back (B) while no controller is connected, in the game's green button style
@@ -1091,6 +1106,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         Native.setOption("link_clothes", prefs.getInt("link_clothes", 0));
         Native.setOption("postbox_mail", prefs.getBoolean("postbox_mail", true) ? 1 : 0);
         Native.setOption("postbox_same_day", prefs.getBoolean("postbox_same_day", false) ? 1 : 0);
+        Native.setOption("gamepad_sounds", prefs.getBoolean("gamepad_sounds", true) ? 1 : 0);
         Native.setOption("mod_swim_speed", prefs.getInt("mod_swim_speed", 100));
         Native.setOption("mod_run_mode", moveMode("mod_run"));
         Native.setOption("mod_swim_mode", moveMode("mod_swim"));
@@ -1103,7 +1119,9 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     void applyControlsAppearance() {
         if (controls == null) return;
         GameIcons.linkPoses = prefs.getBoolean("link_poses", true);  // (before the redraws below)
-        boolean visible = !autoHidden;  // (the old "On-screen controls" switch, controls_visible, is ignored)
+        // Controls > On-screen controls (back for #63; its own pref: the old switch's controls_visible stays ignored)
+        boolean visible = prefs.getBoolean("onscreen_controls", true) && !autoHidden;
+        controls.setMenuAlone(!prefs.getBoolean("onscreen_controls", true));
         final boolean nw = NEW_TOUCH_CONTROLS;
         controls.setAppearance(visible, prefs.getFloat("controls_scale", 1f), nw ? prefs.getFloat("controls_opacity", 0.45f) : 0.45f);
         boolean flexible = nw && prefs.getInt("controls_style", 0) == 1, swipe = prefs.getInt("touch_camera", 0) == 1;
@@ -1120,6 +1138,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         controls.setPictoBig(pictoBig);
         controls.setMinigameTouch(nw && prefs.getBoolean("minigame_touch", true));
         controls.setTalkHold(prefs.getBoolean("talk_hold", true), prefs.getBoolean("talk_hold_ff", false));
+        Native.setOption("talk_hold_pad", prefs.getBoolean("talk_hold", true) ? 1 : 0);  // (A held, mods/minigames.cpp)
         controls.setConductPads(prefs.getBoolean("conduct_pads", true));
         controls.setStickFollows(prefs.getBoolean("stick_follows", true));
         controls.setAfterDefeat(nw ? prefs.getInt("zl_after_defeat", 0) : 0);
@@ -1409,6 +1428,9 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
             }
             if (padL) b &= ~(songs.conducting() ? Native.L | Native.JUMP | Native.MOON : Native.L);  // (a jump on its button still jumps)
         }
+        // in play the game reads L only to turn its GamePad screen between Items and Map (with its tab sound): only with
+        // Controls > Controller > L turns the GamePad page (for a GamePad picture on a second screen)
+        if ((b & Native.L) != 0 && !prefs.getBoolean("l_drc_pages", false) && padInPlay()) b &= ~Native.L;
         // + (touch or controller) shows or hides the full GamePad picture, unless the GamePad has a
         // display of its own: there + goes to the game
         if (!drcOnOwnDisplay() && front != Native.FRONT_OPENING) {  // (the opening: + is the game's skip)
@@ -2142,6 +2164,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         if (debuggable()) Log.d(TAG, "input source: " + (d == null ? "touch" : d.getName() + " (motion " + MotionInput.hasMotion(d) + ")"));
         lastController = d;
         if (d != null) usePadMap(d);
+        if (controls != null) controls.setPadPlay(d != null);
         rumbler().setController(rumbleController(), prefs.getInt("rumble_on", SRC_AUTO) == SRC_BOTH);
         if (started) startMotion();
     }
@@ -2161,6 +2184,13 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
             }
         }
         controllerUsed();
+    }
+
+    /** Controls > On-screen controls: off, only the menu button stays (a touch doesn't bring them back) */
+    void setOnscreenControls(boolean on) {
+        prefs.edit().putBoolean("onscreen_controls", on).apply();
+        autoHidden = false;
+        applyControlsAppearance();
     }
 
     private void controllerUsed() {
@@ -2484,10 +2514,11 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     // no controller connected. The map in use is the controller's last used, else the first connected one's.
     private String padKey;  // the descriptor of the controller whose map is in use; null: pad_map
 
+    // the map in use read again (updateLayout): the controller's own, it stays in use (it went back to pad_map here,
+    // and the controller in use, unchanged, never loaded its own again: its changes were lost, issue #61).
     // (Mods > ... > Button of the test builds before, a Wii U button: forgotten, L1 again)
     private void loadButtonMap() {
-        padKey = null;
-        mapper.loadMap(prefs.getString("pad_map", ""));
+        mapper.loadMap(padKey == null ? prefs.getString("pad_map", "") : prefs.getString("pad_map@" + padKey, prefs.getString("pad_map", "")));
         if (prefs.contains("mod_jump_button") || prefs.contains("cheat_moon_button"))
             prefs.edit().remove("mod_jump_button").remove("cheat_moon_button").apply();
     }
