@@ -927,6 +927,12 @@ final class GameUi {
             base.setColorFilter(lit ? GameTabPlate.lerpFilter(0xFFE0BE2A, GLOW) : GameTabPlate.lerpFilter(0xFFB4B9A2, 0xFFE4E7D6));
         }
 
+        /** ... in other colours: rim (the texture's dark) and fill (its light), as the game's blue Save / Options */
+        GameRowPlate(Context c, int rim, int fill, float unit) {
+            this(c, false, unit);
+            base.setColorFilter(GameTabPlate.lerpFilter(rim, fill));
+        }
+
         /** the part src of a texture in r in nine pieces: corners of CAP texels at k pixels each, the rest stretched */
         private static void drawNine(Canvas canvas, android.graphics.Bitmap b, android.graphics.Rect src, RectF r, float k, Paint paint) {
             float cx = Math.min(CAP * k, r.width() / 2), cy = Math.min(CAP * k, r.height() / 2);

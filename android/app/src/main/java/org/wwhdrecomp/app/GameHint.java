@@ -87,6 +87,7 @@ final class GameHint {
             case ControlsView.HINT_CONDUCT_PAD: return "hint_mg_conduct_pad";
             case ControlsView.HINT_LEAF_GLIDE: return "hint_leaf_glide";
             case ControlsView.HINT_RING: return "hint_ring";
+            case ControlsView.HINT_WIND_DIAL: return "hint_wind_dial";
             case SongListener.HINT_BUTTON: return "hint_songs_button";
             case SongListener.HINT_AUTO: return "hint_songs_auto";
             case SongListener.HINT_TRY: return "hint_songs_try";

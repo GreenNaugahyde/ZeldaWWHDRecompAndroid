@@ -92,6 +92,33 @@ ChMix g_drc_main[kMaxVoices][2];
 bool g_drc_logged[kMaxVoices];  // (WWHD_AX_GAMEPAD_TRACE)
 std::atomic<bool> g_gamepad_sounds{true};
 
+// Sound for other devices (the app's PadHost): bit 1 the TV sound goes to another device as the screen (this
+// device plays the GamePad's sounds only, as the GamePad), bit 2 the GamePad-only sounds go to another device as
+// the GamePad (this device leaves them out). Each stream is 48 kHz stereo s16, queued until the app takes it.
+std::atomic<int> g_remote_audio{0};
+struct RemoteQueue {
+    std::mutex m;
+    std::vector<int16_t> pcm;  // interleaved, oldest first
+    void push(const int16_t* p, int frames) {
+        std::lock_guard<std::mutex> lk(m);
+        pcm.insert(pcm.end(), p, p + frames * 2);
+        constexpr size_t kMax = 48000 / 5 * 2;  // at most 200 ms waiting: older sound is dropped (a stalled reader)
+        if (pcm.size() > kMax) pcm.erase(pcm.begin(), pcm.begin() + (pcm.size() - kMax));
+    }
+    int take(int16_t* out, int maxFrames) {
+        std::lock_guard<std::mutex> lk(m);
+        int n = std::min<int>(maxFrames, (int)(pcm.size() / 2));
+        std::copy(pcm.begin(), pcm.begin() + n * 2, out);
+        pcm.erase(pcm.begin(), pcm.begin() + n * 2);
+        return n;
+    }
+    void clear() {
+        std::lock_guard<std::mutex> lk(m);
+        pcm.clear();
+    }
+};
+RemoteQueue g_remote_tv, g_remote_pad;
+
 // ------------------------------------------------------------------ offsets
 uint32_t base_units(uint16_t fmt, uint32_t samples_ptr) {
     switch (fmt) {
@@ -427,10 +454,31 @@ void output_frame(Cpu* c) {
         for (int i = 0; i < kSamples; i++) in[i] = (int32_t)std::clamp(g_gamepad_only[ch][i], -2147483648.0f, 2147483520.0f);
         upsample(in, pad[ch], g_gamepad_only_hist[ch], 8);
     }
-    const bool with_pad = g_gamepad_sounds.load(std::memory_order_relaxed);
+    const int remote = g_remote_audio.load(std::memory_order_relaxed);
+    if (remote) {  // the streams for other devices
+        int16_t s[kSamples48 * 2];
+        if (remote & 1) {
+            for (int i = 0; i < kSamples48; i++) {
+                s[i * 2] = (int16_t)std::clamp(lr[0][i], -32768, 32767);
+                s[i * 2 + 1] = (int16_t)std::clamp(lr[1][i], -32768, 32767);
+            }
+            g_remote_tv.push(s, kSamples48);
+        }
+        if (remote & 2) {
+            for (int i = 0; i < kSamples48; i++) {
+                s[i * 2] = (int16_t)std::clamp(pad[0][i], -32768, 32767);
+                s[i * 2 + 1] = (int16_t)std::clamp(pad[1][i], -32768, 32767);
+            }
+            g_remote_pad.push(s, kSamples48);
+        }
+    }
+    // here: the TV sound unless another device plays it; the GamePad's own sounds when this device is the GamePad
+    // (the TV sound elsewhere) or with GamePad sounds on, unless another device as the GamePad plays them
+    const bool with_tv = !(remote & 1);
+    const bool with_pad = !(remote & 2) && ((remote & 1) || g_gamepad_sounds.load(std::memory_order_relaxed));
     for (int i = 0; i < kSamples48; i++) {
-        pcm[i * 2] = (int16_t)std::clamp(lr[0][i] + (with_pad ? pad[0][i] : 0), -32768, 32767);
-        pcm[i * 2 + 1] = (int16_t)std::clamp(lr[1][i] + (with_pad ? pad[1][i] : 0), -32768, 32767);
+        pcm[i * 2] = (int16_t)std::clamp((with_tv ? lr[0][i] : 0) + (with_pad ? pad[0][i] : 0), -32768, 32767);
+        pcm[i * 2 + 1] = (int16_t)std::clamp((with_tv ? lr[1][i] : 0) + (with_pad ? pad[1][i] : 0), -32768, 32767);
     }
     audio::push(pcm, kSamples48);
 }
@@ -632,6 +680,14 @@ static FILE* sound_trace_file() {  // g_ax_mutex held
 }
 namespace ax {
 void set_gamepad_sounds(bool on) { g_gamepad_sounds = on; }
+void set_remote_audio(int bits) {
+    int old = g_remote_audio.exchange(bits);
+    if (!(bits & 1) && (old & 1)) g_remote_tv.clear();
+    if (!(bits & 2) && (old & 2)) g_remote_pad.clear();
+}
+int take_remote_audio(int stream, int16_t* out, int maxFrames) {
+    return (stream == 1 ? g_remote_tv : g_remote_pad).take(out, maxFrames);
+}
 bool gamepad_sounds() { return g_gamepad_sounds; }
 void start_sound_trace(const char* path, double seconds) {
     std::lock_guard<std::mutex> lk(g_sound_trace_mutex);

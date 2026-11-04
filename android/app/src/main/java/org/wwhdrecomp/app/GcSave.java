@@ -131,6 +131,80 @@ final class GcSave {
         return out;
     }
 
+    /**
+     * A copy of a WWHD cking.sav with every name the player typed made "Link" (About > Share game
+     * log): in each slot's packed data the three name fields (mPlayerName and the two after it) that
+     * hold one, with the slot's sums made again, and the HD names, with the CRC made again. null if
+     * `sav` is not a cking.sav.
+     */
+    static byte[] withoutNames(byte[] sav) { return renamed(sav, new boolean[] {true, true, true}); }
+
+    /**
+     * A cking.sav of another release for the USA / European games (PadLink: saves between devices): their font has
+     * Latin letters only, so a slot whose name has others (a Japanese name) becomes "Link"; the rest of the file
+     * is the same in all three releases (seen: a European save in the USA game). The file itself if nothing
+     * changes; null if `sav` is not a cking.sav.
+     */
+    static byte[] forLatinFont(byte[] sav) {
+        if (sav.length != HD_FILE) return null;
+        boolean[] which = new boolean[3];
+        boolean any = false;
+        int p = 3 * HD_SLOT;
+        for (int sect = 0; sect < 3; sect++) p += 3 * HD_EXTRA[sect];  // the names: the 4th section
+        for (int s = 0; s < 3; s++) {
+            int o = p + s * HD_EXTRA[3];
+            String name = new String(sav, o, 16, StandardCharsets.UTF_16BE);
+            int end = name.indexOf('\0');
+            if (end >= 0) name = name.substring(0, end);
+            for (int i = 0; i < name.length(); i++)
+                if (name.charAt(i) < 0x20 || name.charAt(i) >= 0x250) which[s] = true;
+            any |= which[s];
+        }
+        return any ? renamed(sav, which) : sav;
+    }
+
+    /** the slots in `which` named "Link" (their packed name fields and HD name), both sums and the CRC made again */
+    private static byte[] renamed(byte[] sav, boolean[] which) {
+        if (sav.length != HD_FILE) return null;
+        byte[] out = sav.clone();
+        for (int s = 0; s < 3; s++) {
+            if (!which[s]) continue;
+            int o = s * HD_SLOT;
+            for (int f : NAME_FIELDS) {
+                if (out[o + INFO + f] == 0) continue;
+                java.util.Arrays.fill(out, o + INFO + f, o + INFO + f + 17, (byte) 0);
+                System.arraycopy("Link".getBytes(StandardCharsets.US_ASCII), 0, out, o + INFO + f, 4);
+            }
+            long sum = 0;
+            for (int i = 0; i < HD_SLOT_USED; i++) sum += out[o + i] & 0xFF;
+            long c0 = sum & 0xFFFFFFFFL, c1 = (HD_SLOT_USED * 0xFFFFFFFFL - c0) & 0xFFFFFFFFL;
+            put32(out, o + HD_SLOT_USED, c0);
+            put32(out, o + HD_SLOT_USED + 4, c1);
+        }
+        // the HD-only data as in fromGci: names are the 4th section; the CRC counts (characters + 1) bytes of each
+        int p = 3 * HD_SLOT;
+        CRC32 crc = new CRC32();
+        for (int sect = 0; sect < HD_EXTRA.length; sect++) {
+            for (int s = 0; s < 3; s++) {
+                byte[] forCrc = java.util.Arrays.copyOfRange(out, p, p + HD_EXTRA[sect]);
+                if (sect == 3) {
+                    if (which[s] && (forCrc[0] != 0 || forCrc[1] != 0)) {
+                        java.util.Arrays.fill(out, p, p + 18, (byte) 0);
+                        System.arraycopy("Link".getBytes(StandardCharsets.UTF_16BE), 0, out, p, 8);
+                    }
+                    int chars = 0;
+                    while (chars < 9 && (out[p + 2 * chars] != 0 || out[p + 2 * chars + 1] != 0)) chars++;
+                    forCrc = new byte[18];
+                    System.arraycopy(out, p, forCrc, 0, chars + 1);
+                }
+                crc.update(forCrc);
+                p += HD_EXTRA[sect];
+            }
+        }
+        put32(out, p + 4, crc.getValue());
+        return out;
+    }
+
     private static String gcName(byte[] g, boolean jp, boolean pal) {
         int n = 0;
         while (n < 17 && g[NAME + n] != 0) n++;

@@ -41,6 +41,42 @@ final class GameFont {
 
     private GameFont(String font) { FONT = font; }
 
+    // ---- on a GamePad device without the game (PadScreen): the font's files come from the console (PadLink.FONT_WANT)
+    interface Remote { void want(String font); }
+    private static Remote remote;
+    private static String remoteLang = "en";
+    private final java.util.List<Runnable> waiting = new java.util.ArrayList<>();
+    private boolean asked;
+
+    static void setRemote(Remote r) {
+        remote = r;
+        for (GameFont f : new GameFont[] {MAIN, MSG})
+            synchronized (f) {
+                f.asked = false;
+                f.waiting.clear();
+            }
+    }
+
+    /** the font's folder for the game's language (the console's, on a GamePad device) */
+    static File dir(Context c, String font, String lang) { return new File(new File(new File(c.getFilesDir(), DIR), lang), font); }
+
+    static String versionFile() { return "version" + VERSION; }
+
+    /** the console sent the font's files (written to dir(c, font, lang)): loaded at the next isReady */
+    static void remoteArrived(String font, String lang) {
+        GameFont f = font.equals(MAIN.FONT) ? MAIN : font.equals(MSG.FONT) ? MSG : null;
+        if (f == null) return;
+        java.util.List<Runnable> run;
+        synchronized (f) {
+            remoteLang = lang;
+            f.failed = false;
+            f.asked = false;
+            run = new java.util.ArrayList<>(f.waiting);
+            f.waiting.clear();
+        }
+        for (Runnable r : run) new android.os.Handler(android.os.Looper.getMainLooper()).post(r);
+    }
+
     // the tab font (CKingMain), as before
     static boolean ready(Context c, Runnable whenReady) { return MAIN.isReady(c, whenReady); }
     static float width(String s) { return MAIN.widthOf(s); }
@@ -53,11 +89,22 @@ final class GameFont {
         if (sheets != null) return true;
         if (failed) return false;
         // per game language: its 2D pack's font has that language's letters (ui_icons.cpp find_pack)
-        String lang = MainActivity.instance == null ? "en" : MainActivity.instance.gameLanguage();
+        boolean far = MainActivity.instance == null && remote != null;
+        String lang = MainActivity.instance == null ? remoteLang : MainActivity.instance.gameLanguage();
         File dir = new File(new File(new File(c.getFilesDir(), DIR), lang), FONT);
+        if (far && !asked) {  // (asked once per connection: the console's files may be newer)
+            asked = true;
+            if (whenReady != null) waiting.add(whenReady);
+            remote.want(FONT);
+            return false;
+        }
         if (new File(dir, "version" + VERSION).exists()) {
             if (load(dir)) return true;
             failed = true;
+            return false;
+        }
+        if (far) {
+            if (whenReady != null && waiting.size() < 16) waiting.add(whenReady);
             return false;
         }
         if (!building && MainActivity.instance != null) {
@@ -133,8 +180,15 @@ final class GameFont {
         }
     }
 
-    private Glyph glyph(char ch) {
+    /** the font's glyph for ch; the minus sign and dashes it lacks as its hyphen (the hints' "hold −") */
+    private Glyph look(char ch) {
         Glyph g = glyphs.get(ch);
+        if (g == null && (ch == '\u2212' || ch == '\u2013' || ch == '\u2010' || ch == '\u2011')) g = glyphs.get('-');
+        return g;
+    }
+
+    private Glyph glyph(char ch) {
+        Glyph g = look(ch);
         if (g == null) {  // a letter the font lacks (the title font has no capital Ä or Á): its plain letter
             String base = java.text.Normalizer.normalize(String.valueOf(ch), java.text.Normalizer.Form.NFD);
             if (base.length() > 1) g = glyphs.get(base.charAt(0));
@@ -221,15 +275,15 @@ final class GameFont {
     // ---- plain text (GameText): glyph by glyph, in the paint's colour
     int height() { return cellH; }
     int baselinePx() { return baseline; }
-    boolean has(char ch) { return glyphs.containsKey(ch); }
-    float advance(char ch) { Glyph g = glyphs.get(ch); return g == null ? 0 : g.advance; }
+    boolean has(char ch) { return look(ch) != null; }
+    float advance(char ch) { Glyph g = look(ch); return g == null ? 0 : g.advance; }
 
     private final Rect src = new Rect();
     private final RectF dst = new RectF();
 
     /** a glyph with its cell's top at y, its origin at x; the advance (screen pixels) */
     float draw(Canvas c, char ch, float x, float y, float scale, Paint p) {
-        Glyph g = glyphs.get(ch);
+        Glyph g = look(ch);
         if (g == null) return 0;
         src.set(g.x, g.y, g.x + g.w, g.y + cellH);
         dst.set(x + g.left * scale, y, x + (g.left + g.w) * scale, y + cellH * scale);

@@ -76,6 +76,9 @@ void request_load(int slot);            // 1..kAllSlots
 void save_on_leave();
 int writes_pending();                   // saves taken but not yet on disk (quitting waits for them)
 void set_auto_interval(int minutes);    // 0: no auto saves
+// the memory Android has above its low-memory line (MainActivity, every 2 s); below min_headroom_mb (savestate.cpp, 96 MB)
+// a save isn't started: the capture's copies could get the game killed
+void set_memory_headroom(int mb);
 int auto_interval();
 std::string last_message();             // short status for the title bar ("" when stale)
 // the app's save state picker at start: armed before the game starts, the game thread then waits at

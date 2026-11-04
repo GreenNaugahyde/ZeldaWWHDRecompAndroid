@@ -79,6 +79,7 @@ struct Surface {
     uint64_t writeSeq = 0;     // when the GPU last wrote it (several surfaces can alias one address)
     uint64_t contentHash = 0;  // hash of guest data at last upload
     uint64_t lastCheckedFrame = ~0ull;
+    uint64_t lastSampledFrame = 0;  // CPU textures: the last frame a draw sampled it (evict_unused_textures)
     uint64_t sparseHash = 0;   // cheap per-frame change check (a few hundred samples)
     uint32_t checkGen = 0;     // write tracking (mem_writes.h) when the contents were last compared
     uint32_t dataSize = 0;     // base level size in guest memory
@@ -86,6 +87,8 @@ struct Surface {
     FormatInfo fmt;
     float rscale = 1.0f;              // resolution scale: image size / guest size (render targets only)
     float ax = 1.0f, ay = 1.0f;       // aspect ratio widening (taller) of TV-shaped targets, on top of rscale
+    bool consoleSized = false;        // the bloom chain claimed it: kept at the console's size (color_target)
+    uint64_t consoleClaimFrame = 0;   // ... R.frame of that claim's last draw
     Surface* feedbackCopy = nullptr;  // copy sampled while this surface is a bound attachment
     Surface* mipChain = nullptr;      // a rendered picture with coarser levels, for sampling with mips
     uint64_t mipChainKey[16] = {};    // per level of mipChain: what it was built from (with_mip_chain)
@@ -196,7 +199,8 @@ Upload upload(const void* data, VkDeviceSize size, VkDeviceSize align = 256);
 
 // ---- images
 bool create_image(Image& img, VkImageType type, VkImageViewType viewType, VkFormat format, uint32_t w, uint32_t h,
-                  uint32_t depth, uint32_t layers, uint32_t mips, VkImageUsageFlags usage, bool cube, bool isDepth, bool stencil);
+                  uint32_t depth, uint32_t layers, uint32_t mips, VkImageUsageFlags usage, bool cube, bool isDepth, bool stencil,
+                  bool dedicated = false);
 VkImageView attachment_view(Image& img, uint32_t layer);
 VkImageView make_view(Image& img, VkImageViewType type, uint32_t baseLayer, uint32_t layers, VkComponentMapping sw,
                       VkImageAspectFlags aspect);
@@ -208,7 +212,8 @@ struct SurfaceDesc {
     bool isDepth = false;
 };
 Surface* find_or_create_surface(const SurfaceDesc& d, bool forRendering);
-Surface* color_target(const uint32_t* regs, int index, uint32_t* slice = nullptr);  // from CB_COLOR* registers
+// sizeRequest: vk_area_sample::SizeRequest of the drawing pixel shader (the bloom chain's console size)
+Surface* color_target(const uint32_t* regs, int index, uint32_t* slice = nullptr, uint8_t sizeRequest = 0);  // from CB_COLOR* registers
 Surface* depth_target(const uint32_t* regs, uint32_t* slice = nullptr);             // from DB_DEPTH_* registers
 Surface* surface_from_color_buffer(uint32_t gx2ColorBuffer, uint32_t* firstSlice = nullptr, uint32_t* numSlices = nullptr);
 Surface* surface_from_depth_buffer(uint32_t gx2DepthBuffer, uint32_t* firstSlice = nullptr, uint32_t* numSlices = nullptr);
@@ -250,6 +255,13 @@ float dynres_scale(float setting);    // at the swap: the scale for the next fra
 Surface* rescaled(Surface* s);
 // forget everything that refers to `old` and free it once the GPU is done with it
 void retire_image(const Image& old);
+void retire_images(const std::vector<Image>& olds);  // several at once (one cache flush)
+void evict_unused_textures();  // frame boundary: textures the game hasn't sampled for minutes
+int memory_headroom();  // MB above Android's low-memory line (set_memory_headroom), -1 when not known
+// 60 fps (generated, reproj.cpp): from the first layout on the TV picture each HUD draw also writes how
+// much it covers (vk_draw.cpp); the coverage of `frame`'s HUD if every HUD draw wrote it, else null
+void hud_coverage_begin(Surface* tv);
+Image* hud_coverage(uint64_t frame);
 
 // ---- shaders (vk_shader.cpp)
 void shader_compiler_init();

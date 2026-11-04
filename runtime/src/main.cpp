@@ -95,6 +95,23 @@ void crash_log_close() {
     crash_write(buf, n);
 }
 
+// how long the game ran and where in the game it is: "12 min 3 s after start, stage "sea", game frame
+// 21000" (crash logs, About > Share game log; signal safe enough for the crash handler)
+int run_place(char* buf, int cap) {
+    if (g_boot_time.tv_sec == 0 && g_boot_time.tv_nsec == 0) return snprintf(buf, cap, "game not started");
+    timespec now{};
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    long secs = (long)(now.tv_sec - g_boot_time.tv_sec);
+    int n = snprintf(buf, cap, "%ld min %ld s after start", secs / 60, secs % 60);
+    if (g_game_loaded && n < cap) {
+        const char* stage = (const char*)mem::ptr(release::data(0x1046F0B0) + 0x5134);  // as savestate.cpp stage_name
+        char st[9] = {};
+        for (int i = 0; i < 8 && stage[i] >= 0x20 && stage[i] <= 0x7E; i++) st[i] = stage[i];
+        n += snprintf(buf + n, cap - n, ", stage \"%s\", game frame %u", st, ld32(release::data(0x101FF558)));
+    }
+    return std::min(n, cap - 1);
+}
+
 // what every crash log says after its first line: GPU, thread, time, place, app and settings
 void crash_log_details() {
     char buf[512];
@@ -108,16 +125,8 @@ void crash_log_details() {
         // the thread, how long the game ran, and where in the game it was
         char tname[17] = {};
         prctl(PR_GET_NAME, tname);
-        timespec now{};
-        clock_gettime(CLOCK_MONOTONIC, &now);
-        long secs = (long)(now.tv_sec - g_boot_time.tv_sec);
-        n = snprintf(buf, sizeof buf, "  thread \"%s\", %ld min %ld s after start", tname, secs / 60, secs % 60);
-        if (g_game_loaded) {
-            const char* stage = (const char*)mem::ptr(release::data(0x1046F0B0) + 0x5134);  // as savestate.cpp stage_name
-            char st[9] = {};
-            for (int i = 0; i < 8 && stage[i] >= 0x20 && stage[i] <= 0x7E; i++) st[i] = stage[i];
-            n += snprintf(buf + n, sizeof buf - n, ", stage \"%s\", game frame %u", st, ld32(release::data(0x101FF558)));
-        }
+        n = snprintf(buf, sizeof buf, "  thread \"%s\", ", tname);
+        n += run_place(buf + n, (int)sizeof buf - n);
         if (n > (int)sizeof buf - 2) n = sizeof buf - 2;
         buf[n++] = '\n';
         crash_write(buf, n);
@@ -126,7 +135,11 @@ void crash_log_details() {
     }
 }
 
+extern "C" void wwhd_compile_journal_on_crash() __attribute__((weak));  // vk/vk_draw.cpp
+
 static void crash_handler(int sig, siginfo_t* si, void* uctx) {
+    // a crash while compiling a shader or pipeline: noted so the next start leaves it out
+    if (wwhd_compile_journal_on_crash) wwhd_compile_journal_on_crash();
     uintptr_t a = (uintptr_t)si->si_addr;
     uintptr_t base = (uintptr_t)PPC_MEM_BASE;
     crash_log_open();
@@ -272,12 +285,15 @@ void boot_runtime() {
 
     LoadedModule& m = g_module;
     std::string rpx = config::game_dir + "/code/cking.rpx";
-    if (!load_rpx(rpx, m)) fatal("cannot load %s", rpx.c_str());
 #ifdef WWHD_DEVICE_RECOMP
     packs::init(config::game_dir);  // mod packs: patched code (compiled with them) and data
+    rpx = packs::executable(config::game_dir);  // (the randomizer's, packs.h)
+    if (!load_rpx(rpx, m)) fatal("cannot load %s", rpx.c_str());
     packs::apply_memory();
     std::string err;
-    if (!recomp::load_game_code(rpx, config::code_dir, err)) fatal("game code: %s", err.c_str());
+    if (!recomp::load_game_code(config::game_dir + "/code/cking.rpx", config::code_dir, err)) fatal("game code: %s", err.c_str());
+#else
+    if (!load_rpx(rpx, m)) fatal("cannot load %s", rpx.c_str());
 #endif
     if (m.entry != g_recomp_entry_point) fatal("%s does not match the recompiled code", rpx.c_str());
     LOG("[boot] loaded %s: entry %08X sda %08X sda2 %08X data end %08X", rpx.c_str(), m.entry, m.sda_base, m.sda2_base,

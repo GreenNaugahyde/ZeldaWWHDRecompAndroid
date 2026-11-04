@@ -16,10 +16,13 @@ struct ScreenRect {
 };
 // tv.w < 0: the TV picture is not drawn (the app's "GamePad on demand" shows only the GamePad)
 void set_layout(ScreenRect tv, ScreenRect drc, bool drcVisible);
+void set_backdrop_tv(bool on);  // the TV picture in the GamePad picture's place (controller view)
 
 // The GamePad picture on its own display (the second screen of dual-screen devices): its window
 // surface, or null. The main window's layout then usually leaves the GamePad picture out.
 void set_drc_window(ANativeWindow* w);
+// the TV picture for another device as the screen while the GamePad window serves a third (PadHost)
+void set_tv_out_window(ANativeWindow* w);
 float drc_picture_aspect();  // width / height of the GamePad picture the game sent last
 
 // write the Vulkan pipeline cache to disk (the app is going to the background)
@@ -57,10 +60,17 @@ void benchmark_sample(float out[kBenchStats]);
 int benchmark_frames();  // frames shown since it started (a live count)
 int work_done();         // shaders compiled and pipelines built since the start (the benchmark's boot wait)
 void trim_memory();      // Android runs low on memory: pipelines unused lately are freed (any thread; vk_draw.cpp)
+int pipelines_pending();  // recipes still to be built ahead, -1 before the cache loaded (shader tour; vk_draw.cpp)
+void set_memory_headroom(int mb);  // MB above Android's low-memory line (the area head start frees by it)
+void set_memory_threshold(int mb);  // Android's low-memory line itself (dynres reads /proc/meminfo against it)
+void area_flush();       // test builds: the area visit's pipelines written now (shader tour, before a warp; vk_draw.cpp)
 void set_background_compiles_paused(bool on);  // its measuring windows: no new background compiles
 
 // frame generation settings (the app's menu); applied from the next frame on (any thread)
 void request_frame_generation(bool on, const char* dll, bool quality, float flowScale, int multiplier, bool uiDetection);
+// 60 fps (generated, reproj.cpp): the built-in in-between frames on or off; it goes before LSFG
+void request_builtin_frame_generation(bool on);
+bool builtin_frame_generation();
 
 // how the TV picture fills its area: 0 original aspect ratio (bars), 1 stretched, 2 filled (cut)
 void set_tv_aspect(int mode);

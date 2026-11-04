@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <bitset>
 #include <chrono>
 extern "C" uint64_t g_shader_state_gen;  // gx2_core.cpp: bumped by shader-relevant register changes
@@ -6,6 +7,8 @@ extern "C" uint64_t g_draw_state_gen;    // gx2_core.cpp: bumped by any non-data
 // binding and primitive submission. Follows gfx/metal_draw.mm; binding conventions are those of
 // the Vulkan GLSL the decompiler emits (one descriptor set per stage, as in Cemu's Vulkan renderer).
 #include "../packs.h"
+#include "area_sample.h"
+#include "hud_coverage.h"
 #include "Cafe/HW/Latte/Core/FetchShader.h"
 #include "Cafe/HW/Latte/Core/LatteCachedFBO.h"
 #include "Cafe/HW/Latte/Core/LatteShader.h"
@@ -24,6 +27,7 @@ extern "C" uint64_t g_draw_state_gen;    // gx2_core.cpp: bumped by any non-data
 
 #include <climits>
 #include <fcntl.h>
+#include <malloc.h>
 #include <condition_variable>
 #include <cstdarg>
 #include <ctime>
@@ -46,6 +50,8 @@ LatteFetchShader* LatteShaderRecompiler_createFetchShader(LatteFetchShader::Cach
 void LatteShader_calculateFSKey(LatteFetchShader* fetchShader);
 
 using namespace Latte;
+
+namespace mods { std::string current_area(); }  // warp.cpp (area tags)
 
 namespace gfx {
 static float bitsf_(uint32_t u) { float f; memcpy(&f, &u, 4); return f; }
@@ -487,6 +493,10 @@ struct Shader {
     bool dynamicUbos = false;
     bool used = false;                            // a draw asked for it this session (mark_used)
     uint32_t varsRange = 0;                       // size of the uniform-variable block
+    uint32_t areaUnits = 0;                       // pixel shader units read area-sampled (area_sample.h)
+    uint32_t gatherUnits = 0;                     // pixel shader units it gathers from (area_sample.h gathered_units)
+    bool areaGuest = false;                       // ... its area units read on the console's grid (the bloom extract)
+    uint8_t sizeRequest = 0;                      // pixel shader: what its draws ask of their targets' size (area_sample.h)
     uint32_t blockRange[LATTE_NUM_MAX_UNIFORM_BUFFERS] = {};  // size bound for each uniform block
     std::atomic<int> state{CS_PENDING};       // translation: CS_FAILED, CS_DEFERRED, else see mod
     // depth clamp emulated (devices without the feature, compile_shader): translated for a draw that
@@ -535,9 +545,9 @@ static void report_compile_error(const std::string& src, uint64_t key, const std
     }
 }
 
-// ---- SPIR-V cache on disk (spirv3.bin next to shaders.bin): translations seen in earlier sessions
+// ---- SPIR-V cache on disk (spirv4.bin next to shaders.bin): translations seen in earlier sessions
 // skip glslang. Records: uint64 source hash, uint32 word count, words. The file only grows: when
-// every translation changes (strictMul, mul_nonIEEE's form), a new name starts it over and the old file is deleted.
+// every translation changes (strictMul, mul_nonIEEE's form, finite pixel colours), a new name starts it over and the old file is deleted.
 // Only where each record is stays in memory (the whole file was ~170 MB of native heap with the head
 // start); the words are read when a module is made, and again for a module made anew (free_modules).
 static std::mutex g_spv_mutex;
@@ -548,10 +558,13 @@ static uint64_t g_spv_end = 0;  // the file's length (new records go there)
 static FILE* g_spv_out = nullptr;
 static size_t g_spv_disk_hits;
 
+static void compile_journal_open(const std::string& dir);
 static void spirv_cache_open(const std::string& dir) {
+    compile_journal_open(dir);
     remove((dir + "/spirv.bin").c_str());   // translations before strictMul
     remove((dir + "/spirv2.bin").c_str());  // before the select form of mul_nonIEEE
-    std::string path = dir + "/spirv3.bin";
+    remove((dir + "/spirv3.bin").c_str());  // before the finite pixel colours (finiteColorOutputs)
+    std::string path = dir + "/spirv4.bin";
     if (FILE* f = fopen(path.c_str(), "rb")) {
         fseek(f, 0, SEEK_END);
         const uint64_t size = (uint64_t)ftell(f);
@@ -581,9 +594,105 @@ static bool spirv_read(uint64_t hash, std::vector<uint32_t>& out) {
     return pread(g_spv_fd, out.data(), bytes, (off_t)it->second.at) == (ssize_t)bytes;
 }
 
+// ---------------------------------------------------------------- compile journal
+// A shader or pipeline whose compile crashes the process (the GPU driver's compiler, glslang) is
+// compiled again at every start (the head start, the cache replay), so the game could never be
+// started again (#53: Maleoon 910, an abort in libbishenggpucompiler on the "shader compile" thread).
+// As WindWakerHD-Android-Plus fc5ddee: each compiling thread notes what it compiles in compiling.bin
+// (one 16-byte slot per thread); the crash handler (main.cpp) marks the slot of a thread that crashes
+// while compiling; the next start adds those to compile_failed.bin, and what is listed there is never
+// compiled again (its draws are left out). Pipelines go by their recipe hash (stable across runs).
+// The list starts over with another GPU driver or app build (compile_failed.key): an update may fix it.
+struct CjEntry { uint32_t type, crashed; uint64_t id; };
+static int g_cj_fd = -1;
+static std::atomic<int> g_cj_next{0};
+static thread_local int t_cj_slot = -1;
+static thread_local CjEntry t_cj{};
+static std::unordered_set<uint64_t> g_cj_bad;
+enum : uint32_t { kCjModule = 1, kCjPipeline = 2, kCjTranslation = 3 };
+static uint64_t cj_key(uint32_t type, uint64_t id) { return id ^ (uint64_t)type * 0x9E3779B97F4A7C15ull; }
+
+static void compile_journal_open(const std::string& dir) {
+    const std::string cur = dir + "/compiling.bin", failed = dir + "/compile_failed.bin", keyPath = dir + "/compile_failed.key";
+    char key[160];
+    snprintf(key, sizeof key, "%08X %08X %08X %s %s %s", R.props.vendorID, R.props.deviceID, R.props.driverVersion,
+             getenv("WWHD_APP_VERSION") ? getenv("WWHD_APP_VERSION") : "", __DATE__, __TIME__);
+    {
+        char old[160] = {};
+        if (FILE* f = fopen(keyPath.c_str(), "rb")) {
+            (void)!fread(old, 1, sizeof old - 1, f);
+            fclose(f);
+        }
+        if (strcmp(old, key) != 0) {
+            if (remove(failed.c_str()) == 0) LOG("[gfx] another GPU driver or app build: the shaders / pipelines left out are tried again");
+            if (FILE* f = fopen(keyPath.c_str(), "wb")) {
+                fputs(key, f);
+                fclose(f);
+            }
+        }
+    }
+    if (FILE* f = fopen(cur.c_str(), "rb")) {
+        CjEntry e;
+        FILE* out = nullptr;
+        while (fread(&e, sizeof e, 1, f) == 1) {
+            if (!e.crashed || !e.type) continue;
+            if (!out) out = fopen(failed.c_str(), "ab");
+            if (out) fwrite(&e, sizeof e, 1, out);
+            LOG("[gfx] the last run crashed while compiling %s %016llx: it is left out from now on",
+                e.type == kCjModule ? "shader" : e.type == kCjTranslation ? "shader translation" : "pipeline", (unsigned long long)e.id);
+        }
+        if (out) fclose(out);
+        fclose(f);
+    }
+    if (FILE* f = fopen(failed.c_str(), "rb")) {
+        CjEntry e;
+        while (fread(&e, sizeof e, 1, f) == 1) g_cj_bad.insert(cj_key(e.type, e.id));
+        fclose(f);
+    }
+    if (!g_cj_bad.empty()) LOG("[gfx] %zu shaders / pipelines left out (they crashed while compiling)", g_cj_bad.size());
+    g_cj_fd = open(cur.c_str(), O_RDWR | O_CREAT | O_TRUNC | O_CLOEXEC, 0644);
+}
+static bool compile_journal_bad(uint32_t type, uint64_t id) { return !g_cj_bad.empty() && g_cj_bad.count(cj_key(type, id)); }
+static void compile_journal_begin(uint32_t type, uint64_t id) {
+    if (g_cj_fd < 0) return;
+    if (t_cj_slot < 0) t_cj_slot = g_cj_next.fetch_add(1);
+    if (t_cj_slot >= 256) return;
+    t_cj = {type, 0, id};
+    (void)!pwrite(g_cj_fd, &t_cj, sizeof t_cj, (off_t)t_cj_slot * sizeof t_cj);
+    // test only: WWHD_TEST_COMPILE_CRASH=<type>:<hex id> aborts while compiling that one (as a driver
+    // would); id 0: the first one of that type not left out already
+    static const char* test = getenv("WWHD_TEST_COMPILE_CRASH");
+    if (test) {
+        unsigned tt = 0;
+        unsigned long long tid = 0;
+        if (sscanf(test, "%u:%llx", &tt, &tid) == 2 && tt == type && (tid == id || tid == 0)) abort();
+    }
+}
+static void compile_journal_end() {
+    if (g_cj_fd < 0 || t_cj_slot < 0 || t_cj_slot >= 256 || !t_cj.type) return;
+    t_cj = {};
+    (void)!pwrite(g_cj_fd, &t_cj, sizeof t_cj, (off_t)t_cj_slot * sizeof t_cj);
+}
+}  // namespace gfx
+// the crash handler (main.cpp): this thread was compiling -> its slot marked (async-signal-safe)
+extern "C" void wwhd_compile_journal_on_crash() {
+    using namespace gfx;
+    if (g_cj_fd < 0 || t_cj_slot < 0 || t_cj_slot >= 256 || !t_cj.type) return;
+    CjEntry e = t_cj;
+    e.crashed = 1;
+    (void)!pwrite(g_cj_fd, &e, sizeof e, (off_t)t_cj_slot * sizeof e);
+}
+namespace gfx {
+
 static void compile_now(Module* m, uint64_t hash, uint64_t key, bool vertex, const std::string& src) {
     double t0 = now_ms();
     m->hash = hash;
+    if (compile_journal_bad(kCjModule, hash)) {  // it crashed the compiler before: left out
+        m->state.store(CS_FAILED, std::memory_order_release);
+        g_work_done.fetch_add(1, std::memory_order_relaxed);
+        compile_done();
+        return;
+    }
     std::vector<uint32_t> spirv;
     {
         std::lock_guard<std::mutex> lk(g_spv_mutex);
@@ -592,7 +701,10 @@ static void compile_now(Module* m, uint64_t hash, uint64_t key, bool vertex, con
     }
     if (spirv.empty()) {
         std::string log;
-        if (!compile_glsl(src.c_str(), vertex, spirv, log)) {
+        compile_journal_begin(kCjModule, hash);
+        const bool compiled = compile_glsl(src.c_str(), vertex, spirv, log);
+        compile_journal_end();
+        if (!compiled) {
             report_compile_error(src, key, log);
             m->state.store(CS_FAILED, std::memory_order_release);
             g_work_done.fetch_add(1, std::memory_order_relaxed);
@@ -616,7 +728,10 @@ static void compile_now(Module* m, uint64_t hash, uint64_t key, bool vertex, con
     VkShaderModuleCreateInfo ci{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
     ci.codeSize = spirv.size() * 4;
     ci.pCode = spirv.data();
-    if (vkCreateShaderModule(R.device, &ci, nullptr, &m->module) != VK_SUCCESS) {
+    compile_journal_begin(kCjModule, hash);
+    const VkResult made = vkCreateShaderModule(R.device, &ci, nullptr, &m->module);
+    compile_journal_end();
+    if (made != VK_SUCCESS) {
         LOG("[gfx] shader %016llx: vkCreateShaderModule failed", (unsigned long long)key);
         m->state.store(CS_FAILED, std::memory_order_release);
         compile_done();
@@ -655,6 +770,8 @@ static bool depth_clamp_variant(const std::string& src, bool vertex, std::string
 // defer (the cache replay) a new module is only created, keeping the source, and compiled later
 static void compile_shader(Shader* sh, bool defer = false) {
     std::string src = sh->dec->strBuf_shaderSource->c_str();
+    // the game's Gaussian blur on upscaled targets: each tap covers one guest texel (area_sample.h)
+    if (sh->areaUnits && vk_area_sample::rewrite(src, sh->areaUnits, sh->areaGuest) <= 0) LOG("[gfx] pixel shader: area-sampled taps not applied");
     // Depth-only and shaded variants of the same geometry must rasterize identical positions:
     // later passes depth-test EQUAL/LEQUAL against the first, and without invariance the driver
     // may compute gl_Position differently per shader (camera-dependent z-fighting: shadow flicker,
@@ -1555,6 +1672,10 @@ static Shader* get_shader_uncached(const uint32_t* regs, bool vertex, LatteFetch
             a->state.store(twin->state.load());
             a->clampWanted = twin->clampWanted;
             a->clampMod = twin->clampMod;
+            a->areaUnits = twin->areaUnits;
+            a->gatherUnits = twin->gatherUnits;
+            a->areaGuest = twin->areaGuest;
+            a->sizeRequest = twin->sizeRequest;
             g_shaders[key] = a;
             hot = {key, a};
             mark_used(a);
@@ -1578,6 +1699,10 @@ static Shader* get_shader_uncached(const uint32_t* regs, bool vertex, LatteFetch
     // Rito mail sorting game); Cemu's default too (original project 0dfd3c3). WWHD_STRICT_MUL=0: off
     static const bool strictMul = !getenv("WWHD_STRICT_MUL") || strcmp(getenv("WWHD_STRICT_MUL"), "0");
     opt.strictMul = strictMul;
+    // pixel colours without NaN / infinity (LatteDecompiler.h): the thunderstorm's flash blacked out the
+    // 3D picture for a few frames. WWHD_NAN_GUARD=0: as the shader computes them
+    static const bool nanGuard = !getenv("WWHD_NAN_GUARD") || strcmp(getenv("WWHD_NAN_GUARD"), "0");
+    opt.finiteColorOutputs = nanGuard;
     // the 32-bit vertex byte swap by bytes on PowerVR (issue #17; LatteDecompilerEmitGLSLAttrDecoder.cpp).
     // WWHD_VTX_SWAP32=0 / 1 forces Cemu's form / the bytes form
     static const bool swap32Bytes = [] {
@@ -1591,16 +1716,30 @@ static Shader* get_shader_uncached(const uint32_t* regs, bool vertex, LatteFetch
         opt.linkPSInputsToVS = true;
         opt.vsOutputSemantics = link.exports;
     }
+    // the game's blur shaders read their units area-sampled on upscaled targets (area_sample.h); a
+    // function of the program alone, so the shader keys stay as they were
+    if (!vertex) {
+        opt.areaSampledTextures = s->areaUnits = vk_area_sample::units_for_pixel_shader(mem::ptr(addr), size);
+        s->areaGuest = vk_area_sample::bloom_extract(mem::ptr(addr), size);
+        s->sizeRequest = vk_area_sample::size_request(mem::ptr(addr), size);
+    }
     LatteDecompilerOutput_t out{};
+    if (compile_journal_bad(kCjTranslation, key)) {  // it crashed the translator before: left out
+        s->state = CS_FAILED;
+        return s;
+    }
+    compile_journal_begin(kCjTranslation, key);
     if (vertex)
         LatteDecompiler_DecompileVertexShader(base, (uint32*)regs, mem::ptr(addr), size, fs, opt, &out);
     else
         LatteDecompiler_DecompilePixelShader(base, (uint32*)regs, mem::ptr(addr), size, opt, &out);
+    compile_journal_end();
     if (!out.shader || out.shader->hasError || !out.shader->strBuf_shaderSource) {
         LOG("[gfx] %s shader %08X failed to translate", vertex ? "vertex" : "pixel", addr);
         s->state = CS_FAILED;
         return s;
     }
+    if (!vertex) s->gatherUnits = vk_area_sample::gathered_units(out.shader->strBuf_shaderSource->c_str());
     s->dec = FinishDecompiledShader(out);
     {
         LATTE_PA_CL_CLIP_CNTL clip;
@@ -1821,20 +1960,29 @@ struct PipelineState {
     uint32_t frontCCW = 0;
     uint32_t depthControl = 0;  // DB_DEPTH_CONTROL (0 without depth buffer)
     uint32_t depthClamp = 0;
-    uint32_t intTargets = 0;    // bit per color attachment with an integer format
+    uint32_t intTargets = 0;    // bit per color attachment with an integer format; bits 28-31: hud_cov_slot
 };
+// the colour attachment of the HUD coverage (hud_coverage.h; 0: none): the pixel shader's variant.
+// Kept in intTargets' unused bits, so PipelineState (and the shader cache's pipeline recipes, which
+// hold it as it is) keeps its size: a larger one made every cached recipe unreadable.
+static uint32_t hud_cov_slot(const PipelineState& st) { return st.intTargets >> 28; }
+static void set_hud_cov_slot(PipelineState& st, uint32_t slot) { st.intTargets = (st.intTargets & 0x0FFFFFFFu) | (slot << 28); }
 
 struct Pipeline {
     VkPipeline pipeline = VK_NULL_HANDLE;   // valid once status == CS_READY
     VkPipelineLayout layout = VK_NULL_HANDLE;
     std::atomic<int> status{CS_PENDING};
     uint64_t lastUse = 0;                   // the frame a draw last asked for it (evict_pipelines)
+    uint64_t recipe = 0;                    // hash of its PipelineRecipe (area tags)
+    std::vector<uint64_t> also;             // other recipes built ahead that came out as this pipeline
+    uint32_t visit = 0;                     // the area visit a draw last used it in (area_use)
 };
 static std::unordered_map<uint64_t, Pipeline*> g_pipelines;
 // the frame's pipelines are found in a small table first (cleared when pipelines are freed)
 static HotCache<Pipeline*, 1024> g_pipe_hot;
 // pipelines freed (evict_pipelines): made again when needed, but not recorded in the cache file again
 static std::unordered_set<uint64_t> g_pipes_freed;
+static size_t g_pipes_remade;  // freed ones a draw needed again
 
 // A device with little RAM (the app sets WWHD_LOW_MEMORY=1 below 4.5 GB): every pipeline is ~11 KB of
 // driver memory and the head start's 36,000 took ~400 MB on a Snapdragon 855, beyond what Android leaves
@@ -1927,6 +2075,32 @@ static bool wait_compiled(const std::atomic<int>& st) {
 }
 
 static void cache_record_pipeline(const uint32_t* regs, Shader* vs, Shader* ps, uint64_t fsKey, const PipelineState& st);
+static uint64_t recipe_hash(const uint32_t* regs, Shader* vs, Shader* ps, uint64_t fsKey, const PipelineState& st);
+
+// ---- area tags (test builds, for the head-start template): the pipelines the game's draws use in each
+// area (mods::current_area: the stage, on the Great Sea the chart square) are appended to areas.bin next
+// to the cache as the visits go on; the template export tags its recipes with them. Records:
+//   "WWHA", u32 name length, name, u32 n, u64 recipe hash (hash_bytes of the PipelineRecipe)*
+// Built-ahead and replayed pipelines don't count, only those a draw asked for.
+static uint32_t g_area_visit = 0;           // 0: not recorded (published releases)
+static std::vector<uint64_t> g_area_used;  // recipes used in this visit, not written yet
+static inline void area_use(Pipeline* pl) {
+    if (pl->visit == g_area_visit || g_building_ahead || g_cache_replaying) return;
+    pl->visit = g_area_visit;
+    g_area_used.push_back(pl->recipe);
+    g_area_used.insert(g_area_used.end(), pl->also.begin(), pl->also.end());
+}
+// Recipes whose shaders translate alike share one pipeline (get_pipeline): the template's ~46,000 are
+// ~13,000 pipelines. One built ahead that finds its pipeline already made is kept with it, so a draw
+// tags all of them, not only the first (else the others look untagged and the area head start leaves
+// them out of their areas).
+static uint64_t g_ahead_recipe = 0;  // the recipe build_pending_pipelines is making
+static inline void ahead_found(Pipeline* pl) {
+    if (!g_building_ahead || pl->recipe == g_ahead_recipe) return;
+    for (uint64_t r : pl->also)
+        if (r == g_ahead_recipe) return;
+    pl->also.push_back(g_ahead_recipe);
+}
 
 // everything vkCreateGraphicsPipelines points to, kept alive for a background compile
 struct PipelineDesc {
@@ -1948,7 +2122,106 @@ struct PipelineDesc {
 
 static VkPrimitiveTopology topology_of(uint32_t t) { return (VkPrimitiveTopology)t; }
 
+// ---------------------------------------------------------------- HUD coverage (60 fps generated)
+// (WindWakerHD-Android-Plus fc5ddee) From the first layout drawn on the TV picture (rp::layout_root,
+// where the scene is copied aside) each draw into that picture also writes how much it covers what
+// lies behind: an R8 image of the picture's size cleared to 0, written by a variant of the pixel
+// shader (hud_coverage.h) with a blend that follows the draw's own. The in-between frame then moves
+// the scene behind translucent HUD parts too (vk/reproj.cpp); a frame with a HUD draw that couldn't
+// write it (a shader without the variant, another target alongside, its pipeline still compiling)
+// is generated with the HUD found by comparing pictures. WWHD_HUD_COVERAGE=0: off.
+static void prep_invalidate();  // (the draw fast path's key, below)
+static bool hud_coverage_on() {
+    static const bool on = (!getenv("WWHD_HUD_COVERAGE") || atoi(getenv("WWHD_HUD_COVERAGE")) != 0);
+    return on && R.features.independentBlend;
+}
+static Surface g_cov;
+static Surface* g_cov_target = nullptr;
+static uint64_t g_cov_frame = ~0ull;
+static bool g_cov_valid = false;
+struct CovModule { VkShaderModule module; uint32_t location; };
+static std::unordered_map<Module*, CovModule> g_cov_modules;  // module VK_NULL_HANDLE: no variant
+
+void hud_coverage_begin(Surface* tv) {
+    g_cov_frame = ~0ull;
+    if (!tv || !hud_coverage_on() || !tv->img.image) return;
+    if (!g_cov.img.image || g_cov.img.width != tv->img.width || g_cov.img.height != tv->img.height) {
+        if (g_cov.img.image) retire_image(g_cov.img);
+        g_cov.img = Image{};
+        if (!create_image(g_cov.img, VK_IMAGE_TYPE_2D, VK_IMAGE_VIEW_TYPE_2D, VK_FORMAT_R8_UNORM, tv->img.width, tv->img.height, 1, 1, 1,
+                          VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT, false, false,
+                          false))
+            return;
+        g_cov.fmt = FormatInfo{};
+        g_cov.fmt.format = VK_FORMAT_R8_UNORM;
+        g_cov.fmt.renderable = true;
+        g_cov.fmt.kind = FormatInfo::FLOAT;
+        g_cov.slices = 1;
+        g_cov.mips = 1;
+        g_cov.addr = 0;  // private: never found by address lookups
+        g_cov.gpuWritten = true;
+    }
+    // guest size and scales as the picture's, so draws scale their viewports alike
+    g_cov.width = tv->width;
+    g_cov.height = tv->height;
+    g_cov.rscale = tv->rscale;
+    g_cov.ax = tv->ax;
+    g_cov.ay = tv->ay;
+    // cleared by the first HUD pass's load op (or before the in-between frame reads it)
+    g_cov.img.pendingClear = {true, 0, VK_IMAGE_ASPECT_COLOR_BIT, VkClearValue{}};
+    g_cov_target = tv;
+    g_cov_frame = R.frame;
+    g_cov_valid = true;
+    prep_invalidate();  // the next draw resolves its targets again (the fast path keeps the last draw's)
+}
+
+// the coverage of `frame`'s HUD, if every HUD draw wrote it (rp::record)
+Image* hud_coverage(uint64_t frame) { return g_cov_frame == frame && g_cov_valid && g_cov.img.image ? &g_cov.img : nullptr; }
+
+static CovModule coverage_module(Module* m) {
+    if (!m || m->state.load(std::memory_order_acquire) != CS_READY || !m->hash) return {VK_NULL_HANDLE, 0};
+    auto it = g_cov_modules.find(m);
+    if (it != g_cov_modules.end()) return it->second;
+    std::vector<uint32_t> spirv;
+    {
+        std::lock_guard<std::mutex> lk(g_spv_mutex);
+        if (!spirv_read(m->hash, spirv)) spirv.clear();
+    }
+    VkShaderModule vm = VK_NULL_HANDLE;
+    uint32_t location = 0;
+    if (!spirv.empty() && hud_coverage::add_output(spirv, location)) {
+        VkShaderModuleCreateInfo ci{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
+        ci.codeSize = spirv.size() * 4;
+        ci.pCode = spirv.data();
+        if (vkCreateShaderModule(R.device, &ci, nullptr, &vm) != VK_SUCCESS) vm = VK_NULL_HANDLE;
+    }
+    static int failures = 0;
+    if (!vm && failures++ < 8) LOG("[framegen] HUD shader %016llx: no coverage variant", (unsigned long long)m->hash);
+    g_cov_modules[m] = {vm, location};
+    return {vm, location};
+}
+
+// the coverage attachment's blend from the picture's: what the draw leaves of the picture behind
+static VkPipelineColorBlendAttachmentState coverage_blend(const VkPipelineColorBlendAttachmentState& c0) {
+    VkPipelineColorBlendAttachmentState c{};
+    c.colorWriteMask = (c0.colorWriteMask & 7) ? VK_COLOR_COMPONENT_R_BIT : 0;
+    if (!c0.blendEnable) return c;  // replaces what was there: covered
+    c.blendEnable = VK_TRUE;
+    c.colorBlendOp = c.alphaBlendOp = VK_BLEND_OP_ADD;
+    VkBlendFactor src = VK_BLEND_FACTOR_SRC_ALPHA, dst = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;  // "over"
+    if (c0.colorBlendOp == VK_BLEND_OP_ADD || c0.colorBlendOp == VK_BLEND_OP_SUBTRACT) switch (c0.dstColorBlendFactor) {
+        case VK_BLEND_FACTOR_ZERO: src = VK_BLEND_FACTOR_ONE; dst = VK_BLEND_FACTOR_ZERO; break;          // replaces
+        case VK_BLEND_FACTOR_ONE: src = VK_BLEND_FACTOR_ZERO; dst = VK_BLEND_FACTOR_ONE; break;           // adds: covers nothing
+        case VK_BLEND_FACTOR_SRC_ALPHA: src = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA; dst = VK_BLEND_FACTOR_SRC_ALPHA; break;
+        default: break;
+    }
+    c.srcColorBlendFactor = c.srcAlphaBlendFactor = src;
+    c.dstColorBlendFactor = c.dstAlphaBlendFactor = dst;
+    return c;
+}
+
 static Pipeline* get_pipeline(const uint32_t* regs, Shader* vs, Shader* ps, LatteFetchShader* fs, uint64_t fsKey, const PipelineState& st) {
+    if (hud_cov_slot(st) && !coverage_module(ps->mod).module) return nullptr;  // (never a pipeline without its module)
     // depth clamp emulated (depth_clamp_variant): the variant pair, once compiled; else as before
     Module* vm = vs->mod;
     Module* pm = ps->mod;
@@ -1968,25 +2241,33 @@ static Pipeline* get_pipeline(const uint32_t* regs, Shader* vs, Shader* ps, Latt
     h = hash_bytes(&st, sizeof st, h);
     if (Pipeline** p = g_pipe_hot.find(h)) {
         (*p)->lastUse = R.frame;
+        ahead_found(*p);
+        area_use(*p);
         return wait_compiled((*p)->status) ? *p : nullptr;
     }
     auto it = g_pipelines.find(h);
     if (it != g_pipelines.end()) {
         g_pipe_hot.put(h, it->second);
         it->second->lastUse = R.frame;
+        ahead_found(it->second);
+        area_use(it->second);
         return wait_compiled(it->second->status) ? it->second : nullptr;
     }
     if (!ensure_module(vm) || !ensure_module(pm)) return nullptr;  // (freed: made again from the disk cache)
     auto* pl = new Pipeline();
     pl->lastUse = R.frame;
+    pl->recipe = recipe_hash(regs, vs, ps, fsKey, st);
+    area_use(pl);
     g_pipelines[h] = pl;
     g_pipe_hot.put(h, pl);
     if (g_pipes_freed.empty() || !g_pipes_freed.count(h)) cache_record_pipeline(regs, vs, ps, fsKey, st);
+    else g_pipes_remade++;
     pl->layout = get_pipeline_layout(vs, ps);
 
     auto d = std::make_shared<PipelineDesc>();
     d->stages[0] = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0, VK_SHADER_STAGE_VERTEX_BIT, vm->module, "main", nullptr};
-    d->stages[1] = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0, VK_SHADER_STAGE_FRAGMENT_BIT, pm->module, "main", nullptr};
+    d->stages[1] = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0, VK_SHADER_STAGE_FRAGMENT_BIT,
+                    hud_cov_slot(st) ? coverage_module(pm).module : pm->module, "main", nullptr};
     // vertex input: attributes fetched as uint and decoded (byte-swapped) in the shader
     for (auto& g : fs->bufferGroups) {
         bool instanced = false, any = false;
@@ -2078,6 +2359,7 @@ static Pipeline* get_pipeline(const uint32_t* regs, Shader* vs, Shader* ps, Latt
     // without independent blending every attachment must use the same state
     if (!R.features.independentBlend && firstUsed >= 0)
         for (uint32_t i = 0; i < colorCount; i++) d->blend[i] = d->blend[firstUsed];
+    if (hud_cov_slot(st) && hud_cov_slot(st) < 8) d->blend[hud_cov_slot(st)] = coverage_blend(d->blend[0]);
     d->cb.attachmentCount = colorCount;
     d->cb.pAttachments = d->blend;
     d->dyn[0] = VK_DYNAMIC_STATE_VIEWPORT;
@@ -2103,8 +2385,18 @@ static Pipeline* get_pipeline(const uint32_t* regs, Shader* vs, Shader* ps, Latt
     d->pi.renderPass = get_render_pass(st.pass);
 
     auto build = [pl, d, vsKey = vs->key, psKey = ps->key] {
+        if (compile_journal_bad(kCjPipeline, pl->recipe)) {  // it crashed the driver before: left out
+            static std::atomic<int> logged{0};
+            if (logged++ < 8) LOG("[gfx] pipeline %016llx left out (it crashed while compiling)", (unsigned long long)pl->recipe);
+            pl->status.store(CS_FAILED, std::memory_order_release);
+            g_work_done.fetch_add(1, std::memory_order_relaxed);
+            compile_done();
+            return;
+        }
         auto t0 = std::chrono::steady_clock::now();
+        compile_journal_begin(kCjPipeline, pl->recipe);
         VkResult r = create_graphics_pipeline(&d->pi, &pl->pipeline);
+        compile_journal_end();
         g_t_pipeline_us += (uint64_t)std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - t0).count();
         if (r != VK_SUCCESS) LOG("[gfx] pipeline creation failed: VkResult %d", (int)r);
         else {
@@ -2332,6 +2624,11 @@ static VkImageView texture_view(Surface* s, VkImageViewType type, uint32_t word4
 // (PS 44BDFD00). The size mismatch is what leaves lines in shadowed grass. With this on, the
 // downsample is drawn a second time into a private 960x540 copy and the occlusion pass reads that
 // copy, one depth texel per pixel. Every other reader keeps the game's 640x360 buffer.
+// Graphics > Picture quality > blur at high resolutions (area_sample.h): the game's light and bloom
+// blur keeps its console footprint above ~1.5x (on by default; off: the game's one sample per tap)
+static std::atomic<bool> g_area_blur{[] { const char* e = getenv("WWHD_AREA_BLUR"); return !e || atoi(e) != 0; }()};
+bool area_blur_enabled() { return g_area_blur.load(std::memory_order_relaxed); }
+void set_area_blur(bool v) { g_area_blur = v; LOG("[gfx] area-sampled blur %s", v ? "on" : "off"); }
 static std::atomic<bool> g_ao_hires{[] { const char* e = getenv("WWHD_AO_HIRES"); return !e || atoi(e) != 0; }()};
 bool ao_hires_enabled() { return g_ao_hires.load(std::memory_order_relaxed); }
 void set_ao_hires(bool v) { g_ao_hires = v; LOG("[gfx] full-size occlusion depth %s", v ? "on" : "off"); }
@@ -2411,7 +2708,9 @@ struct StageTextures {
     VkSampler sampler[LATTE_NUM_MAX_TEX_UNITS];
     float unitScale[LATTE_NUM_MAX_TEX_UNITS];  // by texture unit: resolution scale of the bound surface (x)
     float unitScaleY[LATTE_NUM_MAX_TEX_UNITS]; // ... (y; differs from x for aspect-widened targets)
+    uint32_t unitW[LATTE_NUM_MAX_TEX_UNITS], unitH[LATTE_NUM_MAX_TEX_UNITS];  // ... its guest size (0: none)
     Image* sampled[LATTE_NUM_MAX_TEX_UNITS];   // by binding: the image to prepare for sampling (prepare_sampled)
+    Surface* surf[LATTE_NUM_MAX_TEX_UNITS];    // ... and the surface it belongs to (note_pass_reads)
     int count = 0;
     bool tvPicture = false;  // samples a rendered buffer of the TV picture's shape (and size)
 };
@@ -2420,6 +2719,100 @@ struct StageTextures {
 // resolving one texture can copy from another one already resolved (a surface at the same address
 // in another format, a feedback copy), which leaves that one in TRANSFER_SRC while its descriptor
 // says SHADER_READ_ONLY (found by the validation layer).
+// ---------------------------------------------------------------- textures ready before the pass
+// (WindWakerHD-Android-Plus fc5ddee) A texture a draw samples has to be in its shader-read layout for
+// that shader stage, and a layout change or barrier can't be recorded inside a render pass: a texture
+// first read in the middle of a pass (a buffer drawn earlier in the frame, or just a copy source) ended
+// that pass, which on a tiled GPU stores every attachment to memory and loads them back for the rest
+// of it. The game's frame has the same shape from one frame to the next, so each pass (by its
+// attachments) remembers the textures that ended it, with the stages that read them, and the next time
+// it begins they are made ready first. Nothing else can write them while the pass is open (they aren't
+// its attachments; copies end passes), so the early barrier is right; a guess that doesn't come true
+// costs one barrier. WWHD_PASS_PREFETCH=0: off.
+static bool pass_prefetch_on() {
+    static const bool on = !getenv("WWHD_PASS_PREFETCH") || atoi(getenv("WWHD_PASS_PREFETCH")) != 0;
+    return on;
+}
+struct PassRead {
+    uint32_t addr, width, height, format;
+    VkPipelineStageFlags stages;
+    uint64_t lastFrame;
+};
+static std::unordered_map<uint64_t, std::vector<PassRead>> g_pass_reads;
+static uint64_t g_pass_prefetched = 0, g_pass_splits_seen = 0;
+
+static uint64_t pass_signature(Surface* const* colors, Surface* depth, uint32_t w, uint32_t h) {
+    uint32_t key[11] = {};
+    for (int i = 0; i < 8; i++) key[i] = colors[i] ? colors[i]->addr ^ colors[i]->format << 1 : 0;
+    key[8] = depth ? depth->addr : 0;
+    key[9] = w;
+    key[10] = h;
+    return hash_bytes(key, sizeof key);
+}
+
+// the surface a texture was found as (not a private copy: feedback, mip chain, AO depth)
+static bool primary_surface(const Surface* s) {
+    if (!s || !s->addr) return false;
+    auto range = R.surfaces.equal_range(s->addr);
+    for (auto it = range.first; it != range.second; ++it)
+        if (it->second.get() == s) return true;
+    return false;
+}
+
+// a draw in the open pass is about to sample these: the ones not yet readable by `stages` will end it
+static void note_pass_reads(const StageTextures& t, VkPipelineStageFlags stages) {
+    if (!R.pass || !pass_prefetch_on()) return;
+    for (int i = 0; i < t.count; i++) {
+        Image* im = t.sampled[i];
+        Surface* s = t.surf[i];
+        if (!im || !s || im != &s->img) continue;
+        if (!im->pendingClear.on && im->use == Use::SAMPLED && (im->readStages & stages) == stages) continue;
+        bool attached = s == R.passDepth;
+        for (int c = 0; c < 8 && !attached; c++) attached = R.passColor[c] == s;
+        if (attached || !primary_surface(s)) continue;
+        auto& v = g_pass_reads[pass_signature(R.passColor, R.passDepth, R.passWidth, R.passHeight)];
+        bool found = false;
+        for (auto& r : v)
+            if (r.addr == s->addr && r.width == s->width && r.height == s->height && r.format == s->format) {
+                r.lastFrame = R.frame;
+                r.stages |= stages;
+                found = true;
+            }
+        if (!found && v.size() < 16) v.push_back({s->addr, s->width, s->height, s->format, stages, R.frame});
+        g_pass_splits_seen++;
+        DLOG("[pass] texture %08X %ux%u first read in the pass (use %d): ready before it next time", s->addr, s->width, s->height,
+             (int)im->use);
+    }
+}
+
+// the pass about to begin: the textures it read last time, readable by those stages now
+static void prefetch_pass_reads(Surface* const* colors, Surface* depth, uint32_t w, uint32_t h) {
+    if (!pass_prefetch_on() || g_pass_reads.empty()) return;
+    auto it = g_pass_reads.find(pass_signature(colors, depth, w, h));
+    if (it == g_pass_reads.end()) return;
+    auto& v = it->second;
+    for (size_t k = 0; k < v.size();) {
+        PassRead& r = v[k];
+        if (R.frame - r.lastFrame > 120) {  // not read there for 4 s: forgotten
+            v[k] = v.back();
+            v.pop_back();
+            continue;
+        }
+        k++;
+        auto range = R.surfaces.equal_range(r.addr);
+        for (auto si = range.first; si != range.second; ++si) {
+            Surface* s = si->second.get();
+            if (s->width != r.width || s->height != r.height || s->format != r.format || !s->img.image) continue;
+            if (s == depth || (!s->img.pendingClear.on && s->img.use == Use::SAMPLED && (s->img.readStages & r.stages) == r.stages)) continue;
+            bool attached = false;
+            for (int c = 0; c < 8 && !attached; c++) attached = colors[c] == s;
+            if (attached) continue;
+            prepare_read(s->img, r.stages);
+            g_pass_prefetched++;
+        }
+    }
+}
+
 static void prepare_sampled(StageTextures& t, bool vertex) {
     for (int i = 0; i < t.count; i++)
         if (t.sampled[i]) prepare_read(*t.sampled[i], vertex ? VK_PIPELINE_STAGE_VERTEX_SHADER_BIT : VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT);
@@ -2443,13 +2836,14 @@ static void resolve_textures(const uint32_t* regs, Shader* sh, bool vertex, Surf
     auto& rm = dec->resourceMapping;
     uint32_t texBase = vertex ? REGADDR::SQ_TEX_RESOURCE_WORD0_N_VS : REGADDR::SQ_TEX_RESOURCE_WORD0_N_PS;
     uint32_t samplerBase = vertex ? SAMPLER_BASE_INDEX_VERTEX : SAMPLER_BASE_INDEX_PIXEL;
-    for (int u = 0; u < LATTE_NUM_MAX_TEX_UNITS; u++) out.unitScale[u] = out.unitScaleY[u] = 1.0f;
+    for (int u = 0; u < LATTE_NUM_MAX_TEX_UNITS; u++) out.unitScale[u] = out.unitScaleY[u] = 1.0f, out.unitW[u] = out.unitH[u] = 0;
     out.count = rm.getTextureCount();
     out.tvPicture = false;
     for (sint32 i = 0; i < rm.getTextureCount(); i++) {
         out.view[i] = VK_NULL_HANDLE;
         out.sampler[i] = VK_NULL_HANDLE;
         out.sampled[i] = nullptr;
+        out.surf[i] = nullptr;
         sint32 unit = rm.getRelativeTextureUnitFromRelativeBindingPoint(i);
         if (unit < 0) continue;
         VkImageViewType type = shader_view_type(dec->textureUnitDim[unit]);
@@ -2484,8 +2878,11 @@ static void resolve_textures(const uint32_t* regs, Shader* sh, bool vertex, Surf
              regs[REGADDR::SQ_TEX_SAMPLER_WORD0_0 + (std::min<uint32_t>(samplerIdx, 17) + samplerBase) * 3 + 2]);
         if (v) {
             out.sampled[i] = &s->img;  // prepared once the draw's textures are all resolved (prepare_sampled)
+            out.surf[i] = s;
             out.unitScale[unit] = image_scale_x(s);
             out.unitScaleY[unit] = image_scale_y(s);
+            out.unitW[unit] = s->width;
+            out.unitH[unit] = s->height;
             // a rendered picture (layouts also draw with 16:9 textures from the game files, 800x450)
             if (s->gpuWritten && s->width >= 640 && target_is_tv(s->width, s->height)) out.tvPicture = true;
         }
@@ -2558,13 +2955,20 @@ static VkDescriptorSet cached_descriptor_set(uint64_t key, VkDescriptorSetLayout
 // forget everything that refers to the old image and free it once the GPU is done with it.
 // Framebuffers and cached descriptor sets are dropped wholesale (rare); the sets stay allocated
 // in their pool until the next trim.
-void retire_image(const Image& old) {
+void retire_image(const Image& old) { retire_images({old}); }
+
+void retire_images(const std::vector<Image>& olds) {
+    if (olds.empty()) return;
     end_pass();
     std::vector<VkImageView> views;
-    for (VkImageView v : old.attachViews)
-        if (v) views.push_back(v);
+    std::unordered_set<VkImage> images;
+    for (const Image& old : olds) {
+        images.insert(old.image);
+        for (VkImageView v : old.attachViews)
+            if (v) views.push_back(v);
+    }
     for (auto it = g_views.begin(); it != g_views.end();) {
-        if (it->second.image == old.image) {
+        if (images.count(it->second.image)) {
             if (it->second.view) views.push_back(it->second.view);
             it = g_views.erase(it);
         } else {
@@ -2578,11 +2982,11 @@ void retire_image(const Image& old) {
     g_set_cache.clear();
     g_set_hot.clear();
     g_set_cache_epoch++;
-    Image img = old;
-    on_complete([img, views, fbs] {
+    std::vector<Image> imgs = olds;
+    on_complete([imgs, views, fbs] {
         for (VkFramebuffer fb : fbs) vkDestroyFramebuffer(R.device, fb, nullptr);
         for (VkImageView v : views) vkDestroyImageView(R.device, v, nullptr);
-        vmaDestroyImage(R.vma, img.image, img.alloc);
+        for (const Image& img : imgs) vmaDestroyImage(R.vma, img.image, img.alloc);
     });
 }
 
@@ -2674,6 +3078,13 @@ static void bind_stage(VkCommandBuffer cmd, VkPipelineLayout layout, const uint3
             // for a 640x360 grid; the pass draws 960x540, so tile the 4x4 noise per output pixel instead
             if (vertex && ao_mode() == 2 && (regs[mmSQ_PGM_START_VS] << 8) == 0x44BDF900)
                 ((float*)dst)[3] *= 1.5f;
+            // the half-size light buffer's grid on an upscaled buffer (area_sample.h scale_gather_grid)
+            for (uint32_t units = sh->gatherUnits; units; units &= units - 1) {
+                const int unit = std::countr_zero(units);
+                if (unit < LATTE_NUM_MAX_TEX_UNITS)
+                    vk_area_sample::scale_gather_grid((float*)dst, (size - (uint32_t)dec->uniform.loc_remapped) / 16, tex.unitW[unit],
+                                                      tex.unitH[unit], tex.unitScale[unit], tex.unitScaleY[unit]);
+            }
         }
         if (dec->uniform.loc_uniformRegister >= 0) memcpy(vars.data() + regAt, &regs[aluBase], regEnd - regAt);
         if (dec->uniform.loc_windowSpaceToClipSpaceTransform >= 0) {
@@ -2693,6 +3104,8 @@ static void bind_stage(VkCommandBuffer cmd, VkPipelineLayout layout, const uint3
         }
         for (auto& e : dec->uniform.list_ufTexRescale) {  // texel coordinates: guest texels -> image texels
             bool known = e.texUnit < LATTE_NUM_MAX_TEX_UNITS;
+            // area-sampled blur taps (area_sample.h) switched off: scale 1, the game's one sample
+            if (known && e.texUnit < 32 && (sh->areaUnits >> e.texUnit & 1) && !area_blur_enabled()) known = false;
             at(e.uniformLocation)[0] = known ? tex.unitScale[e.texUnit] : 1.0f;
             at(e.uniformLocation)[1] = known ? tex.unitScaleY[e.texUnit] : 1.0f;
         }
@@ -2808,6 +3221,7 @@ static bool ensure_pass(Surface* const* colors, const uint32_t* colorSlices, Sur
         if (same) return true;
     }
     end_pass();
+    prefetch_pass_reads(colors, depth, w, h);
     // clears the game asked for that wait for this pass (Image::pendingClear) become its load ops
     VkClearValue clearValues[9] = {};
     uint32_t clears = 0;
@@ -3133,6 +3547,23 @@ struct PipelineRecipe {
     uint32_t strides[16];
 };
 std::vector<PipelineRecipe> g_pending_pipelines;
+// recipes still to be built ahead, for the shader tour (it waits for 0); -1 until the cache has loaded
+static std::atomic<int> g_ahead_left{-1};
+
+// the area head start's state (see headstart_area_load)
+constexpr size_t kCommonAreas = 8;
+struct AreaHeadStart {
+    bool on = false;
+    std::vector<std::string> names;
+    std::unordered_map<std::string, uint32_t> index;
+    std::vector<std::vector<uint32_t>> links;          // by area, both ways
+    std::vector<std::vector<PipelineRecipe>> recipes;  // by area (the common ones are queued at the start)
+    std::unordered_map<uint64_t, std::vector<uint32_t>> tags;  // recipe hash -> areas
+    std::vector<uint8_t> active, queued;               // by area: current or a neighbour / queued since
+    int cur = -1;
+    std::string linksPath;
+    size_t evicted = 0;
+} g_ahs;
 
 std::string cache_path() {
     if (const char* e = getenv("WWHD_SHADER_CACHE")) return e;
@@ -3199,17 +3630,27 @@ static void cache_record_shader(const uint32_t* regs, bool vertex, const PsLink&
     cache_write(linked ? kRecShaderLinked : kRecShader, v);
 }
 
-static void cache_record_pipeline(const uint32_t* regs, Shader* vs, Shader* ps, uint64_t fsKey, const PipelineState& st) {
-    if (g_cache_replaying || !g_cache_out) return;
+static PipelineRecipe make_recipe(const uint32_t* regs, Shader* vs, Shader* ps, uint64_t fsKey, const PipelineState& st) {
     PipelineRecipe r{};
     r.vsKey = vs->key;
     r.psKey = ps->key;
     r.fsKey = fsKey;
     r.st = st;
     for (int i = 0; i < 16; i++) r.strides[i] = regs[mmSQ_VTX_ATTRIBUTE_BLOCK_START + i * 7 + 2];
+    return r;
+}
+
+static void cache_record_pipeline(const uint32_t* regs, Shader* vs, Shader* ps, uint64_t fsKey, const PipelineState& st) {
+    if (g_cache_replaying || !g_cache_out) return;
+    if (hud_cov_slot(st)) return;  // made from the module at draw time (coverage_module), never replayed
     std::vector<uint8_t> v;
-    put(v, r);
+    put(v, make_recipe(regs, vs, ps, fsKey, st));
     cache_write(kRecPipelineVk, v);
+}
+
+static uint64_t recipe_hash(const PipelineRecipe& r) { return hash_bytes(&r, sizeof r); }
+static uint64_t recipe_hash(const uint32_t* regs, Shader* vs, Shader* ps, uint64_t fsKey, const PipelineState& st) {
+    return recipe_hash(make_recipe(regs, vs, ps, fsKey, st));
 }
 
 // progress of cache_load for the app's loading screen (cache_progress): 0 not started, 1 loading,
@@ -3281,9 +3722,16 @@ static Shader* replay_state(uint32_t* regs, bool vertex, const uint8_t* code, ui
 // hash and size, the registers, the fetch shader in our own or the code-free encoding and the key
 // the state gave here; then the pipeline recipes whose shaders all resolved. A device rebuilds the
 // records from the programs in its own game files.
-//   "WWHV", u32 version 1, u32 raw size, zlib( u32 nfetch, {u32 size, bytes}*, u32 nstates,
+//   "WWHV", u32 version 2, u32 raw size, zlib( u32 nfetch, {u32 size, bytes}*, u32 nstates,
 //   {u64 key, u64 program hash, u32 program size, u32 kind (0 PS, 1 VS, 2 PS linked), i32 fetch,
-//    u32 vertex shader output mask, u32 nregs, (u32 reg, u32 value)*}*, u32 npipelines, PipelineRecipe* )
+//    u32 vertex shader output mask, u32 nregs, (u32 reg, u32 value)*}*, u32 npipelines, u32 recipe size,
+//   PipelineRecipe*, u32 nareas, {u32 length, name}*, u32 ntags, {u64 recipe hash, u32 n, u32 area index*}*,
+//   u32 nlinks, {u32 area index, u32 area index}* )
+// The tags come from areas.bin (area tags): the areas where the game's draws used a recipe (hash_bytes of
+// its PipelineRecipe). They cover every pipeline drawn, also those the head start made, whose recipes
+// are in the template already but not in this cache: tools/shadermerge.py applies them to the merged
+// recipes by hash. The links (which areas lead into which: tools/areagraph.py from the game files) come
+// in with the merge; an export has none. Version 1 ended after the recipes (their size from the rest).
 namespace {
 struct ExportRec { long at; uint32_t type; };
 struct ExportPs { uint64_t key; long at; uint32_t regs[43]; };  // unlinked pixel shader records
@@ -3498,7 +3946,47 @@ static void template_export(const std::string& cachePath) {
     put_le(out, (uint32_t)nStates);
     out.insert(out.end(), states.begin(), states.end());
     put_le(out, (uint32_t)good.size());
+    put_le(out, (uint32_t)sizeof(PipelineRecipe));
     for (auto* r : good) put_le(out, *r);
+    // the area tags: areas.bin read whole (recipe hash -> areas)
+    std::vector<std::string> areas;
+    std::unordered_map<uint64_t, std::vector<uint32_t>> tags;
+    size_t areaRecords = 0, tagged = 0;
+    {
+        std::unordered_map<std::string, uint32_t> areaIndex;
+        std::string ap = cachePath.substr(0, cachePath.find_last_of('/') + 1) + "areas.bin";
+        if (FILE* a = fopen(ap.c_str(), "rb")) {
+            char magic[4];
+            uint32_t len, n;
+            while (fread(magic, 4, 1, a) == 1 && !memcmp(magic, "WWHA", 4) && fread(&len, 4, 1, a) == 1 && len < 256) {
+                std::string name(len, '\0');
+                if (fread(name.data(), 1, len, a) != len || fread(&n, 4, 1, a) != 1 || n > (1u << 24)) break;
+                std::vector<uint64_t> h(n);
+                if (fread(h.data(), 8, n, a) != n) break;
+                auto it = areaIndex.emplace(name, (uint32_t)areas.size()).first;
+                if (it->second == areas.size()) areas.push_back(name);
+                for (uint64_t x : h) {
+                    auto& v = tags[x];
+                    if (std::find(v.begin(), v.end(), it->second) == v.end()) v.push_back(it->second);
+                }
+                areaRecords++;
+            }
+            fclose(a);
+        }
+    }
+    put_le(out, (uint32_t)areas.size());
+    for (auto& a : areas) {
+        put_le(out, (uint32_t)a.size());
+        out.insert(out.end(), a.begin(), a.end());
+    }
+    put_le(out, (uint32_t)tags.size());
+    for (auto& [h, v] : tags) {
+        put_le(out, h);
+        put_le(out, (uint32_t)v.size());
+        for (uint32_t i : v) put_le(out, i);
+    }
+    put_le(out, (uint32_t)0);  // links
+    for (auto* r : good) tagged += tags.count(recipe_hash(*r));
     uLongf csize = compressBound(out.size());
     std::vector<uint8_t> comp(csize);
     if (compress2(comp.data(), &csize, out.data(), out.size(), 9) != Z_OK) return;
@@ -3509,11 +3997,13 @@ static void template_export(const std::string& cachePath) {
                                              : cachePath.substr(0, cachePath.find_last_of('/') + 1) + "template.bin";
     if (FILE* o = fopen(path.c_str(), "wb")) {
         fwrite("WWHV", 4, 1, o);
-        uint32_t hdr[2] = {1, (uint32_t)out.size()};
+        uint32_t hdr[2] = {2, (uint32_t)out.size()};
         fwrite(hdr, sizeof hdr, 1, o);
         fwrite(comp.data(), 1, csize, o);
         fclose(o);
     }
+    LOG("[gfx] template export: area tags from %zu visits: %zu areas, %zu recipes (%zu of this cache's %zu)", areaRecords,
+        areas.size(), tags.size(), tagged, good.size());
     LOG("[gfx] template export: %zu pipelines (%zu distinct): %zu kept, unresolved %zu vertex / %zu pixel / %zu fetch; "
         "%zu linked pixel shaders found in old records; %zu states (%zu unreadable), %zu fetch shaders (%zu states with code-free "
         "ones, %zu mismatches); %zu bytes raw, %lu written to %s (%.0f ms)",
@@ -3610,6 +4100,7 @@ static void cache_load() {
     if (path == "0") { g_cache_disabled = true; return; }
     size_t slash = path.find_last_of('/');
     spirv_cache_open(slash == std::string::npos ? std::string(".") : path.substr(0, slash));
+    const size_t heap0 = (size_t)mallinfo().uordblks;  // (WWHD_MEM_LOG: what the replay keeps)
     double t0 = now_ms();
     g_use_saved_at = t0;
     g_use_path = path + ".use";
@@ -3752,7 +4243,7 @@ static void cache_load() {
     }
     void headstart_vk_load(const std::string& dir);  // vk_headstart.cpp
     headstart_vk_load(slash == std::string::npos ? std::string(".") : path.substr(0, slash));
-    if (low_memory() && !g_pending_pipelines.empty()) {  // no pipelines made ahead (the shaders are)
+    if (low_memory() && !g_ahs.on && !g_pending_pipelines.empty()) {  // no pipelines made ahead (the shaders are)
         LOG("[gfx] low memory device: %zu cached pipelines made when first drawn, not ahead", g_pending_pipelines.size());
         g_pending_pipelines = {};
     }
@@ -3761,6 +4252,19 @@ static void cache_load() {
     if (shaders || pipelines)
         LOG("[gfx] shader cache: replayed %zu shaders, %zu pipelines queued (%.0f ms) from %s", shaders, pipelines,
             now_ms() - t0, path.c_str());
+    g_ahead_left = (int)g_pending_pipelines.size();
+    if (getenv("WWHD_MEM_LOG")) {
+        std::unordered_set<const LatteDecompilerShader*> decs;
+        size_t bindings = 0;
+        for (auto& [key, sh] : g_shaders) {
+            if (sh->dec) decs.insert(sh->dec);
+            bindings += sh->bindings.capacity() * sizeof(VkDescriptorSetLayoutBinding);
+        }
+        LOG("[mem] shader cache replay: native heap +%zu MB; %zu shaders (%zu B each, bindings %zu MB), %zu translations "
+            "(LatteDecompilerShader %zu B each), %zu modules, g_shaders buckets %zu",
+            ((size_t)mallinfo().uordblks - heap0) >> 20, g_shaders.size(), sizeof(Shader), bindings >> 20, decs.size(),
+            sizeof(LatteDecompilerShader), g_modules.size(), g_shaders.bucket_count());
+    }
 }
 
 // build queued pipelines whose shaders have finished compiling, at most `budget` of them and only
@@ -3796,6 +4300,7 @@ static void build_pending_pipelines(int budget, int maxInFlight) {
         compile_deferred(pi->second);
         if (shader_state(vi->second) != CS_READY || shader_state(pi->second) != CS_READY) { i++; continue; }
         for (int k = 0; k < 16; k++) regs[mmSQ_VTX_ATTRIBUTE_BLOCK_START + k * 7 + 2] = r.strides[k];
+        g_ahead_recipe = recipe_hash(r);
         get_pipeline(regs.data(), vi->second, pi->second, fi->second, r.fsKey, r.st);
         g_pending_pipelines[i] = g_pending_pipelines.back();
         g_pending_pipelines.pop_back();
@@ -3804,6 +4309,7 @@ static void build_pending_pipelines(int budget, int maxInFlight) {
     }
     g_building_ahead = false;
     g_cache_replaying = false;
+    g_ahead_left = (int)g_pending_pipelines.size();
 }
 
 // the game holds without frames (gx2::warm_while_held, every ~20 ms): the startup warming with
@@ -3835,7 +4341,178 @@ void set_background_compiles_paused(bool on) { g_bg_paused = on; }
 
 static void pipeline_budget_step();
 
+// ---- area head start: with a template whose recipes carry area tags (most of them), the head start
+// builds ahead only the pipelines of the area Link is in and of the areas it leads into (the template's
+// links from the stage data, and the moves seen on this device: area-links.txt next to the cache), plus
+// those drawn in many areas (kCommonAreas: Link, the HUD, effects), instead of all ~11,000 (~300 MB on an
+// Adreno 640; one area draws ~300-400). On an area change the new neighbours are queued; pipelines unused
+// for 30 s that belong to none of these areas are freed (made again from the driver's pipeline cache when
+// a draw needs one, like those of a place reached by a warp or a save state). Recipes without tags are
+// made when first drawn and kept. WWHD_AREA_HEADSTART=0: the full head start; 1: also with few tags.
+
+static uint32_t area_id(const std::string& name) {
+    auto it = g_ahs.index.find(name);
+    if (it != g_ahs.index.end()) return it->second;
+    uint32_t i = (uint32_t)g_ahs.names.size();
+    g_ahs.index[name] = i;
+    g_ahs.names.push_back(name);
+    g_ahs.links.emplace_back();
+    g_ahs.recipes.emplace_back();
+    g_ahs.active.push_back(0);
+    g_ahs.queued.push_back(0);
+    return i;
+}
+
+static bool area_link(uint32_t a, uint32_t b) {
+    if (a == b || std::find(g_ahs.links[a].begin(), g_ahs.links[a].end(), b) != g_ahs.links[a].end()) return false;
+    g_ahs.links[a].push_back(b);
+    g_ahs.links[b].push_back(a);
+    return true;
+}
+
+// cache_load (vk_headstart.cpp, render thread): the template's recipes by area; the common ones queued now,
+// the cache's own records dropped (made when drawn)
+void headstart_area_load(const uint8_t* pipes, uint32_t n, const std::vector<std::string>& areas,
+                         const std::unordered_map<uint64_t, std::vector<uint32_t>>& tags,
+                         const std::vector<std::pair<uint32_t, uint32_t>>& links) {
+    for (auto& a : areas) area_id(a);
+    for (auto& [a, b] : links) area_link(a, b);
+    std::string path = cache_path();
+    size_t slash = path.find_last_of('/');
+    g_ahs.linksPath = (slash == std::string::npos ? std::string(".") : path.substr(0, slash)) + "/area-links.txt";
+    size_t learned = 0;
+    if (FILE* f = fopen(g_ahs.linksPath.c_str(), "r")) {
+        char a[64], b[64];
+        while (fscanf(f, "%63s %63s", a, b) == 2) learned += area_link(area_id(a), area_id(b));
+        fclose(f);
+    }
+    g_pending_pipelines.clear();
+    size_t common = 0, byArea = 0, untagged = 0;
+    for (uint32_t i = 0; i < n; i++) {
+        PipelineRecipe r;
+        memcpy(&r, pipes + (size_t)i * sizeof r, sizeof r);
+        const uint64_t h = recipe_hash(r);
+        auto it = tags.find(h);
+        if (it == tags.end()) { untagged++; continue; }
+        g_ahs.tags[h] = it->second;
+        if (it->second.size() >= kCommonAreas) {
+            g_pending_pipelines.push_back(r);
+            common++;
+            continue;
+        }
+        for (uint32_t a : it->second) g_ahs.recipes[a].push_back(r);
+        byArea++;
+    }
+    g_ahs.on = true;
+    LOG("[gfx] area head start: %u pipelines: %zu common (queued now), %zu by area (%zu areas, %zu links, %zu learned here), "
+        "%zu untagged (made when drawn)", n, common, byArea, g_ahs.names.size(), links.size(), learned, untagged);
+}
+
+// a new area: its and its neighbours' recipes queued, the move remembered as a link
+static void area_enter(const std::string& name) {
+    const uint32_t i = area_id(name);
+    if (g_ahs.cur >= 0 && area_link((uint32_t)g_ahs.cur, i)) {
+        if (FILE* f = fopen(g_ahs.linksPath.c_str(), "a")) {
+            fprintf(f, "%s %s\n", g_ahs.names[g_ahs.cur].c_str(), name.c_str());
+            fclose(f);
+        }
+    }
+    g_ahs.cur = (int)i;
+    std::fill(g_ahs.active.begin(), g_ahs.active.end(), 0);
+    g_ahs.active[i] = 1;
+    for (uint32_t b : g_ahs.links[i]) g_ahs.active[b] = 1;
+    size_t queued = 0, areas = 0;
+    auto queue = [&](uint32_t a) {
+        if (g_ahs.queued[a]) return;
+        g_ahs.queued[a] = 1;
+        g_pending_pipelines.insert(g_pending_pipelines.end(), g_ahs.recipes[a].begin(), g_ahs.recipes[a].end());
+        queued += g_ahs.recipes[a].size();
+        areas++;
+    };
+    queue(i);  // (built first: build_pending_pipelines takes them from the cursor on)
+    for (uint32_t b : g_ahs.links[i]) queue(b);
+    for (size_t a = 0; a < g_ahs.queued.size(); a++)
+        if (!g_ahs.active[a]) g_ahs.queued[a] = 0;
+    LOG("[gfx] area head start: %s (%zu neighbours): %zu pipelines of %zu areas queued, %zu pending", name.c_str(),
+        g_ahs.links[i].size(), queued, areas, g_pending_pipelines.size());
+}
+
+static size_t area_evict();
+// Other areas' pipelines are freed only while memory gets short: Android's room above its low-memory line
+// (MainActivity, every 2 s) under WWHD_AREA_EVICT_HEADROOM_MB (768), or not known. With room to spare they stay,
+// so going back and forth between areas doesn't free and make the same pipelines again (Snapdragon 7+ Gen 3, 11.6 GB: 12,125
+// freed and 7,399 made again in a 15-minute tour, for ~150-200 MB); the build ahead stays by area either way.
+static std::atomic<int> g_mem_headroom{-1};
+void set_memory_headroom(int mb) { g_mem_headroom = mb; }
+int memory_headroom() { return g_mem_headroom.load(std::memory_order_relaxed); }
+static bool area_evict_now() {
+    static const int line = getenv("WWHD_AREA_EVICT_HEADROOM_MB") ? atoi(getenv("WWHD_AREA_EVICT_HEADROOM_MB")) : 768;
+    const int h = g_mem_headroom.load(std::memory_order_relaxed);
+    return h < 0 || h < line;
+}
+
+// ---- area tags: the area polled twice a second; a change (or a minute, or the shader tour before each
+// warp: area_flush) writes the visit's pipelines (see area_use)
+static std::string g_area;
+static FILE* g_area_out = nullptr;
+static std::atomic<bool> g_area_flush{false};
+void area_flush() { g_area_flush = true; }
+int pipelines_pending() { return g_ahead_left.load(); }
+
+static void area_write() {
+    if (!g_area_used.empty() && !g_area.empty()) {
+        if (!g_area_out) {
+            std::string path = cache_path();
+            size_t slash = path.find_last_of('/');
+            path = (slash == std::string::npos ? std::string(".") : path.substr(0, slash)) + "/areas.bin";
+            g_area_out = fopen(path.c_str(), "ab");
+        }
+        if (g_area_out) {
+            uint32_t len = (uint32_t)g_area.size(), n = (uint32_t)g_area_used.size();
+            fwrite("WWHA", 4, 1, g_area_out);
+            fwrite(&len, 4, 1, g_area_out);
+            fwrite(g_area.data(), 1, len, g_area_out);
+            fwrite(&n, 4, 1, g_area_out);
+            fwrite(g_area_used.data(), 8, n, g_area_out);
+            fflush(g_area_out);
+        }
+    }
+    g_area_used.clear();
+}
+
+static void area_step() {
+#ifdef WWHD_PUBLIC_RELEASE
+    const bool record = false;
+#else
+    static const bool record = !g_cache_disabled && !(getenv("WWHD_AREA_TAGS") && !atoi(getenv("WWHD_AREA_TAGS")));
+#endif
+    if ((!record && !g_ahs.on) || R.frame % 30 != 0) return;
+    if (g_ahs.on && R.frame % 300 == 0 && area_evict_now()) area_evict();
+    if (record && !g_area_visit) g_area_visit = 1;
+    // a new area counts once it was seen 3 times in a row (1.5 s): arriving on the sea, Link's position is
+    // still the last stage's for a moment (a false chart square)
+    static std::string seen;
+    static int seenTimes = 0;
+    std::string a = mods::current_area();
+    if (a != g_area) {
+        seenTimes = a == seen ? seenTimes + 1 : 1;
+        seen = a;
+    }
+    if (a != g_area && seenTimes >= 3) {
+        if (record) area_write();
+        if (!a.empty()) {
+            if (record) LOG("[gfx] area %s", a.c_str());
+            if (g_ahs.on) area_enter(a);
+        }
+        g_area = a;
+        if (record) g_area_visit++;  // every pipeline counts again once
+    } else if (record && (R.frame % 1800 == 0 || g_area_flush.exchange(false))) {
+        area_write();
+    }
+}
+
 void cache_warm_step() {
+    area_step();
     if (g_bg_paused.load(std::memory_order_relaxed)) return;
     // a few background compiles per frame keep the startup burst from starving the game, and none
     // start while the game's own compiles keep the compiler busy (WWHD_BG_COMPILES in flight, default
@@ -3928,6 +4605,13 @@ void report_skips() {
         g_fast_draws / 300.0, g_slow_draws / 300.0, g_index_reused / 300.0, g_index_kept / 300.0, g_index_built / 300.0,
         keepidx::kept.size(), keepidx::A.top / 1024);
     g_index_reused = g_index_built = g_index_kept = 0;
+    {
+        static uint64_t passes0 = 0;
+        LOG("[gfx] last 300 frames, render passes/frame: %.1f begun by draws; %.1f textures made ready before their pass, %.1f "
+            "first read inside one (ended it)", (g_pass_serial - passes0) / 300.0, g_pass_prefetched / 300.0, g_pass_splits_seen / 300.0);
+        passes0 = g_pass_serial;
+        g_pass_prefetched = g_pass_splits_seen = 0;
+    }
     LOG("[gfx] last 300 frames, program hashes/frame: %.0f looked up, %.0f from the map (%zu addresses); %llu changed unannounced",
         g_program_lookups / 300.0, g_program_map_lookups / 300.0, g_program_hashes.size(), (unsigned long long)g_program_stale);
     g_program_lookups = g_program_map_lookups = g_program_stale = 0;
@@ -4097,6 +4781,7 @@ static struct PrepKey {
     uint32_t prim;
     bool valid;
 } g_prep_key{};
+static void prep_invalidate() { g_prep_key.valid = false; }
 // ---- pipelines freed: the least recently used, unused for minAge frames, until at most `keep` remain;
 // only with no compile running (a background build writes its pipeline). Made again when a draw needs
 // one (from the driver's pipeline cache: a few ms). The frame's prepared draw and the hot table may
@@ -4121,6 +4806,43 @@ static size_t evict_pipelines(size_t keep, uint64_t minAge) {
     g_prep_key.valid = false;
     g_pipes_evicted += n;
     return n;
+}
+
+// area head start: the pipelines unused for 30 s that belong to areas, none of them active (not the common
+// ones; not those without tags either: what the tours never showed, e.g. the menus, stays once made)
+static size_t area_evict() {
+    std::vector<uint64_t> drop;
+    for (auto& [h, pl] : g_pipelines) {
+        if (pl->status.load(std::memory_order_acquire) != CS_READY || R.frame < pl->lastUse + 900) continue;
+        // its recipes' areas (it was made for one, others may have found it made): kept while any is
+        // active; untagged and common ones are kept
+        bool keep = false, tagged = false;
+        auto areasOf = [&](uint64_t r) {
+            auto it = g_ahs.tags.find(r);
+            if (it == g_ahs.tags.end()) return;
+            tagged = true;
+            if (it->second.size() >= kCommonAreas) keep = true;
+            for (uint32_t a : it->second) keep |= g_ahs.active[a] != 0;
+        };
+        areasOf(pl->recipe);
+        for (uint64_t r : pl->also) areasOf(r);
+        if (tagged && !keep) drop.push_back(h);
+    }
+    for (uint64_t h : drop) {
+        auto it = g_pipelines.find(h);
+        vkDestroyPipeline(R.device, it->second->pipeline, nullptr);
+        delete it->second;
+        g_pipelines.erase(it);
+        g_pipes_freed.insert(h);
+    }
+    if (!drop.empty()) {
+        g_pipe_hot.clear();
+        g_prep_key.valid = false;
+        g_ahs.evicted += drop.size();
+        LOG("[gfx] area head start: %zu pipelines of other areas freed, %zu kept (%zu freed, %zu made again so far)", drop.size(),
+            g_pipelines.size(), g_ahs.evicted, g_pipes_remade);
+    }
+    return drop.size();
 }
 
 static std::atomic<bool> g_trim{false};
@@ -4387,7 +5109,7 @@ void draw(const uint32_t* regs, uint32_t prim, uint32_t count, uint32_t indexTyp
     uint32_t colorSlices[8] = {}, depthSlice = 0;
     uint8_t mask = LatteMRT::GetActiveColorBufferMask(ps->dec, lcr);
     for (int i = 0; i < 8; i++)
-        if (mask & (1 << i)) colors[i] = color_target(regs, i, &colorSlices[i]);
+        if (mask & (1 << i)) colors[i] = color_target(regs, i, &colorSlices[i], ps->sizeRequest);
     Surface* depth = LatteMRT::GetActiveDepthBufferMask(lcr) ? depth_target(regs, &depthSlice) : nullptr;
     if (g_hires_redraw) {
         if (!colors[0]) return;
@@ -4402,6 +5124,36 @@ void draw(const uint32_t* regs, uint32_t prim, uint32_t count, uint32_t indexTyp
     for (auto& c : colors)
         if (c && !renderable(c)) c = nullptr;
     if (depth && !renderable(depth)) depth = nullptr;
+    // A draw that binds a subset of the open render pass's colour targets (the game switches between
+    // colour only and colour + its R8 second target) stays in that pass (WindWakerHD-Android-Plus
+    // 4595260): its pipeline writes nothing to the targets it doesn't bind (CB_TARGET_MASK cleared
+    // there); with no depth buffer it then borrows the pass's as below. Not when it samples one of
+    // those targets, nor in the pass with the HUD coverage (vk_draw.cpp hud coverage). Each avoided
+    // split saves a store and reload of the pass's targets on tiled GPUs. WWHD_PASS_SUBSET=0: off.
+    uint32_t absentColors = 0;
+    {
+        static const bool subsetOn = [] { const char* e = getenv("WWHD_PASS_SUBSET"); return !e || atoi(e) != 0; }();
+        if (subsetOn && R.pass && !g_hires_redraw && colors[0] && R.passColor[0] == colors[0] && R.passColorSlice[0] == colorSlices[0]) {
+            bool ok = !depth || (R.passDepth == depth && R.passDepthSlice == depthSlice);
+            uint32_t absent = 0;
+            for (int i = 0; i < 8 && ok; i++) {
+                if (colors[i]) ok = R.passColor[i] == colors[i] && R.passColorSlice[i] == colorSlices[i];
+                else if (R.passColor[i]) {
+                    absent |= 1u << i;
+                    ok = R.passColor[i] != &g_cov && R.passColor[i]->addr;
+                    // the draw samples the target it doesn't bind: it needs the pass ended (a copy or a barrier)
+                    const uint32_t base = R.passColor[i]->addr >> 8;
+                    for (uint32_t tb : {(uint32_t)REGADDR::SQ_TEX_RESOURCE_WORD0_N_PS, (uint32_t)REGADDR::SQ_TEX_RESOURCE_WORD0_N_VS})
+                        for (int t = 0; t < 18 && ok; t++) ok = regs[tb + t * 7 + 2] != base;
+                }
+            }
+            if (ok && absent) {
+                for (int i = 0; i < 8; i++)
+                    if ((absent >> i) & 1) { colors[i] = R.passColor[i]; colorSlices[i] = R.passColorSlice[i]; }
+                absentColors = absent;
+            }
+        }
+    }
     // A draw without a depth buffer into the color targets of the open render pass, which has one: it
     // continues that pass with depth and stencil tests off instead of ending it. Each pass end stores
     // the 960x540 color and depth targets and the next pass loads them again (on tiled GPUs a full
@@ -4438,6 +5190,22 @@ void draw(const uint32_t* regs, uint32_t prim, uint32_t count, uint32_t indexTyp
     for (auto& c : colors)
         if (c && (c->img.width != w || c->img.height != h)) { c = nullptr; g_skip[SK_DROPPED_COLOR]++; }
     if (!w) { g_skip[SK_NO_TARGET]++; return; }
+    // a HUD draw into the TV picture: its coverage too (hud_coverage_begin)
+    bool hudCov = false;
+    uint32_t covSlot = 0;
+    if (g_cov_frame == R.frame && g_cov_valid && colors[0] == g_cov_target && !g_hires_redraw) {
+        bool alone = true;
+        for (int i = 1; i < 8; i++) alone = alone && !colors[i];
+        CovModule cm = alone && ps->mod ? coverage_module(ps->mod) : CovModule{VK_NULL_HANDLE, 0};
+        if (cm.module && g_cov.img.width == w && g_cov.img.height == h && colors[0]->fmt.kind == FormatInfo::FLOAT) {
+            colors[cm.location] = &g_cov;
+            colorSlices[cm.location] = 0;
+            covSlot = cm.location;
+            hudCov = true;
+        } else {
+            g_cov_valid = false;  // this frame's in-between one: the HUD found by comparing pictures
+        }
+    }
 
     // skipping while compiling only for targets drawn in each of the last 3 frames (see wait_compiled)
     bool everyFrame = true;
@@ -4495,6 +5263,10 @@ void draw(const uint32_t* regs, uint32_t prim, uint32_t count, uint32_t indexTyp
     StageTextures& ptex = P.ptex;
     resolve_textures(regs, vs, true, colors, depth, vtex);
     resolve_textures(regs, ps, false, colors, depth, ptex);
+    if (!g_hires_redraw) {
+        note_pass_reads(vtex, VK_PIPELINE_STAGE_VERTEX_SHADER_BIT);
+        note_pass_reads(ptex, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT);
+    }
     prepare_sampled(vtex, true);
     prepare_sampled(ptex, false);
     // the TV picture drawn into a GamePad target of another shape (the game mirrors the TV on the
@@ -4526,6 +5298,8 @@ void draw(const uint32_t* regs, uint32_t prim, uint32_t count, uint32_t indexTyp
     for (int i = 0; i < 8; i++) st.blend[i] = regs[REGADDR::CB_BLEND0_CONTROL + i];
     st.colorControl = regs[REGADDR::CB_COLOR_CONTROL];
     st.targetMask = regs[REGADDR::CB_TARGET_MASK];
+    for (int i = 0; i < 8; i++)
+        if ((absentColors >> i) & 1) st.targetMask &= ~(0xFu << (4 * i));  // (pass subset: kept, not written)
     st.topology = (uint32_t)ptype;
     st.cull = (cf ? 1 : 0) | (cb ? 2 : 0);
     st.frontCCW = pm.get_FRONT_FACE() == LATTE_PA_SU_SC_MODE_CNTL::E_FRONTFACE::CCW;
@@ -4534,8 +5308,17 @@ void draw(const uint32_t* regs, uint32_t prim, uint32_t count, uint32_t indexTyp
     uint32_t clipRaw = regs[REGADDR::PA_CL_CLIP_CNTL];
     memcpy(&clipCntl, &clipRaw, 4);
     st.depthClamp = clipCntl.get_ZCLIP_FAR_DISABLE() ? 1 : 0;
+    set_hud_cov_slot(st, hudCov ? covSlot : 0);
 
     Pipeline* pipe = get_pipeline(regs, vs, ps, fs, fsKey, st);
+    if (!pipe && hudCov) {  // its coverage variant is still compiling: drawn as usual, the frame generated the old way
+        hudCov = false;
+        g_cov_valid = false;
+        colors[covSlot] = nullptr;
+        set_hud_cov_slot(st, 0);
+        st.pass.color[covSlot] = 0;
+        pipe = get_pipeline(regs, vs, ps, fs, fsKey, st);
+    }
     g_wait_whole = false;
     if (!pipe) { g_skip[SK_PIPE_COMPILING]++; return; }
 

@@ -46,6 +46,7 @@ import java.util.Random;
  */
 final class OptionsMenu extends Dialog {
     static int lastTab;  // reopens where it was left
+    static boolean openProgress;  // the next menu opens on Game > Game progress (a tap on the percent on screen, ProgressBadge)
 
     private static final int SLATE = GameUi.SLATE, CYAN_DARK = GameUi.CYAN_DARK, INK = GameUi.INK, HINT = GameUi.HINT;
     private static final int YELLOW = GameUi.YELLOW, GLOW = GameUi.GLOW;
@@ -215,6 +216,9 @@ final class OptionsMenu extends Dialog {
 
     private int px(float v) { return Math.round(v * dp * s); }
 
+    /** the inventory's page on the console's GamePad view (MainActivity.screenRemote) */
+    private boolean backdrop() { return inInventory && a.screenRemote(); }
+
     private void sp(TextView v, float size) { v.setTextSize(TypedValue.COMPLEX_UNIT_SP, size * ts); }
 
     @Override
@@ -225,6 +229,9 @@ final class OptionsMenu extends Dialog {
         w.setBackgroundDrawable(inInventory ? new ColorDrawable(0) : gameStyle ? new GameUi.GameBackground(getContext(), unit) : new ColorDrawable(SLATE));
         w.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT);
         w.getAttributes().layoutInDisplayCutoutMode = android.view.WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES;
+        // the page on the console's GamePad view (the game picture on another device, which goes on): worked by
+        // touch like the GamePad's screen, the controller stays with the game (Home / Select held: the full options)
+        if (backdrop()) w.addFlags(android.view.WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE);
 
         root = inInventory ? new PageRoot() : new FrameLayout(getContext());
         // clear of a camera cutout (the window reaches into it; the inventory's page sits on the game's paper)
@@ -444,7 +451,10 @@ final class OptionsMenu extends Dialog {
             fill();
             if (gameStyle) sizeGameTabs();
         } else {
+            if (openProgress) tab = 1;
             selectTab(tab);
+            if (openProgress) openPage(this::progressPage);
+            openProgress = false;
         }
     }
 
@@ -598,9 +608,23 @@ final class OptionsMenu extends Dialog {
         }
     };
 
+    // opened from a GamePad device (MainActivity.padMenu): see-through on this screen, its picture goes there (PadUi
+    // draws the views themselves, not the screen)
+    private boolean onlyOnGamePad;
+
+    void onlyOnGamePad(boolean on) {
+        onlyOnGamePad = on;
+        if (getWindow() == null) return;
+        android.view.WindowManager.LayoutParams lp = getWindow().getAttributes();
+        lp.alpha = on ? 0f : 1f;
+        getWindow().setAttributes(lp);
+    }
+
     @Override
     protected void onStart() {
         super.onStart();
+        if (onlyOnGamePad) onlyOnGamePad(true);
+        if (!backdrop()) MainActivity.dialogShown(this);  // (on the backdrop: not a dialog that holds a remote GamePad)
         if (!atStart) sound(MenuSounds.OPEN);
         ((android.hardware.input.InputManager) a.getSystemService(Context.INPUT_SERVICE)).registerInputDeviceListener(devices, null);
         if (!inInventory || following) return;
@@ -614,6 +638,8 @@ final class OptionsMenu extends Dialog {
 
     @Override
     protected void onStop() {
+        if (screens != null) screens.stop();
+        MainActivity.dialogGone(this);
         ((android.hardware.input.InputManager) a.getSystemService(Context.INPUT_SERVICE)).unregisterInputDeviceListener(devices);
         if (clothesChoice >= 0) {
             int c = clothesChoice;
@@ -856,7 +882,64 @@ final class OptionsMenu extends Dialog {
         r.setOnClickListener(x -> click.run());
     }
 
+    // Game > Other devices: this device runs the game and others join it (PadHost), or it joins another as the
+    // GamePad (not a TV) or the screen (PadActivity)
+    private void devicesPage() {
+        pageTitle(R.string.opt_page_devices);
+        note(a.getString(a.tv ? R.string.devices_note_tv : R.string.devices_note));
+        toggle(R.string.opt_pad_host, R.string.opt_pad_host_hint, a.prefs.getBoolean("pad_host", a.tv), a::setPadHost);
+        submenu(R.string.opt_pad_cast, R.string.opt_pad_cast_hint, "", () -> openPage(castPage));
+        if (!a.tv) submenu(R.string.opt_pad_play, R.string.opt_pad_play_hint, "", a::becomePad);
+        submenu(R.string.opt_pad_screen, R.string.opt_pad_screen_hint, "", a::becomeScreen);
+        toggle(R.string.opt_start_choice, R.string.opt_start_choice_hint, a.prefs.getBoolean(MainActivity.PREF_START_CHOICE, false),
+                on -> a.prefs.edit().putBoolean(MainActivity.PREF_START_CHOICE, on).apply());
+    }
+
+    // Game > Other devices > Show on a TV: the devices waiting to be a screen (ScreenFinder), one picked is invited
+    private ScreenFinder screens;
+    private final Runnable castPage = this::castPage;
+
+    private void castPage() {
+        pageTitle(R.string.opt_pad_cast);
+        if (screens == null) screens = new ScreenFinder(getContext(), () -> { if (page == castPage) fill(); });
+        screens.start();
+        java.util.List<ScreenFinder.Screen> l = screens.found();
+        note(a.getString(l.isEmpty() ? R.string.pad_cast_looking : R.string.pad_cast_pick));
+        for (ScreenFinder.Screen s : l)
+            driverRow(s.name, null, false, () -> a.inviteScreen(s, ok -> {
+                if (ok) dismiss();  // (to the game: the screen joins)
+            }));
+    }
+
     // a paragraph of explanation on a page
+    /** the achievements page: what keeps them paused (cheats on, one-shot cheats / story presets used in this run); up
+     *  to two named in a note, more behind a line that opens a dialog with the whole list */
+    private void pausedNote() {
+        if (a.prefs.getBoolean(Achievements.PREF_WITH_CHEATS, false)) return;  // (nothing pauses them)
+        java.util.List<String> on = Achievements.pausedOn(a, a.prefs), used = Achievements.pausedUsed();
+        if (on.isEmpty() && used.isEmpty()) return;
+        if (on.size() + used.size() <= 2) {
+            StringBuilder t = new StringBuilder();
+            if (!on.isEmpty()) t.append(a.getResources().getQuantityString(R.plurals.ach_paused_on, on.size(), String.join(", ", on)));
+            if (!used.isEmpty())
+                t.append(t.length() > 0 ? "\n" : "").append(a.getString(R.string.ach_paused_used, String.join(", ", used)));
+            note(t.toString());
+            return;
+        }
+        StringBuilder m = new StringBuilder();
+        if (!on.isEmpty()) {
+            m.append(a.getString(R.string.ach_paused_on_list));
+            for (String n : on) m.append("\n• ").append(n);
+        }
+        if (!used.isEmpty()) {
+            m.append(m.length() > 0 ? "\n\n" : "").append(a.getString(R.string.ach_paused_used_list));
+            for (String n : used) m.append("\n• ").append(n);
+        }
+        submenu(a.getString(R.string.ach_paused_many, on.size() + used.size()), a.getString(R.string.ach_paused_many_hint), "",
+                () -> new GameDialog(getContext()).title(R.string.ach_paused_title).message(m.toString())
+                        .button(android.R.string.ok, null).show());
+    }
+
     private void note(String text) {
         TextView t = GameUi.text(getContext(), gameStyle);
         t.setText(text);
@@ -951,6 +1034,7 @@ final class OptionsMenu extends Dialog {
         int focusIndex = focused != null && focused.getParent() == rows ? rows.indexOfChild(focused) : -1;
         rows.removeAllViews();
         onPacksPage = false;
+        if (screens != null && page != castPage) screens.stop();
         if (page != null) page.run();
         else if (tab == 0) saves();
         else if (tab == 1) game();
@@ -986,7 +1070,7 @@ final class OptionsMenu extends Dialog {
 
     // the picker at start: the last session first, then the other used slots, the latest first
     private void startPage() {
-        java.util.List<Integer> slots = MainActivity.usedStateSlots(a.baseDir());
+        java.util.List<Integer> slots = MainActivity.usedStateSlots(a.playDir());
         if (slots.remove(Integer.valueOf(8))) slots.add(0, 8);
         for (int slot : slots) slotRow(slot, slotLabel(slot), false);
     }
@@ -1082,7 +1166,7 @@ final class OptionsMenu extends Dialog {
     private static final java.util.concurrent.ExecutorService thumbLoader = java.util.concurrent.Executors.newSingleThreadExecutor();
 
     private void thumbnail(int slot, ImageView pic) {
-        java.io.File f = MainActivity.stateFile(a.baseDir(), slot, "png");
+        java.io.File f = MainActivity.stateFile(a.playDir(), slot, "png");
         String key = f.getPath() + "@" + f.lastModified();
         synchronized (thumbs) {
             if (thumbs.containsKey(key)) {
@@ -1135,13 +1219,18 @@ final class OptionsMenu extends Dialog {
         for (int i = 0; i < res.length; i++) res[i] = a.resolutionLabel(MainActivity.RES_SCALES[i]);
         choice(R.string.opt_resolution, 0, res, indexOf(MainActivity.RES_SCALES, a.prefs.getString("res_scale", "1"), 2), a::setResolution);
         int[] rates = a.interpRates();
-        String[] rateNames = new String[rates.length];
+        String[] rateNames = new String[rates.length + 1];  // the last one: 60 fps (generated)
         int rate = 0;
         for (int i = 0; i < rates.length; i++) {
             rateNames[i] = rates[i] == 0 ? a.getString(R.string.interp_off) : a.getString(R.string.interp_fps, rates[i]);
             if (rates[i] == Native.getOption("interp_fps")) rate = i;
         }
-        choice(R.string.opt_interp, R.string.opt_interp_hint, rateNames, rate, i -> a.setInterpFps(rates[i]));
+        rateNames[rates.length] = a.getString(R.string.fps_generated);
+        if (Native.getOption("fps_generated") != 0) rate = rates.length;
+        choice(R.string.opt_interp, R.string.opt_interp_hint, rateNames, rate, i -> {
+            if (i == rates.length) a.setFpsGenerated();
+            else a.setInterpFps(rates[i]);
+        });
         submenu(R.string.opt_framegen, 0, a.frameGenLabel(), () -> openPage(this::frameGenPage));
         submenu(R.string.opt_page_res, R.string.opt_page_res_hint, "", () -> openPage(this::resolutionPage));
         submenu(R.string.opt_page_quality, R.string.opt_page_quality_hint, "", () -> openPage(this::qualityPage));
@@ -1166,6 +1255,7 @@ final class OptionsMenu extends Dialog {
                Native.getOption("upscale"), i -> {
                    a.prefs.edit().putInt("upscale", i).apply();
                    Native.setOption("upscale", i);
+                   a.updateBufferSize();  // Pixel perfect: the full buffer on Auto
                });
         choice(R.string.opt_display_res, R.string.opt_display_res_hint, a.getResources().getStringArray(R.array.display_res_modes),
                a.prefs.getInt("display_res", MainActivity.DISPLAY_RES_AUTO), a::setDisplayRes);
@@ -1176,6 +1266,7 @@ final class OptionsMenu extends Dialog {
         pageTitle(R.string.opt_page_quality);
         choice(R.string.opt_ao, 0, a.getResources().getStringArray(R.array.ao_modes), Native.getOption("ao_mode"), a::setAo);
         toggle(R.string.opt_ao_hires, 0, Native.getOption("ao_hires") != 0, on -> a.setBool("ao_hires", on));
+        toggle(R.string.opt_area_blur, R.string.opt_area_blur_hint, Native.getOption("area_blur") != 0, on -> a.setBool("area_blur", on));
         toggle(R.string.opt_aniso, 0, Native.getOption("aniso") != 0, on -> a.setBool("aniso", on));
     }
 
@@ -1205,10 +1296,13 @@ final class OptionsMenu extends Dialog {
             a.updateLayout();
         });
         if (a.hasSecondDisplay()) {
-            String[] where = {a.getString(R.string.drc_second_display), a.getString(R.string.drc_in_layout)};
-            choice(R.string.opt_drc_display, R.string.opt_drc_display_hint, where, a.drcOnSecondDisplay() ? 0 : 1,
-                    i -> a.setDrcOnSecondDisplay(i == 0));
-            if (a.drcOnSecondDisplay()) {
+            // a TV by casting or a cable is a second display too: the game picture there, the GamePad's here
+            String[] where = {a.getString(R.string.drc_second_display), a.getString(R.string.drc_in_layout), a.getString(R.string.drc_game_there)};
+            choice(R.string.opt_drc_display, R.string.opt_drc_display_hint, where, a.gameOnSecondDisplay() ? 2 : a.drcOnSecondDisplay() ? 0 : 1, i -> {
+                if (i == 2) a.setGameOnSecondDisplay();
+                else a.setDrcOnSecondDisplay(i == 0);
+            });
+            if (a.drcOnSecondDisplay() && !a.gameOnSecondDisplay()) {
                 String[] shapes = {a.getString(R.string.drc_shape_fill), a.getString(R.string.drc_shape_original)};
                 indentNext = true;
                 choice(R.string.opt_drc_shape, R.string.opt_drc_shape_hint, shapes, a.drcFill() ? 0 : 1, i -> a.setDrcFill(i == 0));
@@ -1240,6 +1334,9 @@ final class OptionsMenu extends Dialog {
     // the game itself: its language (the release's languages; applies after a restart) and the menus' language
     // (English or one of the release's: the game's font has only their letters)
     private void game() {
+        // first: phones, tablets and TVs together (all of it on one page, devicesPage)
+        if (BuildConfig.REMOTE_PLAY)
+            submenu(R.string.opt_page_devices, R.string.opt_page_devices_hint, a.padHostState(), () -> openPage(this::devicesPage));
         int[] langs = a.gameLanguages();
         String[] names = new String[langs.length];
         int curLang = 0;
@@ -1259,10 +1356,40 @@ final class OptionsMenu extends Dialog {
         }
         choice(R.string.opt_menu_language, R.string.opt_menu_language_hint, menuNames, curMenu,
                 i -> a.setMenuLanguage(MainActivity.LANGUAGES[menuLangs.get(i)]));
+        GameProgress.Result progress = GameProgress.read(GameProgress.labels(a));
+        submenu(R.string.opt_progress, R.string.opt_progress_hint, progress != null ? progress.percent() + " %" : "",
+                () -> openPage(this::progressPage));
+        submenu(R.string.opt_achievements, R.string.opt_achievements_hint,
+                Achievements.earnedCount(a, achievementFile()) + " / " + Achievements.ALL.length, () -> openPage(this::achievementsPage));
+        submenu(R.string.opt_ach_settings, R.string.opt_ach_settings_hint, "", () -> openPage(this::achievementSettingsPage));
+        submenu(R.string.rando_title, R.string.rando_hint, Randomizer.playing(a) ? a.getString(R.string.rando_on_now) : "",
+                () -> openPage(this::randoPage));
         modToggle(3, R.string.opt_mod_quick_doors, R.string.opt_mod_speed_hint);
+        modToggle(10, R.string.opt_mod_walk_doors, R.string.opt_mod_walk_doors_hint);
+        if (a.prefs.getBoolean(MainActivity.MODS[10], false)) {  // how they open: Link coming near, or A on the game's Open prompt
+            indentNext = true;
+            choice(R.string.opt_mod_walk_doors_open, R.string.opt_mod_walk_doors_open_hint,
+                    new String[] {a.getString(R.string.opt_mod_walk_doors_near), a.getString(R.string.opt_mod_walk_doors_a)},
+                    a.prefs.getBoolean("mod_walk_doors_a", false) ? 1 : 0, k -> {
+                        a.prefs.edit().putBoolean("mod_walk_doors_a", k == 1).apply();
+                        Native.setOption("mod_walk_doors_a", k);
+                    });
+        }
         modToggle(4, R.string.opt_mod_fast_scenes, R.string.opt_mod_speed_hint);
         modToggle(5, R.string.opt_mod_ff_cutscenes, R.string.opt_mod_ff_hint);
         modToggle(6, R.string.opt_mod_ff_dialogues, R.string.opt_mod_ff_hint);
+        modToggle(11, R.string.opt_mod_instant_text, R.string.opt_mod_instant_text_hint);
+        if (a.prefs.getBoolean(MainActivity.MODS[11], false)) {  // the pauses written into texts too
+            indentNext = true;
+            toggle(R.string.opt_mod_text_pauses, R.string.opt_mod_text_pauses_hint, a.prefs.getBoolean("mod_text_pauses_off", false), on -> {
+                a.prefs.edit().putBoolean("mod_text_pauses_off", on).apply();
+                Native.setOption("mod_text_pauses_off", on ? 1 : 0);
+            });
+        }
+        int stopsKept = 0;
+        for (int k = 0; k < MainActivity.HIT_STOP_KINDS; k++) if ((a.hitStopOff() & 1 << k) == 0) stopsKept++;
+        submenu(R.string.opt_hit_stops, R.string.opt_hit_stops_hint, stopsKept + " / " + MainActivity.HIT_STOP_KINDS,
+                () -> openPage(this::hitStopsPage));
         // a talk held (a finger where a tap goes on there: Flexible with context buttons; A held on a controller): goes on
         // up to a question; fast forward with it
         boolean hold = a.prefs.getBoolean("talk_hold", true);
@@ -1301,10 +1428,1175 @@ final class OptionsMenu extends Dialog {
         submenu(R.string.opt_page_songs, R.string.opt_page_songs_hint, "", () -> openPage(this::songsPage));
     }
 
+    // ------------------------------------------------------------------ Game > Randomizer (Randomizer, RandoNative)
+    // The randomizer's settings by its own names (options.cpp settingToName); each change is written to its config
+    // at once. The game is made at the next start (MainActivity.runRandomizer).
+    private static final String[] RANDO_PROGRESS = {"Progress Dungeons", "Progress Great Fairies", "Progress Puzzle Caves",
+            "Progress Combat Caves", "Progress Short Sidequests", "Progress Long Sidequests", "Progress Spoils Trading",
+            "Progress Minigames", "Progress Free Gifts", "Progress Mail", "Progress Platforms Rafts", "Progress Submarines",
+            "Progress Eye Reefs", "Progress Octos Gunboats", "Progress Triforce Charts", "Progress Treasure Charts",
+            "Progress Exp Purchases", "Progress Misc", "Progress Tingle Chests", "Progress Battlesquid",
+            "Progress Savage Labyrinth", "Progress Island Puzzles", "Progress Dungeon Secrets", "Progress Obscure"};
+    private static final String[] RANDO_ENTRANCES = {"Randomize Dungeon Entrances", "Randomize Boss Entrances",
+            "Randomize Miniboss Entrances", "Randomize Door Entrances", "Randomize Misc Entrances", "Mix Dungeons", "Mix Bosses",
+            "Mix Minibosses", "Mix Caves", "Mix Doors", "Mix Misc", "Decouple Entrances", "Random Start Island"};
+    private static final String[] RANDO_CONVENIENCE = {"Instant Text", "Reveal Sea Chart", "Quiet Swift Sail", "Skip Refights",
+            "Add Shortcut Warps", "Fix RNG", "Invert Compass", "Remove Music", "Random Charts", "CTMC"};
+    private static final String[] RANDO_HINT_SWITCHES = {"Ho Ho Hints", "Ho Ho Triforce Hints", "Korl Hints", "Korl Sword Hints",
+            "Kreeb Bow Hints", "Clearer Hints", "Use Always Hints", "Hint Importance"};
+    private static final String[] RANDO_HINT_COUNTS = {"Path Hints", "Barren Hints", "Item Hints", "Location Hints"};
+    private static final int[] RANDO_DAMAGE = {1, 2, 3, 4, 6, 8};
+
+    private void randoToggles(String[] names, String[] labels) {
+        for (int i = 0; i < names.length; i++) {
+            final String n = names[i];
+            toggle(rowText(labels[i], null), Randomizer.on(a, n), on -> Randomizer.set(a, n, on ? 1 : 0));
+        }
+    }
+
+    private void randoChoice(String name, String label, String hint, String[] values) {
+        choice(rowText(label, hint), values, Randomizer.get(a, name), i -> Randomizer.set(a, name, i));
+    }
+
+    private static String[] numbers(int from, int to) {
+        String[] r = new String[to - from + 1];
+        for (int i = from; i <= to; i++) r[i - from] = String.valueOf(i);
+        return r;
+    }
+
+    private void randoPage() {
+        pageTitle(R.string.rando_title);
+        note(a.getString(R.string.rando_about));
+        if (!Randomizer.releaseOk(a)) {
+            note(a.getString(R.string.rando_need_usa));
+            return;
+        }
+        java.util.List<Integer> games = Randomizer.games(a);  // (games made from another release aren't listed)
+        if (!games.isEmpty()) {
+            heading(a.getString(R.string.rando_games), false);
+            note(a.getString(R.string.rando_games_about));
+            int now = Randomizer.playingGame(a);
+            submenu(a.getString(R.string.rando_pick_plain), null, now == 0 ? a.getString(R.string.rando_playing_now) : "",
+                    now == 0 ? () -> {} : () -> playRando(0));
+            for (int n : games) {
+                final int g = n;
+                submenu(Randomizer.name(a, n), null, n == now ? a.getString(R.string.rando_playing_now) : "", () -> {
+                    randoGame = g;
+                    spoiler = null;
+                    openPage(this::randoGamePage);
+                });
+            }
+            // switching between them without compiling again: the game's own compiled code stays (about one set's room)
+            toggle(rowText(a.getString(R.string.rando_keep_plain), a.getString(R.string.rando_keep_plain_hint, Randomizer.codeCacheMb(a))),
+                    a.prefs.getBoolean(Randomizer.PREF_KEEP_PLAIN, true), v -> {
+                        a.prefs.edit().putBoolean(Randomizer.PREF_KEEP_PLAIN, v).apply();
+                        Native.setKeepPlainCode(v);
+                    });
+        }
+        heading(a.getString(R.string.rando_settings), false);
+        submenu(R.string.rando_preset, R.string.rando_preset_hint, "", this::askRandoPreset);
+        submenu(R.string.rando_places, R.string.rando_places_hint, "", () -> openPage(this::randoPlacesPage));
+        submenu(R.string.rando_dungeons, R.string.rando_dungeons_hint, "", () -> openPage(this::randoDungeonsPage));
+        submenu(R.string.rando_entrances, R.string.rando_entrances_hint, "", () -> openPage(this::randoEntrancesPage));
+        submenu(R.string.rando_hints, R.string.rando_hints_hint, "", () -> openPage(this::randoHintsPage));
+        submenu(R.string.rando_start, R.string.rando_start_hint, "", () -> openPage(this::randoStartPage));
+        submenu(R.string.rando_convenience, R.string.rando_convenience_hint, "", () -> openPage(this::randoConveniencePage));
+        submenu(R.string.rando_look, R.string.rando_look_hint, "", () -> openLook(false));
+        String seed = RandoNative.seed(Randomizer.data(a), Randomizer.work(a));
+        submenu(a.getString(R.string.rando_seed), a.getString(R.string.rando_seed_hint), seed,
+                () -> askText(R.string.rando_seed, seed, s -> RandoNative.setSeed(Randomizer.data(a), Randomizer.work(a), s.trim())));
+        submenu(R.string.rando_permalink, R.string.rando_permalink_hint, "", this::showPermalink);
+        submenu(R.string.rando_defaults, R.string.rando_defaults_hint, "", () -> {
+            RandoNative.resetDefaults(Randomizer.data(a), Randomizer.work(a));
+            fill();
+        });
+        if (Randomizer.pending(a.prefs)) note(Randomizer.remaking(a.prefs) != 0
+                ? a.getString(R.string.rando_remake_pending, Randomizer.name(a, Randomizer.remaking(a.prefs)))
+                : a.getString(R.string.rando_pending));
+        addAction(rows, R.string.rando_make, () -> {
+            int same = Randomizer.sameGame(a);
+            GameDialog d = new GameDialog(a).title(R.string.rando_make).button(R.string.opt_cancel, null);
+            if (same != 0) {
+                // the same settings and seed make the same game again: a new seed name first
+                d.message(a.getString(R.string.rando_make_same, Randomizer.name(a, same))).button(R.string.rando_make_new_seed, () -> {
+                    RandoNative.newSeed(Randomizer.data(a), Randomizer.work(a));
+                    Randomizer.requestNew(a);
+                    a.restartForPacks();
+                });
+            } else {
+                d.message(R.string.rando_make_ask).button(R.string.rando_make_go, () -> {
+                    Randomizer.requestNew(a);
+                    a.restartForPacks();
+                });
+            }
+            d.show();
+        });
+    }
+
+    // Game > Randomizer > one randomized game: play it, its spoiler log, delete it
+    private int randoGame;
+
+    private void randoGamePage() {
+        int n = randoGame;
+        if (!Randomizer.made(a, n)) {  // (deleted)
+            page = pageStack.poll();
+            fill();
+            return;
+        }
+        pageTitle(Randomizer.name(a, n));
+        note(a.getString(R.string.rando_made, String.valueOf(Randomizer.lastInfo(a, n, "hash")),
+                String.valueOf(Randomizer.lastInfo(a, n, "seed")), Randomizer.gameMb(a, n)));
+        if (n == Randomizer.playingGame(a)) note(a.getString(R.string.rando_playing_this));
+        else addAction(rows, R.string.rando_play_this, () -> playRando(n));
+        // Link's colours as they are now on Randomizer > Link's colours: the same game made again (its save stays)
+        addAction(rows, R.string.rando_remake, () -> new GameDialog(a).title(Randomizer.name(a, n))
+                .message(a.getString(R.string.rando_remake_ask))
+                .button(R.string.opt_cancel, null)
+                .button(R.string.rando_remake_go, () -> {
+                    Randomizer.requestRemake(a, n);
+                    a.restartForPacks();
+                }).show());
+        if (Randomizer.spoilerLog(a, n) != null) submenu(R.string.rando_spoiler, R.string.rando_spoiler_hint, "", () -> {
+            spoiler = null;
+            openPage(this::randoSpoilerPage);
+        });
+        addAction(rows, R.string.rando_delete, () -> new GameDialog(a).title(Randomizer.name(a, n))
+                .message(n == Randomizer.playingGame(a) ? R.string.rando_delete_playing
+                        : Randomizer.hasProgress(a, n) ? R.string.rando_delete_ask_progress : R.string.rando_delete_ask)
+                .button(R.string.opt_cancel, null)
+                .button(R.string.rando_delete_go, () -> {
+                    boolean wasPlaying = n == Randomizer.playingGame(a);
+                    Randomizer.delete(a, n);
+                    if (wasPlaying) {  // the game as it is from a restart on
+                        a.restartForPacks();
+                        return;
+                    }
+                    page = pageStack.poll();
+                    fill();
+                }).show());
+    }
+
+    // the game as it is (0) or randomized game n at a restart
+    private void playRando(int n) {
+        Randomizer.choose(a, n);
+        a.restartForPacks();
+    }
+
+    // ---- Game > Randomizer > Spoiler log (SpoilerLog): its parts as pages, the map as the game progress's
+    private SpoilerLog spoiler;
+    private int spoilerSquare = -1;
+    private String spoilerDungeon;
+    private int spoilerFloor = Integer.MIN_VALUE;
+    private static final int[] SPOILER_GROUPS = {ProgressPlaces.IMPORTANT, ProgressPlaces.ALL_KINDS, ProgressPlaces.HEARTS,
+            ProgressPlaces.CHARTS, ProgressPlaces.DUNGEONS};
+
+    private SpoilerLog spoilerLog() {
+        if (spoiler == null) spoiler = SpoilerLog.read(a, randoGame);
+        return spoiler;
+    }
+
+    private void randoSpoilerPage() {
+        pageTitle(R.string.rando_spoiler);
+        SpoilerLog s = spoilerLog();
+        if (s == null) {
+            note(a.getString(R.string.rando_spoiler_none));
+            return;
+        }
+        note(a.getString(R.string.rando_spoiler_about, s.hash));
+        submenu(R.string.rando_spoiler_map, R.string.rando_spoiler_map_hint, "", () -> {
+            spoilerSquare = -1;
+            spoilerDungeon = null;
+            openPage(this::randoSpoilerMapPage);
+        });
+        submenu(R.string.rando_spoiler_way, R.string.rando_spoiler_way_hint, String.valueOf(s.spheres.size()), () -> openPage(this::randoSpoilerWayPage));
+        submenu(R.string.rando_spoiler_all, R.string.rando_spoiler_all_hint, String.valueOf(s.all.size()), () -> openPage(this::randoSpoilerAreasPage));
+        if (!s.charts.isEmpty()) submenu(R.string.rando_spoiler_charts, 0, String.valueOf(s.charts.size()), () -> openPage(this::randoSpoilerChartsPage));
+        if (!s.hints.isEmpty()) submenu(R.string.rando_spoiler_hints, 0, String.valueOf(s.hints.size()), () -> openPage(this::randoSpoilerHintsPage));
+        if (!s.entrances.isEmpty())
+            submenu(R.string.rando_spoiler_entrances, 0, String.valueOf(s.entrances.size()), () -> openPage(this::randoSpoilerEntrancesPage));
+        java.io.File log = Randomizer.spoilerLog(a, randoGame);
+        if (log != null) submenu(R.string.rando_spoiler_text, R.string.rando_spoiler_text_hint, "", () -> showTextFile(log));
+    }
+
+    // one line: the item's icon, its name, where (or what) below
+    private void spoilerRow(LinearLayout list, String tex, String main, String sub) {
+        LinearLayout r = new LinearLayout(getContext());
+        r.setGravity(Gravity.CENTER_VERTICAL);
+        r.setPadding(px(24), px(3), px(18), px(3));
+        r.setMinimumHeight(px(44));
+        r.addView(new ProgressIcon(getContext(), new String[] {tex}, null), new LinearLayout.LayoutParams(px(32), px(32)));
+        LinearLayout words = new LinearLayout(getContext());
+        words.setOrientation(LinearLayout.VERTICAL);
+        words.setPadding(px(10), 0, px(8), 0);
+        words.addView(progressText(main, 16, false), new LinearLayout.LayoutParams(-1, -2));
+        if (sub != null && !sub.isEmpty()) words.addView(progressText(sub, 13, true), new LinearLayout.LayoutParams(-1, -2));
+        r.addView(words, new LinearLayout.LayoutParams(0, -2, 1));
+        list.addView(r, new LinearLayout.LayoutParams(-1, -2));
+    }
+
+    private void spoilerEntry(LinearLayout list, SpoilerLog s, SpoilerLog.Entry e, boolean withArea) {
+        String where = withArea ? e.location : e.spot();
+        if (e.sphere >= 0) where += "  ·  " + a.getString(R.string.rando_spoiler_step, e.sphere + 1);
+        spoilerRow(list, e.place != null ? ProgressPlaces.icon(e.place) : SpoilerLog.icon(e.item, e.id), s.itemName(e.item), where);
+    }
+
+    private void randoSpoilerWayPage() {
+        pageTitle(R.string.rando_spoiler_way);
+        SpoilerLog s = spoilerLog();
+        if (s == null) return;
+        note(a.getString(R.string.rando_spoiler_way_about));
+        if (!s.starting.isEmpty()) {
+            mapHeading(rows, a.getString(R.string.rando_spoiler_start), String.valueOf(s.starting.size()));
+            for (String it : s.starting) spoilerRow(rows, SpoilerLog.icon(it, -1), s.itemName(it), null);
+        }
+        for (int i = 0; i < s.spheres.size(); i++) {
+            java.util.List<SpoilerLog.Entry> sp = s.spheres.get(i);
+            mapHeading(rows, a.getString(R.string.rando_spoiler_step, i + 1), String.valueOf(sp.size()));
+            for (SpoilerLog.Entry e : sp) spoilerRow(rows, SpoilerLog.icon(e.item, e.id), s.itemName(e.item), e.location);
+        }
+    }
+
+    private void randoSpoilerAreasPage() {
+        pageTitle(R.string.rando_spoiler_all);
+        SpoilerLog s = spoilerLog();
+        if (s == null) return;
+        boolean important = a.prefs.getBoolean("rando_spoiler_important", true);
+        toggle(R.string.rando_spoiler_important, R.string.rando_spoiler_important_hint, important,
+                v -> a.prefs.edit().putBoolean("rando_spoiler_important", v).apply());
+        for (java.util.Map.Entry<String, java.util.List<SpoilerLog.Entry>> area : s.byArea(important).entrySet()) {
+            mapHeading(rows, area.getKey(), String.valueOf(area.getValue().size()));
+            for (SpoilerLog.Entry e : area.getValue()) spoilerEntry(rows, s, e, false);
+        }
+    }
+
+    private void randoSpoilerChartsPage() {
+        pageTitle(R.string.rando_spoiler_charts);
+        SpoilerLog s = spoilerLog();
+        if (s == null) return;
+        for (java.util.Map.Entry<String, String> c : s.charts.entrySet())
+            spoilerRow(rows, c.getKey().startsWith("Triforce") ? "TriforceShards_00^l" : "MapBtn_00^l", c.getKey(), "→ " + c.getValue());
+    }
+
+    private void randoSpoilerHintsPage() {
+        pageTitle(R.string.rando_spoiler_hints);
+        SpoilerLog s = spoilerLog();
+        if (s == null) return;
+        for (String h : s.hints) {
+            TextView t = progressText(h, 15, false);
+            t.setPadding(px(24), px(4), px(18), px(4));
+            rows.addView(t, new LinearLayout.LayoutParams(-1, -2));
+        }
+    }
+
+    private void randoSpoilerEntrancesPage() {
+        pageTitle(R.string.rando_spoiler_entrances);
+        SpoilerLog s = spoilerLog();
+        if (s == null) return;
+        for (String h : s.entrances) {
+            int c = h.indexOf(':');
+            spoilerRow(rows, null, c > 0 ? h.substring(0, c).trim() : h, c > 0 ? "→ " + h.substring(c + 1).trim() : null);
+        }
+    }
+
+    // the progress map (ProgressMapView) with the spoiler log's places: each location's item at its spot, a tap on a
+    // square lists its locations, a dungeon's square opens its map by floors
+    private void randoSpoilerMapPage() {
+        pageTitle(R.string.rando_spoiler_map);
+        SpoilerLog s = spoilerLog();
+        if (s == null) return;
+        GameText.prepare(getContext(), this::fill);
+        int gi = Math.max(0, Math.min(SPOILER_GROUPS.length - 1, a.prefs.getInt("rando_spoiler_group", 0)));
+        int group = SPOILER_GROUPS[gi];
+        choice(R.string.rando_spoiler_show, 0, a.getResources().getStringArray(R.array.rando_spoiler_groups), gi,
+                i -> a.prefs.edit().putInt("rando_spoiler_group", i).apply());
+        if (spoilerSquare < 0) {
+            spoilerSquare = ProgressPlaces.linkSquare();
+            if (spoilerSquare <= 0) spoilerSquare = 44;
+        }
+        int[] st = new int[s.places.size()];
+        java.util.Arrays.fill(st, ProgressPlaces.FOUND);
+        LinearLayout list = new LinearLayout(getContext());
+        list.setOrientation(LinearLayout.VERTICAL);
+        GameProgress.Labels l = GameProgress.labels(a);
+        ProgressMapView map = new ProgressMapView(getContext(), sq -> {
+            sound(MenuSounds.CURSOR);
+            spoilerSquare = sq;
+            spoilerList(list, s, group, l);
+        });
+        map.setPlaces(s.places);
+        map.set(null, st, ProgressMapView.SHOW_FOUND, group, spoilerSquare);
+        if (spoilerDungeon != null) {
+            LinearLayout bar = new LinearLayout(getContext());
+            bar.setGravity(Gravity.CENTER_VERTICAL);
+            bar.setPadding(px(12), px(2), px(12), px(6));
+            bar.addView(smallButton(a.getString(R.string.pmap_sea), true, v -> {
+                sound(MenuSounds.CANCEL);
+                spoilerDungeon = null;
+                fill();
+            }), new LinearLayout.LayoutParams(-2, -2));
+            TextView name = progressText(l.dungeon(dungeonNumber(spoilerDungeon)), 17, false);
+            name.setPadding(px(14), 0, 0, 0);
+            bar.addView(name, new LinearLayout.LayoutParams(0, -2, 1));
+            rows.addView(bar, new LinearLayout.LayoutParams(-1, -2));
+            LinearLayout floorRow = row(R.string.pmap_floor, 0);
+            map.showDungeon(spoilerDungeon, () -> {
+                int[] fl = map.floors();
+                if (fl.length == 0) return;
+                String[] names = new String[fl.length];
+                int cur = -1, start = 0;
+                for (int i = 0; i < fl.length; i++) {
+                    names[i] = fl[i] >= 0 ? (fl[i] + 1) + "F" : "B" + (-fl[i]);
+                    if (fl[i] == spoilerFloor) cur = i;
+                    if (fl[i] == map.floor()) start = i;
+                }
+                if (cur < 0) cur = start;
+                spoilerFloor = fl[cur];
+                map.setFloor(spoilerFloor);
+                choice(floorRow, names, cur, i -> spoilerFloor = fl[i]);
+            });
+        }
+        LinearLayout.LayoutParams mlp = new LinearLayout.LayoutParams(-1, -2);
+        mlp.setMargins(px(12), px(4), px(12), px(8));
+        mlp.gravity = Gravity.CENTER_HORIZONTAL;
+        rows.addView(map, mlp);
+        rows.addView(list, new LinearLayout.LayoutParams(-1, -2));
+        spoilerList(list, s, group, l);
+    }
+
+    private void spoilerList(LinearLayout list, SpoilerLog s, int group, GameProgress.Labels l) {
+        list.removeAllViews();
+        int sq = spoilerSquare;
+        java.util.List<SpoilerLog.Entry> here = new java.util.ArrayList<>(), loose = new java.util.ArrayList<>();
+        String dungeonStage = null;
+        for (SpoilerLog.Entry e : s.all) {
+            if (e.place == null) continue;
+            if (e.place.square == sq && e.place.stage != null && MiniMapDungeons.of(e.place.stage) != null) dungeonStage = e.place.stage;
+            if (!e.place.inGroup(group)) continue;
+            if (e.place.square == sq) here.add(e);
+            else if (e.place.square == 0) loose.add(e);
+        }
+        mapHeading(list, l.island(sq), String.valueOf(here.size()));
+        if (dungeonStage != null && !dungeonStage.equals(spoilerDungeon)) {
+            String ds = dungeonStage;
+            LinearLayout r = new LinearLayout(getContext());
+            r.setPadding(px(24), px(2), px(18), px(6));
+            r.addView(smallButton(a.getString(R.string.pmap_dungeon_map), true, v -> {
+                sound(MenuSounds.DECIDE);
+                spoilerDungeon = ds;
+                spoilerFloor = Integer.MIN_VALUE;
+                fill();
+                scroll.scrollTo(0, 0);
+            }), new LinearLayout.LayoutParams(-2, -2));
+            list.addView(r, new LinearLayout.LayoutParams(-1, -2));
+        }
+        if (here.isEmpty()) {
+            TextView t = progressText(a.getString(R.string.pmap_none), 15, true);
+            t.setPadding(px(30), 0, px(12), px(8));
+            list.addView(t, new LinearLayout.LayoutParams(-1, -2));
+        }
+        for (SpoilerLog.Entry e : here) spoilerEntry(list, s, e, true);
+        if (!loose.isEmpty()) {
+            mapHeading(list, a.getString(R.string.rando_spoiler_elsewhere), String.valueOf(loose.size()));
+            for (SpoilerLog.Entry e : loose) spoilerEntry(list, s, e, true);
+        }
+    }
+
+    private void randoPlacesPage() {
+        pageTitle(R.string.rando_places);
+        note(a.getString(R.string.rando_places_about));
+        String[] labels = a.getResources().getStringArray(R.array.rando_progress_names);
+        randoChoice(RANDO_PROGRESS[0], labels[0], a.getString(R.string.rando_progress_dungeons_hint),
+                a.getResources().getStringArray(R.array.rando_progress_dungeons));
+        randoToggles(java.util.Arrays.copyOfRange(RANDO_PROGRESS, 1, RANDO_PROGRESS.length),
+                java.util.Arrays.copyOfRange(labels, 1, labels.length));
+    }
+
+    private void randoDungeonsPage() {
+        pageTitle(R.string.rando_dungeons);
+        String[] where = a.getResources().getStringArray(R.array.rando_placement);
+        randoChoice("Dungeon Small Keys", a.getString(R.string.rando_small_keys), null, where);
+        randoChoice("Dungeon Big Keys", a.getString(R.string.rando_big_keys), null, where);
+        randoChoice("Dungeon Maps And Compasses", a.getString(R.string.rando_maps), null, where);
+        randoChoice("Num Required Dungeons", a.getString(R.string.rando_required), a.getString(R.string.rando_required_hint), numbers(0, 6));
+    }
+
+    private void randoEntrancesPage() {
+        pageTitle(R.string.rando_entrances);
+        note(a.getString(R.string.rando_entrances_about));
+        randoChoice("Randomize Cave Entrances", a.getString(R.string.rando_caves), null, a.getResources().getStringArray(R.array.rando_caves));
+        randoToggles(RANDO_ENTRANCES, a.getResources().getStringArray(R.array.rando_entrance_names));
+    }
+
+    private void randoHintsPage() {
+        pageTitle(R.string.rando_hints);
+        randoToggles(RANDO_HINT_SWITCHES, a.getResources().getStringArray(R.array.rando_hint_names));
+        String[] counts = a.getResources().getStringArray(R.array.rando_hint_count_names);
+        for (int i = 0; i < RANDO_HINT_COUNTS.length; i++) randoChoice(RANDO_HINT_COUNTS[i], counts[i], null, numbers(0, 7));
+    }
+
+    private void randoStartPage() {
+        pageTitle(R.string.rando_start);
+        randoChoice("Starting HC", a.getString(R.string.rando_start_hearts), null, numbers(0, 9));
+        randoChoice("Starting HP", a.getString(R.string.rando_start_pieces), null, numbers(0, 44));
+        toggle(rowText(a.getString(R.string.rando_no_swords), a.getString(R.string.rando_no_swords_hint)), Randomizer.on(a, "Remove Swords"),
+                on -> Randomizer.set(a, "Remove Swords", on ? 1 : 0));
+        String[] dmg = new String[RANDO_DAMAGE.length];
+        int cur = 0;
+        for (int i = 0; i < dmg.length; i++) {
+            dmg[i] = "× " + RANDO_DAMAGE[i];
+            if (RANDO_DAMAGE[i] == Randomizer.get(a, "Damage Multiplier")) cur = i;
+        }
+        choice(rowText(a.getString(R.string.rando_damage), a.getString(R.string.rando_damage_hint)), dmg, cur,
+                i -> Randomizer.set(a, "Damage Multiplier", RANDO_DAMAGE[i]));
+    }
+
+    private void randoConveniencePage() {
+        pageTitle(R.string.rando_convenience);
+        randoToggles(RANDO_CONVENIENCE, a.getResources().getStringArray(R.array.rando_convenience_names));
+    }
+
+    // ---- Game > Randomizer > Link's colours (LinkColors: the randomizer's customizer, in preferences.yaml): the
+    // clothes he starts in, a colour set, each colour on a page of its own; the picture as the PC program shows it
+    // Mods > Link's colours: the same pages for the game as it is (LinkColors.fileWork: colours of its own per save file,
+    // for both clothes)
+    private String lookPart;  // the colour on its own page
+    private String lookWork;  // the colours' folder: the randomizer's or the game's
+    private boolean lookGame;  // the game's (Mods), not the randomizer's
+    private int lookFile = 1;  // ... for this save file
+
+    private void openLook(boolean game) {
+        lookGame = game;
+        // (the game's colours: on the save file in play; at the title the one picked last)
+        int played = game ? PlayerModels.playedFile() : 0;
+        if (played > 0) a.prefs.edit().putInt("link_colors_file", played).apply();
+        lookFile = Math.max(1, Math.min(LinkColors.FILES, a.prefs.getInt("link_colors_file", 1)));
+        lookWork = game ? LinkColors.fileWork(a, lookFile) : Randomizer.work(a);
+        openPage(this::randoLookPage);
+    }
+
+    // after a change: the game's colours keep skin, mouth and eyes alike in both clothes (unless separate), and Link's
+    // textures are made again for the game (shown at once)
+    private void lookChanged() {
+        if (!lookGame) return;
+        if (!LinkColors.separate(a, lookFile)) RandoNative.syncShared(Randomizer.data(a), lookWork);
+        LinkColors.remakeSoon(a);
+    }
+
+    private void lookPreview(LinkColors c) {
+        android.graphics.Bitmap b = c.preview(a);
+        if (b == null) return;
+        ImageView v = new ImageView(getContext());
+        v.setImageBitmap(b);
+        v.setScaleType(ImageView.ScaleType.FIT_CENTER);
+        v.setAdjustViewBounds(true);
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, px(220));
+        lp.bottomMargin = px(8);
+        rows.addView(v, lp);
+    }
+
+    private String colorLabel(String part) {
+        String[] keys = {"Hair", "Skin", "Mouth", "Eyes", "Sclera", "Tunic", "Undershirt", "Pants", "Boots", "Belt", "Belt Buckle",
+                "Shirt", "Shirt Emblem", "Armbands", "Shoes", "Shoe Soles"};
+        String[] labels = a.getResources().getStringArray(R.array.rando_color_names);
+        for (int i = 0; i < keys.length && i < labels.length; i++) if (keys[i].equals(part)) return labels[i];
+        return part;
+    }
+
+    // a colour's little square at the end of its row
+    private void swatch(LinearLayout r, String hex) {
+        View sw = new View(getContext());
+        android.graphics.drawable.GradientDrawable d = new android.graphics.drawable.GradientDrawable();
+        d.setColor(LinkColors.rgb(hex));
+        d.setCornerRadius(px(6));
+        d.setStroke(px(2), 0x60000000);
+        sw.setBackground(d);
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(px(34), px(34));
+        lp.rightMargin = px(10);
+        r.addView(sw, lp);
+    }
+
+    private void randoLookPage() {
+        pageTitle(R.string.rando_look);
+        if (lookWork == null) lookWork = Randomizer.work(a);
+        LinkColors c = LinkColors.read(a, lookWork);
+        if (c == null) return;
+        if (lookGame) {
+            String[] files = new String[LinkColors.FILES];
+            for (int i = 0; i < files.length; i++) files[i] = a.getString(R.string.look_file_n, i + 1);
+            choice(rowText(a.getString(R.string.look_file), a.getString(R.string.look_file_hint)), files, lookFile - 1, i -> {
+                lookFile = i + 1;
+                a.prefs.edit().putInt("link_colors_file", lookFile).apply();
+                lookWork = LinkColors.fileWork(a, lookFile);
+            });
+            // (a file playing as a GameCube player model: the model's own colours, nothing to set here)
+            String model = PlayerModels.get(a, lookFile);
+            if (model != null) {
+                note(a.getString(R.string.look_model_note, lookFile, ModPacks.playerModelName(a.baseDir(), model)));
+                return;
+            }
+            boolean on = LinkColors.on(a, lookFile);
+            toggle(R.string.look_on, R.string.look_on_hint, on, v -> {
+                a.prefs.edit().putBoolean(LinkColors.prefOn(lookFile), v).apply();
+                LinkColors.remakeSoon(a);
+            });
+            if (on && Randomizer.runtimeDir(a) != null) note(a.getString(R.string.look_rando_note));
+            note(a.getString(R.string.look_about));
+            lookPreview(c);
+            choice(rowText(a.getString(R.string.look_clothes), a.getString(R.string.look_clothes_hint)),
+                    new String[] {a.getString(R.string.look_clothes_hero), a.getString(R.string.look_clothes_casual)}, c.casual ? 1 : 0,
+                    i -> RandoNative.setCasual(Randomizer.data(a), lookWork, i == 1));
+            // skin, mouth and eyes: alike in both clothes (one texture each), or each clothes' own (swapped with them)
+            toggle(R.string.look_separate, R.string.look_separate_hint, LinkColors.separate(a, lookFile), v -> {
+                a.prefs.edit().putBoolean(LinkColors.prefSeparate(lookFile), v).apply();
+                if (!v) RandoNative.syncShared(Randomizer.data(a), lookWork);  // (the clothes shown now give theirs to the others)
+                LinkColors.remakeSoon(a);
+            });
+        } else {
+            note(a.getString(R.string.rando_look_about));
+            lookPreview(c);
+            toggle(R.string.rando_casual, R.string.rando_casual_hint, c.casual, on -> RandoNative.setCasual(Randomizer.data(a), lookWork, on));
+        }
+        if (!c.presets.isEmpty()) {
+            String[] names = new String[c.presets.size() + (c.preset < 0 ? 1 : 0)];
+            for (int i = 0; i < c.presets.size(); i++) names[i] = i == 0 ? a.getString(R.string.rando_look_default) : c.presets.get(i);
+            if (c.preset < 0) names[names.length - 1] = a.getString(R.string.rando_look_own);
+            choice(rowText(a.getString(R.string.rando_look_preset), null), names, c.preset < 0 ? names.length - 1 : c.preset, i -> {
+                if (i < c.presets.size()) RandoNative.loadPreset(Randomizer.data(a), lookWork, i);
+                lookChanged();
+            });
+        }
+        boolean alike = lookGame && !LinkColors.separate(a, lookFile);
+        for (LinkColors.Part p : c.parts) {
+            LinearLayout r = rowText(colorLabel(p.name),
+                    alike && java.util.Arrays.asList(LinkColors.SHARED).contains(p.name) ? a.getString(R.string.look_shared_hint) : null);
+            swatch(r, p.now);
+            submenu(r, "#" + p.now, () -> {
+                lookPart = p.name;
+                openPage(this::randoColorPage);
+            });
+        }
+        addAction(rows, R.string.rando_look_random, () -> {
+            RandoNative.randomColors(Randomizer.data(a), lookWork, false);
+            lookChanged();
+            fill();
+        });
+        addAction(rows, R.string.rando_look_chaotic, () -> {
+            RandoNative.randomColors(Randomizer.data(a), lookWork, true);
+            lookChanged();
+            fill();
+        });
+        addAction(rows, R.string.rando_look_reset, () -> {
+            RandoNative.loadPreset(Randomizer.data(a), lookWork, 0);
+            lookChanged();
+            fill();
+        });
+    }
+
+    // one of Link's colours: on a colour wheel, hue, saturation and brightness in steps, at random, back to its usual one
+    private void randoColorPage() {
+        if (lookWork == null) lookWork = Randomizer.work(a);
+        LinkColors c = LinkColors.read(a, lookWork);
+        LinkColors.Part p = c != null ? c.part(lookPart) : null;
+        if (p == null || (lookGame && PlayerModels.get(a, lookFile) != null)) {
+            page = pageStack.poll();
+            fill();
+            return;
+        }
+        pageTitle(colorLabel(p.name));
+        if (lookGame && !LinkColors.separate(a, lookFile) && java.util.Arrays.asList(LinkColors.SHARED).contains(p.name))
+            note(a.getString(R.string.look_shared_hint));
+        lookPreview(c);
+        float[] hsv = new float[3];
+        android.graphics.Color.colorToHSV(LinkColors.rgb(p.now), hsv);
+        java.util.function.Consumer<float[]> put = v -> {
+            RandoNative.setColor(Randomizer.data(a), lookWork, p.name,
+                    String.format(java.util.Locale.ROOT, "%06X", android.graphics.Color.HSVToColor(v) & 0xFFFFFF));
+            lookChanged();
+        };
+        // the colour wheel (by touch; a controller has the rows below)
+        ColorWheel wheel = new ColorWheel(getContext(), LinkColors.rgb(p.now), gameStyle ? GameUi.OPTION_TEXT : INK, v -> {
+            sound(MenuSounds.SWITCH);
+            put.accept(v);
+            fill();
+        });
+        LinearLayout.LayoutParams wlp = new LinearLayout.LayoutParams(-1, px(240));
+        wlp.bottomMargin = px(8);
+        rows.addView(wheel, wlp);
+        String[] hues = new String[36];
+        for (int i = 0; i < hues.length; i++) hues[i] = (i * 10) + "°";
+        String[] steps = new String[21];
+        for (int i = 0; i < steps.length; i++) steps[i] = String.format(java.util.Locale.getDefault(), "%d %%", i * 5);
+        choice(rowText(a.getString(R.string.rando_color_hue), null), hues, Math.round(hsv[0] / 10) % 36, i -> put.accept(new float[] {i * 10, hsv[1], hsv[2]}));
+        choice(rowText(a.getString(R.string.rando_color_sat), null), steps, Math.round(hsv[1] * 20), i -> put.accept(new float[] {hsv[0], i / 20f, hsv[2]}));
+        choice(rowText(a.getString(R.string.rando_color_value), null), steps, Math.round(hsv[2] * 20), i -> put.accept(new float[] {hsv[0], hsv[1], i / 20f}));
+        addAction(rows, R.string.rando_color_random, () -> {
+            float[] v = {(float) (Math.random() * 360), hsv[1], hsv[2]};
+            put.accept(v);
+            fill();
+        });
+        addAction(rows, R.string.rando_color_default, () -> {
+            RandoNative.setColor(Randomizer.data(a), lookWork, p.name, "");
+            lookChanged();
+            fill();
+        });
+    }
+
+    // presets: the randomizer's defaults, then a few changes (Beginner: fewer places, hints; Everything: all places)
+    private void askRandoPreset() {
+        Runnable defaults = () -> RandoNative.resetDefaults(Randomizer.data(a), Randomizer.work(a));
+        new GameDialog(a).title(R.string.rando_preset).message(R.string.rando_preset_ask)
+                .button(R.string.opt_cancel, null)
+                .button(R.string.rando_preset_beginner, () -> {
+                    defaults.run();
+                    Randomizer.set(a, "Progress Puzzle Caves", 0);
+                    Randomizer.set(a, "Progress Exp Purchases", 0);
+                    Randomizer.set(a, "Korl Hints", 1);
+                    Randomizer.set(a, "Clearer Hints", 1);
+                    Randomizer.set(a, "Path Hints", 3);
+                    Randomizer.set(a, "Barren Hints", 2);
+                    Randomizer.set(a, "Item Hints", 3);
+                    Randomizer.set(a, "Damage Multiplier", 1);
+                    fill();
+                })
+                .button(R.string.rando_preset_standard, () -> {
+                    defaults.run();
+                    fill();
+                })
+                .button(R.string.rando_preset_all, () -> {
+                    defaults.run();
+                    for (int i = 1; i < RANDO_PROGRESS.length; i++)
+                        if (!RANDO_PROGRESS[i].equals("Progress Obscure") && !RANDO_PROGRESS[i].equals("Progress Battlesquid"))
+                            Randomizer.set(a, RANDO_PROGRESS[i], 1);
+                    Randomizer.set(a, "Korl Hints", 1);
+                    Randomizer.set(a, "Path Hints", 4);
+                    Randomizer.set(a, "Barren Hints", 3);
+                    fill();
+                }).show();
+    }
+
+    private void showPermalink() {
+        String link = RandoNative.permalink(Randomizer.data(a), Randomizer.work(a));
+        TextView t = GameUi.text(getContext(), false);
+        t.setText(link);
+        t.setTextIsSelectable(true);
+        t.setTextColor(GameUi.INK);
+        sp(t, 14);
+        new GameDialog(a).title(R.string.rando_permalink).content(t)
+                .button(R.string.rando_permalink_paste, () -> askText(R.string.rando_permalink, "", s -> {
+                    String err = RandoNative.loadPermalink(Randomizer.data(a), Randomizer.work(a), s.trim());
+                    if (err != null) new GameDialog(a).title(R.string.rando_permalink).message(err).button(R.string.opt_ok, null).show();
+                }))
+                .button(R.string.rando_share, () -> shareText(link))
+                .button(R.string.opt_ok, null).show();
+    }
+
+    private void showTextFile(java.io.File f) {
+        String text;
+        try {
+            text = new String(java.nio.file.Files.readAllBytes(f.toPath()), java.nio.charset.StandardCharsets.UTF_8);
+        } catch (java.io.IOException e) {
+            text = String.valueOf(e.getMessage());
+        }
+        TextView t = GameUi.text(getContext(), false);
+        t.setText(text);
+        t.setTextIsSelectable(true);
+        t.setTypeface(Typeface.MONOSPACE);
+        t.setTextColor(GameUi.INK);
+        sp(t, 11);
+        android.widget.ScrollView sv = new android.widget.ScrollView(getContext());
+        sv.addView(t);
+        final String all = text;
+        new GameDialog(a).title(f.getName()).content(sv).button(R.string.rando_share, () -> shareText(all)).button(R.string.opt_ok, null).show();
+    }
+
+    private void shareText(String text) {
+        android.content.Intent send = new android.content.Intent(android.content.Intent.ACTION_SEND).setType("text/plain")
+                .putExtra(android.content.Intent.EXTRA_TEXT, text);
+        a.startActivity(android.content.Intent.createChooser(send, null));
+    }
+
+    interface TextSetter { void set(String s); }
+
+    private void askText(int title, String cur, TextSetter set) {
+        android.widget.EditText e = new android.widget.EditText(getContext());
+        e.setText(cur);
+        e.setSingleLine(true);
+        e.setTextColor(GameUi.INK);
+        new GameDialog(a).title(title).content(e).button(R.string.opt_cancel, null).button(R.string.opt_ok, () -> {
+            set.set(e.getText().toString());
+            fill();
+        }).show();
+    }
+
+    // Game > Game progress (GameProgress): the whole in percent, the percent on screen (ProgressBadge), then each part as a
+    // checklist in the game's look (its icons, ProgressIcon; what is missing grey), everything or only what is missing
+    private void progressPage() {
+        pageTitle(R.string.opt_progress);
+        GameText.prepare(getContext(), this::fill);  // (the names in the game's words: read once, in the game's language)
+        GameProgress.Result r = GameProgress.read(GameProgress.labels(a));
+        if (r != null) progressTotal(r.percent());
+        toggle(R.string.progress_on_screen, R.string.progress_on_screen_hint, a.prefs.getBoolean("progress_hud", false), on -> {
+            a.prefs.edit().putBoolean("progress_hud", on).apply();
+            a.applyControlsAppearance();
+        });
+        if (r == null) {
+            note(a.getString(R.string.progress_no_game));
+            return;
+        }
+        // the map's places are where the game itself has its things, not where a randomized game has them
+        if (Randomizer.playing(a)) note(a.getString(R.string.rando_no_map));
+        else submenu(R.string.pmap_title, R.string.pmap_hint, "", () -> {
+            mapSquare = -1;
+            mapDungeon = null;
+            openPage(this::progressMapPage);
+        });
+        boolean missingOnly = a.prefs.getInt("progress_filter", 0) == 1;
+        choice(R.string.progress_show, 0, a.getResources().getStringArray(R.array.progress_filters), missingOnly ? 1 : 0,
+                i -> a.prefs.edit().putInt("progress_filter", i).apply());
+        note(a.getString(R.string.progress_about, r.sections.size()));
+        for (GameProgress.Section sec : r.sections) {
+            progressHeading(sec);
+            // (the long lists, islands and figurines, are names only: two side by side)
+            boolean twoColumns = sec.entries.size() > 40;
+            java.util.List<GameProgress.Entry> plain = new java.util.ArrayList<>();
+            for (GameProgress.Entry e : sec.entries) {
+                if (missingOnly && e.complete()) continue;
+                if (twoColumns) plain.add(e);
+                else progressEntry(e, rows, -1);
+            }
+            for (int i = 0; i < plain.size(); i += 2) {
+                LinearLayout pair = new LinearLayout(getContext());
+                for (int k = i; k < i + 2; k++) {
+                    if (k < plain.size()) progressEntry(plain.get(k), pair, 1);
+                    else pair.addView(new View(getContext()), new LinearLayout.LayoutParams(0, 1, 1));
+                }
+                rows.addView(pair, new LinearLayout.LayoutParams(-1, -2));
+            }
+            if (missingOnly && sec.done >= sec.total) {
+                TextView t = progressText(a.getString(R.string.progress_part_done), 15, true);
+                t.setPadding(px(30), 0, px(12), px(8));
+                rows.addView(t, new LinearLayout.LayoutParams(-1, -2));
+            }
+        }
+    }
+
+    // Game > Game progress > Map (ProgressMapView, ProgressPlaces): the sea chart with a mark where each thing is found
+    // (and, by choice, where what is missing is), a count per square; a tap on a square lists its things below; a square
+    // with a dungeon opens the dungeon's map by floors. The square picked and the dungeon stay while the page is made again.
+    private int mapSquare = -1;
+    private String mapDungeon;
+    private int mapFloor = Integer.MIN_VALUE;
+
+    private void progressMapPage() {
+        pageTitle(R.string.pmap_title);
+        GameText.prepare(getContext(), this::fill);
+        byte[] d = Native.progressData();
+        if (d == null || d.length < 0x79D) {
+            note(a.getString(R.string.progress_no_game));
+            return;
+        }
+        int[] st = ProgressPlaces.states(d);
+        int show = a.prefs.getInt("progress_map_show", ProgressMapView.SHOW_FOUND), group = a.prefs.getInt("progress_map_kind", 0);
+        choice(R.string.pmap_show, 0, a.getResources().getStringArray(R.array.pmap_shows), show,
+                i -> a.prefs.edit().putInt("progress_map_show", i).apply());
+        choice(R.string.pmap_kind, 0, a.getResources().getStringArray(R.array.pmap_kinds), group,
+                i -> a.prefs.edit().putInt("progress_map_kind", i).apply());
+        choice(R.string.pmap_game_map, R.string.pmap_game_map_hint, a.getResources().getStringArray(R.array.minimap_marks),
+                a.prefs.getInt("chart_marks", MiniMap.MARKS_OFF), i -> {
+                    a.prefs.edit().putInt("chart_marks", i).apply();
+                    a.applyControlsAppearance();
+                });
+        choice(R.string.opt_minimap_marks, R.string.pmap_mini_map_hint, a.getResources().getStringArray(R.array.minimap_marks),
+                a.prefs.getInt("minimap_marks", MiniMap.MARKS_OFF), i -> {
+                    a.prefs.edit().putInt("minimap_marks", i).apply();
+                    a.applyControlsAppearance();
+                });
+        if (mapSquare < 0) {
+            mapSquare = ProgressPlaces.linkSquare();
+            if (mapSquare <= 0) mapSquare = 44;
+        }
+        LinearLayout list = new LinearLayout(getContext());
+        list.setOrientation(LinearLayout.VERTICAL);
+        GameProgress.Labels l = GameProgress.labels(a);
+        ProgressMapView map = new ProgressMapView(getContext(), sq -> {
+            sound(MenuSounds.CURSOR);
+            mapSquare = sq;
+            mapList(list, d, st, show, group, l);
+        });
+        map.set(d, st, show, group, mapSquare);
+        if (mapDungeon != null) {
+            LinearLayout bar = new LinearLayout(getContext());
+            bar.setGravity(Gravity.CENTER_VERTICAL);
+            bar.setPadding(px(12), px(2), px(12), px(6));
+            bar.addView(smallButton(a.getString(R.string.pmap_sea), true, v -> {
+                sound(MenuSounds.CANCEL);
+                mapDungeon = null;
+                fill();
+            }), new LinearLayout.LayoutParams(-2, -2));
+            TextView name = progressText(l.dungeon(dungeonNumber(mapDungeon)), 17, false);
+            name.setPadding(px(14), 0, 0, 0);
+            bar.addView(name, new LinearLayout.LayoutParams(0, -2, 1));
+            rows.addView(bar, new LinearLayout.LayoutParams(-1, -2));
+            LinearLayout floorRow = row(R.string.pmap_floor, 0);
+            map.showDungeon(mapDungeon, () -> {
+                int[] fl = map.floors();
+                if (fl.length == 0) return;
+                String[] names = new String[fl.length];
+                int cur = -1, start = 0;
+                for (int i = 0; i < fl.length; i++) {
+                    names[i] = fl[i] >= 0 ? (fl[i] + 1) + "F" : "B" + (-fl[i]);
+                    if (fl[i] == mapFloor) cur = i;
+                    if (fl[i] == map.floor()) start = i;
+                }
+                if (cur < 0) cur = start;  // (a dungeon just opened: 1F)
+                mapFloor = fl[cur];
+                map.setFloor(mapFloor);
+                choice(floorRow, names, cur, i -> mapFloor = fl[i]);
+            });
+        }
+        LinearLayout.LayoutParams mlp = new LinearLayout.LayoutParams(-1, -2);
+        mlp.setMargins(px(12), px(4), px(12), px(8));
+        mlp.gravity = Gravity.CENTER_HORIZONTAL;
+        rows.addView(map, mlp);
+        note(a.getString(R.string.pmap_about));
+        rows.addView(list, new LinearLayout.LayoutParams(-1, -2));
+        mapList(list, d, st, show, group, l);
+    }
+
+    // the dungeon number (1..6, GameProgress's) of a dungeon map's stage
+    private static int dungeonNumber(String stage) {
+        String[] s = {"majroom", "M_NewD2", "kindan", "Siren", "M_Dai", "kaze"};
+        for (int i = 0; i < s.length; i++) if (s[i].equals(stage)) return i + 1;
+        return 1;
+    }
+
+    // the picked square's things (a dungeon's map to open when it has one), then those of no fixed place
+    private void mapList(LinearLayout list, byte[] d, int[] st, int show, int group, GameProgress.Labels l) {
+        list.removeAllViews();
+        String f = Achievements.currentFile();
+        int sq = mapSquare;
+        java.util.List<ProgressPlaces.Place> here = shownPlaces(ProgressPlaces.inSquare(sq, group), st, show);
+        java.util.List<ProgressPlaces.Place> all = ProgressPlaces.inSquare(sq, group);
+        int found = 0;
+        for (ProgressPlaces.Place p : all) if (st[p.index] != ProgressPlaces.MISSING) found++;
+        mapHeading(list, l.island(sq), all.isEmpty() ? "" : found + " / " + all.size());
+        String dungeonStage = null;
+        for (ProgressPlaces.Place p : ProgressPlaces.inSquare(sq, ProgressPlaces.ALL_KINDS))
+            if (p.stage != null && MiniMapDungeons.of(p.stage) != null) dungeonStage = p.stage;
+        if (dungeonStage != null && !dungeonStage.equals(mapDungeon)) {
+            String ds = dungeonStage;
+            LinearLayout r = new LinearLayout(getContext());
+            r.setPadding(px(24), px(2), px(18), px(6));
+            r.addView(smallButton(a.getString(R.string.pmap_dungeon_map), true, v -> {
+                sound(MenuSounds.DECIDE);
+                mapDungeon = ds;
+                mapFloor = Integer.MIN_VALUE;
+                fill();
+                scroll.scrollTo(0, 0);
+            }), new LinearLayout.LayoutParams(-2, -2));
+            list.addView(r, new LinearLayout.LayoutParams(-1, -2));
+        }
+        if (here.isEmpty()) {
+            TextView t = progressText(a.getString(R.string.pmap_none), 15, true);
+            t.setPadding(px(30), 0, px(12), px(8));
+            list.addView(t, new LinearLayout.LayoutParams(-1, -2));
+        }
+        for (ProgressPlaces.Place p : here) mapEntry(list, p, st[p.index], l, f);
+        // no fixed place: shown with every square
+        java.util.List<ProgressPlaces.Place> loose = shownPlaces(ProgressPlaces.inSquare(0, group), st, show);
+        if (!loose.isEmpty()) {
+            mapHeading(list, a.getString(R.string.pmap_elsewhere), "");
+            TextView t = progressText(a.getString(R.string.pmap_elsewhere_hint), 14, true);
+            t.setPadding(px(30), 0, px(12), px(4));
+            list.addView(t, new LinearLayout.LayoutParams(-1, -2));
+            for (ProgressPlaces.Place p : loose) mapEntry(list, p, st[p.index], l, f);
+        }
+    }
+
+    private static java.util.List<ProgressPlaces.Place> shownPlaces(java.util.List<ProgressPlaces.Place> in, int[] st, int show) {
+        java.util.List<ProgressPlaces.Place> out = new java.util.ArrayList<>();
+        for (ProgressPlaces.Place p : in) {
+            int s = st[p.index];
+            if (show == ProgressMapView.SHOW_FOUND && s == ProgressPlaces.MISSING) continue;
+            if (show == ProgressMapView.SHOW_MISSING && s == ProgressPlaces.FOUND) continue;
+            out.add(p);
+        }
+        return out;
+    }
+
+    private void mapHeading(LinearLayout list, String title, String count) {
+        LinearLayout r = new LinearLayout(getContext());
+        r.setGravity(Gravity.CENTER_VERTICAL);
+        r.setPadding(px(12), px(12), px(18), px(4));
+        TextView t = progressText(title, 19, false);
+        t.setTypeface(Typeface.create("sans-serif-black", Typeface.NORMAL));
+        t.setPadding(px(10), 0, px(12), 0);
+        r.addView(t, new LinearLayout.LayoutParams(0, -2, 1));
+        if (!count.isEmpty()) r.addView(progressText(count, 16, false), new LinearLayout.LayoutParams(-2, -2));
+        list.addView(r, new LinearLayout.LayoutParams(-1, -2));
+    }
+
+    // a thing of the list: its icon (grey while missing), name, how it is found (and when, if seen in play), the check
+    // mark when found (a question mark when found, not sure which)
+    private void mapEntry(LinearLayout list, ProgressPlaces.Place p, int state, GameProgress.Labels l, String file) {
+        LinearLayout r = new LinearLayout(getContext());
+        r.setGravity(Gravity.CENTER_VERTICAL);
+        r.setPadding(px(24), px(3), px(18), px(3));
+        r.setMinimumHeight(px(44));
+        boolean got = state != ProgressPlaces.MISSING;
+        r.addView(new ProgressIcon(getContext(), new String[] {ProgressPlaces.icon(p)}, new boolean[] {got}),
+                new LinearLayout.LayoutParams(px(32), px(32)));
+        LinearLayout words = new LinearLayout(getContext());
+        words.setOrientation(LinearLayout.VERTICAL);
+        words.setPadding(px(10), 0, px(8), 0);
+        String name = ProgressPlaces.name(p, l, a);
+        if (p.kind == ProgressPlaces.GALLERY) name += "  " + ProgressPlaces.figurines(Native.progressData()) + " / " + GameProgress.FIGURINES;
+        if (p.kind == ProgressPlaces.SQUARE) name = l.island(p.what) + " · " + name;
+        words.addView(progressText(name, 16, !got), new LinearLayout.LayoutParams(-1, -2));
+        StringBuilder how = new StringBuilder(ProgressPlaces.source(p, a));
+        if (state == ProgressPlaces.MAYBE) how.append(" · ").append(a.getString(R.string.pmap_maybe));
+        long at = got ? ProgressPlaces.foundAt(a, file, p) : 0;
+        if (at != 0) how.append(" · ").append(a.getString(R.string.pmap_found_on,
+                java.text.DateFormat.getDateInstance(java.text.DateFormat.MEDIUM).format(new java.util.Date(at))));
+        if (p.square == 0) {
+            int on = ProgressPlaces.foundOn(a, file, p);
+            if (on > 0) how.append(" · ").append(l.island(on));
+        }
+        words.addView(progressText(how.toString(), 13, true), new LinearLayout.LayoutParams(-1, -2));
+        r.addView(words, new LinearLayout.LayoutParams(0, -2, 1));
+        View check;
+        if (state == ProgressPlaces.FOUND) check = new ProgressIcon(getContext(), new String[] {ProgressIcon.CHECK}, null);
+        else if (state == ProgressPlaces.MAYBE) {
+            TextView q = progressText("?", 20, false);
+            q.setGravity(Gravity.CENTER);
+            check = q;
+        } else check = new View(getContext());
+        r.addView(check, new LinearLayout.LayoutParams(px(28), px(28)));
+        list.addView(r, new LinearLayout.LayoutParams(-1, -2));
+    }
+
+    // Game > Achievements (Achievements): how many are earned and their points, the popup on screen (AchievementPopup),
+    // then each group as a list in the game progress's look: icon (grey while open), title, what to do, when earned
+    // the save game the achievements page shows (Show: This save game, pref achievement_scope 1, the default, while one
+    // is in play), null for all of them
+    private String achievementFile() {
+        return a.prefs.getInt("achievement_scope", 1) == 1 ? Achievements.currentFile() : null;
+    }
+
+    private void achievementSettingsPage() {
+        pageTitle(R.string.opt_ach_settings);
+        toggle(R.string.ach_popups, R.string.ach_popups_hint, a.prefs.getBoolean("achievement_popup", true), on -> {
+            a.prefs.edit().putBoolean("achievement_popup", on).apply();
+            a.applyControlsAppearance();
+        });
+        toggle(R.string.ach_link, R.string.ach_link_hint, a.prefs.getBoolean("achievement_link", true), on -> {
+            a.prefs.edit().putBoolean("achievement_link", on).apply();
+            a.applyControlsAppearance();
+        });
+        toggle(R.string.ach_sound, R.string.ach_sound_hint, a.prefs.getBoolean("achievement_sound", true), on -> {
+            a.prefs.edit().putBoolean("achievement_sound", on).apply();
+            a.applyControlsAppearance();
+            if (on) MenuSounds.play(MenuSounds.ITEM_GET);  // (to hear it)
+        });
+        {  // the jingle's volume: 10 % steps, stopping at the ends
+            String[] vols = new String[10];
+            for (int i = 0; i < 10; i++) vols[i] = (i + 1) * 10 + " %";
+            int cur = a.prefs.getInt("achievement_sound_volume", MenuSounds.JINGLE_DEFAULT) / 10 - 1;
+            choice(R.string.ach_sound_volume, 0, vols, cur, i -> {
+                if (Math.abs(i - cur) > 1) return;  // (the row's wrap from one end to the other)
+                a.prefs.edit().putInt("achievement_sound_volume", (i + 1) * 10).apply();
+                MenuSounds.itemGetScale = (i + 1) / 10f;
+                MenuSounds.play(MenuSounds.ITEM_GET);  // (to hear it)
+            });
+        }
+        toggle(R.string.ach_each_file, R.string.ach_each_file_hint, a.prefs.getBoolean("achievement_each_file", true),
+                on -> a.prefs.edit().putBoolean("achievement_each_file", on).apply());
+        note(a.getString(R.string.ach_files_about));
+        toggle(R.string.ach_with_cheats, R.string.ach_with_cheats_hint, a.prefs.getBoolean(Achievements.PREF_WITH_CHEATS, false),
+                on -> a.prefs.edit().putBoolean(Achievements.PREF_WITH_CHEATS, on).apply());
+        submenu(R.string.ach_reset, R.string.ach_reset_hint, "", () -> new GameDialog(getContext()).title(R.string.ach_reset)
+                .message(R.string.ach_reset_ask)
+                .button(R.string.opt_cancel, null)
+                .button(R.string.ach_reset, () -> {
+                    Achievements.reset(a);
+                    fill();
+                }).show());
+    }
+
+    private void achievementsPage() {
+        pageTitle(R.string.opt_achievements);
+        GameText.prepare(getContext(), this::fill);  // (the item, song and place names in the game's words)
+        String file = achievementFile();
+        int n = Achievements.earnedCount(a, file), points = Achievements.earnedPoints(a, file), total = Achievements.totalPoints();
+        LinearLayout top = new LinearLayout(getContext());
+        top.setGravity(Gravity.CENTER_VERTICAL);
+        top.setPadding(px(14), px(4), px(18), px(10));
+        top.addView(new ProgressIcon(getContext(), new String[] {"Triforce_00^l"}, null), new LinearLayout.LayoutParams(px(54), px(54)));
+        TextView sum = progressText(a.getString(R.string.ach_total, n, Achievements.ALL.length, points, total), 17, false);
+        sum.setTypeface(Typeface.create("sans-serif-black", Typeface.NORMAL));
+        sum.setPadding(px(10), 0, px(16), 0);
+        top.addView(sum, new LinearLayout.LayoutParams(0, -2, 1));
+        top.addView(new ProgressIcon.Bar(getContext(), points / (float) total), new LinearLayout.LayoutParams(px(110), px(18)));
+        rows.addView(top, new LinearLayout.LayoutParams(-1, -2));
+        String now = Achievements.currentFile();
+        String[] scopes = {a.getString(R.string.ach_scope_all), now != null ? Achievements.fileLabel(a, now) : a.getString(R.string.ach_scope_file)};
+        choice(R.string.ach_scope, 0, scopes, a.prefs.getInt("achievement_scope", 1), i -> {
+            a.prefs.edit().putInt("achievement_scope", i).apply();
+        });
+        if (now == null && a.prefs.getInt("achievement_scope", 1) == 1) note(a.getString(R.string.ach_no_file));
+        boolean missingOnly = a.prefs.getInt("achievement_filter", 0) == 1;
+        choice(R.string.progress_show, 0, a.getResources().getStringArray(R.array.progress_filters), missingOnly ? 1 : 0,
+                i -> a.prefs.edit().putInt("achievement_filter", i).apply());
+        note(a.getString(R.string.ach_about));
+        pausedNote();
+        int[] groups = {R.string.ach_group_story, R.string.ach_group_items, R.string.ach_group_songs, R.string.ach_group_quests,
+                R.string.ach_group_collect, R.string.ach_group_gallery};
+        java.text.DateFormat date = java.text.DateFormat.getDateInstance(java.text.DateFormat.MEDIUM);
+        for (int g = 0; g < groups.length; g++) {
+            int done = 0, all = 0;
+            for (Achievements.Def d : Achievements.ALL) {
+                if (d.group != g) continue;
+                all++;
+                if (Achievements.earned(a, d, file) != 0) done++;
+            }
+            LinearLayout h = new LinearLayout(getContext());
+            h.setGravity(Gravity.CENTER_VERTICAL);
+            h.setPadding(px(12), px(14), px(18), px(4));
+            h.setFocusable(true);
+            h.setBackground(pressed(new GameUi.OptionCursor()));
+            TextView ht = progressText(a.getString(groups[g]), 19, false);
+            ht.setTypeface(Typeface.create("sans-serif-black", Typeface.NORMAL));
+            ht.setPadding(px(10), 0, px(12), 0);
+            h.addView(ht, new LinearLayout.LayoutParams(0, -2, 1));
+            TextView hn = progressText(done + " / " + all, 16, false);
+            hn.setPadding(0, 0, px(10), 0);
+            h.addView(hn, new LinearLayout.LayoutParams(-2, -2));
+            h.addView(new ProgressIcon.Bar(getContext(), done / (float) all), new LinearLayout.LayoutParams(px(110), px(12)));
+            rows.addView(h, new LinearLayout.LayoutParams(-1, -2));
+            for (Achievements.Def d : Achievements.ALL) {
+                if (d.group != g) continue;
+                long when = Achievements.earned(a, d, file);
+                if (missingOnly && when != 0) continue;
+                achievementEntry(d, when == 0 ? null : date.format(new java.util.Date(when)));
+            }
+            if (missingOnly && done == all) {
+                TextView t = progressText(a.getString(R.string.progress_part_done), 15, true);
+                t.setPadding(px(30), 0, px(12), px(8));
+                rows.addView(t, new LinearLayout.LayoutParams(-1, -2));
+            }
+        }
+    }
+
+    // an achievement's line: its icon (grey while open), title and what to do, its points or when it was earned, the
+    // check mark when earned
+    private void achievementEntry(Achievements.Def d, String earnedOn) {
+        boolean got = earnedOn != null;
+        LinearLayout r = new LinearLayout(getContext());
+        r.setGravity(Gravity.CENTER_VERTICAL);
+        r.setPadding(px(24), px(4), px(18), px(4));
+        r.setMinimumHeight(px(48));
+        r.addView(new ProgressIcon(getContext(), new String[] {d.icon}, new boolean[] {got}), new LinearLayout.LayoutParams(px(36), px(36)));
+        LinearLayout words = new LinearLayout(getContext());
+        words.setOrientation(LinearLayout.VERTICAL);
+        words.setPadding(px(10), 0, px(8), 0);
+        TextView title = progressText(d.title.of(a), 16, !got);
+        title.setTypeface(Typeface.create("sans-serif-black", Typeface.NORMAL));
+        words.addView(title, new LinearLayout.LayoutParams(-1, -2));
+        words.addView(progressText(d.desc.of(a), 14, true), new LinearLayout.LayoutParams(-1, -2));
+        r.addView(words, new LinearLayout.LayoutParams(0, -2, 1));
+        TextView side = progressText(got ? a.getString(R.string.ach_earned_on, earnedOn) : a.getString(R.string.ach_points, d.points),
+                13, true);
+        side.setGravity(Gravity.END);
+        side.setPadding(px(6), 0, px(6), 0);
+        r.addView(side, new LinearLayout.LayoutParams(px(96), -2));
+        View check = got ? new ProgressIcon(getContext(), new String[] {ProgressIcon.CHECK}, null) : new View(getContext());
+        r.addView(check, new LinearLayout.LayoutParams(px(28), px(28)));
+        rows.addView(r, new LinearLayout.LayoutParams(-1, -2));
+    }
+
+    private TextView progressText(String text, float size, boolean faint) {
+        TextView t = GameUi.text(getContext(), gameStyle);
+        t.setText(text);
+        t.setTextColor(faint ? GameUi.OPTION_HINT : GameUi.OPTION_TEXT);
+        sp(t, size);
+        t.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
+        return t;
+    }
+
+    // the whole: the Triforce, the percent large, a bar
+    private void progressTotal(int percent) {
+        LinearLayout r = new LinearLayout(getContext());
+        r.setGravity(Gravity.CENTER_VERTICAL);
+        r.setPadding(px(14), px(4), px(18), px(10));
+        r.addView(new ProgressIcon(getContext(), new String[] {"Triforce_00^l"}, null), new LinearLayout.LayoutParams(px(54), px(54)));
+        TextView t = progressText(percent + " %", 30, false);
+        t.setTypeface(Typeface.create("sans-serif-black", Typeface.NORMAL));
+        t.setPadding(px(10), 0, px(16), 0);
+        r.addView(t, new LinearLayout.LayoutParams(-2, -2));
+        r.addView(new ProgressIcon.Bar(getContext(), percent / 100f), new LinearLayout.LayoutParams(0, px(18), 1));
+        rows.addView(r, new LinearLayout.LayoutParams(-1, -2));
+    }
+
+    // a part's heading: its icon, its name, how much of it there is, a short bar (focusable: a controller steps through
+    // the parts)
+    private void progressHeading(GameProgress.Section sec) {
+        LinearLayout r = new LinearLayout(getContext());
+        r.setGravity(Gravity.CENTER_VERTICAL);
+        r.setPadding(px(12), px(14), px(18), px(4));
+        r.setFocusable(true);
+        r.setBackground(pressed(new GameUi.OptionCursor()));
+        r.addView(new ProgressIcon(getContext(), new String[] {sec.icon}, null), new LinearLayout.LayoutParams(px(38), px(38)));
+        TextView t = progressText(sec.title, 19, false);
+        t.setTypeface(Typeface.create("sans-serif-black", Typeface.NORMAL));
+        t.setPadding(px(10), 0, px(12), 0);
+        r.addView(t, new LinearLayout.LayoutParams(0, -2, 1));
+        TextView n = progressText(sec.done + " / " + sec.total, 16, false);
+        n.setPadding(0, 0, px(10), 0);
+        r.addView(n, new LinearLayout.LayoutParams(-2, -2));
+        r.addView(new ProgressIcon.Bar(getContext(), sec.fraction()), new LinearLayout.LayoutParams(px(110), px(12)));
+        rows.addView(r, new LinearLayout.LayoutParams(-1, -2));
+    }
+
+    // a line of a part: its icon(s), its name (grey while missing), how many of a count, the check mark when complete;
+    // weight > 0: a cell of a two-column line
+    private void progressEntry(GameProgress.Entry e, LinearLayout parent, float weight) {
+        LinearLayout r = new LinearLayout(getContext());
+        r.setGravity(Gravity.CENTER_VERTICAL);
+        r.setPadding(px(weight > 0 ? 30 : 24), px(3), px(18), px(3));
+        r.setMinimumHeight(px(40));
+        boolean multi = e.icons.length > 1;  // (a dungeon: its parts after its name)
+        if (!multi && e.icons[0] != null)
+            r.addView(new ProgressIcon(getContext(), e.icons, new boolean[] {e.complete()}), new LinearLayout.LayoutParams(px(32), px(32)));
+        TextView t = progressText(e.name, 16, !e.complete());
+        t.setPadding(px(multi || e.icons[0] == null ? 4 : 10), 0, px(8), 0);
+        r.addView(t, new LinearLayout.LayoutParams(0, -2, 1));
+        if (multi) r.addView(new ProgressIcon(getContext(), e.icons, e.got), new LinearLayout.LayoutParams(px(34 * e.icons.length), px(32)));
+        if (e.total > 1 && !multi) {
+            TextView n = progressText(e.done + " / " + e.total, 16, !e.complete());
+            n.setPadding(px(6), 0, px(6), 0);
+            r.addView(n, new LinearLayout.LayoutParams(-2, -2));
+        }
+        View check = e.complete() ? new ProgressIcon(getContext(), new String[] {ProgressIcon.CHECK}, null) : new View(getContext());
+        r.addView(check, new LinearLayout.LayoutParams(px(28), px(28)));
+        parent.addView(r, weight > 0 ? new LinearLayout.LayoutParams(0, -2, weight) : new LinearLayout.LayoutParams(-1, -2));
+    }
+
     // a mod of MainActivity.MODS by its index there
     private void modToggle(int i, int label, int hint) {
         String key = MainActivity.MODS[i];
         toggle(label, hint, a.prefs.getBoolean(key, false), on -> a.setMod(key, on));
+    }
+
+    // Game > Hit freezes: a switch per kind of the game's short stop on a hit (on: as in the game)
+    private void hitStopsPage() {
+        pageTitle(R.string.opt_hit_stops);
+        int[][] kinds = {{R.string.opt_hit_stop_hit, R.string.opt_hit_stop_hit_hint}, {R.string.opt_hit_stop_strong, R.string.opt_hit_stop_strong_hint},
+                         {R.string.opt_hit_stop_defeat, R.string.opt_hit_stop_defeat_hint}, {R.string.opt_hit_stop_boss, R.string.opt_hit_stop_boss_hint},
+                         {R.string.opt_hit_stop_sign, R.string.opt_hit_stop_sign_hint}};
+        for (int k = 0; k < kinds.length; k++) {
+            int bit = 1 << k;
+            toggle(kinds[k][0], kinds[k][1], (a.hitStopOff() & bit) == 0, on -> a.setHitStopOff(on ? a.hitStopOff() & ~bit : a.hitStopOff() | bit));
+        }
     }
 
     // Game > Songs: conducted songs replayed, songs sung into the microphone (SongListener, experimental), play buttons
@@ -1381,11 +2673,32 @@ final class OptionsMenu extends Dialog {
             }
         }
         modToggle(2, R.string.opt_mod_climb, R.string.opt_mod_climb_hint);
+        modToggle(9, R.string.opt_mod_leaf_lift, R.string.opt_mod_leaf_lift_hint);
+        if (a.prefs.getBoolean(MainActivity.MODS[9], false)) {  // the height of one wave's lift
+            int[] heights = MainActivity.LEAF_LIFT_HEIGHTS;
+            String[] pct = new String[heights.length];
+            for (int j = 0; j < pct.length; j++) pct[j] = heights[j] + "%";
+            int cur = java.util.Arrays.binarySearch(heights, a.prefs.getInt("mod_leaf_lift_height", 100));
+            if (cur < 0) cur = java.util.Arrays.binarySearch(heights, 100);
+            indentNext = true;
+            choice(R.string.opt_mod_leaf_lift_height, R.string.opt_mod_leaf_lift_height_hint, pct, cur, k -> {
+                a.prefs.edit().putInt("mod_leaf_lift_height", heights[k]).apply();
+                Native.setOption("mod_leaf_lift_height", heights[k]);
+            });
+        }
         moveSpeed("mod_run", R.string.opt_mod_run, R.string.opt_mod_run_hint, runs, curRun);
         moveSpeed("mod_swim", R.string.opt_mod_swim, R.string.opt_mod_swim_hint, runs, curSwim);
         moveSpeed("mod_climb", R.string.opt_mod_climb_fast, R.string.opt_mod_climb_fast_hint, runs, curClimb);
         moveSpeed("mod_sidle", R.string.opt_mod_sidle, R.string.opt_mod_sidle_hint, runs, curSidle);
         submenu(R.string.opt_cheats, R.string.opt_cheats_hint, "", () -> openPage(this::cheatsPage));
+        submenu(a.getString(R.string.rando_look), a.getString(R.string.look_hint),
+                LinkColors.anyOn(a) ? a.getString(R.string.look_on_short) : "", () -> openLook(true));
+        submenu(a.getString(R.string.names_title), a.getString(R.string.names_hint), "", () -> {
+            // (opens on the save file in play; at the title on the one picked last)
+            int played = PlayerModels.playedFile();
+            if (played > 0) a.prefs.edit().putInt("save_name_file", played).apply();
+            openPage(this::saveNamesPage);
+        });
         int packsOn = 0;
         for (String f : ModPacks.list(a.baseDir())) if (a.prefs.getBoolean("pack_on_" + f, false)) packsOn++;
         submenu(R.string.opt_packs, R.string.opt_packs_hint, packsOn > 0 ? a.getString(R.string.packs_on_count, packsOn) : "",
@@ -1508,6 +2821,7 @@ final class OptionsMenu extends Dialog {
             String song = GameText.songName((Integer) sc[1]);
             submenu(song, p.name + " · " + sc[2] + " " + a.getString(R.string.warp_spawn, (Integer) sc[3], (Integer) sc[4]), "", () -> {
                 Native.warpPlace((Float) sc[5], (Float) sc[6], (Float) sc[7], (Integer) sc[8]);
+                Achievements.pauseRun(a.getString(R.string.preset_song_scenes) + ": " + song);  // (a story put in place)
                 if (!Native.warpPreset(songUndo((Integer) sc[1], p.story), (String) sc[2], (Integer) sc[3], (Integer) sc[4], -1)) {
                     android.widget.Toast.makeText(a, R.string.warp_no_save, android.widget.Toast.LENGTH_SHORT).show();
                     return;
@@ -1519,6 +2833,7 @@ final class OptionsMenu extends Dialog {
     }
 
     private void warpPreset(StoryPresets.Preset p) {
+        Achievements.pauseRun(a.getString(R.string.preset_title) + ": " + p.name);  // (a story put in place)
         if (!Native.warpPreset(p.story, p.stage, p.room, p.spawn, p.layer >= 0 ? p.layer : WarpCatalog.layer)) {
             android.widget.Toast.makeText(a, R.string.warp_no_save, android.widget.Toast.LENGTH_SHORT).show();
             return;
@@ -1566,6 +2881,98 @@ final class OptionsMenu extends Dialog {
 
     // cheats (mods/cheats.cpp, from the original project): edits of the save file in play; one-shot
     // ones by a tap, the infinite ones as switches (kept as settings); story cheats ask first
+    // Mods > Mod packs > GameCube player model: per save file Link himself or one of the imported models
+    // (PlayerModels: the runtime puts it into the game's memory when that file is played, at once)
+    private int modelFile = 1;
+
+    private void playerModelsPage() {
+        pageTitle(R.string.packs_gc_model);
+        java.io.File base = a.baseDir();
+        if (ModPacks.needsTrim(base)) {  // (once: model packs from before down to their Link.szs)
+            a.withProgressLines(a.getString(R.string.packs_gc_trimming), p -> {
+                String err = ModPacks.choosePlayerModel(base, a.gameDir(), a.prefs, null, p);
+                return err == null ? "" : "!" + err;
+            }, r -> fill());
+        }
+        modelFile = Math.max(1, Math.min(PlayerModels.FILES, a.prefs.getInt("player_model_file", modelFile)));
+        String[] files = new String[PlayerModels.FILES];
+        for (int i = 0; i < files.length; i++) files[i] = a.getString(R.string.look_file_n, i + 1);
+        choice(rowText(a.getString(R.string.look_file), a.getString(R.string.packs_gc_file_hint)), files, modelFile - 1, i -> {
+            modelFile = i + 1;
+            a.prefs.edit().putInt("player_model_file", modelFile).apply();
+            fill();
+        });
+        note(a.getString(R.string.packs_gc_model_about));
+        String on = PlayerModels.get(a, modelFile);
+        java.util.List<String> names = new java.util.ArrayList<>();
+        names.add(null);
+        names.addAll(ModPacks.playerModels(base));
+        for (String f : names) {
+            String label = f == null ? a.getString(R.string.packs_gc_off) : ModPacks.playerModelName(base, f);
+            boolean cur = f == null ? on == null : f.equals(on);
+            submenu(label, null, cur ? a.getString(R.string.packs_gc_current) : "", cur ? () -> {} : () -> {
+                PlayerModels.set(a, modelFile, f);
+                fill();
+            });
+        }
+        // (what was converted of this file's one)
+        if (on != null) {
+            java.io.File rep = new java.io.File(new java.io.File(ModPacks.dir(base), on), "conversion.txt");
+            if (rep.isFile())
+                submenu(a.getString(R.string.packs_gc_report), null, "", () -> {
+                    try {
+                        new GameDialog(a).title(ModPacks.playerModelName(base, on))
+                                .message(new String(java.nio.file.Files.readAllBytes(rep.toPath()), java.nio.charset.StandardCharsets.UTF_8))
+                                .button(R.string.opt_ok, null).show();
+                    } catch (java.io.IOException ignored) {
+                    }
+                });
+        }
+    }
+
+    // ---- Mods > Save file names (SaveNames, runtime/src/mods/save_names.cpp): a file's name changed in play, up to 16
+    // characters; read from the game's memory (nothing to change before the game has its names)
+    private void saveNamesPage() {
+        pageTitle(R.string.names_title);
+        int file = Math.max(1, Math.min(SaveNames.FILES, a.prefs.getInt("save_name_file", 1)));
+        String[] files = new String[SaveNames.FILES];
+        for (int i = 0; i < files.length; i++) files[i] = a.getString(R.string.look_file_n, i + 1);
+        choice(rowText(a.getString(R.string.look_file), a.getString(R.string.names_file_hint)), files, file - 1, i -> {
+            a.prefs.edit().putInt("save_name_file", i + 1).apply();
+            fill();
+        });
+        note(a.getString(R.string.names_about, SaveNames.MAX, SaveNames.OWN));
+        String[] cur = SaveNames.current();
+        if (cur == null) {
+            note(a.getString(R.string.names_no_game));
+            return;
+        }
+        // (a rename the paused game hasn't taken over yet: shown as asked)
+        String asked = SaveNames.asked[file];
+        if (asked != null && asked.equals(cur[file - 1])) SaveNames.asked[file] = asked = null;
+        String name = asked != null ? asked : cur[file - 1];
+        submenu(a.getString(R.string.names_name), a.getString(R.string.names_name_hint), name, () -> askSaveName(file, name));
+    }
+
+    private void askSaveName(int file, String cur) {
+        android.widget.EditText e = new android.widget.EditText(getContext());
+        e.setText(cur);
+        e.setSingleLine(true);
+        e.setSelectAllOnFocus(true);
+        e.setTextColor(GameUi.INK);
+        e.setFilters(new android.text.InputFilter[] {new android.text.InputFilter.LengthFilter(SaveNames.MAX)});
+        new GameDialog(a).title(a.getString(R.string.look_file_n, file)).content(e).button(R.string.opt_cancel, null).button(R.string.opt_ok, () -> {
+            String name = SaveNames.clean(e.getText().toString());
+            String bad = SaveNames.badChar(a, name);
+            if (bad != null) {
+                new GameDialog(a).title(R.string.names_title).message(a.getString(R.string.names_bad_char, bad)).button(R.string.opt_ok, null).show();
+                return;
+            }
+            if (!SaveNames.rename(a, file, name)) return;
+            fill();
+        }).show();
+    }
+
     // ---- mod packs (ModPacks, runtime/src/packs.h): Cemu graphic packs imported from zip files
     private void packsPage() {
         onPacksPage = true;
@@ -1574,7 +2981,24 @@ final class OptionsMenu extends Dialog {
         submenu(R.string.packs_import, R.string.packs_import_hint, "", () -> a.pickPacks(this::fill));
         java.io.File base = a.baseDir();
         java.util.List<String> folders = ModPacks.list(base);
-        if (folders.isEmpty()) note(a.getString(R.string.packs_none));
+        // player models: one row, their own page (a whole collection made this page slow and long)
+        java.util.List<String> models = new java.util.ArrayList<>();
+        for (String f : folders) if (ModPacks.isPlayerModel(f)) models.add(f);
+        folders.removeAll(models);
+        if (!models.isEmpty()) {
+            // (each file's: one name when all play as the same)
+            java.util.LinkedHashSet<String> who = new java.util.LinkedHashSet<>();
+            for (int f = 1; f <= PlayerModels.FILES; f++) who.add(PlayerModels.name(a, f));
+            String value = who.size() == 1 ? who.iterator().next()
+                    : PlayerModels.name(a, 1) + " · " + PlayerModels.name(a, 2) + " · " + PlayerModels.name(a, 3);
+            submenu(a.getString(R.string.packs_gc_model), a.getString(R.string.packs_gc_model_hint, models.size()), value, () -> {
+                // (opens on the save file in play; at the title on the one picked last)
+                int played = PlayerModels.playedFile();
+                if (played > 0) a.prefs.edit().putInt("player_model_file", played).apply();
+                openPage(this::playerModelsPage);
+            });
+        }
+        if (folders.isEmpty() && models.isEmpty()) note(a.getString(R.string.packs_none));
         for (String f : folders) {
             ModPacks.Info info = ModPacks.describe(base, a.gameDir(), a.prefs, f);
             boolean on = a.prefs.getBoolean("pack_on_" + f, false);
@@ -1626,6 +3050,7 @@ final class OptionsMenu extends Dialog {
                     boolean wasOn = a.prefs.getBoolean("pack_on_" + folder, false);
                     ModPacks.delete(base, a.prefs, folder);
                     if (wasOn) a.markPacksChanged();
+                    if (ModPacks.isPlayerModel(folder)) PlayerModels.handOver(a);  // (a save file's model gone: HD Link)
                     page = pageStack.poll();
                     fill();
                 }).show());
@@ -1634,15 +3059,17 @@ final class OptionsMenu extends Dialog {
     private void cheatsPage() {
         pageTitle(R.string.opt_cheats);
         note(a.getString(R.string.cheats_about));
-        submenu(R.string.cheat_items, R.string.cheat_items_hint, "", () -> a.cheat(MainActivity.CHEAT_ITEMS, R.string.cheat_items_done));
-        submenu(R.string.cheat_sword, R.string.cheat_sword_hint, "", () -> a.cheat(MainActivity.CHEAT_SWORD, R.string.cheat_sword_done));
-        submenu(R.string.cheat_stats, R.string.cheat_stats_hint, "", () -> a.cheat(MainActivity.CHEAT_STATS, R.string.cheat_stats_done));
-        submenu(R.string.cheat_bags, R.string.cheat_bags_hint, "", () -> a.cheat(MainActivity.CHEAT_BAGS, R.string.cheat_bags_done));
+        submenu(R.string.cheat_items, R.string.cheat_items_hint, "", () -> a.cheat(R.string.cheat_items, MainActivity.CHEAT_ITEMS, R.string.cheat_items_done));
+        submenu(R.string.cheat_sword, R.string.cheat_sword_hint, "", () -> a.cheat(R.string.cheat_sword, MainActivity.CHEAT_SWORD, R.string.cheat_sword_done));
+        submenu(R.string.cheat_stats, R.string.cheat_stats_hint, "", () -> a.cheat(R.string.cheat_stats, MainActivity.CHEAT_STATS, R.string.cheat_stats_done));
+        submenu(R.string.cheat_bags, R.string.cheat_bags_hint, "", () -> a.cheat(R.string.cheat_bags, MainActivity.CHEAT_BAGS, R.string.cheat_bags_done));
+        submenu(R.string.cheat_figurines, R.string.cheat_figurines_hint, "", () -> a.cheatFigurines());
         int[] inf = {R.string.cheat_inf_health, R.string.cheat_inf_magic, R.string.cheat_inf_ammo, R.string.cheat_inf_rupees,
-                     R.string.cheat_inf_bags, R.string.cheat_inf_breath, R.string.cheat_one_hit};
-        int[] infHint = {0, 0, 0, 0, R.string.cheat_inf_bags_hint, R.string.cheat_inf_breath_hint, R.string.cheat_one_hit_hint};
+                     R.string.cheat_inf_bags, R.string.cheat_inf_breath, R.string.cheat_one_hit, R.string.cheat_fast_push};
+        int[] infHint = {0, 0, 0, 0, R.string.cheat_inf_bags_hint, R.string.cheat_inf_breath_hint, R.string.cheat_one_hit_hint,
+                         R.string.cheat_fast_push_hint};
         String[] infKey = {"cheat_inf_health", "cheat_inf_magic", "cheat_inf_ammo", "cheat_inf_rupees", "cheat_inf_bags", "cheat_inf_breath",
-                           "cheat_one_hit"};
+                           "cheat_one_hit", "cheat_fast_push"};
         for (int i = 0; i < inf.length; i++) {
             String key = infKey[i];
             toggle(inf[i], infHint[i], a.prefs.getBoolean(key, false), on -> {
@@ -1658,7 +3085,7 @@ final class OptionsMenu extends Dialog {
         for (int[] c : story)
             submenu(c[0], 0, "", () -> new GameDialog(getContext()).title(c[0]).message(R.string.cheats_story_confirm)
                     .button(R.string.opt_cancel, null)
-                    .button(R.string.cheat_apply, () -> a.cheat(c[1], c[2])).show());
+                    .button(R.string.cheat_apply, () -> a.cheat(c[0], c[1], c[2])).show());
     }
 
     // faster running, swimming, climbing or sidling: its speed, and below it (when on) when it applies and how L3 works
@@ -1682,7 +3109,7 @@ final class OptionsMenu extends Dialog {
     // the Controls tab: the touch style and the layout editor, then a page per topic (no on/off for the touch
     // controls: a controller in use hides them, a touch brings them back, MainActivity.controllerUsed)
     private void controls() {
-        toggle(R.string.opt_onscreen, R.string.opt_onscreen_hint, a.prefs.getBoolean("onscreen_controls", true), a::setOnscreenControls);
+        toggle(R.string.opt_onscreen, R.string.opt_onscreen_hint, a.onscreenControls(), a::setOnscreenControls);
         if (MainActivity.NEW_TOUCH_CONTROLS) {
             String[] styles = {a.getString(R.string.controls_classic), a.getString(R.string.controls_flexible)};
             choice(R.string.opt_controls_style, R.string.opt_controls_style_hint, styles, a.prefs.getInt("controls_style", 0), i -> {
@@ -1775,10 +3202,55 @@ final class OptionsMenu extends Dialog {
             a.prefs.edit().putBoolean("stick_follows", on).apply();
             a.applyControlsAppearance();
         });
+        // the console's GamePad view while the game is on another screen (ControlsView: the eyes-free layout)
+        toggle(R.string.opt_controls_blind, R.string.opt_controls_blind_hint, a.prefs.getBoolean("controls_blind", true), on -> {
+            a.prefs.edit().putBoolean("controls_blind", on).apply();
+            a.applyControlsAppearance();
+        });
+        if (a.prefs.getBoolean("controls_blind", true)) {  // its own layout, in the layout editor
+            indentNext = true;
+            submenu(R.string.opt_controls_edit_blind, R.string.opt_controls_edit_blind_hint, "", () -> {
+                a.editBlindControls();
+                dismiss();
+            });
+        }
+        if (a.prefs.getBoolean("controls_blind", true)) {  // its face buttons: the diamond, or a swipe from where the thumb lands
+            String[] faces = {a.getString(R.string.blind_face_diamond), a.getString(R.string.blind_face_swipe)};
+            indentNext = true;
+            choice(R.string.opt_blind_face, R.string.opt_blind_face_hint, faces, a.prefs.getInt("controls_blind_face", 1), i -> {
+                a.prefs.edit().putInt("controls_blind_face", i).apply();
+                a.applyControlsAppearance();
+            });
+        }
+        {  // the same view: the TV picture faded in, in place of the dimmed GamePad picture
+            int[] pct = {0, 25, 50, 75};
+            String[] names = new String[pct.length];
+            int sel = 0, now = a.prefs.getInt("controls_tv_backdrop", 50);
+            for (int i = 0; i < pct.length; i++) {
+                names[i] = pct[i] == 0 ? a.getString(R.string.opt_off) : pct[i] + " %";
+                if (pct[i] == now) sel = i;
+            }
+            choice(R.string.opt_controls_tv_backdrop, R.string.opt_controls_tv_backdrop_hint, names, sel, i -> {
+                a.prefs.edit().putInt("controls_tv_backdrop", pct[i]).apply();
+                a.applyControlsAppearance();
+            });
+        }
+        if (a.prefs.getInt("controls_style", 0) == 0) {  // the classic style's face buttons: the diamond, or the eyes-free view's swipe
+            String[] faces = {a.getString(R.string.blind_face_diamond), a.getString(R.string.blind_face_swipe)};
+            choice(R.string.opt_classic_face, R.string.opt_blind_face_hint, faces, a.prefs.getInt("controls_classic_face", 0), i -> {
+                a.prefs.edit().putInt("controls_classic_face", i).apply();
+                a.applyControlsAppearance();
+            });
+        }
         if (a.prefs.getInt("controls_style", 0) == 1) {
             toggle(R.string.opt_show_sticks, R.string.opt_show_sticks_hint, a.prefs.getBoolean("controls_show_sticks", true), on -> {
                 a.prefs.edit().putBoolean("controls_show_sticks", on).apply();
                 a.applyControlsAppearance();
+            });
+            toggle(R.string.opt_z_latch, R.string.opt_z_latch_hint, a.prefs.getBoolean("z_latch", true), on -> {
+                a.prefs.edit().putBoolean("z_latch", on).apply();
+                a.applyControlsAppearance();
+                fill();  // (ZL when the target is defeated: only with the latch)
             });
             toggle(R.string.opt_context_buttons, R.string.opt_context_buttons_hint, a.prefs.getBoolean("context_buttons", false), on -> {
                 a.prefs.edit().putBoolean("context_buttons", on).apply();
@@ -1800,6 +3272,7 @@ final class OptionsMenu extends Dialog {
             a.prefs.edit().putBoolean("link_poses", on).apply();
             a.applyControlsAppearance();
         });
+        if (a.prefs.getInt("controls_style", 0) == 1 && !a.prefs.getBoolean("z_latch", true)) return;  // ZL held: the game's own
         String[] defeat = {a.getString(R.string.opt_zl_defeat_release), a.getString(R.string.opt_zl_defeat_next)};
         choice(R.string.opt_zl_defeat, R.string.opt_zl_defeat_hint, defeat, a.prefs.getInt("zl_after_defeat", 0), i -> {
             a.prefs.edit().putInt("zl_after_defeat", i).apply();
@@ -1931,6 +3404,151 @@ final class OptionsMenu extends Dialog {
     // Controls > Screen (HUD): hearts and rupees shown only when needed, the large Picto Box view (with context buttons)
     private void hudPage() {
         pageTitle(R.string.opt_page_hud);
+        // the mini map (MiniMap): on / off, its corner and size
+        boolean map = a.prefs.getBoolean("minimap", true);
+        toggle(R.string.opt_minimap, R.string.opt_minimap_hint, map, on -> {
+            a.prefs.edit().putBoolean("minimap", on).apply();
+            a.applyControlsAppearance();
+        });
+        if (map) {
+            indentNext = true;
+            choice(R.string.opt_minimap_style, 0, a.getResources().getStringArray(R.array.minimap_styles),
+                    a.prefs.getBoolean("minimap_round", false) ? 1 : 0, i -> {
+                        a.prefs.edit().putBoolean("minimap_round", i == 1).apply();
+                        a.applyControlsAppearance();
+                    });
+            indentNext = true;
+            choice(R.string.opt_minimap_inside, 0, a.getResources().getStringArray(R.array.minimap_insides),
+                    a.prefs.getBoolean("minimap_outline", false) ? 1 : 0, i -> {
+                        a.prefs.edit().putBoolean("minimap_outline", i == 1).apply();
+                        a.applyControlsAppearance();
+                    });
+            indentNext = true;
+            choice(R.string.opt_minimap_pictures, R.string.opt_minimap_pictures_hint, a.getResources().getStringArray(R.array.minimap_pictures),
+                    MiniMap.pictures(a.prefs), i -> {
+                        a.prefs.edit().putInt("minimap_pictures", i).apply();
+                        a.applyControlsAppearance();
+                    });
+            indentNext = true;
+            choice(R.string.opt_minimap_sea_zoom, R.string.opt_minimap_sea_zoom_hint, a.getResources().getStringArray(R.array.minimap_sea_zooms),
+                    MiniMap.seaZoom(a.prefs), i -> {
+                        a.prefs.edit().putInt("minimap_sea_zoom", i).apply();
+                        a.applyControlsAppearance();
+                    });
+            indentNext = true;
+            toggle(R.string.opt_minimap_face, R.string.opt_minimap_face_hint, a.prefs.getBoolean("minimap_face", true), on -> {
+                a.prefs.edit().putBoolean("minimap_face", on).apply();
+                a.applyControlsAppearance();
+            });
+            indentNext = true;
+            choice(R.string.opt_minimap_mark_size, 0, a.getResources().getStringArray(R.array.minimap_mark_sizes),
+                    a.prefs.getInt("minimap_mark_size", 1), i -> {
+                        a.prefs.edit().putInt("minimap_mark_size", i).apply();
+                        a.applyControlsAppearance();
+                    });
+            indentNext = true;
+            choice(R.string.opt_minimap_arrow_colour, 0, a.getResources().getStringArray(R.array.minimap_arrow_colours),
+                    a.prefs.getInt("minimap_arrow_colour", 0), i -> {
+                        a.prefs.edit().putInt("minimap_arrow_colour", i).apply();
+                        a.applyControlsAppearance();
+                    });
+            indentNext = true;
+            choice(R.string.opt_minimap_move_zoom, R.string.opt_minimap_move_zoom_hint, a.getResources().getStringArray(R.array.minimap_move_zooms),
+                    a.prefs.getInt("minimap_move_zoom", 0), i -> {
+                        a.prefs.edit().putInt("minimap_move_zoom", i).apply();
+                        a.applyControlsAppearance();
+                    });
+            indentNext = true;
+            toggle(R.string.opt_minimap_names, R.string.opt_minimap_names_hint, a.prefs.getBoolean("minimap_names", true), on -> {
+                a.prefs.edit().putBoolean("minimap_names", on).apply();
+                a.applyControlsAppearance();
+            });
+            // opacity (fainter while moving), the wind arrow, the chart beside it, its buttons
+            String[] full = percents(100, 30), faded = percents(90, 0);
+            indentNext = true;
+            choice(R.string.opt_minimap_opacity, 0, full, (100 - a.prefs.getInt("minimap_opacity", 100)) / 10, i -> {
+                a.prefs.edit().putInt("minimap_opacity", 100 - 10 * i).apply();
+                a.applyControlsAppearance();
+            });
+            boolean fade = a.prefs.getBoolean("minimap_fade", false);
+            indentNext = true;
+            toggle(R.string.opt_minimap_fade, R.string.opt_minimap_fade_hint, fade, on -> {
+                a.prefs.edit().putBoolean("minimap_fade", on).apply();
+                a.applyControlsAppearance();
+            });
+            if (fade) {
+                indentNext = true;
+                choice(R.string.opt_minimap_fade_opacity, 0, faded, (90 - a.prefs.getInt("minimap_fade_opacity", 50)) / 10, i -> {
+                    a.prefs.edit().putInt("minimap_fade_opacity", 90 - 10 * i).apply();
+                    a.applyControlsAppearance();
+                });
+            }
+            indentNext = true;
+            toggle(R.string.opt_minimap_wind, R.string.opt_minimap_wind_hint, a.prefs.getBoolean("minimap_wind", true), on -> {
+                a.prefs.edit().putBoolean("minimap_wind", on).apply();
+                a.applyControlsAppearance();
+            });
+            if (a.prefs.getBoolean("minimap_wind", true)) {
+                indentNext = true;
+                toggle(R.string.opt_minimap_wind_swipe, R.string.opt_minimap_wind_swipe_hint, a.prefs.getBoolean("minimap_wind_swipe", true), on -> {
+                    a.prefs.edit().putBoolean("minimap_wind_swipe", on).apply();
+                    a.applyControlsAppearance();
+                });
+            }
+            indentNext = true;
+            toggle(R.string.opt_minimap_charts, R.string.opt_minimap_charts_hint, a.prefs.getBoolean("minimap_charts", true), on -> {
+                a.prefs.edit().putBoolean("minimap_charts", on).apply();
+                a.applyControlsAppearance();
+            });
+            indentNext = true;
+            toggle(R.string.opt_minimap_buttons, R.string.opt_minimap_buttons_hint, a.prefs.getBoolean("minimap_buttons", false), on -> {
+                a.prefs.edit().putBoolean("minimap_buttons", on).putBoolean("minimap_hidden", false).apply();
+                a.applyControlsAppearance();
+            });
+            indentNext = true;
+            choice(R.string.opt_minimap_corner, 0, a.getResources().getStringArray(R.array.minimap_corners),
+                    a.prefs.getInt("minimap_corner", MiniMap.CORNER_BOTTOM_LEFT), i -> {
+                        a.prefs.edit().putInt("minimap_corner", i).apply();
+                        a.applyControlsAppearance();
+                    });
+            indentNext = true;
+            choice(R.string.opt_minimap_size, R.string.opt_minimap_size_hint, a.getResources().getStringArray(R.array.minimap_sizes),
+                    a.prefs.getInt("minimap_size", 1), i -> {
+                        a.prefs.edit().putInt("minimap_size", i).apply();
+                        a.applyControlsAppearance();
+                    });
+            indentNext = true;
+            choice(R.string.opt_minimap_turn, 0, a.getResources().getStringArray(R.array.minimap_turns),
+                    a.prefs.getBoolean("minimap_turn", false) ? 1 : 0, i -> {
+                        a.prefs.edit().putBoolean("minimap_turn", i == 1).apply();
+                        a.applyControlsAppearance();
+                    });
+            indentNext = true;
+            choice(R.string.opt_minimap_marks, R.string.opt_minimap_marks_hint, a.getResources().getStringArray(R.array.minimap_marks),
+                    a.prefs.getInt("minimap_marks", MiniMap.MARKS_OFF), i -> {
+                        a.prefs.edit().putInt("minimap_marks", i).apply();
+                        a.applyControlsAppearance();
+                    });
+        }
+        // the full map (FullMap): opened from here, its pictures; the + menu's chart drawn anew (ChartMarks)
+        submenu(R.string.opt_fullmap, R.string.opt_fullmap_hint, "", () -> {
+            dismiss();
+            FullMap.open(a);
+        });
+        indentNext = true;
+        choice(R.string.opt_fullmap_pictures, 0, a.getResources().getStringArray(R.array.minimap_pictures),
+                a.prefs.getInt("fullmap_pictures", MiniMap.PICTURES_TERRAIN), i -> a.prefs.edit().putInt("fullmap_pictures", i).apply());
+        indentNext = true;
+        toggle(R.string.opt_fullmap_deco, R.string.opt_fullmap_deco_hint, a.prefs.getBoolean("fullmap_deco", true),
+                on -> a.prefs.edit().putBoolean("fullmap_deco", on).apply());
+        // (the game's own, Redrawn, HD, Terrain: Original is the game's own)
+        int[] charts = {ChartMarks.GAME_CHART, MiniMap.PICTURES_REDRAWN, MiniMap.PICTURES_HD, MiniMap.PICTURES_TERRAIN};
+        int chart = 0;
+        for (int i = 0; i < charts.length; i++) if (charts[i] == a.prefs.getInt("chart_pictures", ChartMarks.GAME_CHART)) chart = i;
+        choice(R.string.opt_chart_pictures, R.string.opt_chart_pictures_hint, a.getResources().getStringArray(R.array.chart_pictures), chart, i -> {
+            a.prefs.edit().putInt("chart_pictures", charts[i]).apply();
+            a.applyControlsAppearance();
+        });
         toggle(R.string.opt_hearts_combat, R.string.opt_hearts_combat_hint, a.prefs.getBoolean("hearts_combat", false), on -> {
             a.prefs.edit().putBoolean("hearts_combat", on).apply();
             a.applyControlsAppearance();
@@ -2159,6 +3777,13 @@ final class OptionsMenu extends Dialog {
         indentNext = false;
         rows.addView(r, lp);
         return r;
+    }
+
+    // "100 %", "90 %" ... down to `to`, in steps of 10
+    private static String[] percents(int from, int to) {
+        String[] v = new String[(from - to) / 10 + 1];
+        for (int i = 0; i < v.length; i++) v[i] = String.format(java.util.Locale.getDefault(), "%d %%", from - 10 * i);
+        return v;
     }
 
     private void toggle(int label, int hint, boolean on, BoolSetter set) {

@@ -12,16 +12,17 @@ import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 
 /** The GamePad menus' own sounds (the HD version's c_king.bfsar: SE_MENU_CURSOR, SE_MENU_DECIDE...) for the
- *  options menu, with Game > GamePad sounds (issue #64). Read once from the game's sound archive, decoded
+ *  options menu, with Game > GamePad sounds (issue #64); and the item get's jingle (NW_BGM_ITEM_GET, an important
+ *  item's) for an achievement earned (AchievementPopup). Read once from the game's sound archive, decoded
  *  (DSP ADPCM) into WAV files in files/menu_sounds and played with a SoundPool. */
 final class MenuSounds {
     static final int CURSOR = 0, SWITCH = 1, DECIDE = 2, CANCEL = 3, TAB = 4, OPEN = 5, CLOSE = 6, WINDOW_OPEN = 7,
-            WINDOW_CLOSE = 8;
+            WINDOW_CLOSE = 8, ITEM_GET = 9;
     private static final String[] NAMES = {"SE_MENU_CURSOR", "SE_MENU_OPTION_SWITCH", "SE_MENU_DECIDE_S", "SE_MENU_CANCEL",
             "SE_MENU_TAB_SWITCH", "SE_MENU_OPTION_IN", "SE_MENU_OPTION_OUT", "SE_MENU_MINI_WINDOW_OPEN",
-            "SE_MENU_MINI_WINDOW_CLOSE"};
+            "SE_MENU_MINI_WINDOW_CLOSE", "NW_BGM_ITEM_GET"};
     private static final String TAG = "wwhd", DIR = "menu_sounds";
-    private static final int VERSION = 1;
+    private static final int VERSION = 2;
 
     private static SoundPool pool;
     private static final int[] ids = new int[NAMES.length];
@@ -54,9 +55,19 @@ final class MenuSounds {
     }
 
     static void play(MainActivity a, int sound) {
-        if (!a.prefs.getBoolean("gamepad_sounds", true)) return;
+        if (a.prefs.getBoolean("gamepad_sounds", true)) play(sound);
+    }
+
+    // the item get's jingle (the achievement pop-up) under the archive's volume: Achievement settings > Jingle volume
+    // (pref achievement_sound_volume, percent, default JINGLE_DEFAULT; at full it stood out over the game's sound)
+    static final int JINGLE_DEFAULT = 70;
+    static volatile float itemGetScale = JINGLE_DEFAULT / 100f;
+
+    /** whatever the GamePad sounds option says (prepare first) */
+    static void play(int sound) {
         synchronized (MenuSounds.class) {
-            if (pool != null) pool.play(ids[sound], volumes[sound], volumes[sound], 1, 0, 1);
+            float v = volumes[sound] * (sound == ITEM_GET ? itemGetScale : 1);
+            if (pool != null) pool.play(ids[sound], v, v, 1, 0, 1);
         }
     }
 
@@ -144,28 +155,31 @@ final class MenuSounds {
         throw new IOException("file " + id + " missing");
     }
 
-    /** a wave (FWAV, DSP ADPCM, mono) as a 16-bit WAV file */
+    /** a wave (FWAV, DSP ADPCM, mono or stereo) as a 16-bit WAV file */
     private static void writeWav(int wav, File out) throws IOException {
         int info = section(wav, 0), data = section(wav, 1);
         if (u8(info) != 2) throw new IOException("not DSP ADPCM");
         int rate = s32(info + 4), n = s32(info + 12);
-        int ch = table(info + 0x14)[0];
-        int src = data + refOffset(ch), adpcm = ch + refOffset(ch + 8);
-        short[] coef = new short[16];
-        for (int i = 0; i < 16; i++) coef[i] = d.getShort(adpcm + 2 * i);
-        int h1 = d.getShort(adpcm + 34), h2 = d.getShort(adpcm + 36);  // (after the predictor/scale)
-        ByteBuffer w = ByteBuffer.allocate(44 + 2 * n).order(ByteOrder.LITTLE_ENDIAN);
-        w.put("RIFF".getBytes()).putInt(36 + 2 * n).put("WAVEfmt ".getBytes()).putInt(16).putShort((short) 1).putShort((short) 1)
-                .putInt(rate).putInt(rate * 2).putShort((short) 2).putShort((short) 16).put("data".getBytes()).putInt(2 * n);
-        for (int done = 0, i = src; done < n; i += 8) {  // frames of 8 bytes: predictor/scale, 14 nibbles
-            int ps = u8(i), scale = 1 << (ps & 15), c1 = coef[(ps >> 4) * 2], c2 = coef[(ps >> 4) * 2 + 1];
-            for (int k = 0; k < 14 && done < n; k++, done++) {
-                int b = u8(i + 1 + k / 2), nib = k % 2 == 0 ? b >> 4 : b & 15;
-                if (nib >= 8) nib -= 16;
-                int v = Math.max(-32768, Math.min(32767, (((nib * scale) << 11) + 1024 + c1 * h1 + c2 * h2) >> 11));
-                w.putShort((short) v);
-                h2 = h1;
-                h1 = v;
+        int[] chs = table(info + 0x14);
+        int nc = Math.min(2, chs.length), bytes = 2 * n * nc;
+        ByteBuffer w = ByteBuffer.allocate(44 + bytes).order(ByteOrder.LITTLE_ENDIAN);
+        w.put("RIFF".getBytes()).putInt(36 + bytes).put("WAVEfmt ".getBytes()).putInt(16).putShort((short) 1).putShort((short) nc)
+                .putInt(rate).putInt(rate * 2 * nc).putShort((short) (2 * nc)).putShort((short) 16).put("data".getBytes()).putInt(bytes);
+        for (int c = 0; c < nc; c++) {  // (each channel its own ADPCM state, interleaved into the frames)
+            int ch = chs[c], src = data + refOffset(ch), adpcm = ch + refOffset(ch + 8);
+            short[] coef = new short[16];
+            for (int i = 0; i < 16; i++) coef[i] = d.getShort(adpcm + 2 * i);
+            int h1 = d.getShort(adpcm + 34), h2 = d.getShort(adpcm + 36);  // (after the predictor/scale)
+            for (int done = 0, i = src; done < n; i += 8) {  // frames of 8 bytes: predictor/scale, 14 nibbles
+                int ps = u8(i), scale = 1 << (ps & 15), c1 = coef[(ps >> 4) * 2], c2 = coef[(ps >> 4) * 2 + 1];
+                for (int k = 0; k < 14 && done < n; k++, done++) {
+                    int b = u8(i + 1 + k / 2), nib = k % 2 == 0 ? b >> 4 : b & 15;
+                    if (nib >= 8) nib -= 16;
+                    int v = Math.max(-32768, Math.min(32767, (((nib * scale) << 11) + 1024 + c1 * h1 + c2 * h2) >> 11));
+                    w.putShort(44 + 2 * (done * nc + c), (short) v);
+                    h2 = h1;
+                    h1 = v;
+                }
             }
         }
         try (FileOutputStream o = new FileOutputStream(out)) {

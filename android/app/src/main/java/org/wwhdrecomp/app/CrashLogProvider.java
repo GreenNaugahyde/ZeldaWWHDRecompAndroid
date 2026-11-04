@@ -12,8 +12,8 @@ import java.io.File;
 import java.io.FileNotFoundException;
 
 /**
- * Hands the crash logs (CrashLogs) to the app the user shares them with: read only, one file per
- * content://org.wwhdrecomp.app.crashlogs/crash-YYYYmmdd-HHMMSS.log. Not exported; the share
+ * Hands the crash logs (CrashLogs) and the game log's zip (About > Share game log) to the app the
+ * user shares them with: read only, one file per content://org.wwhdrecomp.app.crashlogs/<name>. Not exported; the share
  * intent grants the receiving app access to the URIs it carries.
  */
 public final class CrashLogProvider extends ContentProvider {
@@ -23,7 +23,7 @@ public final class CrashLogProvider extends ContentProvider {
 
     private File file(Uri u) throws FileNotFoundException {
         String name = u.getLastPathSegment();
-        if (name == null || !CrashLogs.isLogName(name)) throw new FileNotFoundException(String.valueOf(u));
+        if (name == null || !CrashLogs.isLogName(name) && !CrashLogs.isGameLogName(name)) throw new FileNotFoundException(String.valueOf(u));
         File f = new File(CrashLogs.dir(getContext()), name);
         if (!f.isFile()) throw new FileNotFoundException(name);
         return f;
@@ -56,7 +56,10 @@ public final class CrashLogProvider extends ContentProvider {
     }
 
     @Override
-    public String getType(Uri u) { return "text/plain"; }
+    public String getType(Uri u) {
+        String n = u.getLastPathSegment();
+        return n != null && CrashLogs.isGameLogName(n) ? "application/zip" : "text/plain";
+    }
 
     @Override
     public Uri insert(Uri u, ContentValues v) { throw new UnsupportedOperationException(); }

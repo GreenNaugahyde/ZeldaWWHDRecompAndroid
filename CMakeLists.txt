@@ -156,7 +156,9 @@ elseif(ANDROID)
 
   file(GLOB VK_SOURCES CONFIGURE_DEPENDS runtime/src/vk/*.cpp)
   file(GLOB ANDROID_SOURCES CONFIGURE_DEPENDS runtime/src/android/*.cpp)
-  set_source_files_properties(${GX2_SOURCES} ${VK_SOURCES} ${ANDROID_SOURCES} ${SHARED_GFX_SOURCES} PROPERTIES COMPILE_OPTIONS "-include;${CEMU_DIR}/cemu_shim.h")
+  # GameCube player models converted for the mod pack import (gcmodel.h; tiling through Cemu's address library)
+  file(GLOB GCMODEL_SOURCES CONFIGURE_DEPENDS runtime/src/gcmodel/*.cpp)
+  set_source_files_properties(${GX2_SOURCES} ${VK_SOURCES} ${ANDROID_SOURCES} ${SHARED_GFX_SOURCES} ${GCMODEL_SOURCES} PROPERTIES COMPILE_OPTIONS "-include;${CEMU_DIR}/cemu_shim.h")
 
   # the runtime's own shaders (runtime/shaders), compiled to SPIR-V here with the NDK's glslc: the
   # sources include the words as numbers ("<name>.inc"), so no shader is compiled at start
@@ -171,7 +173,7 @@ elseif(ANDROID)
     list(APPEND SPV_INCS ${out})
   endforeach()
 
-  add_library(wwhd SHARED ${RUNTIME_SOURCES} runtime/src/audio_out_aaudio.cpp ${GX2_SOURCES} ${VK_SOURCES} ${ANDROID_SOURCES}
+  add_library(wwhd SHARED ${RUNTIME_SOURCES} runtime/src/audio_out_aaudio.cpp ${GX2_SOURCES} ${VK_SOURCES} ${ANDROID_SOURCES} ${GCMODEL_SOURCES}
                           ${SHARED_GFX_SOURCES} ${volk_SOURCE_DIR}/volk.c ${SPV_INCS})
   target_include_directories(wwhd PRIVATE runtime/include runtime/src runtime/src/gx2 ${vma_SOURCE_DIR}/include ${glslang_SOURCE_DIR}
                                           ${volk_SOURCE_DIR} ${CMAKE_BINARY_DIR}/shaders)
@@ -198,6 +200,30 @@ elseif(ANDROID)
     target_link_libraries(wwhd PRIVATE gamecode)
   endif()
 
+  # ---- the randomizer (TWWHD Randomizer, runtime/third_party/twwhd_rando/WWHD.md): libwwhdrando.so,
+  # loaded only by the app's ":rando" process (RandoService); its data goes in as assets/rando (build.gradle)
+  set(RANDO_DIR ${CMAKE_SOURCE_DIR}/runtime/third_party/twwhd_rando)
+  file(GLOB RANDO_SOURCES CONFIGURE_DEPENDS
+    ${RANDO_DIR}/*.cpp ${RANDO_DIR}/command/*.cpp ${RANDO_DIR}/customizer/*.cpp ${RANDO_DIR}/filetypes/*.cpp
+    ${RANDO_DIR}/filetypes/util/*.cpp ${RANDO_DIR}/filetypes/shared/*.cpp ${RANDO_DIR}/filetypes/texture/*.cpp
+    ${RANDO_DIR}/filetypes/subfiles/*.cpp ${RANDO_DIR}/logic/*.cpp ${RANDO_DIR}/logic/flatten/*.cpp ${RANDO_DIR}/seedgen/*.cpp
+    ${RANDO_DIR}/utility/*.cpp ${RANDO_DIR}/libs/yaml.cpp ${RANDO_DIR}/libs/hash-library/sha1.cpp ${RANDO_DIR}/libs/hash-library/sha256.cpp
+    ${RANDO_DIR}/libs/tinyxml2/tinyxml2.cpp ${RANDO_DIR}/libs/base64pp/base64pp/base64pp.cpp ${RANDO_DIR}/libs/yaml-cpp/src/*.cpp
+    ${RANDO_DIR}/libs/yaml-cpp/src/contrib/*.cpp)
+  set(GIT_TAG 1.2.0)  # the release it is (permalinks and seeds match the PC randomizer 1.2.0)
+  set(SEED_KEY "")
+  configure_file(${RANDO_DIR}/version.hpp.in ${CMAKE_BINARY_DIR}/rando/version.hpp @ONLY)
+  configure_file(${RANDO_DIR}/keys/keys.hpp.in ${CMAKE_BINARY_DIR}/rando/keys/keys.hpp @ONLY)
+  add_library(wwhdrando SHARED ${RANDO_SOURCES} runtime/src/rando/rando_jni.cpp)
+  set_target_properties(wwhdrando PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
+  target_include_directories(wwhdrando PRIVATE ${RANDO_DIR} ${CMAKE_BINARY_DIR}/rando ${RANDO_DIR}/libs/yaml-cpp/include
+                                               ${RANDO_DIR}/libs/base64pp/base64pp/include)
+  string(LENGTH "${RANDO_DIR}/" RANDO_PATH_SIZE)
+  target_compile_definitions(wwhdrando PRIVATE WWHD_APP SOURCE_PATH_SIZE=${RANDO_PATH_SIZE} YAML_CPP_STATIC_DEFINE)
+  target_compile_options(wwhdrando PRIVATE -fexceptions -frtti -Wno-everything)
+  target_link_options(wwhdrando PRIVATE "-Wl,-z,max-page-size=16384")
+  target_link_libraries(wwhdrando PRIVATE z log)
+
   # ---- the licenses of everything in the APK, shown in the app (About and licenses)
   set(LIC_PARTS
     "This project|MPL-2.0|${CMAKE_SOURCE_DIR}/LICENSE"
@@ -210,7 +236,13 @@ elseif(ANDROID)
     "volk|MIT|${volk_SOURCE_DIR}/LICENSE.md"
     "libadrenotools|BSD-2-Clause|${adrenotools_SOURCE_DIR}/LICENSE"
     "libarchive (mod pack archives: zip, RAR)|BSD-2-Clause|${libarchive_SOURCE_DIR}/COPYING"
-    "linkernsbypass (part of libadrenotools)|BSD-2-Clause|${adrenotools_SOURCE_DIR}/lib/linkernsbypass/LICENSE")
+    "linkernsbypass (part of libadrenotools)|BSD-2-Clause|${adrenotools_SOURCE_DIR}/lib/linkernsbypass/LICENSE"
+    "TWWHD Randomizer (Game > Randomizer, in runtime/third_party/twwhd_rando)|MIT|${RANDO_DIR}/LICENSE.txt"
+    "yaml-cpp (the randomizer's settings and logic files)|MIT|${RANDO_DIR}/libs/yaml-cpp/LICENSE"
+    "TinyXML-2 (part of the randomizer)|Zlib|${RANDO_DIR}/libs/tinyxml2/LICENSE.txt"
+    "base64pp (the randomizer's permalinks)|MIT|${RANDO_DIR}/libs/base64pp/LICENSE"
+    "BS::thread_pool (part of the randomizer)|MIT|${RANDO_DIR}/libs/thread-pool/LICENSE.txt"
+    "hash-library (part of the randomizer)|Zlib|")
   set(WWHD_LLVM_DIR ${CMAKE_SOURCE_DIR}/build/llvm/install CACHE PATH "LLVM built for Android (tools/android/build-llvm.sh)")
   if(EXISTS ${WWHD_LLVM_DIR}/lib/cmake/llvm/LLVMConfig.cmake)
     find_package(LLVM REQUIRED CONFIG PATHS ${WWHD_LLVM_DIR}/lib/cmake/llvm NO_DEFAULT_PATH NO_CMAKE_FIND_ROOT_PATH)
@@ -259,10 +291,12 @@ wwhd_hooks:
     .incbin \"${HOOKS_DIR}/hooks_aspect.txt\"
     .byte 10
     .incbin \"${HOOKS_DIR}/hooks_perf.txt\"
+    .byte 10
+    .incbin \"${HOOKS_DIR}/hooks_resmgr.txt\"
 wwhd_hooks_end:
 ")
     set_source_files_properties(${CMAKE_BINARY_DIR}/recomp_data.S PROPERTIES OBJECT_DEPENDS
-      "${OPS_BC};${HOOKS_DIR}/hooks.txt;${HOOKS_DIR}/hooks_climb.txt;${HOOKS_DIR}/hooks_mods.txt;${HOOKS_DIR}/hooks_aspect.txt;${HOOKS_DIR}/hooks_perf.txt;${HOOKS_DIR}/release_eur.txt;${HOOKS_DIR}/release_jpn.txt;${HOOKS_DIR}/hot_functions.txt")
+      "${OPS_BC};${HOOKS_DIR}/hooks.txt;${HOOKS_DIR}/hooks_climb.txt;${HOOKS_DIR}/hooks_mods.txt;${HOOKS_DIR}/hooks_aspect.txt;${HOOKS_DIR}/hooks_perf.txt;${HOOKS_DIR}/hooks_resmgr.txt;${HOOKS_DIR}/release_eur.txt;${HOOKS_DIR}/release_jpn.txt;${HOOKS_DIR}/hot_functions.txt")
 
     if(WWHD_DEVICE_RECOMP)
       # The game code is linked at startup (loader.cpp). The game functions the runtime calls

@@ -21,6 +21,8 @@ struct CompileOptions {
     std::string outDir;       // m_<hash>.o are written here (existing ones are kept: the hash names their content)
     std::string baseKey;      // what the code depends on besides its own instructions (code_base_key, loader.h)
     std::string cpu;          // target CPU ("" = the host's, e.g. on the device; "generic" for a PC build)
+    std::string features;     // another device's CPU features (its host_features(): code made here for it; "" = ours)
+    std::string tune;         // that device's CPU model, for scheduling only ("" = generic there)
     size_t perModule = 1500;  // guest functions per module (and object file)
     int optLevel = kDefaultOptLevel;  // LLVM -O2 or -O3
     unsigned jobs = 0;        // parallel modules (0: hardware threads)
@@ -45,5 +47,7 @@ size_t module_count(size_t functions, size_t perModule);
 
 // the target features compile_game uses on this device (part of the code cache's key)
 std::string host_features();
+// this device's CPU model as LLVM names it (scheduling only)
+std::string host_cpu_model();
 
 }  // namespace recomp

@@ -27,7 +27,8 @@ namespace packs {
 namespace {
 
 std::mutex g_mu;
-std::string g_gameDir, g_cfg;
+std::string g_gameDir, g_cfg, g_randoDir, g_randoUsed, g_colorsDir;
+std::atomic<uint32_t> g_colorsGen{0};
 bool g_done = false;
 recomp::CodePatch g_patch;
 std::vector<Status> g_status;
@@ -233,16 +234,69 @@ std::vector<uint8_t> read_bytes(const std::string& p) {
     return std::vector<uint8_t>(s.begin(), s.end());
 }
 
+// the randomizer's output (rando.h): its executable is compiled and run instead of the game's, its
+// content/ files win over the game's and the packs'
+void add_randomizer() {
+    g_randoUsed.clear();
+    if (g_randoDir.empty()) return;
+    const std::string rpx = g_randoDir + "/code/cking.rpx";
+    std::string bytes = read_file(rpx);
+    if (bytes.empty()) {
+        LOG("[rando] %s missing: playing the game as it is", rpx.c_str());
+        return;
+    }
+    size_t n = index_content(g_randoDir + "/content");
+    uint8_t h[20];
+    disc::sha1((const uint8_t*)bytes.data(), bytes.size(), h);
+    char hex[41];
+    for (int i = 0; i < 20; i++) snprintf(hex + 2 * i, 3, "%02x", h[i]);
+    g_patch.rpx = rpx;
+    {  // the game's own .text end: the randomizer's code follows it (CodePatch::noEabiLo)
+        recomp::Program vanilla;
+        vanilla.patch = nullptr;
+        std::string err;
+        if (vanilla.parse(read_bytes(g_gameDir + "/code/cking.rpx"), err)) g_patch.noEabiLo = vanilla.textHi;
+    }
+    // ("relocs": its code compiled with its relocations' values, Program::relocFixes)
+    g_patch.key += std::string(g_patch.key.empty() ? "" : " ") + "rando " + hex + " relocs noeabi";
+    g_randoUsed = rpx;
+    LOG("[rando] %s (%s), %zu game files from %s/content", rpx.c_str(), hex, n, g_randoDir.c_str());
+    recomp::set_code_patch(&g_patch);
+}
+
 }  // namespace
+
+void set_randomizer(const std::string& outDir) {
+    std::lock_guard<std::mutex> lk(g_mu);
+    g_randoDir = outDir;
+}
+
+void set_link_colors(const std::string& dir) {
+    std::lock_guard<std::mutex> lk(g_mu);
+    g_colorsDir = dir;
+    g_colorsGen++;
+}
+
+std::string link_colors_used() {
+    std::lock_guard<std::mutex> lk(g_mu);
+    return g_colorsDir;
+}
+
+uint32_t link_colors_gen() { return g_colorsGen.load(); }
+
+std::string executable(const std::string& gameDir) {
+    std::lock_guard<std::mutex> lk(g_mu);
+    return g_randoUsed.empty() ? gameDir + "/code/cking.rpx" : g_randoUsed;
+}
 
 void init(const std::string& gameDir) {
     std::lock_guard<std::mutex> lk(g_mu);
     const std::string dir = parent(gameDir) + "/packs";
     std::string cfg = read_file(dir + "/enabled.txt");
-    if (g_done && g_gameDir == gameDir && g_cfg == cfg) return;
+    if (g_done && g_gameDir == gameDir && g_cfg == cfg + "\n" + g_randoDir) return;
     g_done = true;
     g_gameDir = gameDir;
-    g_cfg = cfg;
+    g_cfg = cfg + "\n" + g_randoDir;
     g_patch = {};
     g_status.clear();
     g_caveEnd = kCodeCave;
@@ -252,6 +306,22 @@ void init(const std::string& gameDir) {
     g_customShaders.clear();
     g_textureRules.clear();
     recomp::set_code_patch(nullptr);
+    struct Last {  // on every way out: the randomizer last (its files win), then a player model's pack over it
+        const std::string& dir;
+        const std::string& cfg;
+        ~Last() {
+            add_randomizer();
+            // (a GameCube player model, ModPacks.preparePlayerModel: its permanent_3d.pack is made from the one this game
+            // plays, a randomized game's own included, so it goes over the randomizer's)
+            for (auto& line : split(cfg, '\n')) {
+                auto f = split(line, '\t');
+                if (f.size() >= 2 && f[0] == "pack" && f[1].rfind("gcmodel-", 0) == 0) {
+                    size_t n = index_content(dir + "/" + f[1] + "/content");
+                    LOG("[packs] player model %s: %zu game files over the others", f[1].c_str(), n);
+                }
+            }
+        }
+    } last{dir, cfg};
     if (cfg.empty()) return;
     std::vector<std::string> folders;
     std::map<std::string, std::map<std::string, std::string>> selection;
@@ -348,6 +418,28 @@ void apply_memory() {
     std::lock_guard<std::mutex> lk(g_mu);
     for (auto& w : g_patch.writes) memcpy(mem::ptr(w.addr), w.bytes.data(), w.bytes.size());
     if (!g_patch.writes.empty()) LOG("[packs] wrote %zu patches into guest memory", g_patch.writes.size());
+    // the randomizer's executable: its relocations' values, as a console's loader writes them (Program::relocFixes;
+    // its item functions' pointers in .data are only in them)
+    if (!g_randoUsed.empty()) {
+        recomp::Program p;  // (patch: g_patch, whose rpx is the randomizer's)
+        std::string err;
+        std::vector<uint8_t> bytes = read_bytes(g_randoUsed);
+        if (!p.parse(bytes, err)) {
+            LOG("[rando] relocations: %s", err.c_str());
+            return;
+        }
+        size_t changed = 0;
+        for (auto& f : p.relocFixes) {
+            uint8_t* m = mem::ptr(f.addr);
+            uint8_t v[4] = {(uint8_t)(f.value >> 24), (uint8_t)(f.value >> 16), (uint8_t)(f.value >> 8), (uint8_t)f.value};
+            const uint8_t* src = f.size == 4 ? v : v + 2;
+            if (memcmp(m, src, f.size) != 0) {
+                memcpy(m, src, f.size);
+                changed++;
+            }
+        }
+        LOG("[rando] %zu relocations, %zu values written into guest memory", p.relocFixes.size(), changed);
+    }
 }
 
 // WWHD_PACK_TRACE=1: how often each block of the packs' code runs (emit.cpp, trace), logged every 5 s

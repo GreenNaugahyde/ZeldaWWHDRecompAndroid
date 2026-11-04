@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- the screen app's icon: a TV on the sea, waves coming in from a phone -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp" android:height="108dp" android:viewportWidth="108" android:viewportHeight="108">
+    <path android:fillColor="#1C63BD" android:pathData="M18,4h72a14,14 0 0 1 14,14v72a14,14 0 0 1 -14,14h-72a14,14 0 0 1 -14,-14v-72a14,14 0 0 1 14,-14z" />
+    <path android:fillColor="#2E8BE0" android:pathData="M4,74q12.5,-4 25,0t25,0t25,0t25,0v16a14,14 0 0 1 -14,14h-72a14,14 0 0 1 -14,-14z" />
+    <path android:fillColor="#2A2A30" android:pathData="M20,24h68a4,4 0 0 1 4,4v40a4,4 0 0 1 -4,4h-68a4,4 0 0 1 -4,-4v-40a4,4 0 0 1 4,-4z" />
+    <path android:fillColor="#A8E6F7" android:pathData="M22,30h64v36h-64z" />
+    <path android:fillColor="#2E8BE0" android:pathData="M22,54q8,-3 16,0t16,0t16,0t16,0v12h-64z" />
+    <path android:fillColor="#2A2A30" android:pathData="M50,72h8v6h-8z M38,78h32v4h-32z" />
+    <path android:strokeColor="#FFFFFF" android:strokeWidth="3.5" android:strokeLineCap="round"
+        android:pathData="M45,45a12,12 0 0 1 18,0 M40,40a19,19 0 0 1 28,0" />
+    <path android:fillColor="#FFFFFF" android:pathData="M54,50m-3,0a3,3 0 1,0 6,0a3,3 0 1,0 -6,0" />
+</vector>

@@ -25,7 +25,7 @@ struct Request {
     bool sword = false;   // ... drawn: the sword in his left hand, the shield on his right
     bool noLink = false;  // only the thing (with): a postbox's own icon
     // a thing with him: "pot" (a small pot in his hands, as he carries it), "chest", "door" (each moving in its own
-    // animation withAnim, at his frame), "stick" (a Bokoblin's), "block"; placed at withAt in his space (his front
+    // animation withAnim, at his frame), "stick" (a Bokoblin's, lying), "weapon" (the stick in his hand), "block"; placed at withAt in his space (his front
     // +z), turned withYaw degrees; "ladder" (the short wooden one, Mhsg), "ledge" (a stone push block, Osiblk), "ivy" (a
 // strip of a climbable vine wall), "ship" (the King of Red Lions with his head and a sail; withVariant "swift": the Swift Sail)
     std::string with, withAnim;
@@ -37,20 +37,30 @@ struct Request {
     float drop = 0;        // with from: he falls this far (units) as the blend goes on (letting go of a ladder)
     bool fitLink = false;  // the framing fits him only: the thing may reach past the edges (a ladder)
     float fitMore = 0;     // ... and this much more room around him (0.5: half as much again), for more of the thing
+    int mouth = 0;         // his mouth: mouthS3TC.<mouth> (7: the big smile of an item get; 0: the model's own, .1)
     bool fixedFrame = false;  // one framing for all pictures (he moves in it), not each centred
     float move[3] = {0, 0, 0};  // he moves this far (his space) from picture moveFrom to the last, evenly, and up in an
     float hop = 0;                // arc this high at its middle (a jump: into / out of the boat)
     int moveFrom = 0;
+    std::vector<float> slide;     // per picture: he and the thing in front of him (with) move this far ahead (his z; a
+                                  // push block pushed and pulled back); missing pictures: 0
+    float rope = 0;               // > 0: he holds the Grappling Hook's rope (with = "rope"), its top (where it is
+                                  // caught: the swing's pivot) this far above his upper hand in picture 0
+    std::vector<float> swing;     // per picture: his angle (degrees, + ahead) about the pivot while he holds on; from
+                                  // letGo on about his middle, kept where it was (he turns back upright); missing: 0
+    int letGo = 1 << 30;          // the picture from which he has let go (the rope swings on by ropeSwing, alone)
+    std::vector<float> ropeSwing; // per picture from letGo: the rope's angle about the pivot
 };
 // renders each request; returns how many pictures were written
 int render(const std::string& gameDir, const std::string& outDir, const std::vector<Request>& requests);
 // the touch controls' pictures (GameIcons.java): link_jump_0, link_crouch_0, link_kneel_0..7 / link_rise_0..7 (crouching down / standing up), link_roll_0..11 and its rest 12,
 // link_stand_0, link_back_0, link_sidle_0..15, link_lift_0..7, link_throw_0..7, link_drop_0..7, link_door_0..11,
-// link_chest_0..9, link_push_0..11, link_pickup_0..7, link_postbox_0..9 (the postbox swallowing a letter: only it),
+// link_chest_0..9, link_push_0..20 (grab: take hold, push the block, pull it back), link_rope_0..15 (letting go of the Grappling Hook's rope), link_pickup_0..7, link_weapon_0..9 (swinging an enemy's weapon), link_postbox_0..9 (the postbox swallowing a letter: only it),
 // link_jattack_0..11 (the jump attack), link_ladder_0..9 / link_ivy_0..9 / link_hang_0..9 (letting go of a ladder, vines, a ledge),
 // link_sailup[_swift]_0..9 / link_saildown[_swift]_0..9 (the boat raising / lowering its sail), link_sailing_0..7 (sailing,
 // the Swift Sail), link_drifting_0..7 (the sail down, still moving),
+// link_cruise_0..15 (the same, for R Cruise),
 // link_getin_0..9 / link_getout_0..9 (climbing into the boat, jumping out of it), link_talk_0..11 (talking: Speak),
-// link_walkaway_0..11 (walking, seen from behind: leaving a shop)
+// link_walkaway_0..11 (walking, seen from behind: leaving a shop), link_conduct_0..11 (the Wind Waker raised and brought down)
 int render_buttons(const std::string& gameDir, const std::string& outDir);
 }  // namespace link_icons

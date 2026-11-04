@@ -25,10 +25,30 @@ final class Native {
     static native void cameraSwipe(float dx, float dy);
     /** {valid, A action, sword, X item, Y item, R item, B action, ZR action, event mode, pause menu open, has the Wind Waker, shield} (0xFF: none; all 0 outside a game). */
     static native int[] touchState();
+    /** The mini map (mods/minimap.cpp, mods.h kMiniMapLen): {on the sea, Link x, z, facing, on the boat, ship known, ship x, z, facing,
+     *  event mode, aiming / looking, fade, 49 chart squares filled in, ... (mods.h kMiniMapLen)}: [0] 1 on the sea, 2 elsewhere, 0 not in play. */
+    static native float[] miniMapState();
+    /** The stage now ("" while it's being changed). */
+    static native String miniMapStage();
+    /** The save data as it is now (mods/progress.cpp, mods.h kProgressLen; big-endian), empty outside a game (GameProgress). */
+    static native byte[] progressData();
+    /** A stage's map data from the game files (map_plan.h): {DMAP origin x, z, scale (0s without), then FLOR height, floor pairs}, or null. */
+    static native float[] miniMapStageInfo(String gameDir, String stage);
+    // the charts' list (cmapdat.bin) from the first of these game folders that has one, or null
+    static native byte[] miniMapCharts(String[] gameDirs);
+    /** A stage's chests and doors (map_plan.h), 7 floats each: {0 chest, x, y, z, chest number, room, 0} / {1 door, x, y, z, turn, room, room}, or null. */
+    static native float[] miniMapMarks(String gameDir, String stage);
+    /** The floors of a stage's rooms between two heights from above (map_plan.h): {w, h, x0, z0, units per pixel as float bits, ARGB...}, or null.
+     *  style: 0 the dungeon map's colours, 1 terrain (rooms in dim, not lit, grey), 2 the floor white (a mask); lit / dim: a bit per room. */
+    static native int[] miniMapPlan(String gameDir, String stage, float yMin, float yMax, int style, long lit, long dim, float[] window, float fineUpp);
+    /** A sea room's island from above, coloured by its ground (map_plan::sea_terrain): as miniMapPlan, or null. */
+    static native int[] miniMapTerrain(String gameDir, int room);
     /** Songs by microphone (songs.cpp): {conducting, learned songs (bits by melody; -1 unknown), has the Wind Waker, another event runs, songs handed to the game}. */
     static native int[] songState();
     /** The game's judge answers this melody (0 Wind's Requiem .. 5 Song of Passing) at the next beat while Link conducts. */
     static native void playSong(int melody);
+    /** The wind set at once, no event (songs.cpp set_wind): the game's tact wind angle y (s16; blows along (cos, sin) in x, z). */
+    static native void setWind(int angle);
     /** a beat of the singing count-in: the game's metronome click (and on the last, its upbeat) */
     static native void countBeat(int time, boolean last);
     /** The HUD's text for each button action code: NN of T_ACT_Command_NN (0 none); empty until the game filled its table (touch_state.cpp). */
@@ -67,6 +87,8 @@ final class Native {
     static native int renderLinkIcons(String gameDir, String outDir);
     /** One section of the crash log's context (runtime/src/crash_info.h). */
     static native void setCrashInfo(String section, String text);
+    /** About > Share game log's header: GPU and driver, run time and place, then that context. */
+    static native String reportInfo();
     /** The same from a Cemu .wua archive (decrypted, no keys). */
     static native String extractArchive(int fd, String outDir);
     /** {bytes written, total} of the running extraction. */
@@ -77,9 +99,43 @@ final class Native {
     /** True if this build contains no game code and compiles it on the device. */
     static native boolean buildsGameCode();
     /** True if the game code has to be compiled first (builds that recompile on the device). */
+    /** The randomizer's output folder to play (Randomizer.java), null for the game as it is; before needsCompile / start. */
+    static native void setRandomizer(String outDir);
+    /** player models per save file (PlayerModels): the played permanent_3d.pack, the mod packs' folder, each file's model folder or null */
+    static native void setPlayerModels(String basePack, String packsDir, String file1, String file2, String file3);
+    /** Save file names (SaveNames): each file's name over 8 characters (null: none); any time. */
+    static native void setSaveNames(String file1, String file2, String file3);
+    /** Renames save file `file` (1..3) in the game's memory at the next frame. */
+    static native void renameSaveFile(int file, String name);
+    /** The three save files' names in the game's memory, null when it has none there yet. */
+    static native String[] saveNames();
+    static native void setLinkColors(String dir);  // Mods > Link's colours (LinkColors.needsMaking, make), null for none
+    /** Game > Randomizer > Keep the game's own code: its compiled code stays next to the randomized game's. */
+    static native void setKeepPlainCode(boolean on);
     static native boolean needsCompile(String gameDir, String codeDir);
     /** Compiles the game code into codeDir (resuming an interrupted compile): null, or why not. Blocks. */
     static native String compileGame(String gameDir, String codeDir);
+    private static boolean loadedHere;
+
+    /** loads the library in a process that doesn't play the game (PadActivity's, for the compile); false if it can't */
+    static synchronized boolean libraryHere(android.content.Context c) {
+        if (!loadedHere)
+            try {
+                System.loadLibrary("wwhd");
+                loadedHere = buildsGameCode();
+            } catch (Throwable t) {
+                android.util.Log.w("wwhd", "no game library here: " + t);
+            }
+        return loadedHere;
+    }
+
+    /** this device's CPU features as the game code's compile uses them (another device can compile for it) */
+    static native String cpuFeatures();
+    /** this device's CPU model (for the compile's scheduling only) */
+    static native String cpuModel();
+    /** Compiles the game in gameDir into codeDir for another device's CPU (its cpuFeatures / cpuModel); null when
+     *  done, else why not. Progress: compileProgress. Blocks. */
+    static native String compileGameFor(String gameDir, String codeDir, String features, String model);
     /** {modules done, modules in total (0 until known)} of the running compile. */
     static native long[] compileProgress();
     static native void compileCancel();
@@ -113,8 +169,12 @@ final class Native {
     static native void surfaceDestroyed();
     /** The GamePad picture's own display (a second screen): its surface, or null. */
     static native void drcSurfaceChanged(Object surface);
+    /** the TV picture's own extra output (another device as the screen, besides a GamePad one); null: none */
+    static native void tvOutSurfaceChanged(Object surface);
     /** Screen rectangles in surface pixels: {x, y, w, h}. */
     static native void setLayout(float[] tv, float[] drc, boolean drcVisible);
+    /** the TV picture in the GamePad picture's place (the GamePad view's controller view, game on another screen) */
+    static native void setBackdropTv(boolean on);
 
     /** the item buttons' letters on the HUD and the GamePad's drop slots: "X,Y,R" order ("" each: the game's) */
     static native void setSlotLabels(String labels);
@@ -144,7 +204,7 @@ final class Native {
 
     /**
      * ao_mode (0..2), ao_hires, aniso, pro_controller (0/1); capture (any value); gameplay mods:
-     * mod_direct_camera, mod_camera_speed (percent), mod_first_person, mod_climb, mod_quick_doors, mod_fast_scenes, mod_ff_cutscenes, mod_ff_dialogues,
+     * mod_direct_camera, mod_camera_speed (percent), mod_first_person, mod_climb, mod_quick_doors, mod_walk_doors, mod_fast_scenes, mod_ff_cutscenes, mod_ff_dialogues, mod_hit_stop_off (mods::HitStop bits),
      * mod_run_speed (percent), mod_run_mode (0 always, 1 hold L3, 2 L3 switches), mod_swim_speed (percent), mod_swim_mode (as run),
      * mod_climb_speed / mod_climb_mode, mod_sidle_speed / mod_sidle_mode (as run);
      * auto_state (auto save state interval in minutes, 0 off); vsync (1: frames wait for the display refresh).
@@ -156,6 +216,23 @@ final class Native {
 
     /** Unpacks a mod archive (zip, RAR; open file descriptor) into destDir: null when done, else why not. */
     static native String extractModArchive(int fd, String destDir);
+    /** A GameCube player model (Link.arc of a custom model pack) converted into the game's Link.szs at outPath
+     *  (runtime/src/gcmodel): its report when done, "!" and why not otherwise. Seconds; not on the main thread;
+     *  gcProgress now and then. */
+    static native String convertGcModel(String arcPath, String gamePackPath, String outPath);
+    /** The game's permanent_3d.pack with a converted Link.szs, at outPath: null when done, else why not. */
+    static native String assembleGcModel(String gamePackPath, String szsPath, String outPath);
+    /** Link.szs out of a converted permanent_3d.pack: true when written. */
+    static native boolean extractGcModel(String packPath, String outPath);
+
+    /** convertGcModel's progress (percent of the model in hand), on its thread */
+    static volatile java.util.function.IntConsumer gcProgressListener;
+
+    @SuppressWarnings("unused")  // (called by convertGcModel)
+    static void gcProgress(int percent) {
+        java.util.function.IntConsumer l = gcProgressListener;
+        if (l != null) l.accept(percent);
+    }
     static native int getOption(String name);
 
     /** Warp (developer menu): to a stage's room and spawn at the next frame; layer -1 = the story's. False without a loaded save file. */
@@ -187,6 +264,11 @@ final class Native {
     static native int frontScreen();
     /** the GamePad screen's touch targets drawn now: "name parent x y w h;" (16:9 screen, 0..1, y down) */
     static native String drcTargets();
+    // the game's own GamePad screens as drawing orders (runtime drc_mirror.h): recording on / off, the screen as last
+    // drawn if it changed (null: not), a texture of it (int width, height little-endian, then RGBA; null: none)
+    static native void drcMirror(boolean on);
+    static native byte[] drcMirrorFrame();
+    static native byte[] drcMirrorTexture(int id);
     /** the game shows its own button cursor on the GamePad screen (it takes the buttons there) */
     static native boolean drcGameCursor();
     static native void setGamePaused(boolean on);
@@ -209,6 +291,9 @@ final class Native {
     static native void motionSample(float dt, float gx, float gy, float gz, float ax, float ay, float az);
     /** Motion sensors stopped: the GamePad reports resting values. */
     static native void motionReset();
+    /** Sound for another device (PadHost): stream 1 the TV sound, 2 the GamePad-only sounds (option remote_audio
+     *  turns them on); interleaved stereo 48 kHz frames into `out`, the number taken. */
+    static native int takeRemoteAudio(int stream, short[] out);
 
     /** Called by the game (VPADControlMotor): a rumble pattern of `bits` 1/120 s steps, or stop (0). */
     @SuppressWarnings("unused")

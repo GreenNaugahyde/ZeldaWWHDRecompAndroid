@@ -39,8 +39,8 @@ bool hud_msg_key_icon();
 int64_t hud_msg_key_icon_age();
 // the message's number entry (P_SelNumber_00: the auction's bid) is shown
 bool hud_number_entry();
-// the message window's box (P_MsgWindow_00) in layout units: out[0] shown (drawn in the last moments), [1] / [2] its
-// centre, [3] / [4] its half width / height
+// the message window's box (P_MsgWindow_00, or a letter / tablet / sign's P_Paper_00 / P_Stone_00 / P_Wood_00) in
+// layout units: out[0] shown (drawn in the last moments), [1] / [2] its centre, [3] / [4] its half width / height
 void hud_msg_window(int32_t out[5]);
 // the wind compass after the Wind's Requiem (ControlWind_00) is shown: out[0] / [1] its centre, layout units
 bool hud_wind_compass(int32_t out[2]);
@@ -50,6 +50,10 @@ bool hud_picto_screen();
 bool hud_album_screen();
 // the boot layout shows a message with one button (the first start's "save data created")
 bool hud_boot_message();
+// a system question's buttons (SequenceWindow_00's L_BtnSeqenceL_00 / R_00 / C_00: the save question after a game over
+// and the like), layout units: for button i (0 left, 1 right, 2 centre) out[4i] shown (drawn in the last moments),
+// [4i+1] / [4i+2] its centre, [4i+3] its size (N_Btn_00's scale per mille: the cursor's one is larger)
+void hud_sequence_buttons(int32_t out[12]);
 
 // a layout root is drawn (Pane::Draw, aspect.cpp): notes the pause menu's layout (its children
 // include L_MenuArrowL_00; it is computed also while the menu is closed, but drawn only when open)

@@ -29,10 +29,22 @@ vec3 upscale(vec2 uv, float sharp) {
     vec3 p2 = texelFetch(tex, i + ivec2(0, 1), 0).rgb, p3 = texelFetch(tex, i + ivec2(1, 1), 0).rgb;
     return clamp(c, min(min(p0, p1), min(p2, p3)), max(max(p0, p1), max(p2, p3)));
 }
+// Pixel perfect (opts.z = 1): each source texel a hard-edged block of the same size; only the screen
+// pixel on a block's edge is blended (one bilinear tap pulled onto the texel centre), so blocks stay
+// even and don't shimmer at scales that aren't whole numbers. d = source texels per screen pixel.
+vec3 pixels(vec2 uv, vec2 d) {
+    vec2 size = vec2(textureSize(tex, 0));
+    vec2 pos = uv * size - 0.5;
+    vec2 t = clamp((fract(pos) - 0.5) / d + 0.5, 0.0, 1.0);
+    return textureLod(tex, (floor(pos) + 0.5 + t) / size, 0.0).rgb;
+}
 void main() {
     vec2 size = vec2(textureSize(tex, 0));
-    bool enlarged = max(abs(dFdx(uv.x)) * size.x, abs(dFdy(uv.y)) * size.y) < 0.95;  // source texels per screen pixel
-    vec3 c = clamp(pc.opts.y > 0.0 && enlarged ? upscale(uv, pc.opts.y) : texture(tex, uv).rgb, 0.0, 1.0);
+    vec2 d = max(vec2(abs(dFdx(uv.x)), abs(dFdy(uv.y))) * size, vec2(1e-4));  // source texels per screen pixel
+    bool enlarged = max(d.x, d.y) < 0.95;
+    vec3 c = enlarged && pc.opts.z > 0.5 ? pixels(uv, d)
+           : enlarged && pc.opts.y > 0.0 ? upscale(uv, pc.opts.y) : texture(tex, uv).rgb;
+    c = clamp(c, 0.0, 1.0);
     // opts.x: the scan buffer is sRGB, i.e. the display encodes (the window surface is UNORM)
     if (pc.opts.x > 0.5) c = mix(c * 12.92, 1.055 * pow(c, vec3(1.0 / 2.4)) - 0.055, step(vec3(0.0031308), c));
     color = vec4(c, 1.0);

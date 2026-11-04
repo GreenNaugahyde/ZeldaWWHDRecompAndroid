@@ -105,6 +105,20 @@ public:
     }
 
 private:
+    // the randomizer's code (CodePatch::noEabiLo), and the game's functions with a branch into it: its patches hand
+    // values over in any register (a replaced `lis r12` done in its function, the caller's r31 read there)
+    bool noeabi_rando(uint32_t start) const {
+        if (!P.noEabiLo) return false;
+        if (start >= P.noEabiLo) return true;
+        for (uint32_t a = start; a < end; a += 4) {
+            uint32_t w = P.word(a), op = w >> 26, t = 0xFFFFFFFFu;
+            if (op == 18) t = (uint32_t)(((int32_t)((w & 0x03FFFFFC) << 6) >> 6) + (w & 2 ? 0 : (int32_t)a));
+            else if (op == 16) t = (uint32_t)((int32_t)(int16_t)(w & 0xFFFC) + (w & 2 ? 0 : (int32_t)a));
+            if (t != 0xFFFFFFFFu && t >= P.noEabiLo && t < P.textHi) return true;
+        }
+        return false;
+    }
+
     // no calls (and no instruction hooks or traces, which call): see emit
     bool leaf() const {
         static const bool on = !getenv("WWHD_RECOMP_LEAF_SPLIT") || atoi(getenv("WWHD_RECOMP_LEAF_SPLIT")) != 0;
@@ -124,6 +138,7 @@ private:
         F = fn;
         const uint32_t start = cur;
         if (start >= P.caveLo && start < P.caveHi) F->addFnAttr("wwhd-noeabi");  // mod pack code (locals.cpp)
+        else if (noeabi_rando(start)) F->addFnAttr("wwhd-noeabi");
         c = F->getArg(0);
         auto* entry = llvm::BasicBlock::Create(C, "entry", F);  // first: the function's entry block
         collect_labels();

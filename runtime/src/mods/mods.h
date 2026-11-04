@@ -1,11 +1,13 @@
 // Optional gameplay mods (Gameplay menu). All off by default; each can be switched live.
 //   camera.cpp  direct right-stick camera, mouse camera, first person on R3 / mouse wheel
 //   mouse.mm    mouse capture in the game window (macOS events)
+//   walk_doors.cpp  walk-through doors (no door scene in dungeons)
 //   turbo.cpp   quick doors, fast scene changes and fast forward (extra logic steps while they run)
 //   mods.cpp    faster running, swimming, sidling (true60_link.cpp's posMoveFromFootPos site applies it)
 //               and climbing (hooks on the climbing animations' speed)
 // Test/start-up switches: WWHD_MOD_<NAME>=1 (see mods.cpp).
 #pragma once
+#include <array>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -32,6 +34,12 @@ bool first_person_wheel();
 void set_first_person_wheel(bool on);
 bool quick_doors();
 void set_quick_doors(bool on);
+// walk-through doors (walk_doors.cpp): dungeon shutter doors open as Link comes near and shut behind him, no door scene
+bool walk_doors();
+void set_walk_doors(bool on);
+bool walk_doors_by_a();
+bool walk_door_exit();  // walk_doors.cpp: Link went into the doorway of a house door: its scene change runs fast  // they open on A (the game's "Open" prompt) instead of when Link comes near
+void set_walk_doors_by_a(bool on);
 bool fast_scenes();
 void set_fast_scenes(bool on);
 float run_speed();  // Link's running: multiplier of the distance per step (1 = off)
@@ -75,6 +83,22 @@ void postbox_service(Cpu* c);     // game main thread, frame start (interp.cpp)
 int link_clothes();
 void set_link_clothes(int mode);
 void clothes_service(Cpu* c);  // game main thread, frame start (interp.cpp)
+// Link's colours with each clothes' own skin, mouth and eyes (link_colors.cpp): game main thread, frame start
+void link_colors_service();
+// Player models per save file (player_models.cpp): the played pack (the game's or a randomized game's
+// permanent_3d.pack), the mod packs' folder and each save file's model folder ("": HD Link)
+void set_player_models(const std::string& basePack, const std::string& packsDir, const std::vector<std::string>& folders);
+bool player_model_file(int file);  // save file 0..2 has a model (Link's colours leave it alone)
+uint32_t player_model_area(uint32_t* size);  // guest memory of the model in (save states keep it); size 0: none
+void player_models_service();  // game main thread, frame start (interp.cpp), before link_colors_service
+// save file names (save_names.cpp): renamed in play, up to 16 characters; their longer part kept in the player model
+// area's last 0x100 bytes (player_models.cpp leaves them free)
+constexpr uint32_t kSaveNameArea = 0x583FFF00;
+constexpr uint32_t kSaveNameMax = 16;
+void set_long_save_names(const std::array<std::u16string, 3>& names);  // any thread: the app's names over 8 characters
+void rename_save_file(int file, const std::u16string& name);           // any thread: file 0..2, done at the next frame
+bool save_names(std::array<std::u16string, 3>& out);                   // the names in memory; false: none there
+void save_names_service();  // game main thread, frame start (interp.cpp)
 // Picto Box album pages (picto_pages.cpp): any number of pages of 12 pictos; a full album starts a new page,
 // the album viewer's page switch (the app) asks for the next / previous one
 bool picto_pages();
@@ -91,6 +115,25 @@ void picto_pad(input::PadState& s);  // filter_pad: ZL / L turn the pages in the
 void picto_pages_service(Cpu* c);  // game main thread, frame start (interp.cpp)
 bool ff_dialogues();
 void set_ff_dialogues(bool on);
+// Game > Instant text (instant_text.cpp): message boxes show their whole text at once
+bool instant_text();
+void set_instant_text(bool on);
+bool text_pauses_off();  // and the pauses written into texts left out (with instant text on)
+void set_text_pauses_off(bool on);
+// hit freezes (turbo.cpp): the play scene's hit-stop timer (dScnPly_ply_c::nextPauseTimer) an actor's step sets is
+// put back as it was when that kind is switched off; the kinds by the actor and the stop's length
+enum HitStop {
+    kHitStopHit = 1,     // a hit on an enemy (1-2 steps)
+    kHitStopStrong = 2,  // a strong hit it survives (4-6: knocked down, a Darknut's armour, a Stalfos' head)
+    kHitStopDefeat = 4,  // the hit that defeats it (6, 8 for a frozen one shattered)
+    kHitStopBoss = 8,    // any a boss sets (up to 8)
+    kHitStopSign = 16,   // a signpost cut (1)
+};
+int hit_stop_off();  // the kinds switched off
+void set_hit_stop_off(int mask);
+void app_pause();  // the app's own pause (setGamePaused) uses that timer: left alone while it is wanted
+void hit_stop_step(uint32_t actor, bool before);
+void touch_actor_seen(uint32_t actor);  // each actor's execute (cheats.cpp's fopAc_Execute hook): the one A acts on  // around each actor's execute (cheats.cpp's fopAc_Execute hook)
 bool ff_button();  // ZR is held (last pad read)
 int event_mode_now();  // turbo.cpp: 0 no event, 1 dialogue, 2 / 3 cutscene
 // for daPy_lk_c::posMoveFromFootPos (true60_link.cpp): the factor for Link's horizontal movement
@@ -136,7 +179,7 @@ uint32_t link_actor();  // camera.cpp: Link (daPy_lk_c), 0 until seen
 void touch_state_step();
 // touch for the minigames (minigames.cpp): once per logic step
 void minigame_step();
-// the minigame played by touch now (0 none; 1 Sploosh Kaboom, 2 picture puzzle, 3 mail sorting, 4 cannon, 5 auction, 6 a message's choices, 7 its number entry, 8 a shop's items, 9 looking at a figure, 10 conducting)
+// the minigame played by touch now (0 none; 1 Sploosh Kaboom, 2 picture puzzle, 3 mail sorting, 4 cannon, 5 auction, 6 a message's choices, 7 its number entry, 8 a shop's items, 9 looking at a figure, 10 conducting, 11 the wind compass, 12 a shop's held item, 13 a system question's buttons)
 int minigame_mode();
 // a finger on the TV picture (any thread): action 0 down, 1 moved, 2 up (NaN: cancelled); x, y in layout
 // units (720 across the picture's height, 0 at its centre, +y up); 3 a second finger pinches (x: distance
@@ -163,7 +206,7 @@ bool talk_hold_ff();
 // [33] a fade / wipe is under way (scene change, also on the title screen), [34] the attention type A acts on
 // (fopAc_Attn_TYPE: 5 a door, 6 a chest; -1 none), [35] A's Jump is the jump attack (1; the side hop / back flip 0),
 // [36] Link's mode flags (daPy_lk_c::mModeFlg: 0x400000 on a ladder), [37] has the Swift Sail
-constexpr int kTouchStateLen = 38;
+constexpr int kTouchStateLen = 40;
 void touch_state(int32_t out[kTouchStateLen]);
 // the item ring: {21 inventory item ids (0xFF empty), X / Y / R inventory slots, item in Link's hand,
 // the bags' 3 x 8 items (slots 24.., 36.., 48..)} (all -1 outside the game); request_equip puts an
@@ -184,6 +227,26 @@ void set_game_pace(int mode);
 void pace_service();
 // the player's save data (dSv_player_c, as on the GameCube; touch_state.cpp), 0 outside a game
 uint32_t player_save();
+// a new game not yet woken up: the save's event flags as the game's dSv_event_c::init leaves them (all clear but
+// 0x7E and 0xBE, setInitEventBit) until the "awake" scene sets 0x3510 (progress.cpp); its save file starts as the
+// game's Link (a model, colours, a long name chosen for the file before are the old game's)
+bool save_new_game(uint32_t save);
+// the mini map (minimap.cpp, drawn by the app's MiniMap.java), all 0 off the Great Sea or outside a game:
+// [0] on the sea, [1] / [2] Link's x / z, [3] his facing (radians, 0 = +z, south), [4] on the boat, [5] the King of
+// Red Lions known, [6] / [7] / [8] its x / z / facing, [9] event mode (event_mode_now), [10] Link aims or looks
+// (first person, telescope, Picto Box, conducting) or the pause menu is open, [11] a fade / wipe, [12..60] the 49 chart
+// squares filled in (the sea only); [0] is 2 on any other stage: [61] Link's height, [62] his room, [63] the stage's
+// dungeon items (bit 0 the map, 1 the compass), [64..67] its visited rooms (0..63) in 16-bit parts, lowest first,
+// [68..69] its chests opened (0..31) in the same way, [70] / [71] the wind's way / power (any stage), [72] Link's partner
+// known (mpPlayerPtr[1]: Medli, Makar), [73] / [74] / [75] / [76] its x / z / facing / height
+constexpr int kMiniMapLen = 77;
+void minimap_state(float out[kMiniMapLen]);
+std::string minimap_stage();  // the stage now ("" while it's being changed)
+// game progress (progress.cpp): the save data as it is now (dSv_save_c, the stage's working dSv_memBit_c at +0x778 and
+// dSv_danBit_c at +0x79C; big-endian), for the app's checklist and achievements, then at +0x7A0 the play's timer info
+// (__d_timer_info_c: pointer, now ms, limit ms, mode); the bytes written (0 outside a game)
+constexpr int kProgressSave = 0x7A0, kProgressLen = kProgressSave + 0x11;
+int progress_data(uint8_t out[kProgressLen]);
 // ---- songs sung into the microphone (songs.cpp): the Wind Waker plays the song the app recognised
 // {conducting (Link holds the Wind Waker: free play), learned songs (bits by melody number; -1 unknown),
 //  has the Wind Waker, an event other than conducting runs (or the pause menu is open), songs handed to the game,
@@ -196,6 +259,9 @@ void count_beat(int time, bool last);
 // the game's judge of the conducted notes answers this melody (0 Wind's Requiem .. 5 Song of Passing) at the
 // next beat while Link conducts (forgotten after 5 s)
 void play_song(int melody);
+// the wind set at once, no event, no compass: angle the game's tact wind y (s16; the wind blows along (cos, sin) in x, z),
+// as the compass's choice sets it (songs.cpp; any stage, the Wind's Requiem known or not; outside events)
+void set_wind(int angle);
 // debug WWHD_SONG_DUMP: the game plays its songs while Link holds the Wind Waker (top of a frame, game thread)
 void song_dump_service(Cpu* c);
 // the 21 inventory slots' item numbers (0xFF empty); false without a loaded save
@@ -211,9 +277,10 @@ enum Cheat {
     // story progress (can change or break story events)
     kCheatSongs = 8, kCheatTriforce = 16, kCheatDungeon = 32, kCheatKey = 64,
     kCheatBags = 128,  // the spoils and bait bag filled
+    kCheatFigurines = 256,  // every Nintendo Gallery figurine (a gallery member's save only)
 };
 void request_cheat(int which);  // any thread
-enum Infinite { kInfHealth = 1, kInfMagic = 2, kInfAmmo = 4, kMoonJump = 8, kMoonNoFall = 16, kMoonAllAnims = 32, kInfRupees = 64, kInfBags = 128, kInfBreath = 256, kOneHit = 512 };  // switches (kMoonJump: hold L)
+enum Infinite { kInfHealth = 1, kInfMagic = 2, kInfAmmo = 4, kMoonJump = 8, kMoonNoFall = 16, kMoonAllAnims = 32, kInfRupees = 64, kInfBags = 128, kInfBreath = 256, kOneHit = 512, kFastPush = 1024 };  // switches (kMoonJump: hold L)
 bool infinite(int which);
 void set_infinite(int which, bool on);
 void cheats_service();          // game main thread, frame start (interp.cpp)
@@ -224,6 +291,11 @@ bool moon_jump_move(uint32_t link, float& x, float& z);
 void set_moon_jump_speeds(int rise, int fly);
 int moon_jump_rise();
 int moon_jump_fly();
+// the shader tour's fly mode (flytour.cpp): Link flies through the warped-to room's path (<game>/flypath.txt)
+void fly_start();  // any thread; fly_left then: -2 starting, -1 no path / stopped, else points to go
+void fly_stop();
+int fly_left();
+void fly_step(Cpu* c, uint32_t link, bool before);  // around daPy_lk_c::execute (climb.cpp)
 bool jump_held();               // Jump anywhere's input (input::kJump) in the latest read (run_input)
 bool moon_held();               // the moon jump's (input::kMoonJump); on one controller button the app sends only that
 
@@ -236,6 +308,11 @@ bool no_auto_jump();  // the game's own jump off ledges becomes a plain fall (wi
 void set_no_auto_jump(bool on);
 void jump_step(Cpu* c, uint32_t link);        // before daPy_lk_c::execute (climb.cpp)
 void jump_after_step(Cpu* c, uint32_t link);  // after it
+bool leaf_lift();  // the Deku Leaf's wave while gliding lifts Link (jump.cpp)
+void set_leaf_lift(bool on);
+int leaf_lift_height();  // percent of the default lift's height
+void set_leaf_lift_height(int percent);
+void leaf_pad(input::PadState& s);  // filter_pad: a held leaf button waves again and again (jump.cpp)
 void left_stick(float& x, float& y);  // ... and its left stick (-1..1, +y up)
 
 // the live save data (dSv_info_c) once a save file is loaded, else 0 (cheats.cpp)
@@ -251,6 +328,7 @@ bool request_warp(const char* stage, int room, int spawn, int layer, const uint8
 void set_warp_place(float x, float y, float z, int angle);
 std::vector<uint8_t> story_block();  // the live save's story part (dSv_save_c), empty outside the game
 std::string warp_where();  // "stage,room,spawn,layer" of the current scene ("" outside the game)
+std::string current_area();  // stage, on the Great Sea "sea:<chart square>" (shader head start areas)
 void warp_service();       // game main thread, frame start (interp.cpp)
 // the latest warp: {0 none, 1 requested, 2 changing scene, 3 loaded, 4 refused (a change was under
 // way); ms since the request, or the load time once loaded; the event mode now (event_mode_now)}

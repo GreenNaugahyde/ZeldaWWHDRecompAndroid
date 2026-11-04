@@ -72,6 +72,23 @@ constexpr int kDoorTalk = 16;              // dDoor_info_c action table: "TALK"
 const release::Data kEvtCtrl{0x10474280};
 const release::Data kCounter{0x101FF558};  // g_Counter.mCounter0: +1 per logic step
 constexpr uint32_t kEvtMode = 0xC2;        // dEvt_control_c::mMode (as on GameCube)
+// dScnPly_ply_c::nextPauseTimer: set by hits (cc_at_check, bosses' own), taken into pauseTimer by calcPauseTimer
+// (025B02E8) at the next play scene step, which then skips the world's step while it counts down
+const release::Data kNextPauseTimer{0x101EACB7};
+std::atomic<int64_t> g_app_pause_ms{-1000000};  // when the app last asked for its pause (app_pause)
+std::atomic<int> g_hit_stop_off{getenv("WWHD_MOD_HIT_STOP_OFF") ? atoi(getenv("WWHD_MOD_HIT_STOP_OFF")) : 0};
+constexpr uint32_t kSubMethod = 0xF0;  // fopAc_ac_c::sub_method (its +8: the actor's execute)
+constexpr uint32_t kHealth = 0x3A1;    // fopAc_ac_c::health (s8; GameCube 0x285)
+// the bosses' executes (build/names.tsv): Helmaroc King and its parts, Puppet Ganon's three forms, Kalle Demos,
+// Gohdan, Gohma, Molgera, Phantom Ganon, Ganondorf
+const release::Code kBossExecute[] = {{0x02066A38}, {0x020729A8}, {0x0207E7B4}, {0x0208B6A4}, {0x02090680}, {0x020AEBCC},
+                                      {0x020E54A0}, {0x020F1494}, {0x020FA614}, {0x02134B28}, {0x02154EE0}};
+const release::Code kKanbanExecute{0x0218B234};  // daKanban_Execute: signposts
+uint8_t g_hit_stop_saved = 0;
+bool g_hit_stop_watch = false;
+int64_t now_ms() {
+    return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+}
 
 int env_i(const char* n, int d) {
     const char* e = getenv(n);
@@ -114,6 +131,8 @@ int event_mode_now() { return event_mode(); }
 namespace {
 // fast forward applies to the event running now
 bool ff_now() {
+    static const bool test = env_i("WWHD_TEST_FAST_FORWARD", 0) != 0;  // test aid: held all the time, also in play
+    if (test) return true;
     if (talk_hold_ff()) return event_mode() != 0;  // a talk held by touch, its fast forward on (minigames.cpp)
     if (!ff_button()) return false;
     int m = event_mode();
@@ -178,6 +197,43 @@ void call(Cpu* c, void (*f)(Cpu*), uint32_t r3) {
     f(c);
 }
 }  // namespace
+
+void app_pause() { g_app_pause_ms = now_ms(); }
+int hit_stop_off() { return g_hit_stop_off.load(std::memory_order_relaxed); }
+void set_hit_stop_off(int mask) {
+    g_hit_stop_off = mask;
+    LOG("[mods] hit freezes off: %d", mask);
+}
+
+// an actor's step that sets the timer asked for the freeze: the timer goes back to what it was when that kind is off
+// (not while the app pauses the game that way: it asks each frame, from its own thread)
+void hit_stop_step(uint32_t actor, bool before) {
+    if (before) {
+        g_hit_stop_watch = hit_stop_off() && now_ms() - g_app_pause_ms.load(std::memory_order_relaxed) > 250;
+        if (g_hit_stop_watch) {
+            g_hit_stop_saved = ld8(kNextPauseTimer);
+            st8(kNextPauseTimer, 0);
+        }
+        return;
+    }
+    if (!g_hit_stop_watch) return;
+    g_hit_stop_watch = false;
+    const uint8_t steps = ld8(kNextPauseTimer);
+    if (!steps) {
+        st8(kNextPauseTimer, g_hit_stop_saved);
+        return;
+    }
+    const uint32_t sub = ld32(actor + kSubMethod);
+    const uint32_t fn = sub >= 0x10000000 && sub < 0x50000000 ? ld32(sub + 8) : 0;
+    int kind = (int8_t)ld8(actor + kHealth) <= 0 ? kHitStopDefeat : steps >= 4 ? kHitStopStrong : kHitStopHit;
+    if (fn == kKanbanExecute) kind = kHitStopSign;
+    for (uint32_t b : kBossExecute)
+        if (fn == b) kind = kHitStopBoss;
+    if (hit_stop_off() & kind) {
+        trace("hit freeze (kind %d, %u steps, execute %08X) left out", kind, steps, fn);
+        st8(kNextPauseTimer, g_hit_stop_saved);
+    }
+}
 
 // interp.cpp's fpcEx_Handler hook, after the step's own execute
 void after_execute(Cpu* c, uint32_t execute_fn) {
@@ -264,7 +320,7 @@ void after_execute(Cpu* c, uint32_t execute_fn) {
             for (size_t k = 0; k < sizeof kTrigWords / sizeof *kTrigWords; k++) st32(pad + kTrigWords[k], saved[k]);
     }
     // fast scene changes: transition machinery only
-    if (fast_scenes()) {
+    if (fast_scenes() || walk_door_exit()) {
         for (int i = 0; i < kSceneExtra && overlap_active(); i++) {
             // (no fpcCt_Handler: process creation stays once per frame, see the top, issue #15)
             uint32_t ovl_req = ld32(kOverlap);

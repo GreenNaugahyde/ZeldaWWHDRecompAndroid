@@ -195,7 +195,7 @@ final class LayoutPresets {
         i.addCategory(Intent.CATEGORY_OPENABLE);
         i.setType("application/json");
         i.putExtra(Intent.EXTRA_TITLE, name.replaceAll("[\\\\/:*?\"<>|]", "_") + ".json");
-        a.startActivityForResult(i, PICK_EXPORT);
+        a.startPicker(i, PICK_EXPORT);
     }
 
     private void pickImport() {
@@ -203,7 +203,7 @@ final class LayoutPresets {
         i.addCategory(Intent.CATEGORY_OPENABLE);
         i.setType("*/*");  // (JSON files often have no type the picker matches)
         i.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true);
-        a.startActivityForResult(i, PICK_IMPORT);
+        a.startPicker(i, PICK_IMPORT);
     }
 
     void exportTo(Uri file) {

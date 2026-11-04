@@ -57,7 +57,8 @@ constexpr uint32_t kRestartRoom = kRestart + 0, kLastSpeed = kRestart + 0x28, kL
 
 constexpr uint32_t kStoryLen = 0x778;  // dSv_save_c
 constexpr uint32_t kMemories = 0x380, kMemoryLen = 0x24;  // dSv_save_c::mMemory[16] (dSv_memory_c)
-constexpr uint32_t kWorkMemory = 0x778;  // dSv_info_c::mMemory: the current stage's copy
+constexpr uint32_t kWorkMemory = 0x778;
+constexpr uint32_t kNames = 0x148 + 0x14, kNamesLen = 3 * 17;  // dSv_player_info_c's names (kept by a story preset)  // dSv_info_c::mMemory: the current stage's copy
 
 struct Place {
     bool on = false;
@@ -277,6 +278,23 @@ std::vector<uint8_t> story_block() {
     return b;
 }
 
+// The area for the shader head start (vk_draw.cpp, area tags): the stage, on the Great Sea also the
+// chart square Link is in ("sea:<room>"; 7 x 7 squares of 100,000 units around the origin, room 1 in
+// the north-west corner, as the sea's rooms are numbered). Read by the render thread: a stage being
+// changed may give a half-written name once, which only costs a short extra visit.
+std::string current_area() {
+    std::string s = name_at(kPlay + kStartStage);
+    for (char c : s)
+        if (c < 0x20 || c > 0x7E) return "";
+    if (s != "sea") return s;
+    uint32_t link = link_actor();
+    if (!link) return s;
+    double x = ldf32(link + kPos), z = ldf32(link + kPos + 8);
+    int col = (int)std::floor((x + 350000.0) / 100000.0), row = (int)std::floor((z + 350000.0) / 100000.0);
+    if (col < 0 || col > 6 || row < 0 || row > 6) return s;
+    return "sea:" + std::to_string(row * 7 + col + 1);
+}
+
 std::string warp_where() {
     if (!loaded_save()) return "";
     uint32_t p = kPlay;
@@ -333,7 +351,12 @@ void warp_service() {
     if (!r.story.empty()) {
         std::string here = name_at(p + kStartStage);
         int tbl = save_table(here);
+        // the names stay this game's (dSv_player_info_c at 0x148: mPlayerName and the two name fields after it,
+        // 0x14..0x47): a preset made from another player's save brought that player's name along
+        uint8_t names[kNamesLen];
+        memcpy(names, mem::ptr(s + kNames), kNamesLen);
         memcpy(mem::ptr(s), r.story.data(), kStoryLen);
+        memcpy(mem::ptr(s + kNames), names, kNamesLen);
         if (tbl >= 0 && tbl < 16) memcpy(mem::ptr(s + kWorkMemory), r.story.data() + kMemories + kMemoryLen * tbl, kMemoryLen);
         LOG("[warp] story preset written (life %u/%u, rupees %u); %s keeps table %d", ld16(s + 2), ld16(s), ld16(s + 4),
             here.c_str(), tbl);

@@ -346,7 +346,10 @@ void LatteDecompiler_analyzeTEXClause(LatteDecompilerShaderContext* shaderContex
 		}
 		else if( texInstruction.opcode == GPU7_TEX_INST_SET_CUBEMAP_INDEX )
 		{
-			// no analysis required
+			// WWHD: the index variable is declared for this unit even when the bound texture is no cube map
+			// (the hardware then ignores the index; a head-start state may pair the program with such a texture)
+			if (texInstruction.textureFetch.textureIndex >= 0 && texInstruction.textureFetch.textureIndex < LATTE_NUM_MAX_TEX_UNITS)
+				shaderContext->analyzer.texUnitSetsCubeMapIndex.set(texInstruction.textureFetch.textureIndex);
 		}
 		else if (texInstruction.opcode == GPU7_TEX_INST_GET_GRADIENTS_H || texInstruction.opcode == GPU7_TEX_INST_GET_GRADIENTS_V)
 		{
@@ -1161,6 +1164,13 @@ void LatteDecompiler_analyze(LatteDecompilerShaderContext* shaderContext, LatteD
 	if (shaderContext->options->useTFViaSSBO && shaderContext->output->streamoutBufferWriteMask.any())
 	{
 		shaderContext->analyzer.useSSBOForStreamout = true;
+	}
+	// WWHD: units the host reads area-sampled need their resolution factor (uf_texNScale)
+	if (shaderContext->shaderType == LatteConst::ShaderType::Pixel)
+	{
+		for (sint32 t = 0; t < LATTE_NUM_MAX_TEX_UNITS && t < 32; t++)
+			if ((shaderContext->options->areaSampledTextures >> t) & 1 && shaderContext->output->textureUnitMask[t])
+				shaderContext->analyzer.texUnitUsesTexelCoordinates.set(t);
 	}
 	// assign binding points
 	if (shaderContext->shaderType == LatteConst::ShaderType::Vertex)

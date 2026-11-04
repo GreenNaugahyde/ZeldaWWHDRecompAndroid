@@ -61,6 +61,7 @@ void f_024EF968_orig(Cpu* c);  // dBgS::MoveBgCrrPos
 }
 
 namespace interp {
+bool enabled();            // interp.cpp: a 60 fps mode is on
 bool hold_pass();          // interp.cpp: this is a half pass (no 30 Hz logic)
 uint64_t logic_steps();    // full logic steps so far
 }
@@ -499,7 +500,11 @@ extern "C" void hook_025DF940(Cpu* c) {
 // re-implementations of the GameCube source with fractional smoothing and split steps.
 
 // f32 cLib_addCalc(f32* v, f32 target, f32 scale, f32 maxStep, f32 minStep)
+namespace interp { bool zoom_ease(Cpu* c, void (*orig)(Cpu*)); void fx_actor_draw(uint32_t proc, uint32_t exec, bool begin); }
 extern "C" void hook_0200ECD4(Cpu* c) {
+    // camera_draw's ease of the HD projection zoom: once per logic step with frame interpolation (interp.cpp)
+    static const uint32_t zoom_call = release::code(0x0250018C);
+    if (c->lr == zoom_call && interp::zoom_ease(c, f_0200ECD4_orig)) return;
     if (t_dt < 1.0f) {
         c->f[2].ps0 = (float)frac(c->f[2].ps0);
         c->f[3].ps0 = (float)(c->f[3].ps0 * t_dt);
@@ -764,7 +769,13 @@ bool true60::drawing_60() {
 extern "C" void hook_025DF904(Cpu* c) {
     if (g_draw_depth < 8) g_draw_stack[g_draw_depth] = c->r[3];
     g_draw_depth++;
+    // frame interpolation: actor draws that advance their own state, once per logic step (interp_fx.cpp;
+    // the logic pass's draws too: replayed draws and fields blended between the steps)
+    const uint32_t proc = c->r[3];
+    const uint32_t keep_exec = interp::enabled() && !true60::enabled() ? actor_execute_fn(proc) : 0;
+    if (keep_exec) interp::fx_actor_draw(proc, keep_exec, true);
     f_025DF904_orig(c);
+    if (keep_exec) interp::fx_actor_draw(proc, keep_exec, false);
     g_draw_depth--;
 }
 
@@ -860,4 +871,20 @@ void true60_nan_probe(uint32_t addr) {
         for (uint32_t o = 0x10; o <= 0x60; o += 4) if (std::isnan(ldf32(cam + o))) LOG("[nanprobe]   NaN at dCamera+0x%02X", o);
     }
     was_nan = nan;
+}
+
+// The HUD (d_meter) updates its state from the play scene's draw (02593B10, the per-step part of
+// the meter: button labels, gauges, the magic gauge sparkle with its random numbers), so at 60 fps
+// it stepped on in-between passes as well (twice per logic step at 60 and 120 fps). The update runs
+// on full passes only, with frame interpolation as with true 60 (in-between passes still draw it):
+// HUD timing and its use of the shared random numbers are those of the 30 fps game. Its sounds depend
+// on this too: the Pirate's Charm ring while Tetra calls (JA_SE_ITM_OMAMORI_BLINK) starts from here
+// every 20 updates of the A-button counter. Sound starts on in-between passes are dropped
+// (interp.cpp), and with two updates per step every 20th update fell on an in-between pass, so with
+// 60/120 fps the charm shook without its ring (issue #262).
+extern "C" void f_02593B10_orig(Cpu* c);
+extern "C" void hook_02593B10(Cpu* c) {
+    static const bool every = getenv("WWHD_HUD_EVERY_PASS") != nullptr;  // debug: old behaviour
+    if (half_pass() && !every) return;
+    f_02593B10_orig(c);
 }

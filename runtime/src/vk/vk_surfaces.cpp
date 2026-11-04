@@ -1,6 +1,8 @@
 #include <atomic>
 #include <cmath>
 #include <tuple>
+#include <unistd.h>
+#include <unordered_set>
 // Guest surfaces <-> Vulkan images: render targets, depth buffers, sampled textures. Same rules as
 // the Metal renderer (gfx/metal_surfaces.mm); tiled layouts are decoded with the vendored LatteAddrLib.
 #include "Cafe/HW/Latte/ISA/LatteReg.h"
@@ -10,6 +12,8 @@
 #include "gx2_texture_regs.h"
 #include "mem_writes.h"
 #include "runtime.h"
+#include "area_sample.h"
+#include "texture_levels.h"
 #include "vk.h"
 
 Latte::E_GX2SURFFMT LatteTexture_ReconstructGX2Format(const Latte::LATTE_SQ_TEX_RESOURCE_WORD1_N&, const Latte::LATTE_SQ_TEX_RESOURCE_WORD4_N&);
@@ -29,12 +33,16 @@ static uint64_t content_hash(const uint8_t* p, size_t n) {
         h = (h ^ w) * 0x9E3779B97F4A7C15ull;
         h ^= h >> 29;
     };
+    // (large textures: two of the four lanes 8 bytes on, so 16-byte blocks are seen in both halves: BC3's colours are
+    // its second half, at multiples of 64 only its alpha was read, and a texture recoloured in memory wasn't uploaded
+    // again, mods/link_colors.cpp)
+    const size_t skew = step == 64 ? 8 : 0;
     size_t i = 0;
-    for (; i + 3 * step + 8 <= n; i += 4 * step) {
+    for (; i + 3 * step + skew + 8 <= n; i += 4 * step) {
         lane(a, p + i);
-        lane(b, p + i + step);
+        lane(b, p + i + step + skew);
         lane(c, p + i + 2 * step);
-        lane(d, p + i + 3 * step);
+        lane(d, p + i + 3 * step + skew);
     }
     for (; i + 8 <= n; i += step) lane(a, p + i);
     if (step == 8)
@@ -43,7 +51,7 @@ static uint64_t content_hash(const uint8_t* p, size_t n) {
 }
 
 static uint64_t g_write_seq = 0;
-static std::vector<Surface*> g_linear_targets;  // linear-aligned colour render targets (surfaces are never freed)
+static std::vector<Surface*> g_linear_targets;  // linear-aligned colour render targets (never freed: see evict_unused_textures)
 static Surface* adopt_newer_alias(Surface* s);
 uint64_t next_write_seq() { return ++g_write_seq; }
 uint64_t write_seq() { return g_write_seq; }
@@ -186,7 +194,7 @@ static void target_aspect(const Surface* s, float& ax, float& ay) {
 
 Surface* rescaled(Surface* s) {
     if (!s || !s->img.image || s->img.type != VK_IMAGE_TYPE_2D || s->mips > 1 || !screen_shaped(s)) return s;
-    float want = resolution_scale(), ax, ay;
+    float want = s->consoleSized ? 1.0f : resolution_scale(), ax, ay;
     target_aspect(s, ax, ay);
     if (std::fabs(s->rscale - want) < 1e-3f && s->ax == ax && s->ay == ay) return s;
     Image old = s->img;
@@ -268,8 +276,9 @@ bool create_surface_image(Surface* s, bool forRendering) {
     s->rscale = 1.0f;
     s->ax = s->ay = 1.0f;
     if (forRendering && type == VK_IMAGE_TYPE_2D && screen_shaped(s)) target_aspect(s, s->ax, s->ay);
-    if (forRendering && type == VK_IMAGE_TYPE_2D && (resolution_scale() != 1.0f || s->ax != 1.0f || s->ay != 1.0f) && screen_shaped(s)) {
-        s->rscale = resolution_scale();
+    const float scale = s->consoleSized ? 1.0f : resolution_scale();
+    if (forRendering && type == VK_IMAGE_TYPE_2D && (scale != 1.0f || s->ax != 1.0f || s->ay != 1.0f) && screen_shaped(s)) {
+        s->rscale = scale;
         w = std::max<uint32_t>(1, (uint32_t)lroundf(s->width * s->rscale * s->ax));
         h = std::max<uint32_t>(1, (uint32_t)lroundf(s->height * s->rscale * s->ay));
     }
@@ -278,7 +287,13 @@ bool create_surface_image(Surface* s, bool forRendering) {
     for (uint32_t d = std::max({w, h, depth}); d > 1; d >>= 1) maxMips++;
     s->mips = std::min(s->mips, maxMips);
     if (cube && !R.features.imageCubeArray && layers > 6) layers = 6;
-    return create_image(s->img, type, view, s->fmt.format, w, h, depth, layers, s->mips, usage, cube, s->fmt.depth, s->fmt.stencil);
+    // CPU textures of 64K texels or more get memory of their own: evict_unused_textures frees them, and
+    // freed ones left holes in VMA's shared blocks, which go back to the system only when empty (Snapdragon 855
+    // tour: 1,192 MB of blocks for 920 MB of allocations). WWHD_TEXTURE_DEDICATED=0: shared blocks
+    static const bool dedicatedTextures = !getenv("WWHD_TEXTURE_DEDICATED") || atoi(getenv("WWHD_TEXTURE_DEDICATED")) != 0;
+    const bool dedicated = dedicatedTextures && !forRendering && (uint64_t)w * h * depth * layers >= 65536;
+    return create_image(s->img, type, view, s->fmt.format, w, h, depth, layers, s->mips, usage, cube, s->fmt.depth, s->fmt.stencil,
+                        dedicated);
 }
 
 Surface* find_or_create_surface(const SurfaceDesc& d, bool forRendering) {
@@ -344,6 +359,7 @@ Surface* find_or_create_surface(const SurfaceDesc& d, bool forRendering) {
     if (!raw->isDepth)
         for (auto it = range.first; it != range.second; ++it)
             if (!it->second->isDepth && (it->second->format & 0x3F) == (raw->format & 0x3F)) raw->aliased = it->second->aliased = true;
+    raw->lastSampledFrame = R.frame;
     R.surfaces.emplace(d.addr, std::move(s));
     if (forRendering && !raw->isDepth && raw->tileMode == (uint32_t)Latte::E_HWTILEMODE::TM_LINEAR_ALIGNED) g_linear_targets.push_back(raw);
     surfaces_changed();
@@ -392,7 +408,26 @@ static Surface* adopt_newer_alias(Surface* s) {
 // CB_COLORn_BASE holds the full guest address; CB_COLORn_TILE/FRAG hold width/height (our convention).
 constexpr uint32_t kDim2D = 1, kDim2DArray = 5;
 
-Surface* color_target(const uint32_t* regs, int i, uint32_t* slice) {
+// The bloom chain's targets keep the console's size while its passes draw them (area_sample.h
+// size_request; the original project's d3fade20, 51f93711, 59838abe, 710ec2f8, issue #307). Other passes
+// draw into the chain's levels too (a generic pass at PS 44FD8500 every frame), so a draw without a claim
+// returns the target to the internal resolution only once the claim is a few frames old: the game can
+// reuse the address for another target of the same size and format. WWHD_BLOOM_CONSOLE_SIZE=0: off
+static void request_size(Surface* s, uint8_t request) {
+    static const bool off = getenv("WWHD_BLOOM_CONSOLE_SIZE") && !atoi(getenv("WWHD_BLOOM_CONSOLE_SIZE"));
+    constexpr uint64_t kIdleFrames = 10;
+    if (!s || off) return;
+    if (request == vk_area_sample::kSizeClaimConsole) {
+        s->consoleSized = true;
+        s->consoleClaimFrame = R.frame;
+    } else if (s->consoleSized && request == vk_area_sample::kSizeRenewConsole) {
+        s->consoleClaimFrame = R.frame;
+    } else if (s->consoleSized && R.frame - s->consoleClaimFrame > kIdleFrames) {
+        s->consoleSized = false;
+    }
+}
+
+Surface* color_target(const uint32_t* regs, int i, uint32_t* slice, uint8_t sizeRequest) {
     uint32_t base = regs[mmCB_COLOR0_BASE + i];
     if (!base) return nullptr;
     uint32_t size = regs[mmCB_COLOR0_SIZE + i], info = regs[mmCB_COLOR0_INFO + i];
@@ -412,7 +447,9 @@ Surface* color_target(const uint32_t* regs, int i, uint32_t* slice) {
     d.tileMode = (info >> 8) & 0xF;
     d.slices = slices;
     d.dim = slices > 1 ? kDim2DArray : kDim2D;
-    return adopt_newer_alias(rescaled(find_or_create_surface(d, true)));
+    Surface* s = find_or_create_surface(d, true);
+    request_size(s, sizeRequest);
+    return adopt_newer_alias(rescaled(s));
 }
 
 Surface* depth_target(const uint32_t* regs, uint32_t* slice) {
@@ -826,6 +863,99 @@ Surface* sampled_texture(const uint32_t* w, bool isDepthSampler, uint32_t maxLev
     return s;
 }
 
+// Textures uploaded from guest memory are freed when the game hasn't sampled them for a while (as
+// WindWakerHD-Android-Plus e8d20b8): surfaces were never freed, and every area visited left its
+// textures in GPU memory (Adreno has no BC formats: RGBA8 with mips, ~100 MB per area; 1.3 -> 2.4 GB
+// in a few minutes of changing areas on an SD865 phone, until Android ended the game for low memory).
+// Every 300 frames: those not sampled for 7200 frames (WWHD_TEXTURE_IDLE_FRAMES, 0 = keep all), then,
+// while the textures take more than a tenth of the device's memory (at least 384 MB;
+// WWHD_TEXTURE_BUDGET_MB), the least recently sampled that weren't sampled in the last 300 frames. A
+// texture sampled again is made again from guest memory (its contents are the guest's); render
+// targets, depth buffers and textures the GPU wrote stay (their contents exist only on the GPU).
+// While memory is short (Android's room above its low-memory line under WWHD_TEXTURE_HEADROOM_MB, 768,
+// as the area head start's eviction) every texture not sampled in the last 300 frames goes.
+// The age is lastSampledFrame, not lastCheckedFrame: an invalidate resets that one, and a texture
+// whose memory the next area reuses would never count as unused.
+// debug: WWHD_MEM_LOG=1 logs GPU memory by kind every 600 frames
+static void mem_log() {
+    static const bool on = getenv("WWHD_MEM_LOG") != nullptr;
+    if (!on || R.frame % 600) return;
+    uint64_t n[3] = {}, b[3] = {};  // CPU textures, GPU-written colour, depth
+    for (auto& [a, sp] : R.surfaces) {
+        const Surface* s = sp.get();
+        int k = s->isDepth ? 2 : s->gpuWritten ? 1 : 0;
+        n[k]++;
+        if (s->img.alloc) {
+            VmaAllocationInfo ai;
+            vmaGetAllocationInfo(R.vma, s->img.alloc, &ai);
+            b[k] += ai.size;
+        }
+    }
+    VmaTotalStatistics st;
+    vmaCalculateStatistics(R.vma, &st);
+    LOG("[mem] textures %llu (%llu MB), gpu colour %llu (%llu MB), depth %llu (%llu MB); vma blocks %llu MB in %u, allocations %llu MB in %u",
+        (unsigned long long)n[0], (unsigned long long)(b[0] >> 20), (unsigned long long)n[1], (unsigned long long)(b[1] >> 20),
+        (unsigned long long)n[2], (unsigned long long)(b[2] >> 20), (unsigned long long)(st.total.statistics.blockBytes >> 20),
+        st.total.statistics.blockCount, (unsigned long long)(st.total.statistics.allocationBytes >> 20), st.total.statistics.allocationCount);
+}
+
+static uint64_t texture_budget() {
+    if (const char* e = getenv("WWHD_TEXTURE_BUDGET_MB")) return strtoull(e, nullptr, 10) << 20;
+    const uint64_t ram = (uint64_t)sysconf(_SC_PHYS_PAGES) * (uint64_t)sysconf(_SC_PAGESIZE);
+    return std::max<uint64_t>(ram / 10, 384ull << 20);
+}
+
+void evict_unused_textures() {
+    mem_log();
+    static const uint64_t idle = getenv("WWHD_TEXTURE_IDLE_FRAMES") ? strtoull(getenv("WWHD_TEXTURE_IDLE_FRAMES"), nullptr, 10) : 7200;
+    static const uint64_t budget = texture_budget();
+    if (!idle || R.frame % 300) return;
+    static const int pressureLine = getenv("WWHD_TEXTURE_HEADROOM_MB") ? atoi(getenv("WWHD_TEXTURE_HEADROOM_MB")) : 768;
+    const int headroom = memory_headroom();
+    const uint64_t limit = headroom >= 0 && headroom < pressureLine ? 0 : budget;
+    auto bytes_of = [](const Surface* s) -> uint64_t {
+        if (!s->img.alloc) return 0;
+        VmaAllocationInfo ai;
+        vmaGetAllocationInfo(R.vma, s->img.alloc, &ai);
+        return ai.size;
+    };
+    auto evictable = [](const Surface* s) {
+        return !s->gpuWritten && !s->isDepth && !s->aliased && !s->feedbackCopy && !s->mipChain && !s->volume;
+    };
+    std::vector<std::pair<uint64_t, Surface*>> lru;  // last sampled frame, texture
+    uint64_t total = 0;
+    for (auto& [a, sp] : R.surfaces)
+        if (evictable(sp.get())) {
+            total += bytes_of(sp.get());
+            lru.push_back({sp->lastSampledFrame, sp.get()});
+        }
+    std::sort(lru.begin(), lru.end(), [](auto& x, auto& y) { return x.first < y.first; });
+    std::unordered_set<const Surface*> drop;
+    uint64_t freed = 0;
+    for (auto& [last, s] : lru) {
+        const uint64_t age = R.frame - last;
+        if (age <= 300 || (age <= idle && total - freed <= limit)) break;
+        drop.insert(s);
+        freed += bytes_of(s);
+    }
+    if (drop.empty()) return;
+    std::vector<Image> imgs;
+    for (auto it = R.surfaces.begin(); it != R.surfaces.end();) {
+        if (!drop.count(it->second.get())) {
+            ++it;
+            continue;
+        }
+        if (it->second->img.image) imgs.push_back(it->second->img);
+        it = R.surfaces.erase(it);
+    }
+    retire_images(imgs);
+    next_write_seq();  // texture lookups and the draw's fast path keep Surface pointers: look again
+    surfaces_changed();
+    LOG("[gfx] freed %zu unused textures (%llu MB; %llu MB of textures left, budget %llu MB%s)", drop.size(),
+        (unsigned long long)(freed >> 20), (unsigned long long)((total - freed) >> 20), (unsigned long long)(budget >> 20),
+        limit ? "" : ", memory short");
+}
+
 // a sampled CPU texture: upload it if its memory changed (checked once per frame)
 // The sparse sample (256 words spread over the texture, nearly all cache misses: ~5% of the render
 // thread at 60 fps) is skipped while the game hasn't written the texture's pages since the last
@@ -834,6 +964,7 @@ Surface* sampled_texture(const uint32_t* w, bool isDepthSampler, uint32_t maxLev
 static const bool g_track_texture_writes = [] { const char* e = getenv("WWHD_TRACK_WRITES"); return !e || atoi(e) != 0; }();
 uint64_t g_stat_texture_stale;
 static Surface* check_texture(Surface* s) {
+    if (s) s->lastSampledFrame = R.frame;
     if (s && !s->gpuWritten && s->lastCheckedFrame != R.frame) {
         const bool forced = s->lastCheckedFrame == ~0ull;
         s->lastCheckedFrame = R.frame;
@@ -867,8 +998,9 @@ static Surface* check_texture(Surface* s) {
 // ---------------------------------------------------------------- BC decoding on the GPU
 // Where the GPU can't sample BC textures (most Mali and PowerVR GPUs), a compute shader unpacks
 // them to RGBA8 / R8 / RG8 instead of the CPU. Bit-exact with convert_row() in vk_formats.cpp.
-// One invocation per 4x4 block; input = the detiled blocks, output = rows of texels as the copy
-// to the image expects them. WWHD_BC_DECODE=cpu keeps the CPU decoder (for comparisons).
+// One invocation per 4x4 block on a 3D dispatch; input = the detiled blocks, output = rows of texels
+// as the copy to the image expects them. WWHD_BC_DECODE=cpu keeps the CPU decoder (for comparisons;
+// Huawei GPUs use it anyway, see bc_decoder()).
 // runtime/shaders/bc_decode.comp, compiled to SPIR-V at build time
 static const uint32_t kBcDecodeSpv[] = {
 #include "bc_decode.comp.inc"
@@ -890,6 +1022,13 @@ static VkPipeline bc_decoder() {
     const char* env = getenv("WWHD_BC_DECODE");
     if (env && !strcmp(env, "cpu")) {
         LOG("[vk] BC textures: decoded on the CPU (WWHD_BC_DECODE=cpu)");
+        return VK_NULL_HANDLE;
+    }
+    // Huawei's Maleoon driver (B236 on a Maleoon 910) aborted in its shader compiler shortly after
+    // start (WindWakerHD-Android-Plus 74f24f4); the CPU decoder needs no shader.
+    // WWHD_BC_DECODE=gpu tries the compute shader anyway.
+    if (R.props.vendorID == 0x19E5 && !(env && !strcmp(env, "gpu"))) {
+        LOG("[vk] BC textures: decoded on the CPU (Huawei GPU; WWHD_BC_DECODE=gpu overrides)");
         return VK_NULL_HANDLE;
     }
     VkShaderModuleCreateInfo mi{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
@@ -961,11 +1100,10 @@ static Upload bc_decode_gpu(const FormatInfo& f, const std::vector<uint8_t>& blo
     VkCommandBuffer cmd = command_buffer();
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, g_bc.pipe);
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, g_bc.layout, 0, 1, &set, 0, nullptr);
-    const uint32_t n = bw * bh * slices;
-    const uint32_t pc[4] = {(uint32_t)f.convert - (uint32_t)Convert::BC1, bw, bh, n};
+    const uint32_t pc[4] = {(uint32_t)f.convert - (uint32_t)Convert::BC1, bw, bh, slices};
     vkCmdPushConstants(cmd, g_bc.layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof pc, pc);
-    const uint32_t groups = (n + 63) / 64, gx = std::min(groups, 65535u);
-    vkCmdDispatch(cmd, gx, (groups + gx - 1) / gx, 1);
+    // one invocation per block, 8x8 blocks per workgroup, one workgroup layer per slice
+    vkCmdDispatch(cmd, (bw + 7) / 8, (bh + 7) / 8, slices);
     return out;
 }
 
@@ -1016,8 +1154,8 @@ static void bc_verify() {
 // Decodes one mip level into `out` in host layout: texels, or 4x4 blocks if the host image is
 // block compressed (or if `rawBC`: BC blocks left for the GPU decoder). outW/outH are the level's
 // texel size.
-static void decode_level(Surface* s, uint32_t level, uint32_t base, std::vector<uint8_t>& out, uint32_t& outW, uint32_t& outH,
-                         uint32_t& outSlices, bool rawBC) {
+static void decode_level(Surface* s, uint32_t level, const texture_levels::Level& at, std::vector<uint8_t>& out, uint32_t& outW,
+                         uint32_t& outH, uint32_t& outSlices, bool rawBC) {
     const FormatInfo& f = s->fmt;
     uint32_t w = std::max(s->width >> level, 1u), h = std::max(s->height >> level, 1u);
     uint32_t slices = s->dim == (uint32_t)Latte::E_DIM::DIM_3D ? std::max(s->slices >> level, 1u) : s->slices;
@@ -1038,10 +1176,11 @@ static void decode_level(Surface* s, uint32_t level, uint32_t base, std::vector<
     uint32_t pitch = info.pitch, height = info.height;
     auto tm = (Latte::E_HWTILEMODE)info.hwTileMode;
     uint32_t bpp = f.bytesPerBlock * 8;
-    uint32_t pipeSwizzle = (s->swizzle >> 8) & 1, bankSwizzle = (s->swizzle >> 9) & 3;
+    // level 0 is tiled with the base pointer's swizzle, the mip chain with the mip pointer's (texture_levels.h)
+    uint32_t pipeSwizzle = (at.swizzle >> 8) & 1, bankSwizzle = (at.swizzle >> 9) & 3;
     out.assign((size_t)hostRowBytes * hostRows * slices, 0);
     std::vector<uint8_t> row(bw * f.bytesPerBlock);
-    const uint8_t* src = mem::ptr(base);
+    const uint8_t* src = mem::ptr(at.address);
     const bool norm16 = f.convert == Convert::UNORM16_F16 || f.convert == Convert::SNORM16_F16;
     for (uint32_t z = 0; z < slices; z++) {
         LatteAddrLib::CachedSurfaceAddrInfo ci;
@@ -1076,9 +1215,11 @@ static uint64_t sparse_hash(Surface* s) {
     if (!s->dataSize) return 0;
     uint64_t h = 0xcbf29ce484222325ull;
     uint32_t step = std::max<uint32_t>((s->dataSize / 256) & ~7u, 8);
-    for (uint32_t o = 0; o + 8 <= s->dataSize; o += step) {
+    for (uint32_t o = 0, k = 0; o + 8 <= s->dataSize; o += step, k++) {
+        // (every other sample 8 bytes on: both halves of 16-byte blocks, as content_hash)
+        uint32_t at = o + ((k & 1) && step >= 16 && o + 16 <= s->dataSize ? 8 : 0);
         uint64_t v;
-        memcpy(&v, mem::ptr(s->addr + o), 8);
+        memcpy(&v, mem::ptr(s->addr + at), 8);
         h = (h ^ v) * 0x100000001b3ull;
     }
     return h;
@@ -1109,21 +1250,12 @@ void upload_surface(Surface* s) {
     const bool gpuBC = is_bc_decode(f.convert) && bc_decoder_checked();
     std::vector<std::pair<Upload, VkBufferImageCopy>> decoded;
     for (uint32_t level = 0; level < s->img.mips; level++) {
-        uint32_t base;
-        if (level == 0) base = s->addr;
-        else if (!s->mipAddr) break;
-        else if (level == 1) base = s->mipAddr;
-        else {
-            // mip offsets relative to the mip chain start
-            uint32_t sliceOffset = 0, sliceSize = 0;
-            sint32 sub = 0;
-            LatteAddrLib::CalculateMipAndSliceAddr(s->addr, s->mipAddr, (Latte::E_GX2SURFFMT)s->format, s->width, s->height,
-                                                   s->slices, (Latte::E_DIM)s->dim, (Latte::E_HWTILEMODE)s->tileMode,
-                                                   s->swizzle, 0, level, 0, &sliceOffset, &sliceSize, &sub);
-            base = sliceOffset;
-        }
+        if (level && !s->mipAddr) break;
+        // level 1 starts at the mip pointer without its swizzle bits (texture_levels.h)
+        const texture_levels::Level at = texture_levels::level(s->addr, s->mipAddr, s->format, s->width, s->height, s->slices,
+                                                               s->dim, s->tileMode, s->swizzle, level);
         uint32_t w, h, slices;
-        decode_level(s, level, base, data, w, h, slices, gpuBC);
+        decode_level(s, level, at, data, w, h, slices, gpuBC);
         Upload u = gpuBC ? bc_decode_gpu(f, data, (w + 3) / 4, (h + 3) / 4, slices) : upload(data.data(), data.size(), 16);
         uint32_t layers = is3D ? 1 : std::min(slices, s->img.layers);
         uint32_t lw = std::max(s->img.width >> level, 1u), lh = std::max(s->img.height >> level, 1u);

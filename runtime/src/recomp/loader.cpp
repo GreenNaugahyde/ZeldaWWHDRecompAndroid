@@ -137,7 +137,7 @@ std::string hex(const uint8_t* p, size_t n) {
 
 }  // namespace
 
-std::string code_base_key(const std::string& rpxPath) {
+std::string code_base_key(const std::string& rpxPath, const std::string& features) {
     std::string rpx = read_file(rpxPath);
     if (rpx.empty()) return "";
     uint8_t h[20], hk[20], hh[20];
@@ -145,7 +145,7 @@ std::string code_base_key(const std::string& rpxPath) {
     disc::sha1((const uint8_t*)wwhd_hooks, (size_t)(wwhd_hooks_end - wwhd_hooks), hk);
     disc::sha1((const uint8_t*)wwhd_hot, (size_t)(wwhd_hot_end - wwhd_hot), hh);
     std::string key = std::string("recompiler ") + WWHD_RECOMP_VERSION + "\nhooks " + hex(hk, 20) + "\nhot " + hex(hh, 20) + "\nrpx " + hex(h, 20) + "\ncpu " +
-                      host_features() + "\nopt " + std::to_string(kDefaultOptLevel) + "\n" + code_switches() + "\n";
+                      (features.empty() ? host_features() : features) + "\nopt " + std::to_string(kDefaultOptLevel) + "\n" + code_switches() + "\n";
     // another release: its address map decides the function names
     uint32_t entry = rpx.size() >= 0x1C ? (uint8_t)rpx[0x18] << 24 | (uint8_t)rpx[0x19] << 16 | (uint8_t)rpx[0x1A] << 8 | (uint8_t)rpx[0x1B] : 0;
     if (release::known_entry(entry) && entry != kSupportedEntryPoint) {
@@ -157,8 +157,8 @@ std::string code_base_key(const std::string& rpxPath) {
     return key;
 }
 
-std::string code_cache_key(const std::string& rpxPath) {
-    std::string key = code_base_key(rpxPath);
+std::string code_cache_key(const std::string& rpxPath, const std::string& features) {
+    std::string key = code_base_key(rpxPath, features);
     if (key.empty()) return key;
     if (const CodePatch* p = code_patch(); p && !p->key.empty()) key += p->key + "\n";  // mod packs (packs.h)
     return key;
@@ -166,7 +166,13 @@ std::string code_cache_key(const std::string& rpxPath) {
 
 namespace {
 constexpr int kKeepSets = 3;  // manifests (code sets) whose objects stay in the cache
+std::atomic<bool> g_keep_plain{true};  // set_keep_plain_code
 
+}  // namespace
+
+void set_keep_plain_code(bool on) { g_keep_plain = on; }
+
+namespace {
 std::string manifest_path(const std::string& dir, const std::string& key) {
     uint8_t h[20];
     disc::sha1((const uint8_t*)key.data(), key.size(), h);
@@ -235,13 +241,21 @@ bool finish_code_cache(const std::string& dir, const std::string& key, const std
     }
     std::sort(sets.rbegin(), sets.rend());
     std::set<std::string> keep(objects.begin(), objects.end());
+    // the newest set without the randomizer (set_keep_plain_code), made by this recompiler: an older one's objects
+    // can't be loaded any more
+    std::string plain, recompiler;
+    if (size_t r = key.find("recompiler "); r != std::string::npos) recompiler = "\n" + key.substr(r, key.find('\n', r) - r) + "\n";
     for (size_t i = 0; i < sets.size(); i++) {
         std::string s = read_file(dir + "/" + sets[i].second);
-        if ((int)i >= kKeepSets && dir + "/" + sets[i].second != path) {
+        size_t sep = s.find("\n---\n");
+        if (plain.empty() && sep != std::string::npos && s.find("rando ", sep) == std::string::npos &&
+            (recompiler.empty() || s.find(recompiler, sep) != std::string::npos))
+            plain = sets[i].second;
+        bool pinned = g_keep_plain && sets[i].second == plain;
+        if ((int)i >= kKeepSets && dir + "/" + sets[i].second != path && !pinned) {
             unlink((dir + "/" + sets[i].second).c_str());
             continue;
         }
-        size_t sep = s.find("\n---\n");
         for (size_t p = 0; sep != std::string::npos && p < sep;) {
             size_t e = s.find('\n', p);
             if (e == std::string::npos || e > sep) e = sep;

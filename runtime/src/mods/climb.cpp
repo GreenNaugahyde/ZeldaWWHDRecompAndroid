@@ -251,8 +251,10 @@ extern "C" void hook_0240CDD0(Cpu* c) {
     uint32_t self = c->r[3];
     mods::jump_step(c, self);  // jump anywhere (jump.cpp)
     mods::moon_jump_step(c, self, true);  // the moon jump cheat (cheats.cpp)
+    mods::fly_step(c, self, true);        // the shader tour's flight (flytour.cpp)
     f_0240CDD0_orig(c);
     mods::moon_jump_step(c, self, false);
+    mods::fly_step(c, self, false);
     mods::jump_after_step(c, self);
     if (!g_on) {
         g_stamina = 1.0f;

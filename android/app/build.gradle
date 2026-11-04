@@ -6,6 +6,8 @@ plugins {
 
 def shaderTemplate = file((project.findProperty('wwhdShaderTemplate') ?: rootProject.file('../../private/shader-template/template.bin').path) as String)
 def templateAssets = layout.buildDirectory.dir('generated/shader-template').get().asFile
+// the randomizer's data (logic, code patches, pictures; runtime/third_party/twwhd_rando) as assets/rando/
+def randoAssets = layout.buildDirectory.dir('generated/rando-data').get().asFile
 def gitBranch = { ->
     try {
         return providers.exec { commandLine 'git', '-C', rootProject.projectDir.path, 'rev-parse', '--abbrev-ref', 'HEAD' }
@@ -16,6 +18,9 @@ def gitBranch = { ->
 }()
 def publicRelease = project.hasProperty('wwhdPublicRelease') ? project.property('wwhdPublicRelease').toString().toBoolean()
                                                              : (gitBranch == 'android' || gitBranch.startsWith('release-'))
+// remote play (this device as another's GamePad or screen, others joining it, Show on a TV): not in published releases
+// yet (-PwwhdRemotePlay=true there too); test builds have it
+def remotePlay = project.hasProperty('wwhdRemotePlay') ? project.property('wwhdRemotePlay').toString().toBoolean() : !publicRelease
 
 android {
     namespace 'org.wwhdrecomp.app'
@@ -34,16 +39,21 @@ android {
         minSdk 30          // Vulkan 1.1, AAudio, 39-bit+ address space handling
         targetSdk 36
         // -PwwhdVersionCode / -PwwhdVersionName for a release; raise the code with every APK you share
-        versionCode((project.findProperty('wwhdVersionCode') ?: '18') as int)
-        versionName project.findProperty('wwhdVersionName') ?: '0.9.8'
+        versionCode((project.findProperty('wwhdVersionCode') ?: '19') as int)
+        versionName project.findProperty('wwhdVersionName') ?: '0.9.9'
         ndk {
             abiFilters 'arm64-v8a'
         }
         // developer tools in Java that published releases leave out (ShaderTour)
         buildConfigField 'boolean', 'PUBLIC_RELEASE', publicRelease.toString()
+        // the screen-only app (module receiver) shares this code: false here
+        buildConfigField 'boolean', 'RECEIVER', 'false'
+        buildConfigField 'boolean', 'REMOTE_PLAY', remotePlay.toString()
+        // the icon's shortcuts (GamePad / screen for another device): only with remote play
+        manifestPlaceholders = [appShortcuts: remotePlay ? '@xml/shortcuts' : '@xml/shortcuts_none']
         externalNativeBuild {
             cmake {
-                targets 'wwhd', 'main_hook', 'hook_impl'  // + libadrenotools' hooks (custom GPU drivers)
+                targets 'wwhd', 'wwhdrando', 'main_hook', 'hook_impl'  // + the randomizer, libadrenotools' hooks (custom GPU drivers)
                 arguments '-DANDROID_STL=c++_static'
                 // -PwwhdGenDir=<dir>: recompiled code somewhere other than build/gen
                 if (project.hasProperty('wwhdGenDir')) arguments "-DGEN_DIR=${project.property('wwhdGenDir')}"
@@ -98,10 +108,14 @@ android {
     // private/shader-template/template.bin next to the repository.
     sourceSets {
         main {
-            assets.srcDirs += [templateAssets]
+            assets.srcDirs += [templateAssets, randoAssets]
         }
         debug {
             if (privateAssets.isDirectory()) assets.srcDirs += [privateAssets]
+        }
+        // without remote play no network at all (as up to 0.9.8): its permissions taken out again
+        release {
+            if (!remotePlay) manifest.srcFile 'src/noremote/AndroidManifest.xml'
         }
     }
 
@@ -130,3 +144,18 @@ def copyShaderTemplate = tasks.register('copyShaderTemplate', Sync) {
     inputs.property('template', shaderTemplate.exists() ? shaderTemplate.path : '')
 }
 preBuild.dependsOn copyShaderTemplate
+
+// as the randomizer's CMakeLists lays out its data folder (data/asm, data/assets, data/logic, data/customizer)
+def copyRandoData = tasks.register('copyRandoData', Sync) {
+    def r = rootProject.file('../runtime/third_party/twwhd_rando')
+    into new File(randoAssets, 'rando')
+    from(new File(r, 'asm')) { include 'custom_symbols.yaml', 'patch_diffs/**'; into 'asm' }
+    // the EUR and JPN releases' ports (tools/rando/port_rando.py)
+    from(new File(r, 'asm_eur')) { include 'custom_symbols.yaml', 'patch_diffs/**', 'address_map.txt'; into 'asm_eur' }
+    from(new File(r, 'asm_jpn')) { include 'custom_symbols.yaml', 'patch_diffs/**', 'address_map.txt'; into 'asm_jpn' }
+    from(new File(r, 'assets')) { into 'assets' }
+    from(new File(r, 'logic/data')) { exclude '*example*'; into 'logic' }
+    from(new File(r, 'customizer/data')) { into 'customizer' }
+    from(new File(r, 'wwhd')) { into 'wwhd' }  // the spoiler log's places (tools/rando/spoiler_places.py)
+}
+preBuild.dependsOn copyRandoData

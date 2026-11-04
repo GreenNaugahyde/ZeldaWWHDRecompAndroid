@@ -15,6 +15,11 @@
 0252A684  # dDoor_info_c::getDemoAction: a door event cut is running
 021C0078  # daMbdoor_c::getDemoAction
 025DC86C  # fopScnM_ChangeReq: scene change trigger (traces)
+# Walk-through doors (mods/walk_doors.cpp): the dungeon doors' executes
+021277D0  # daDoor10_Execute: stone shutters (slide up)
+02129830  # daDoor12_Execute: double doors (slide apart)
+021A5008  # daKnob00_Execute: wooden knob doors (houses, shops)
+025D7710  # fopAcM_orderDoorEvent: A on a door's Open prompt (walk-through doors opening on A)
 # Gyro aiming with the Pro Controller selected (mods/gyro_pro.cpp): "is the Pro Controller active"
 02617AE4  # pad state: controller mode == 0 (Pro Controller); answered "no" for the gyro code
 # Faster climbing (mods/mods.cpp): the climbing animations' speed, asked for each step
@@ -49,3 +54,20 @@
 023A4BB0  # daObjTpost execute: the postbox takes pictos (attention flag 0x01000000)
 023A5570  # daObjTpost::getMsg: a handed picto gets Carlov's checks and order
 023A55BC  # daObjTpost::next_msgStatus: after a picto, "accepted for delivery" and done
+# Beedle's Shop Ship (mods/shop_ship.cpp): the sea room kept on entering, checked on leaving
+@025C3964 # scene change, exit type 62 (Obshop): the ship's sea room is stored
+@025C39F0 # the same, type 59 (Abship)
+@025C3A64 # exit type 61 (back to the sea): the stored room is read (the game halts if it isn't 0..63)
+# Instant text (mods/instant_text.cpp): the message window's draw type, the TWWHD Randomizer's B-skip reads and arrow waits
+@026014F4 # typing step: lbz r9, 0x696(r5) (draw type: 0 letter by letter, 1 instant)
+@026BA648 # after lwz r0, 0x54(r3) (randomizer: 0x50)
+@026FCF1C # after lwz r8, 0x54(r30)
+@026FD294 # after lwz r0, 0x54(r30)
+@026FD3E0 # after lwz r12, 0x54(r11)
+@026FD9BC # after lwz r9, 0x54(r30)
+@026FDB44 # after lwz r9, 0x54(r30)
+@026FE62C # after lwz r10, 0x54(r8)
+@026FE81C # after lwz r8, 0x54(r30)
+@026FEB20 # after lwz r0, 0x54(r30)
+@026F7EA0 # beq: wait for the continue arrow to appear (randomizer: nop)
+@026F802C # beq: wait for the continue arrow to fade (randomizer: nop)

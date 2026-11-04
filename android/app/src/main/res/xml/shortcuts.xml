@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The icon's shortcuts (long press): this device as another one's GamePad or screen (PadActivity), without
+     starting the game here (MainActivity.EXTRA_PAD_ROLE: PadLink.ROLE_PAD 1, ROLE_SCREEN 2) -->
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+    <shortcut
+        android:enabled="true"
+        android:icon="@mipmap/ic_launcher"
+        android:shortcutId="pad"
+        android:shortcutLongLabel="@string/shortcut_pad_long"
+        android:shortcutShortLabel="@string/shortcut_pad">
+        <intent
+            android:action="android.intent.action.MAIN"
+            android:targetClass="org.wwhdrecomp.app.MainActivity"
+            android:targetPackage="org.wwhdrecomp.app">
+            <extra android:name="pad_role" android:value="1" />
+        </intent>
+    </shortcut>
+    <shortcut
+        android:enabled="true"
+        android:icon="@mipmap/ic_launcher"
+        android:shortcutId="screen"
+        android:shortcutLongLabel="@string/shortcut_screen_long"
+        android:shortcutShortLabel="@string/shortcut_screen">
+        <intent
+            android:action="android.intent.action.MAIN"
+            android:targetClass="org.wwhdrecomp.app.MainActivity"
+            android:targetPackage="org.wwhdrecomp.app">
+            <extra android:name="pad_role" android:value="2" />
+        </intent>
+    </shortcut>
+</shortcuts>

@@ -29,8 +29,10 @@ static bool plausible_mtx(uint32_t a) {
 
 static bool guest_ptr(uint32_t p) { return p >= 0x10000000 && p < 0x50000000 && (p & 3) == 0; }
 
+namespace interp { void model_calc_before(uint32_t model); }  // interp.cpp: kept actors' model matrices
 extern "C" void hook_027F4D5C(Cpu* c) {
     uint32_t model = c->r[3];
+    interp::model_calc_before(model);
     f_027F4D5C_orig(c);
     static int left = getenv("WWHD_PROBE_MODEL") ? atoi(getenv("WWHD_PROBE_MODEL")) : 0;
     static std::set<uint32_t> seen;

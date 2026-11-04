@@ -42,6 +42,8 @@ final class ControlsView extends View {
         /** the singing panel shows / is gone (its own zoom; the picture moves down below it) */
         default void onSongView(boolean panel) {}
         void onMenu();
+        /** a tap on the game progress's percent (ProgressBadge): its checklist */
+        default void onProgressTap() {}
         /** the performance overlay was dragged: its top left corner as fractions of the view size */
         void onOverlayMoved(float fx, float fy);
         /** the screen button: switch between the TV picture and the GamePad picture */
@@ -59,7 +61,7 @@ final class ControlsView extends View {
         /** let go: dx as above, v in layout units per second */
         void onPageDragEnd(float dx, float v);
         /** the layout editor closed: the controls' layout (layoutString), opacity and style */
-        void onLayoutEdited(String layout, float opacity, boolean filled);
+        void onLayoutEdited(String layout, float opacity, boolean filled, boolean blindLayout);
     }
 
     // button shapes: the style's own, round, oval (a pill like L / ZL), square, rectangle (both slightly rounded),
@@ -77,6 +79,7 @@ final class ControlsView extends View {
         float px = Float.NaN, py = Float.NaN, size = 1f;  // own place (fractions of the view) and size factor
         boolean hidden;
         int shape;                   // buttons: SHAPE_*, the player's own (layout editor); 0: the style's
+        int drawShape;               // the shape in use now (the eyes-free layout: the style's)
         float cx, cy, w, h;          // centre and size (buttons: w x h, sticks: w = radius)
         boolean round, pressed;
         final boolean round0;        // round by default
@@ -99,8 +102,8 @@ final class ControlsView extends View {
                 return (x - cx) * (x - cx) + (y - cy) * (y - cy) <= r * r;
             }
             float ex = Math.abs(x - cx) / (w / 2 * slack), ey = Math.abs(y - cy) / (h / 2 * slack);
-            if (shape == SHAPE_DIAMOND) return ex + ey <= 1;
-            if (shape == SHAPE_HEX) return ey <= 1 && ex + ey / 2 <= 1;
+            if (drawShape == SHAPE_DIAMOND) return ex + ey <= 1;
+            if (drawShape == SHAPE_HEX) return ey <= 1 && ex + ey / 2 <= 1;
             return ex <= 1 && ey <= 1;
         }
     }
@@ -132,6 +135,7 @@ final class ControlsView extends View {
     ControlsView(Context c, Listener l) {
         super(c);
         listener = l;
+        ChartMarks.I.attach(this);
         fill.setStyle(Paint.Style.FILL);
         stroke.setStyle(Paint.Style.STROKE);
         text.setTextAlign(Paint.Align.CENTER);
@@ -160,6 +164,354 @@ final class ControlsView extends View {
     // ---- the full GamePad picture (+, or the screen button of "GamePad on demand"): the TV picture
     // with the controls, or the GamePad picture with only + and the screen button (touches go to the GamePad)
     private boolean screenButton, drcMode;
+
+    // the GamePad picture fills the screen with the controls over it (another device or a cast display shows the game
+    // picture, MainActivity.screenRemote): its overlays (the options arrow, page swipes, chart marks, the song list's
+    // buttons, its back button) work as in the GamePad view of +
+    private boolean drcBackdrop;
+    // On that view without a controller: the controller view (the picture dimmed, a touch on it is the touch
+    // controls' - a floating stick, nothing reaches the GamePad's touch screen, where the inventory takes any touch
+    // as an item) or, by the screen button, the touch screen view (only the screen button, + and the menu; a
+    // touch on the picture is the GamePad's). With a controller connected (a phone in a controller clamp) the
+    // picture takes touches as before.
+    private boolean backdropTouch, noController = true;
+
+    void setDrcBackdrop(boolean on) {
+        if (on == drcBackdrop) return;
+        drcBackdrop = on;
+        backdropTouch = false;
+        noController = MainActivity.firstController() == null;
+        restyle();
+        invalidate();
+    }
+
+    // ---- the eyes-free layout (Controls > Touch > Eyes-free controller view, default on): in the backdrop's
+    // controller view the game is on another screen and nobody looks at the phone, so a layout for the thumbs
+    // alone. Every button stays at its place at all times (as in Classic: no context buttons, no hiding, no
+    // item ring, plain letters - what a button does shows on the TV, the game's own button icons are back
+    // there, MainActivity), the sticks float (as in Flexible: no stick to find), the shoulder buttons fill the
+    // corners and the edge below them (found by feel), the face buttons are big and a touch anywhere near them
+    // is the nearest one (no gaps), and each button has its own short vibration
+    private boolean flexiblePref, blindPref = true, blind;
+    private float blindFx, blindFy, blindZone;  // the face buttons' middle and the reach of their nearest-button zone
+
+    // Controls > Touch > TV picture in the controller view (0 = off: the GamePad picture, dimmed; default 50): the renderer draws
+    // the TV picture in the GamePad picture's place in the controller view, seen at this opacity (a dark veil over it),
+    // so a look down at the phone misses nothing. The touch screen view (the screen button) shows the GamePad again
+    private float tvBackdrop;
+    private boolean tvBackdropSent;
+    // the shortcut button below the screen button (controller view only): switches the background between the TV
+    // picture and the GamePad picture for now (null: as the option says; the option's change starts over from it)
+    private Boolean bgTv;
+    private final RectF bgButtonRect = new RectF();
+    // a long press on it steps the TV picture's brightness (25 / 50 / 75 %, saved as the option), again every
+    // moment while held; a short tap switches the picture
+    private int bgPtr = -1;
+    private boolean bgStepped;
+    private long bgLevelShownUntil;
+    private final Runnable bgStep = new Runnable() {
+        @Override
+        public void run() {
+            if (bgPtr < 0) return;
+            bgStepped = true;
+            int now = Math.round(bgTvLevel() * 100), next = !bgTvNow() ? now : now >= 75 ? 25 : now + 25;
+            tvBackdrop = next / 100f;
+            bgTv = true;
+            if (MainActivity.instance != null) MainActivity.instance.prefs.edit().putInt("controls_tv_backdrop", next).apply();
+            performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS);
+            bgLevelShownUntil = android.os.SystemClock.uptimeMillis() + 1200;
+            invalidate();
+            postInvalidateDelayed(1250);
+            postDelayed(this, 700);
+        }
+    };
+
+    void setTvBackdrop(float opacity) {
+        if (opacity != tvBackdrop) bgTv = null;
+        tvBackdrop = opacity;
+        invalidate();
+    }
+
+    /** the TV picture is the controller view's background now (option or shortcut) */
+    private boolean bgTvNow() { return bgTv != null ? bgTv : tvBackdrop > 0; }
+
+    /** the TV picture's opacity there (the option's; 50 % when the shortcut turns it on while the option is off) */
+    private float bgTvLevel() { return tvBackdrop > 0 ? tvBackdrop : 0.5f; }
+
+    private boolean placeBgButton() {
+        if (!controllerView() || editing) return false;
+        Control sc = controls.get(15);
+        if (sc.w <= 0 || sc.h <= 0) return false;
+        float dy = sc.h * 1.35f * (sc.cy > getHeight() / 2f ? -1 : 1);  // below the screen button (above it in the lower half)
+        bgButtonRect.set(sc.cx - sc.w / 2, sc.cy + dy - sc.h / 2, sc.cx + sc.w / 2, sc.cy + dy + sc.h / 2);
+        return true;
+    }
+
+    /** the shortcut: its icon is what a tap shows (a TV while the GamePad picture is there, a GamePad while the TV's is) */
+    private void drawBgButton(Canvas canvas) {
+        if (!placeBgButton()) return;
+        int a = (int) (255 * opacity);
+        RectF r = bgButtonRect;
+        float h = r.height(), w = r.width(), x = r.centerX(), y = r.centerY();
+        fill.setColor(filled ? 0xFF303030 : 0xFF202020);
+        fill.setAlpha(filled ? a : a / 4);
+        stroke.setColor(0xFFFFFFFF);
+        stroke.setAlpha(filled ? a / 3 : a);
+        canvas.drawRoundRect(r, h / 3, h / 3, fill);
+        canvas.drawRoundRect(r, h / 3, h / 3, stroke);
+        stroke.setAlpha(a);
+        float sw = stroke.getStrokeWidth();
+        if (bgTvNow()) {  // a GamePad: a wide body with a screen in the middle and a stick at each side
+            float bw = w * 0.62f, bh = h * 0.5f;
+            tmp.set(x - bw / 2, y - bh / 2, x + bw / 2, y + bh / 2);
+            canvas.drawRoundRect(tmp, bh * 0.3f, bh * 0.3f, stroke);
+            stroke.setStrokeWidth(Math.max(1, sw * 0.7f));
+            float iw = bw * 0.46f, ih = bh * 0.56f;
+            tmp.set(x - iw / 2, y - ih / 2, x + iw / 2, y + ih / 2);
+            canvas.drawRect(tmp, stroke);
+            canvas.drawCircle(x - bw * 0.37f, y - bh * 0.12f, bh * 0.1f, stroke);
+            canvas.drawCircle(x + bw * 0.37f, y - bh * 0.12f, bh * 0.1f, stroke);
+        } else {  // a TV: a wide screen on a foot
+            float tw = w * 0.5f, th = h * 0.42f, top = y - h * 0.27f;
+            tmp.set(x - tw / 2, top, x + tw / 2, top + th);
+            canvas.drawRoundRect(tmp, th * 0.1f, th * 0.1f, stroke);
+            stroke.setStrokeWidth(Math.max(1, sw * 0.7f));
+            float foot = top + th + h * 0.1f;
+            canvas.drawLine(x, top + th, x, foot, stroke);
+            canvas.drawLine(x - tw * 0.25f, foot, x + tw * 0.25f, foot, stroke);
+        }
+        stroke.setStrokeWidth(sw);
+        if (android.os.SystemClock.uptimeMillis() < bgLevelShownUntil) {  // the step just taken, beside the button
+            text.setColor(0xFFFFFFFF);
+            text.setAlpha(255);
+            float ts = text.getTextSize();
+            text.setTextSize(h * 0.55f);
+            float tx = r.right + h * 0.9f, ty = y - (text.descent() + text.ascent()) / 2;
+            fill.setColor(0xB0000000);
+            float tw = text.measureText("75 %") / 2 + h * 0.2f;
+            tmp.set(tx - tw, y - h * 0.42f, tx + tw, y + h * 0.42f);
+            canvas.drawRoundRect(tmp, h * 0.2f, h * 0.2f, fill);
+            canvas.drawText(Math.round(bgTvLevel() * 100) + " %", tx, ty, text);
+            text.setTextSize(ts);
+        }
+    }
+
+    // the eyes-free layout's face buttons as a swipe (Controls > Touch > Face buttons: Swipe, the default): the thumb lands
+    // anywhere in their zone (that spot is home) and a short slide up / right / down / left is X / A / B / Y, held
+    // while the thumb stays; sliding on to another side switches. A tap is A, and resting still a moment holds A
+    // (the classic style can have the same swipe: Controls > Touch > Face buttons, classicSwipePref; its zone from the
+    // player's own face-button places)
+    private boolean blindSwipePref = true, classicSwipePref, faceAHeld;
+    private int facePtr = -1;
+    private float faceHx, faceHy, blindU;
+    private Control faceBtn;
+    private final Runnable faceHoldA = () -> {
+        if (facePtr < 0 || faceBtn != null) return;
+        faceAHeld = true;
+        facePick(controls.get(8));
+    };
+
+    void setBlindSwipe(boolean on) {
+        if (on == blindSwipePref) return;
+        faceRelease();
+        blindSwipePref = on;
+        invalidate();
+    }
+
+    void setClassicSwipe(boolean on) {
+        if (on == classicSwipePref) return;
+        faceRelease();
+        classicSwipePref = on;
+        invalidate();
+    }
+
+    /** the face buttons are the swipe now (not the diamond) */
+    private boolean faceSwipe() {
+        boolean on = blind ? blindSwipePref : classicSwipePref && !flexible && !cameraLaid && inMode(controls.get(8));
+        return on && !editing && !padsLaid && controlsVisible && front == 0;
+    }
+
+    /** the face buttons' middle and the reach of their zone, from where they are now (moved, resized) */
+    private void faceZone(float u) {
+        float sx = 0, sy = 0, far = 0;
+        for (int i = 7; i <= 10; i++) {
+            sx += controls.get(i).cx;
+            sy += controls.get(i).cy;
+        }
+        blindFx = sx / 4;
+        blindFy = sy / 4;
+        for (int i = 7; i <= 10; i++) {
+            Control c = controls.get(i);
+            far = Math.max(far, (float) Math.hypot(c.cx - blindFx, c.cy - blindFy) + Math.max(c.w, c.h) * 0.5f);
+        }
+        blindZone = far + u * 0.25f;
+        blindU = u;
+    }
+
+    private void facePick(Control c) {
+        if (c == faceBtn) return;
+        if (faceBtn != null) faceBtn.pressed = false;
+        faceBtn = c;
+        c.pressed = true;
+        buzz(c);
+        if (c.bit == Native.B && stowSince >= 0) stowSince = SystemClock.uptimeMillis();
+        listener.onControlsChanged();
+        invalidate();
+    }
+
+    private void faceRelease() {
+        removeCallbacks(faceHoldA);
+        if (faceBtn != null) faceBtn.pressed = false;
+        faceBtn = null;
+        facePtr = -1;
+        faceAHeld = false;
+    }
+
+    /** the swipe's own touches: true when the event is used up (a landing in the zone, the thumb's lifting) */
+    private boolean faceTouch(MotionEvent e, int action, int idx) {
+        if (action == MotionEvent.ACTION_CANCEL) {
+            if (facePtr >= 0) faceRelease();
+            return false;
+        }
+        if (action == MotionEvent.ACTION_DOWN || action == MotionEvent.ACTION_POINTER_DOWN) {
+            if (facePtr >= 0 || !faceSwipe()) return false;
+            float x = e.getX(idx), y = e.getY(idx);
+            if (Math.hypot(x - blindFx, y - blindFy) > blindZone) return false;
+            for (Control c : controls) {  // another button right there keeps its touch
+                int i = controls.indexOf(c);
+                if ((i < 7 || i > 10) && usable(c) && c.hit(x, y, 1f)) return false;
+            }
+            facePtr = e.getPointerId(idx);
+            faceHx = x;
+            faceHy = y;
+            faceBtn = null;
+            faceAHeld = false;
+            postDelayed(faceHoldA, 220);
+            invalidate();
+            return true;
+        }
+        if (facePtr < 0) return false;
+        if (action == MotionEvent.ACTION_MOVE) {
+            int pi = e.findPointerIndex(facePtr);
+            if (pi < 0) return false;
+            float dx = e.getX(pi) - faceHx, dy = e.getY(pi) - faceHy;
+            if (Math.hypot(dx, dy) >= blindU * 0.3f) {
+                removeCallbacks(faceHoldA);
+                int i = Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? 8 : 10) : (dy < 0 ? 7 : 9);  // A right, Y left, X up, B down
+                facePick(controls.get(i));
+            }
+            return false;  // (the other fingers' moves go on as usual)
+        }
+        if ((action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_POINTER_UP) && e.getPointerId(idx) == facePtr) {
+            boolean tap = faceBtn == null;
+            faceRelease();
+            if (tap) {
+                buzz(controls.get(8));
+                pulse(Native.A);
+            } else listener.onControlsChanged();
+            invalidate();
+            return true;
+        }
+        return false;
+    }
+
+    /** the swipe's zone: the four letters at their sides, and while a thumb is on it its home and the side taken */
+    private void drawFaceSwipe(Canvas canvas) {
+        int a = (int) (255 * opacity);
+        float ts = text.getTextSize();
+        text.setTextSize(blindU * 0.42f);
+        float off = blindZone * 0.62f;
+        int[] idx = {7, 8, 9, 10};
+        float[][] dir = {{0, -1}, {1, 0}, {0, 1}, {-1, 0}};
+        float hx = facePtr >= 0 ? faceHx : blindFx, hy = facePtr >= 0 ? faceHy : blindFy;
+        if (facePtr >= 0) off = blindU * 0.75f;
+        for (int k = 0; k < 4; k++) {
+            Control c = controls.get(idx[k]);
+            float cx = hx + dir[k][0] * off, cy = hy + dir[k][1] * off;
+            boolean on = c == faceBtn;
+            if (on) {
+                fill.setColor(0xFFFFFFFF);
+                fill.setAlpha(Math.min(255, a + 60));
+                canvas.drawCircle(cx, cy, blindU * 0.36f, fill);
+            }
+            text.setColor(on ? 0xFF000000 : 0xFFFFFFFF);
+            text.setAlpha(on ? 255 : Math.min(255, a + 40));
+            canvas.drawText(labelOf(c), cx, cy - (text.descent() + text.ascent()) / 2, text);
+        }
+        if (facePtr >= 0) {
+            stroke.setColor(0xFFFFFFFF);
+            stroke.setAlpha(a);
+            canvas.drawCircle(hx, hy, blindU * 0.3f, stroke);
+        }
+        text.setTextSize(ts);
+    }
+
+    void setBlindLayout(boolean on) {
+        blindPref = on;
+        restyle();
+    }
+
+    /** the eyes-free layout is in use now */
+    boolean blind() { return blind; }
+
+    private void restyle() {
+        boolean b = editing ? editBlind : blindPref && drcBackdrop && noController && !backdropTouch;
+        boolean f = flexiblePref || b;
+        if (b == blind && f == flexible) return;
+        if (f != flexible) releaseAll();
+        blind = b;
+        flexible = f;
+        swapLayoutFields();
+        if (!blind) touched();
+        removeCallbacks(pollState);
+        if (blind || context || drcBackdrop) post(pollState);  // (the note pads while conducting, the wind compass: the game's minigame mode)
+        layoutControls(getWidth(), getHeight());
+        invalidate();
+        if (MainActivity.instance != null) post(MainActivity.instance::applyControlsAppearance);  // context buttons and the game's HUD
+    }
+
+    private android.os.Vibrator vibrator;
+
+    /** a button's own vibration (eyes-free layout): A one short, B two short, X one long, Y long and short,
+     *  the shoulder buttons a light tick, the d-pad a tick, + / L3 / R3 three ticks */
+    private void buzz(Control c) {
+        if (vibrator == null) vibrator = (android.os.Vibrator) getContext().getSystemService(Context.VIBRATOR_SERVICE);
+        if (vibrator == null || !vibrator.hasVibrator()) return;
+        long[] w;
+        if (c.kind == KIND_DPAD) w = new long[] {0, 10};
+        else if (c.kind != KIND_BUTTON) return;
+        else if (c.bit == Native.A) w = new long[] {0, 18};
+        else if (c.bit == Native.B) w = new long[] {0, 14, 60, 14};
+        else if (c.bit == Native.X) w = new long[] {0, 45};
+        else if (c.bit == Native.Y) w = new long[] {0, 40, 60, 14};
+        else if (c.bit == Native.ZL || c.bit == Native.ZR || c.bit == Native.L || c.bit == Native.R) w = new long[] {0, 7};
+        else w = new long[] {0, 8, 40, 8, 40, 8};
+        try {
+            vibrator.vibrate(android.os.VibrationEffect.createWaveform(w, -1));
+        } catch (RuntimeException ignored) {
+        }
+    }
+
+    /** the controller view of the GamePad backdrop: no touches to the picture */
+    private boolean controllerView() {
+        return drcBackdrop && !backdropTouch && noController && controlsVisible && !touchless && front == 0;
+    }
+
+    private int lastRawMode;
+    // the wind compass after the Wind's Requiem (minigame mode 11, pollState; also without minigames by touch): the TV
+    // shows it with A choose / B back, the left stick turns its arrow; on the GamePad the map's compass takes touches
+    // and has an OK. Link's
+    // conducting bit stays on under it, and the pane it is seen by goes after a moment (mode 10 again): the note pads
+    // came back and hid A - a softlock. Once seen it counts until conducting ends or B (back to conducting)
+    private boolean windCompass;
+
+    /** the screen button switches the backdrop's controller / touch screen view */
+    private boolean backdropButton() { return drcBackdrop && noController && controlsVisible && !touchless && front == 0; }
+
+    /** the GamePad picture is what the screen shows (the GamePad view of +, or as the backdrop) */
+    // (not in the backdrop's controller view: the picture takes no touches there, so its overlays - the options
+    // arrow, the Back button, the chart's marks and full-map button, the song list - are left out too)
+    private boolean drcPicture() { return drcMode || (drcBackdrop && !controllerView()); }
 
     void setScreenButton(boolean on, boolean drcShown) {
         screenButton = on;
@@ -192,6 +544,15 @@ final class ControlsView extends View {
     // Controls > On-screen controls off: the menu button is the way to the menu in play too (+ isn't shown)
     private boolean menuAlone;
 
+    // a TV (MainActivity.isTv): nothing to touch, so no menu or screen button either (outside the editor)
+    private boolean touchless;
+
+    void setTouchless(boolean on) {
+        if (on == touchless) return;
+        touchless = on;
+        invalidate();
+    }
+
     void setMenuAlone(boolean on) {
         if (on == menuAlone) return;
         menuAlone = on;
@@ -202,7 +563,8 @@ final class ControlsView extends View {
     private boolean inMode(Control c) {
         if (front != 0) return c.kind == KIND_MENU;
         if (c.kind == KIND_MENU && menuInInventory && !menuAlone) return false;
-        if (c.kind == KIND_SCREEN) return screenButton;
+        if (c.kind == KIND_SCREEN) return screenButton || backdropButton();
+        if (backdropButton() && backdropTouch) return c.kind == KIND_MENU || (c.kind == KIND_BUTTON && c.bit == Native.PLUS);
         return !drcMode || (c.kind == KIND_BUTTON && c.bit == Native.PLUS);
     }
 
@@ -275,7 +637,37 @@ final class ControlsView extends View {
         return b.toString();
     }
 
+    // the eyes-free layout has its own places / sizes / shapes / hidden / opacities (Edit eyes-free layout): the
+    // controls hold the set in use, the other waits here
+    private String normalLayoutStr = "", blindLayoutStr = "";
+    private boolean blindFieldsIn;  // the controls hold the eyes-free set now
+    private boolean editBlind;      // the editor is on the eyes-free layout
+
     void setLayoutString(String s) {
+        normalLayoutStr = s == null ? "" : s;
+        if (!blindFieldsIn) applyLayoutFields(normalLayoutStr);
+        layoutControls(getWidth(), getHeight());
+        invalidate();
+    }
+
+    void setBlindLayoutString(String s) {
+        blindLayoutStr = s == null ? "" : s;
+        if (blindFieldsIn) applyLayoutFields(blindLayoutStr);
+        layoutControls(getWidth(), getHeight());
+        invalidate();
+    }
+
+    /** the editor is on the eyes-free layout (MainActivity saves it in its own place) */
+    boolean editingBlind() { return editBlind; }
+
+    /** the controls take the set of the layout in use (blind or not) */
+    private void swapLayoutFields() {
+        if (blind == blindFieldsIn) return;
+        blindFieldsIn = blind;
+        applyLayoutFields(blind ? blindLayoutStr : normalLayoutStr);
+    }
+
+    private void applyLayoutFields(String s) {
         for (Control c : controls) {
             c.px = c.py = Float.NaN;
             c.size = 1f;
@@ -305,18 +697,22 @@ final class ControlsView extends View {
                         }
                     }
             }
-        layoutControls(getWidth(), getHeight());
-        invalidate();
     }
 
-    void setEditing(boolean on) {
+    void setEditing(boolean on) { setEditing(on, false); }
+
+    /** blindLayout: the eyes-free layout's own places (Controls > Touch > Edit eyes-free layout) */
+    void setEditing(boolean on, boolean blindLayout) {
+        editBlind = on && blindLayout;
         releaseAll();
         sliderOpen = false;
         sliderPtr = -1;
         grid = MainActivity.instance == null || MainActivity.instance.prefs.getBoolean("controls_grid", true);
         editing = on;
+        restyle();
         sel = null;
-        dragPtr = pinchPtr = -1;
+        mapSel = false;
+        dragPtr = pinchPtr = mapPtr = -1;
         listener.onControlsChanged();  // nothing pressed while editing
         layoutControls(getWidth(), getHeight());
         invalidate();
@@ -333,6 +729,7 @@ final class ControlsView extends View {
         switch (i) {
             case 0:
             case 1:
+                if (mapSel) miniMap.resize(i == 0 ? -1 : 1);
                 if (sel != null) {
                     sel.size = Math.max(0.4f, Math.min(3f, sel.size * (i == 0 ? 0.9f : 1.1f)));
                     editLayoutChanged();
@@ -365,18 +762,39 @@ final class ControlsView extends View {
                 invalidate();
                 break;
             case 7:  // saved layouts (LayoutPresets): save this one, load one into the editor, export / import
+                if (editBlind) break;  // (they hold Classic / Flexible layouts)
                 if (MainActivity.instance != null) MainActivity.instance.layoutPresets().show();
                 break;
             case 8:
+                if (editBlind) {  // the eyes-free layout as it comes (the map and the look stay)
+                    applyLayoutFields("");
+                    sel = null;
+                    editLayoutChanged();
+                    break;
+                }
                 setLayoutString("");
                 opacity = 0.45f;
                 filled = false;
                 sel = null;
+                mapSel = false;
+                miniMap.setPlace(MiniMap.CORNER_BOTTOM_LEFT, 1, miniMapTurn(), 0, 1,
+                        MainActivity.instance != null && MainActivity.instance.prefs.getBoolean("minimap_round", false),
+                        MainActivity.instance != null && MainActivity.instance.prefs.getBoolean("minimap_outline", false));
                 break;
             default:
+                String edited = layoutString();
+                boolean wasBlind = editBlind;
+                if (wasBlind) blindLayoutStr = edited;
+                else normalLayoutStr = edited;
                 editing = false;
+                restyle();
+                editBlind = false;
                 sel = null;
-                listener.onLayoutEdited(layoutString(), opacity, filled);
+                mapSel = false;
+                if (MainActivity.instance != null)  // the map's place and size (the editor's own; MainActivity reads them back)
+                    MainActivity.instance.prefs.edit().putInt("minimap_corner", miniMap.corner()).putInt("minimap_size", miniMap.size())
+                            .putFloat("minimap_x", miniMap.ownX()).putFloat("minimap_y", miniMap.ownY()).apply();
+                listener.onLayoutEdited(edited, opacity, filled, wasBlind);
                 layoutControls(getWidth(), getHeight());
                 invalidate();
         }
@@ -451,10 +869,19 @@ final class ControlsView extends View {
                 }
                 Control c = controlAt(x, y);
                 sel = c;
+                mapSel = false;
                 if (c != null) {
                     dragPtr = id;
                     dragDx = c.cx - x;
                     dragDy = c.cy - y;
+                } else if (miniMap.enabled() && !editBlind) {  // the mini map (under the controls): dragged to its own place
+                    miniMap.place(tvArea.isEmpty() ? tvRect : tvArea, tmp);
+                    if (tmp.contains(x, y)) {
+                        mapSel = true;
+                        mapPtr = id;
+                        dragDx = tmp.left - x;
+                        dragDy = tmp.top - y;
+                    }
                 }
                 invalidate();
                 return true;
@@ -463,6 +890,11 @@ final class ControlsView extends View {
                 if (sliderPtr >= 0) {
                     int si = e.findPointerIndex(sliderPtr);
                     if (si >= 0) slideTo(e.getX(si));
+                }
+                if (mapPtr >= 0) {
+                    int mi = e.findPointerIndex(mapPtr);
+                    if (mi >= 0) miniMap.moveTo(tvArea.isEmpty() ? tvRect : tvArea, e.getX(mi) + dragDx, e.getY(mi) + dragDy);
+                    return true;
                 }
                 if (sel == null || dragPtr < 0) return true;
                 int di = e.findPointerIndex(dragPtr);
@@ -491,6 +923,7 @@ final class ControlsView extends View {
                 int id = e.getPointerId(idx);
                 if (action == MotionEvent.ACTION_CANCEL || id == sliderPtr) sliderPtr = -1;
                 if (action == MotionEvent.ACTION_CANCEL || id == dragPtr) dragPtr = pinchPtr = -1;
+                if (action == MotionEvent.ACTION_CANCEL || id == mapPtr) mapPtr = -1;
                 else if (id == pinchPtr) pinchPtr = -1;
                 return true;
             }
@@ -552,7 +985,7 @@ final class ControlsView extends View {
         Paint bg = new Paint(Paint.ANTI_ALIAS_FLAG);
         for (int i = 0; i < TOOLS.length; i++) {
             boolean off = (i <= 3 && sel == null) || (i == 2 && sel != null && (sel.kind == KIND_MENU || sel.kind == KIND_SCREEN))
-                    || (i == 3 && sel != null && sel.kind != KIND_BUTTON);
+                    || (i == 3 && sel != null && sel.kind != KIND_BUTTON) || (i == 7 && editBlind);
             if (toolRects[i] == null) toolRects[i] = new RectF();
             toolRects[i].set(x, y, x + w[i], y + h);
             bg.setColor(i == TOOLS.length - 1 ? 0xE02E7D32 : 0xE0202020);
@@ -601,6 +1034,99 @@ final class ControlsView extends View {
     void setTvRect(RectF r) {
         if (r == null) tvRect.setEmpty();
         else tvRect.set(r);
+    }
+
+    // ---- the mini map (MiniMap): in a corner of the whole TV picture (wider than 16:9 when it fills the screen)
+    final MiniMap miniMap = new MiniMap(this);
+    // the game progress in percent at the top of the TV picture (ProgressBadge); a tap on it is watched with the map's
+    final ProgressBadge progressBadge = new ProgressBadge(this);
+    // achievements earned in play and their popup below the top of the TV picture (AchievementPopup)
+    final AchievementPopup achievementPopup = new AchievementPopup(this);
+    private boolean mapSel;      // the layout editor: the map selected (dragged by mapPtr)
+    private int mapPtr = -1;
+    // in play: a tap on the map (a finger down on it, up again soon without moving) makes it the next size; the finger
+    // is not taken from anything else (the stick or a camera swipe starting there go on as before)
+    private int mapTapPtr = -1;
+    private boolean mapTapWind;   // ... on the mini map's wind dial: a swipe the wind that way (a tap the map's)
+    private int mapWindSwipe = Integer.MIN_VALUE;
+    private int windPointer = -1;  // the finger on the wind dial: nothing else gets it  // the wind the swipe points at now (game angle y)
+    private boolean mapTapBadge;  // ... the finger came down on the game progress's percent instead: a tap opens its checklist
+    private long mapTapAt;
+    private float mapTapX, mapTapY;
+    private static final long MAP_TAP_MS = 300, MAP_HOLD_MS = 550;
+    // ... held still on the map: the full map (FullMap)
+    private final Runnable mapHold = () -> {
+        if (mapTapPtr < 0 || mapTapBadge || MainActivity.instance == null) return;
+        mapTapPtr = -1;
+        performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS);
+        FullMap.open(MainActivity.instance);
+    };
+
+    private boolean miniMapTurn() { return MainActivity.instance != null && MainActivity.instance.prefs.getBoolean("minimap_turn", false); }
+
+    private void mapTapWatch(MotionEvent e, int action, int idx) {
+        if (action == MotionEvent.ACTION_DOWN || action == MotionEvent.ACTION_POINTER_DOWN) {
+            boolean badge = progressBadge.bounds().contains(e.getX(idx), e.getY(idx));
+            if (mapTapPtr < 0 && (badge || miniMap.hit(e.getX(idx), e.getY(idx)))) {
+                mapTapPtr = e.getPointerId(idx);
+                mapTapBadge = badge;
+                mapTapWind = !badge && miniMap.onWind(e.getX(idx), e.getY(idx));
+                mapWindSwipe = Integer.MIN_VALUE;
+                mapTapAt = SystemClock.uptimeMillis();
+                mapTapX = e.getX(idx);
+                mapTapY = e.getY(idx);
+                removeCallbacks(mapHold);
+                if (!badge) postDelayed(mapHold, MAP_HOLD_MS);
+            }
+            return;
+        }
+        if (mapTapPtr < 0) return;
+        int i = e.findPointerIndex(mapTapPtr);
+        float slop = android.view.ViewConfiguration.get(getContext()).getScaledTouchSlop();
+        boolean up = action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_POINTER_UP && e.getPointerId(idx) == mapTapPtr;
+        // a swipe from the wind dial: the wind that way at once (8 ways, shown on the dial while the finger is down)
+        if (mapTapWind && action != MotionEvent.ACTION_CANCEL && i >= 0) {
+            float dx = e.getX(i) - mapTapX, dy = e.getY(i) - mapTapY;
+            if (mapWindSwipe != Integer.MIN_VALUE || Math.hypot(dx, dy) > slop) {  // (past a tap's reach: a swipe, never cancelled)
+                removeCallbacks(mapHold);
+                int w = Math.hypot(dx, dy) > slop ? miniMap.windAngle(dx, dy) : mapWindSwipe;
+                if (w != mapWindSwipe && mapWindSwipe != Integer.MIN_VALUE)
+                    performHapticFeedback(android.view.HapticFeedbackConstants.CLOCK_TICK);
+                mapWindSwipe = w;
+                miniMap.setWindPreview(w);
+                if (up) {
+                    mapTapPtr = -1;
+                    miniMap.setWindPreview(Integer.MIN_VALUE);
+                    if (MainActivity.instance != null) MainActivity.instance.setWind(w);
+                }
+                return;
+            }
+        }
+        if (action == MotionEvent.ACTION_CANCEL || i < 0 || Math.hypot(e.getX(i) - mapTapX, e.getY(i) - mapTapY) > slop) {
+            mapTapPtr = -1;
+            removeCallbacks(mapHold);
+            miniMap.setWindPreview(Integer.MIN_VALUE);
+            return;
+        }
+        if (!up) return;
+        mapTapPtr = -1;
+        removeCallbacks(mapHold);
+        if (SystemClock.uptimeMillis() - mapTapAt > MAP_TAP_MS) return;
+        if (mapTapBadge) {
+            if (!progressBadge.bounds().isEmpty()) listener.onProgressTap();
+            return;
+        }
+        int t = miniMap.tap(mapTapX, mapTapY);  // (the map: the next size; its buttons: hide / show)
+        if (MainActivity.instance == null) return;
+        if (t == MiniMap.TAP_SIZE) MainActivity.instance.prefs.edit().putInt("minimap_size", miniMap.size()).apply();
+        else if (t == MiniMap.TAP_HIDDEN) MainActivity.instance.prefs.edit().putBoolean("minimap_hidden", miniMap.hidden()).apply();
+    }
+    private final RectF tvArea = new RectF();
+
+    void setTvArea(RectF r) {
+        if (r == null) tvArea.setEmpty();
+        else tvArea.set(r);
+        invalidate();
     }
 
     private float[] hud = {0, 0, 0};
@@ -881,9 +1407,27 @@ final class ControlsView extends View {
     private static final int RELOCK_GAP_MS = 120, RELOCK_CHECK_MS = 400;  // (logic steps at 30 per second)
     void setAfterDefeat(int mode) { afterDefeat = mode; }
 
+    // Controls > Touch > ZL / ZR latch (flexible style; the classic style always latches): off, ZL and ZR are
+    // held like any button (no tap-on / tap-off targeting, no crouch or shield latched by ZR)
+    private boolean zLatch = true;
+    void setZLatch(boolean on) {
+        if (on == zLatch) return;
+        zLatch = on;
+        Control zl = controls.get(0);
+        zl.latch = on;
+        if (!on && zl.pressed && pointers.indexOfValue(zl) < 0) releaseZl();  // latched on, no finger on it
+        if (!on && zrLatched) {
+            zrLatched = false;
+            for (Control z : controls)
+                if (z.kind == KIND_BUTTON && z.bit == Native.ZR && pointers.indexOfValue(z) < 0) z.pressed = false;
+            listener.onControlsChanged();
+            invalidate();
+        }
+    }
+
     private void targetDefeated(int[] s) {
         Control zl = controls.get(0);
-        if (!zl.pressed || s[31] != 0) return;  // not latched, or already on another target
+        if (!zl.latch || !zl.pressed || s[31] != 0) return;  // not latched, or already on another target
         releaseZl();
         if (afterDefeat != 1) return;
         int gen = ++relockGen;
@@ -934,7 +1478,7 @@ final class ControlsView extends View {
     private boolean stowBusy;
     private long stowSince = -1;     // the Deku Leaf (on the ground, not waving) or the sword (no swing, no target) in Link's
                                      // hand since: LEAF_STOW_MS / SWORD_STOW_MS later it goes
-    private static final int DEKU_LEAF = 0x34, SWORD = 0x103;
+    private static final int DEKU_LEAF = 0x34, SWORD = 0x103, BOKO = 0x101;  // (BOKO: an enemy's weapon, daPyItem_BOKO)
     private static final long LEAF_STOW_MS = 3000, SWORD_STOW_MS = 5000;
     private boolean padPlay;         // a controller in use (MainActivity.inputSource): A puts the item away, as on the Wii U
     private boolean viewWas;         // the Picto Box's or the telescope's view was open: closed, the item goes away
@@ -1012,7 +1556,7 @@ final class ControlsView extends View {
 
     private void startPutAway() {
         reaim = false;
-        if (controls.get(0).pressed && aiming()) releaseZl();  // third person: letting go of ZL ends the aim
+        if (controls.get(0).latch && controls.get(0).pressed && aiming()) releaseZl();  // third person: letting go of ZL ends the aim
         putAwaySince = SystemClock.uptimeMillis();
         lastAPulse = 0;
         startAimTick();
@@ -1070,6 +1614,8 @@ final class ControlsView extends View {
     void setPadPlay(boolean on) {
         if (on == padPlay) return;
         padPlay = on;
+        android.util.Log.i("wwhd", "controls: playing " + (on ? "with a controller" : "by touch") + " (put away by itself: tap mode "
+                + tapMode() + ", item " + (state.length > 29 ? state[29] : -1) + ")");
         removeCallbacks(handStow);
         stowSince = -1;
         if (!on && tapMode() && stowsItself()) {
@@ -1084,7 +1630,11 @@ final class ControlsView extends View {
     private final Runnable handStow = new Runnable() {
         @Override
         public void run() {
-            if (stowSince < 0 || !tapMode() || !stowsItself() || aAction() != 0x08) return;
+            if (stowSince < 0 || !tapMode() || !stowsItself() || aAction() != 0x08) {
+                android.util.Log.i("wwhd", "controls: no put away (since " + stowSince + ", tap mode " + tapMode() + ", controller " + padPlay
+                        + ", A " + Integer.toHexString(aAction()) + ")");
+                return;
+            }
             long left = stowSince + (state[29] == SWORD ? SWORD_STOW_MS : LEAF_STOW_MS) - SystemClock.uptimeMillis();
             if (left > 0) postDelayed(this, left);  // a swing since (B) started the time again
             else pulse(Native.A);
@@ -1196,7 +1746,25 @@ final class ControlsView extends View {
                 quietScene = quiet;
                 invalidate();
             }
-            int mg = minigameOn ? Native.minigameMode() : 0;
+            int raw = Native.minigameMode(), mg = minigameOn ? raw : 0;
+            boolean wind = raw == MINIGAME_WIND || windCompass && raw == MINIGAME_CONDUCT && (buttons() & Native.B) == 0;
+            if (raw != lastRawMode) {
+                android.util.Log.i("wwhd", "touch minigame mode " + lastRawMode + " -> " + raw + (wind ? " (wind compass)" : ""));
+                lastRawMode = raw;
+            }
+            if (wind != windCompass) {
+                windCompass = wind;
+                releaseAll();
+                resetPads();
+                // the game on another screen: the touch screen view while it is up (HD's touch compass and its OK on the
+                // GamePad, user's wish); ▭ goes to the controller view (the stick, A, B) as always; back after it
+                if (drcBackdrop && noController) {
+                    backdropTouch = wind;
+                    restyle();
+                }
+                invalidate();
+            }
+            if (windCompass && mg == MINIGAME_CONDUCT) mg = MINIGAME_WIND;  // (no note pads over the compass)
             if (mg != minigame) {
                 minigameSince = SystemClock.uptimeMillis();
                 hintAsked = false;
@@ -1229,7 +1797,8 @@ final class ControlsView extends View {
             if (minigame != 0 && !hintAsked && SystemClock.uptimeMillis() - minigameSince > 1200) {
                 hintAsked = true;
                 int hm = minigame == MINIGAME_CONDUCT && conductPadsOn ? HINT_CONDUCT_PAD : minigame;
-                if (controlsVisible && hint.offer(hm)) releaseAll();
+                // (not with the game on another screen: they tell how it's played by touch on the TV picture, not here)
+                if (controlsVisible && !drcBackdrop && hint.offer(hm)) releaseAll();
             }
             if (minigame != 0) {
                 float[] m = Native.minigameMarks();
@@ -1263,9 +1832,19 @@ final class ControlsView extends View {
     }
     private long minigameSince;
     private boolean hintAsked;
+    private final RectF hintArea = new RectF();
+
+    /** where a hint shows (and takes its touches): the TV picture, or the whole view without one (the game on another
+     *  screen) - an unseen hint took every touch there (softlocked under the wind compass) */
+    private RectF hintRect() {
+        if (!tvRect.isEmpty()) return tvRect;
+        hintArea.set(0, 0, getWidth(), getHeight());
+        return hintArea;
+    }
     private static final int MINIGAME_FIGURE = 9;  // looking at a figure: two fingers pinch
     private static final int MINIGAME_CONDUCT = 10;  // conducting: two fingers, each a stick
     private static final int MINIGAME_WIND = 11;  // the wind compass: a finger on it drags its blue arrow (elsewhere: the stick)
+    private static final int MINIGAME_QUESTION = 13;  // a system question's buttons (the save question after a game over): a tap on one takes it
     private static final float WIND_R = 190;  // layout units around the compass's centre
     private int minigamePinch = -1, minigamePointer2 = -1;
     private float minigamePinch0;
@@ -1489,17 +2068,20 @@ final class ControlsView extends View {
         context = on;
         layoutControls(getWidth(), getHeight());  // the shoulder buttons' shape
         removeCallbacks(pollState);
-        if (on) post(pollState);
+        if (on || blind || drcBackdrop) post(pollState);  // (the eyes-free layout: the note pads; the backdrop: the wind compass)
         if (on) GameText.prepare(getContext(), this::invalidate);  // the actions' names in the game's words
         invalidate();
     }
 
     // not in the pause menu: it uses every button (X / Y / R put items on them)
-    private boolean contextActive() { return context && flexible && !editing && state[0] != 0 && state[9] == 0; }
+    private boolean contextActive() { return context && flexible && !blind && !editing && state[0] != 0 && state[9] == 0; }
 
     /** whether the context buttons show this control now (always true without them) */
     private boolean shown(Control c) {
         if (editing) return true;  // the editor: all of the style's controls
+        // the classic style hides no button at any time (only Jump anywhere's / the moon jump's while that is off)
+        // (the eyes-free layout neither, but while conducting by the note pads: as below)
+        if (!flexible || blind && !singing() && !conductPads()) return c.kind != KIND_BUTTON || (c.bit & (Native.JUMP | Native.MOON)) == 0 || (c.bit & jumpInputs()) != 0 || c.pressed;
         // singing while Link conducts (the mic button), or conducting by the note pads: only + and B (the game's Back) stay
         if (singing() || conductPads()) {
             if (c.kind == KIND_DPAD) return c.dpadBits != 0;
@@ -1509,6 +2091,8 @@ final class ControlsView extends View {
             if (c.bit == Native.A) return msgShown;
             return c.bit == Native.B && (!contextActive() || state[6] != 0 && !dimmed(18));
         }
+        // a system question (the save question after a game over): its own buttons are tapped, none of ours
+        if (minigame == MINIGAME_QUESTION && !editing && (c.kind == KIND_BUTTON || c.kind == KIND_DPAD) && !c.pressed) return false;
         // a cutscene without text: nothing to press (the game's own A does nothing there)
         if (quietScene && !editing && (c.kind == KIND_BUTTON || c.kind == KIND_DPAD) && !c.pressed)
             return c.bit == Native.ZR && fastForward();  // but fast forward, while it is on
@@ -1559,6 +2143,8 @@ final class ControlsView extends View {
         if (tapMode() && c.bit == Native.A && leafFlying()) return false;  // the leaf's button closes it
         if (c.bit == Native.A) return aAction() != 0 || state[8] != 0;  // in events A always continues; 0x44 (album) does nothing
         if (c.bit == Native.B && (swimming() || climbing())) return false;  // no sword in water, on a ladder (the game still shows it there)
+        // an enemy's weapon in his hand: B shows the sword (0x35) but A swings the weapon; B stays for its Throw
+        if (c.bit == Native.B && state.length > 29 && state[29] == BOKO && state[6] == 0x35) return false;
         if (c.bit == Native.B) return state[6] != 0 && state[6] != 0x3E && !dimmed(18);  // 0x3E: the game hides B
         if (c.bit == Native.X) return itemShown(0);
         if (c.bit == Native.Y) return itemShown(1);
@@ -1812,8 +2398,19 @@ final class ControlsView extends View {
     private String actionIcon(int code) {
         // carrying a pot, barrel, ...: Link throwing it (A, B) / setting it down whole (ZR) (not a Bokoblin's club:
         // B shows it, 0x37)
+        // what he holds / A would lift or pick up (touch state 38 / 39: kinds, GameIcons.variant): an enemy's weapon in
+        // his hand: A Swing, B Throw (the cut that lets go of it, an arrow up and away), R Drop (putting it down)
+        int held = state.length > 39 ? state[38] : 0, target = state.length > 39 ? state[39] : 0;
+        if (GameIcons.linkPoses && state.length > 29 && state[29] == BOKO) {
+            if (code == 0x2F) return GameIcons.variant(GameIcons.LINK_WEAPON, held) + "*";
+            if (code == 0x0E) return "#carry:" + GameIcons.variant(GameIcons.LINK_WTHROW, held) + "*:135";
+            if (code == 0x09) return "#carry:" + GameIcons.variant(GameIcons.LINK_WDROP, held) + "*:0";
+        }
+        // A Lift: the pot, barrel, skull, rock, bomb ... before him; A Pick up: the weapon lying there
+        if (GameIcons.linkPoses && code == 0x04) return "#carry:" + GameIcons.variant(GameIcons.LINK_LIFT, target) + "*:180";
+        if (GameIcons.linkPoses && code == 0x1B) return GameIcons.variant(GameIcons.LINK_PICKUP, target) + "*";
         if (GameIcons.linkPoses && (code == 0x0E || code == 0x09) && carrying())
-            return "#carry:" + (code == 0x0E ? GameIcons.LINK_THROW + "*:135" : GameIcons.LINK_DROP + "*:0");
+            return "#carry:" + (code == 0x0E ? GameIcons.variant(GameIcons.LINK_THROW, held) + "*:135" : GameIcons.variant(GameIcons.LINK_DROP, held) + "*:0");
         // look / check at a postbox (postbox.cpp): the postbox swallowing a letter (its own model and animation)
         if ((code == 0x01 || code == 0x0A || code == 0x02) && postboxNear) return GameIcons.POSTBOX + "*";
         // Open: Link opening a door or a chest (the game's attention entry tells which; touch state 34)
@@ -1823,13 +2420,14 @@ final class ControlsView extends View {
         // with the sword (not the side hop's / back flip's jump)
         if (GameIcons.linkPoses && code == 0x12 && state.length > 35 && state[35] != 0) return GameIcons.LINK_JATTACK + "*";
         // the boat (touch state 37: the Swift Sail or the sail): Set sail (0x14, the decompilation's はる; HD's text
-        // "Set sail", also 0x2C Cruise), the mast rising with the sail; Put away while sailing (no item in Link's hand,
+        // "Set sail"), the mast rising with the sail; R Cruise (0x2C, held: the boat creeps ahead), it gliding with its wake; Put away while sailing (no item in Link's hand,
         // the sail's 0x77 / 0x78 aside), it going down; Stop (the sail down, the boat still moving): it drifting, an arrow
         // into a bar; the Swift Sail's Fast / Normal: sailing, two arrows / one
         boolean swift = state.length > 37 && state[37] != 0;
         // Get in / Get out: Link climbing into the boat from its side / jumping out of it
         if (GameIcons.linkPoses && (code == 0x1C || code == 0x1D)) return (code == 0x1C ? GameIcons.LINK_GETIN : GameIcons.LINK_GETOUT) + "*";
         if (code == 0x13 && (state[12] & ST0_SHIP) != 0) return "#stop:" + GameIcons.DRIFTING + "*";
+        if (code == 0x2C && (state[12] & ST0_SHIP) != 0) return "#cruise:" + GameIcons.CRUISE + "*";  // R held: creeping ahead
         if (code == 0x14 || code == 0x2C) return (swift ? GameIcons.SAIL_UP_SWIFT : GameIcons.SAIL_UP) + "*";
         if (code == 0x08 && (state[12] & ST0_SHIP) != 0 && (state[29] < 0 || state[29] >= 0xFF || state[29] == 0x77 || state[29] == 0x78))
             return (swift ? GameIcons.SAIL_DOWN_SWIFT : GameIcons.SAIL_DOWN) + "*";
@@ -1840,6 +2438,9 @@ final class ControlsView extends View {
             int mode = state[36];
             return ((mode & MODE_LADDER) != 0 ? GameIcons.LINK_LADDER : (mode & MODE_CLIMB) != 0 ? GameIcons.LINK_IVY : GameIcons.LINK_HANG) + "*";
         }
+        // an enemy's weapon in Link's hand (touch state 29: daPyItem_BOKO 0x101): HD puts Swing (0x2F, the Grappling
+        // Hook's) on A; Link swinging a Bokoblin's stick, not the hook (without Link pictures: the text)
+        if (code == 0x2F && state.length > 29 && state[29] == BOKO) return GameIcons.linkPoses ? GameIcons.LINK_WEAPON + "*" : null;
         if (code == 0x08 && state.length > 29 && state[29] == 0x22) return "#putaway:" + GameIcons.itemTexture(0x22);
         if (code == 0x08 && state.length > 29 && state[29] >= 0 && state[29] < 0xFF) {
             String item = GameIcons.itemTexture(state[29]);
@@ -1888,18 +2489,24 @@ final class ControlsView extends View {
     }
 
     void setStyle(boolean flexible, boolean showSticks, boolean swipeCamera) {
-        if (flexible != this.flexible || swipeCamera != this.swipeCamera) releaseAll();
-        this.flexible = flexible;
+        if (flexible != flexiblePref || swipeCamera != this.swipeCamera) releaseAll();
+        flexiblePref = flexible;
+        this.flexible = flexible || blind;  // (the eyes-free layout's sticks float)
+        if (!flexible) touched();  // a menu button hidden in the flexible style comes back
         this.showSticks = showSticks;
         this.swipeCamera = swipeCamera;
         layoutControls(getWidth(), getHeight());
         invalidate();
     }
 
+    /** floating sticks now (the Flexible style, or the eyes-free layout) */
+    boolean flexibleNow() { return flexible; }
+
     // ---- the menu button hides after a while without touches and comes back on the next touch
     private static final long MENU_HIDE_MS = 5000;
     private boolean menuShown = true;
     private final Runnable hideMenu = () -> {
+        if (!flexible || blind) return;  // the classic style (and the eyes-free layout): always there
         menuShown = false;
         invalidate();
     };
@@ -1966,6 +2573,22 @@ final class ControlsView extends View {
         for (Control c : controls) {
             c.round = c.round0;
             c.corner = 0.5f;
+            c.drawShape = c.shape;
+        }
+        if (blind) {
+            layoutBlind(W, H, u, m);
+            applyOwnPlaces(W, H);
+            faceZone(u);  // (the face buttons' middle and zone: from where they are now)
+            cameraLaid = false;  // (the Picto Box's places: Classic's)
+            padsLaid = conductPads();
+            if (padsLaid) {  // the note pads (conducting): B up to the face buttons' middle, clear of the note pad
+                Control b = controls.get(9);
+                b.cx = blindFx;
+                b.cy = blindFy - u * 0.25f;
+            }
+            text.setTextSize(u * 0.34f);
+            stroke.setStrokeWidth(Math.max(2f, u * 0.04f));
+            return;
         }
         float colL = m + u * 1.6f, colR = W - m - u * 1.6f;
         set(0, colL, m + u * 0.4f, u * 1.6f, u * 0.65f);               // ZL
@@ -2004,7 +2627,13 @@ final class ControlsView extends View {
             s.round = context && flexible;
             if (s.round) s.w = s.h = u * 0.72f;
         }
-        // the player's own places, shapes and sizes (layout editor); a shape keeps about the area of the style's button
+        applyOwnPlaces(W, H);
+        faceZone(u);  // (the classic style's face-button swipe, when on: its zone)
+        cameraLayoutAndPads(W, H, u, m, colR);
+    }
+
+    /** the player's own places, shapes and sizes (layout editor); a shape keeps about the area of the style's button */
+    private void applyOwnPlaces(int W, int H) {
         for (Control c : controls) {
             if (c.kind == KIND_BUTTON && c.shape != SHAPE_DEFAULT) {
                 float s = (float) Math.sqrt(c.w * c.h);
@@ -2026,6 +2655,9 @@ final class ControlsView extends View {
                 c.cy = c.py * H;
             }
         }
+    }
+
+    private void cameraLayoutAndPads(int W, int H, float u, float m, float colR) {
         // the Picto Box with the large view: fixed places as in a phone's camera app (the player's own
         // places don't apply). Landscape: the shutter (A) big at the right edge, the selfie / delete (X)
         // above it, the album / back to the camera (ZR) below it; portrait: the shutter at the bottom
@@ -2059,6 +2691,36 @@ final class ControlsView extends View {
         stroke.setStrokeWidth(Math.max(2f, u * 0.04f));
     }
 
+    /** the eyes-free layout: places for the thumbs alone (its own edited places, sizes and shapes go over them: applyOwnPlaces) */
+    private void layoutBlind(int W, int H, float u, float m) {
+        float cw = u * 2.4f, ch = u * 1.05f, lh = u * 0.9f, gap = u * 0.08f;
+        set(0, cw / 2, ch / 2, cw, ch);                                // ZL: the top left corner
+        set(1, cw / 2, ch + gap + lh / 2, cw, lh);                     // L: below it, on the edge
+        set(2, W - cw / 2, ch / 2, cw, ch);                            // ZR: the top right corner
+        set(3, W - cw / 2, ch + gap + lh / 2, cw, lh);                 // R: below it
+        for (int i = 0; i < 4; i++) controls.get(i).corner = 0.22f;
+        set(4, u * 0.85f, H - u * 0.85f, u * 0.8f, 0);                 // d-pad: the bottom left corner
+        controls.get(5).w = controls.get(6).w = u * 1.05f;             // floating sticks
+        float d = u * 0.95f, r = u * 0.9f;  // (right-hand: room for the camera swipe left of the zone)
+        blindU = u;
+        blindFx = W - u * 1.85f;
+        blindFy = H * 0.57f;
+        blindZone = d + r * 0.5f + u * 0.25f;
+        set(7, blindFx, blindFy - d, r, r);                            // X (top)
+        set(8, blindFx + d, blindFy, r, r);                            // A (right)
+        set(9, blindFx, blindFy + d, r, r);                            // B (bottom)
+        set(10, blindFx - d, blindFy, r, r);                           // Y (left)
+        float top = m + u * 0.35f;                                     // the top middle: menu, screen button, +
+        set(14, W * 0.5f - u * 1.1f, top, u * 0.6f, u * 0.6f);
+        set(15, W * 0.5f, top, u * 0.8f, u * 0.55f);
+        set(11, W * 0.5f + u * 1.1f, top, u * 0.6f, u * 0.6f);
+        set(12, W * 0.5f - u * 0.9f, H - m - u * 0.35f, u * 0.6f, u * 0.6f);  // L3 / R3: the bottom middle
+        set(13, W * 0.5f + u * 0.9f, H - m - u * 0.35f, u * 0.6f, u * 0.6f);
+        set(16, cw + gap + u * 0.8f, ch / 2, u * 1.6f, ch);           // the jumps beside ZL and L
+        set(17, cw + gap + u * 0.8f, ch + gap + lh / 2, u * 1.6f, lh);
+        controls.get(16).corner = controls.get(17).corner = 0.22f;
+    }
+
     private void set(int i, float cx, float cy, float w, float h) {
         Control c = controls.get(i);
         c.cx = cx;
@@ -2069,17 +2731,37 @@ final class ControlsView extends View {
     }
 
     private Control controlAt(float x, float y) {
-        // exact hits first, then a little slack (thumbs are imprecise)
-        for (float slack : new float[] {1f, 1.35f})
+        // exact hits first, then a little slack (thumbs are imprecise); the eyes-free layout: then the nearest face
+        // button within their zone
+        for (float slack : new float[] {1f, 1.35f}) {
             for (Control c : controls) {
-                if (!controlsVisible && c.kind != KIND_MENU && !editing) continue;
-                if (flexible && c.kind == KIND_STICK) continue;  // floating: not at a fixed place
-                if (!inMode(c) && !(editing && c.kind != KIND_SCREEN)) continue;
-                if (c.hidden && !editing) continue;
-                if (!shown(c)) continue;
+                if (!usable(c)) continue;
+                if (faceSwipe() && c.kind == KIND_BUTTON && (c.bit & (Native.A | Native.B | Native.X | Native.Y)) != 0) continue;
                 if (c.hit(x, y, slack)) return c;
             }
+            if (blind && !faceSwipe() && !padsLaid && Math.hypot(x - blindFx, y - blindFy) <= blindZone) {
+                Control best = null;
+                double bd = Double.MAX_VALUE;
+                for (int i = 7; i <= 10; i++) {
+                    Control c = controls.get(i);
+                    double dd = Math.hypot(x - c.cx, y - c.cy);
+                    if (usable(c) && dd < bd) {
+                        bd = dd;
+                        best = c;
+                    }
+                }
+                if (best != null) return best;
+            }
+        }
         return null;
+    }
+
+    private boolean usable(Control c) {
+        if (!controlsVisible && c.kind != KIND_MENU && !editing) return false;
+        if (flexible && c.kind == KIND_STICK) return false;  // floating: not at a fixed place
+        if (!inMode(c) && !(editing && c.kind != KIND_SCREEN)) return false;
+        if (c.hidden && !editing) return false;
+        return shown(c);
     }
 
     private void updateStick(Control c, float x, float y) {
@@ -2101,6 +2783,10 @@ final class ControlsView extends View {
     }
 
     private void updateDpad(Control c, float x, float y) {
+        if (batonOnly()) {  // one round button: anywhere on it
+            c.dpadBits = Native.UP;
+            return;
+        }
         float dx = x - c.cx, dy = y - c.cy, dead = c.w * 0.25f;
         int b = 0;
         if (dx < -dead && Math.abs(dy) < Math.abs(dx) * 2.4f) b |= Native.LEFT;
@@ -2122,6 +2808,7 @@ final class ControlsView extends View {
     }
 
     private void releaseAll() {
+        faceRelease();
         zrLatched = false;
         aimBtn = tapCandidate = null;
         reaim = false;
@@ -2246,6 +2933,55 @@ final class ControlsView extends View {
         return true;
     }
 
+    // ---- the game progress's places on the game's own sea chart (ChartMarks), on the GamePad picture of +
+    void setChartMarks(int marks) { ChartMarks.I.setMarks(marks); }
+
+    void setChart(boolean on, float x, float y, float w, float h, int square, float vx, float vy, float vw, float vh) {
+        ChartMarks.I.set(on, x, y, w, h, square, vx, vy, vw, vh);
+    }
+
+    /** a game controller, outlined (the touch screen view's switch back to the controller view) */
+    private void drawControllerIcon(Canvas canvas, Control c) {
+        float w = c.w * 0.62f, h = c.h * 0.5f, x = c.cx, y = c.cy, gr = h * 0.3f;
+        android.graphics.Path body = new android.graphics.Path(), grips = new android.graphics.Path();
+        body.addRoundRect(x - w / 2, y - h / 2, x + w / 2, y + h * 0.2f, h * 0.35f, h * 0.35f, android.graphics.Path.Direction.CW);
+        grips.addCircle(x - w / 2 + gr, y + h * 0.22f, gr, android.graphics.Path.Direction.CW);
+        grips.addCircle(x + w / 2 - gr, y + h * 0.22f, gr, android.graphics.Path.Direction.CW);
+        body.op(grips, android.graphics.Path.Op.UNION);  // one outline round the body and its grips
+        canvas.drawPath(body, stroke);
+        float sw = stroke.getStrokeWidth();
+        stroke.setStrokeWidth(Math.max(1, sw * 0.7f));
+        float dx = x - w * 0.27f, dy = y - h * 0.08f, arm = h * 0.17f;  // the d-pad
+        canvas.drawLine(dx - arm, dy, dx + arm, dy, stroke);
+        canvas.drawLine(dx, dy - arm, dx, dy + arm, stroke);
+        float bx = x + w * 0.27f, br = h * 0.07f;  // two buttons
+        canvas.drawCircle(bx - h * 0.13f, dy + h * 0.06f, br, stroke);
+        canvas.drawCircle(bx + h * 0.13f, dy - h * 0.06f, br, stroke);
+        stroke.setStrokeWidth(sw);
+    }
+
+    /** a tablet with a fingertip's tap on it (the controller view's switch to touching the GamePad picture) */
+    private void drawTouchScreenIcon(Canvas canvas, Control c) {
+        int keepFill = fill.getColor(), ink = stroke.getColor() | 0xFF000000;
+        float iw = c.w * 0.5f, ih = c.h * 0.5f, x = c.cx, y = c.cy;
+        tmp.set(x - iw / 2, y - ih / 2, x + iw / 2, y + ih / 2);
+        canvas.drawRoundRect(tmp, ih * 0.12f, ih * 0.12f, stroke);
+        fill.setColor(ink);
+        float tx = x + iw * 0.12f, ty = y + ih * 0.05f;
+        canvas.drawCircle(tx, ty, ih * 0.13f, fill);  // the tap and its ring
+        float sw = stroke.getStrokeWidth();
+        stroke.setStrokeWidth(Math.max(1, sw * 0.6f));
+        canvas.drawCircle(tx, ty, ih * 0.27f, stroke);
+        stroke.setStrokeWidth(sw);
+        fill.setColor(keepFill);
+    }
+
+    private void drawChartMarks(Canvas canvas) {
+        if (!drcPicture() || drcRect.isEmpty()) return;
+        pictureRect(pic);
+        ChartMarks.I.draw(canvas, pic, getContext(), this);
+    }
+
     // ---- a Back button (the game's Back icon) on the GamePad picture's Options / Save while no controller is
     // connected: their A / B hints are hidden (MainActivity.setMenuTouch) and they have no Back of their own; a tap = B
     private boolean menuBack;
@@ -2260,7 +2996,7 @@ final class ControlsView extends View {
     }
 
     private boolean placeMenuBack() {
-        if (!menuBack || !drcMode || drcRect.isEmpty()) return false;
+        if (!menuBack || !drcPicture() || drcRect.isEmpty()) return false;
         pictureRect(pic);
         float h = MENU_BACK_H * (pictureV(1) - pictureV(0)) * pic.height(), cx = pic.left + pictureU(MENU_BACK_X) * pic.width(), cy = pic.top + pictureV(MENU_BACK_Y) * pic.height();
         menuBackRect.set(cx - h / 2, cy - h / 2, cx + h / 2, cy + h / 2);
@@ -2301,7 +3037,7 @@ final class ControlsView extends View {
     }
 
     private boolean placeOptionsArrow() {
-        if (!optionsArrow || !drcMode || drcRect.isEmpty()) return false;
+        if (!optionsArrow || !drcPicture() || drcRect.isEmpty()) return false;
         pictureRect(pic);
         optionsArrowRect.set(pic.left + pictureU(optionsArrowGame.left) * pic.width(), pic.top + pictureV(optionsArrowGame.top) * pic.height(),
                 pic.left + pictureU(optionsArrowGame.right) * pic.width(), pic.top + pictureV(optionsArrowGame.bottom) * pic.height());
@@ -2339,7 +3075,7 @@ final class ControlsView extends View {
     }
 
     private boolean placeSongPlay(int row) {
-        if (songListLearned == 0 || !drcMode || drcRect.isEmpty() || editing) return false;
+        if (songListLearned == 0 || !drcPicture() || drcRect.isEmpty() || editing) return false;
         int melody = SONG_ROW_MELODY[row];
         if ((songListLearned & (1 << melody)) == 0) return false;
         float side = SONG_ROWS[row][0] < 0 ? -1 : 1, y = -(SONG_ROWS[row][1] + SONG_TITLE_UP);
@@ -2479,9 +3215,22 @@ final class ControlsView extends View {
     @Override
     public boolean onTouchEvent(MotionEvent e) {
         if (editing) return editTouch(e);
-        if (hint.showing()) return hint.onTouch(e, tvRect);
+        if (hint.showing()) return hint.onTouch(e, hintRect());
         int action = e.getActionMasked();
         int idx = e.getActionIndex();
+        if (faceTouch(e, action, idx)) return true;
+        mapTapWatch(e, action, idx);
+        // a finger that came down on the mini map's wind dial is the dial's alone (no stick, camera, button: Link stays)
+        if ((action == MotionEvent.ACTION_DOWN || action == MotionEvent.ACTION_POINTER_DOWN) && mapTapWind
+                && mapTapPtr == e.getPointerId(idx)) {
+            windPointer = mapTapPtr;
+            return true;
+        }
+        if (windPointer >= 0 && (action == MotionEvent.ACTION_CANCEL
+                || (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_POINTER_UP) && e.getPointerId(idx) == windPointer)) {
+            windPointer = -1;
+            if (action != MotionEvent.ACTION_CANCEL) return true;
+        }
         if ((action == MotionEvent.ACTION_DOWN || action == MotionEvent.ACTION_POINTER_DOWN) && pageBarTouch(e.getX(idx), e.getY(idx)))
             return true;
         // the mic button: held while singing; its finger is nothing else
@@ -2521,6 +3270,10 @@ final class ControlsView extends View {
         } else if (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_POINTER_UP) {
             if (padUp(e.getPointerId(idx))) return true;
         }
+        if (action == MotionEvent.ACTION_DOWN && drcBackdrop) {
+            noController = MainActivity.firstController() == null;
+            restyle();
+        }
         boolean changed = false;
         boolean menuWasHidden = touched();
         switch (action) {
@@ -2537,9 +3290,22 @@ final class ControlsView extends View {
                         return true;
                     }
                     if (c.kind == KIND_SCREEN) {
-                        listener.onScreenToggle();
+                        if (backdropButton()) {
+                            backdropTouch = !backdropTouch;
+                            releaseAll();
+                            restyle();
+                            invalidate();
+                        } else listener.onScreenToggle();
                         return true;
                     }
+                }
+                if (placeBgButton() && bgButtonRect.contains(x, y)) {
+                    if (bgPtr < 0) {  // the tap acts on letting go (a long press steps the brightness instead)
+                        bgPtr = id;
+                        bgStepped = false;
+                        postDelayed(bgStep, android.view.ViewConfiguration.getLongPressTimeout());
+                    }
+                    return true;
                 }
                 if (placeMenuBack() && menuBackRect.contains(x, y)) {
                     pulse(Native.B);
@@ -2547,6 +3313,10 @@ final class ControlsView extends View {
                 }
                 if (placeOptionsArrow() && optionsArrowRect.contains(x, y)) {
                     listener.onOptionsPage();
+                    return true;
+                }
+                if (drcPicture() && ChartMarks.I.fullMapButton.contains(x, y) && MainActivity.instance != null) {
+                    FullMap.open(MainActivity.instance);
                     return true;
                 }
                 if (placeSongWanted() && Math.hypot(x - songWantedRect.centerX(), y - songWantedRect.centerY()) <= songWantedRect.width() * 0.75f) {
@@ -2621,12 +3391,13 @@ final class ControlsView extends View {
                     }
                 }
                 if (c != null) {
+                    if (blind) buzz(c);
                     // ZR latches for crouching (context buttons: its action is Crouch) and while ZL (targeting)
                     // is latched (the shield stays up); otherwise (fast forward held in cutscenes) it stays a
                     // normal button. A latched ZR is released by a tap.
-                    boolean zlLatched = controls.get(0).pressed;
+                    boolean zlLatched = controls.get(0).latch && controls.get(0).pressed;
                     // not in the Picto Box and its album: there ZR switches between them (a tap)
-                    boolean crouchLatch = c.bit == Native.ZR && !pictoMode() && (zrLatched || zlLatched || (contextActive() && state[7] == 0x0F));
+                    boolean crouchLatch = c.bit == Native.ZR && zLatch && !pictoMode() && (zrLatched || zlLatched || (contextActive() && state[7] == 0x0F));
                     if (c.latch || crouchLatch) {  // switches on the tap; lifting the finger changes nothing
                         c.pressed = !c.pressed;
                         if (c.bit == Native.ZL) relockGen++;
@@ -2693,7 +3464,7 @@ final class ControlsView extends View {
                     removeCallbacks(pollState);
                     post(pollState);
                     changed = true;
-                } else if (drcPointer < 0 && pagePointer < 0 && inDrc(x, y) && drcMode
+                } else if (drcPointer < 0 && pagePointer < 0 && !controllerView() && inDrc(x, y) && drcPicture()
                         && listener.pageSwipeFrom(gameXY(x, y)[0], gameXY(x, y)[1])) {
                     pagePointer = id;
                     pageDragging = pageFlipping = false;
@@ -2701,7 +3472,7 @@ final class ControlsView extends View {
                     pageY0 = y;
                     pageV = 0;
                     pageLastT = e.getEventTime();
-                } else if (drcPointer < 0 && inDrc(x, y)) {
+                } else if (drcPointer < 0 && !controllerView() && inDrc(x, y)) {
                     drcPointer = id;
                     touchDrc(true, x, y);
                 } else if (minigamePointer >= 0 && minigamePointer2 < 0 && minigame == MINIGAME_CONDUCT && minigameTouchable(x, y)) {
@@ -2739,6 +3510,7 @@ final class ControlsView extends View {
             case MotionEvent.ACTION_MOVE:
                 for (int i = 0; i < e.getPointerCount(); i++) {
                     int id = e.getPointerId(i);
+                    if (id == windPointer) continue;  // (the wind dial's finger)
                     float x = e.getX(i), y = e.getY(i);
                     float[] at = fingerAt.get(id);
                     if (at != null) {
@@ -2848,6 +3620,15 @@ final class ControlsView extends View {
             case MotionEvent.ACTION_UP:
             case MotionEvent.ACTION_POINTER_UP:
             case MotionEvent.ACTION_CANCEL: {
+                if (bgPtr >= 0 && (action == MotionEvent.ACTION_CANCEL || e.getPointerId(idx) == bgPtr)) {
+                    removeCallbacks(bgStep);
+                    bgPtr = -1;
+                    if (action != MotionEvent.ACTION_CANCEL && !bgStepped) {
+                        bgTv = !bgTvNow();
+                        invalidate();
+                    }
+                    if (action != MotionEvent.ACTION_CANCEL) break;
+                }
                 if (action == MotionEvent.ACTION_CANCEL) {
                     releaseAll();
                     perfDragPointer = -1;
@@ -2973,7 +3754,7 @@ final class ControlsView extends View {
     }
 
     /** the d-pad's uses are in the item ring (see dpadMask) */
-    boolean dpadInRing() { return flexible && !padConnected && ring != null && ring.enabled(); }
+    boolean dpadInRing() { return flexible && !blind && !padConnected && ring != null && ring.enabled(); }
 
     /** where the finger holding this button is now, or null */
     float[] fingerOn(int bit) {
@@ -2987,7 +3768,7 @@ final class ControlsView extends View {
     @Override
     public void draw(Canvas canvas) {
         super.draw(canvas);
-        hint.draw(canvas, tvRect);
+        hint.draw(canvas, hintRect());
         if (ring != null) ring.draw(canvas);
     }
 
@@ -2998,18 +3779,43 @@ final class ControlsView extends View {
         loopWasShown.clear();
         loopWasShown.addAll(loopDrawn);
         loopDrawn.clear();
+        boolean tvBack = bgTvNow() && controllerView() && !editing;
+        if (tvBack != tvBackdropSent) {
+            tvBackdropSent = tvBack;
+            Native.setBackdropTv(tvBack);
+        }
+        if (controllerView() && !editing && !drcRect.isEmpty()) {  // dimmed: it takes no touches in this view
+            int keep = fill.getColor();
+            fill.setColor(tvBack ? Math.round((1 - bgTvLevel()) * 255) << 24 : 0x6E000000);
+            canvas.drawRect(drcRect, fill);
+            fill.setColor(keep);
+        }
+        if ((blind || faceSwipe()) && controlsVisible && front == 0) {  // the face buttons' zone: a faint ring (for a glance)
+            int keep = stroke.getColor();
+            stroke.setColor(0xFFFFFFFF);
+            stroke.setAlpha((int) (255 * opacity) / 4);
+            canvas.drawCircle(blindFx, blindFy, blindZone, stroke);
+            stroke.setColor(keep);
+            if (faceSwipe()) drawFaceSwipe(canvas);
+        }
         drawClimbHud(canvas);
+        miniMap.draw(canvas, tvArea.isEmpty() ? tvRect : tvArea, !drcMode && front == 0 && !editing);
+        progressBadge.draw(canvas, tvArea.isEmpty() ? tvRect : tvArea, !drcMode && front == 0 && !editing);
+        achievementPopup.draw(canvas, tvArea.isEmpty() ? tvRect : tvArea, !drcMode && front == 0 && !editing);
         drawMinigameMarks(canvas);
         drawPerfHud(canvas);
         if (editing && grid) drawGrid(canvas);
+        if (editing && !editBlind) miniMap.drawEditor(canvas, tvArea.isEmpty() ? tvRect : tvArea, mapSel);
         int a0 = (int) (255 * opacity);
         for (Control c : controls) {
-            if (c.kind == KIND_SCREEN && !screenButton) continue;
+            if (c.kind == KIND_SCREEN && !screenButton && !backdropButton()) continue;
             if (!editing) {
                 if (!inMode(c)) continue;
                 if (!controlsVisible && c.kind != KIND_MENU && c.kind != KIND_SCREEN) continue;
                 if (c.kind == KIND_MENU && !menuShown) continue;
+                if (touchless && (c.kind == KIND_MENU || c.kind == KIND_SCREEN)) continue;
                 if (c.hidden || !shown(c)) continue;
+                if (faceSwipe() && c.kind == KIND_BUTTON && (c.bit & (Native.A | Native.B | Native.X | Native.Y)) != 0) continue;
                 // floating sticks: only while a thumb holds them, and only if they are shown
                 if (flexible && c.kind == KIND_STICK && (!showSticks || pointers.indexOfValue(c) < 0)) continue;
             } else if (flexible && c.kind == KIND_STICK) continue;  // floating: no place to edit
@@ -3017,7 +3823,9 @@ final class ControlsView extends View {
         }
         if (editing) drawEditor(canvas);
         else drawFocus(canvas);
+        drawBgButton(canvas);
         drawMenuBack(canvas);
+        drawChartMarks(canvas);
         drawOptionsArrow(canvas);
         drawSongPlay(canvas);
         drawSongWanted(canvas);
@@ -3025,6 +3833,7 @@ final class ControlsView extends View {
         drawPageBar(canvas);
         drawPostNotice(canvas);
         drawPads(canvas);
+        drawConductBar(canvas);
         drawMic(canvas);
         updateSongView(placeMic() && songConducting);
     }
@@ -3072,6 +3881,23 @@ final class ControlsView extends View {
                 ringHintDone = true;  // (shown now, or seen before)
                 return;
             }
+    }
+
+    // the wind dial's hint (once): Link in play for 2 s with the mini map's wind dial on the screen (the mini map on, Wind
+    // arrow and Wind dial by touch on)
+    private long windPlaySince = -1;
+    private boolean windHintDone;
+
+    /** MainActivity's poll */
+    void windDialHint(int[] s) {
+        if (windHintDone || editing || !GameHint.enabled()) return;
+        boolean play = s[0] != 0 && s[8] == 0 && s[9] == 0 && miniMap.windDialShown();
+        long now = SystemClock.uptimeMillis();
+        if (!play) { windPlaySince = -1; return; }
+        if (windPlaySince < 0) windPlaySince = now;
+        if (now - windPlaySince < 2000 || hint.showing()) return;
+        offerHint(HINT_WIND_DIAL);
+        windHintDone = true;  // (shown now, or seen before)
     }
 
     void offerHint(int m) {
@@ -3270,6 +4096,7 @@ final class ControlsView extends View {
     // (the mic button) the time switch picks the time: only the note pad shows.
     static final int HINT_CONDUCT_PAD = 30;  // GameHint: its own hint (not the two sticks')
     static final int HINT_LEAF_GLIDE = 31;   // GameHint: the Deku Leaf's button while gliding (item buttons by tap)
+    static final int HINT_WIND_DIAL = 34;    // GameHint: the mini map's wind dial, swipe / tap (windDialHint)
     static final int HINT_RING = 32;         // GameHint: how the item ring opens (Link's first item, ringHint)
     private static final int[] PAD_TIMES = {4, 3, 6};
     private boolean conductPadsOn = true, padsLaid;
@@ -3299,6 +4126,102 @@ final class ControlsView extends View {
 
     /** the time the time pad holds (3, 4, 6); 3 (the stick in the middle) while it doesn't show */
     int conductTime() { return timePadShown() ? padTime : 3; }
+
+    // ---- the game's conducting bar on the phone (the GamePad view with the game on another screen, conducting by the
+    // note pads: the player looks at the pads, the game's own bar is on the TV): the notes the game took (its signs,
+    // the last six, the newest pops), and the time bar with a beat point per beat of the time and the yellow point
+    // running to the next one; the note the pad holds rides on it. From the judge's beats (Native.songState 5..7:
+    // count, beat * 16 + C-stick position, ms since)
+    private static final int BAR_NOTES = 6;
+    private final int[] barNotes = new int[BAR_NOTES];
+    private int barCount, barBeatsSeen = -1, barBeat;  // barBeat: the judge's beat number (now_beat) of the last beat
+    private final RectF barRect = new RectF();
+
+    private void drawConductBar(Canvas canvas) {
+        if (!drcBackdrop || !conductPads() || singing()) {
+            barBeatsSeen = -1;
+            return;
+        }
+        int[] ss = Native.songState();
+        if (ss.length < 8) return;
+        if (barBeatsSeen < 0 || ss[5] < barBeatsSeen) {  // (the baton just came out: from none)
+            barBeatsSeen = ss[5];
+            barCount = 0;
+        }
+        int time = conductTime(), beatMs = time == 4 ? 857 : time == 6 ? 750 : 1000;
+        while (barBeatsSeen < ss[5]) {  // beats taken since
+            barBeatsSeen++;
+            barBeat = ss[6] >> 4;
+            if (barBeat % time == 0) barCount = 0;  // a bar's first beat: a new try, the row empties (user)
+            System.arraycopy(barNotes, 1, barNotes, 0, BAR_NOTES - 1);
+            barNotes[BAR_NOTES - 1] = ss[6] & 15;
+            barCount++;
+        }
+        float u = Math.min(getWidth(), getHeight()) / 7f * scale;
+        float w = Math.min(getWidth() - u * 5.6f, u * 6.5f), h = u * 1.55f, cx = getWidth() / 2f, top = u * 0.95f;
+        barRect.set(cx - w / 2, top, cx + w / 2, top + h);
+        Runnable redraw = () -> post(this::invalidate);
+        int keep = fill.getColor();
+        fill.setColor(0xA8000000);
+        canvas.drawRoundRect(barRect, u * 0.25f, u * 0.25f, fill);
+        // the notes taken: as many places as the time has beats (3, 4, 6), filled from the left as the game's row
+        int places = Math.min(time, BAR_NOTES), shown = Math.min(barCount, places);
+        float sz = Math.min(u * 0.62f, (w - u * 0.6f) / BAR_NOTES), rowY = top + u * 0.45f, step = (w - u * 0.6f) / places;
+        long since = ss[7];
+        for (int i = 0; i < places; i++) {
+            float px = barRect.left + u * 0.3f + step * (i + 0.5f);
+            int n = BAR_NOTES - shown + i;  // (barNotes: the last six, the newest last)
+            if (i >= shown) {  // an empty place
+                fill.setColor(0x40FFFFFF);
+                canvas.drawCircle(px, rowY, sz * 0.12f, fill);
+                continue;
+            }
+            boolean newest = i == shown - 1;
+            float pop = newest ? Math.max(0, 1 - since / 220f) : 0;
+            drawBaton(canvas, "#baton:" + barNotes[n] + ":" + (newest ? 1 : 0), px, rowY, sz * (1 + 0.4f * pop), redraw);
+        }
+        // the time bar as the game's: a point swinging along it, crossing the middle at each beat (where the note held
+        // locks: its sign sits there) and turning at the ends half a beat after; the bar's first beat (the judge's beat
+        // number, even) to the right, the next to the left (not by the count: with 3 or 6 notes it went left after a song)
+        float bx0 = barRect.left + u * 0.55f, bx1 = barRect.right - u * 0.55f, barY = top + h - u * 0.42f, bh = u * 0.26f;
+        android.graphics.Bitmap bar = GameIcons.get(getContext(), "#batonbar", redraw);
+        tmp.set(bx0 - u * 0.3f, barY - bh / 2, bx1 + u * 0.3f, barY + bh / 2);
+        if (bar != null) canvas.drawBitmap(bar, null, tmp, iconPaint);
+        else {
+            fill.setColor(0xDC303030);
+            canvas.drawRoundRect(tmp, bh / 2, bh / 2, fill);
+        }
+        float mid = (bx0 + bx1) / 2;
+        int sc = stroke.getColor();
+        float sw = stroke.getStrokeWidth();
+        stroke.setColor(0xFFFFE100);  // the middle: where the note locks
+        stroke.setStrokeWidth(Math.max(2f, u * 0.05f));
+        canvas.drawLine(mid, barY - bh * 0.9f, mid, barY + bh * 0.9f, stroke);
+        stroke.setColor(sc);
+        stroke.setStrokeWidth(sw);
+        drawBaton(canvas, "#baton:" + padNote + ":1", mid, barY - u * 0.42f, u * 0.44f, redraw);  // the note held, locked at the middle
+        float f = Math.min(since / (float) beatMs, 1f) + 0.5f;  // 0.5: the beat, 1: the end, 1.5: the middle (the next beat)
+        float side = barCount == 0 ? -1f : (barBeat % 2 == 0 ? 1f : -1f) * (f <= 1f ? 2 * f - 1 : 1 - 2 * (f - 1));
+        drawBaton(canvas, "#batonpoint:ffe100", mid + (bx1 - bx0) / 2 * side, barY, u * 0.26f, redraw);
+        fill.setColor(keep);
+        postInvalidateOnAnimation();  // (the point runs)
+    }
+
+    /** one of the game's conducting pictures (GameIcons), its height `size` (a point: as wide as it is), centred */
+    private void drawBaton(Canvas canvas, String key, float px, float py, float size, Runnable redraw) {
+        android.graphics.Bitmap b = GameIcons.get(getContext(), key, redraw);
+        if (b == null) {
+            int keep = fill.getColor();
+            fill.setColor(key.contains("ffe100") ? 0xFFFFE100 : 0xFFB8B8B8);
+            canvas.drawCircle(px, py, size * 0.3f, fill);
+            fill.setColor(keep);
+            return;
+        }
+        float hw = size / 2 * b.getWidth() / b.getHeight();
+        tmp.set(px - hw, py - size / 2, px + hw, py + size / 2);
+        iconPaint.setAlpha(255);
+        canvas.drawBitmap(b, null, tmp, iconPaint);
+    }
 
     private void resetPads() {
         notePointer = timePointer = -1;
@@ -3797,7 +4720,7 @@ final class ControlsView extends View {
     private void drawPolygon(Canvas canvas, Control c) {
         float x = c.cx, y = c.cy, hw = c.w / 2, hh = c.h / 2;
         shapePath.reset();
-        if (c.shape == SHAPE_HEX) {
+        if (c.drawShape == SHAPE_HEX) {
             shapePath.moveTo(x - hw, y);
             shapePath.lineTo(x - hw / 2, y - hh);
             shapePath.lineTo(x + hw / 2, y - hh);
@@ -3844,6 +4767,7 @@ final class ControlsView extends View {
                 break;
             }
             case KIND_DPAD: {
+                if (batonOnly() && drawBatonButton(canvas, c, a)) break;
                 float s = c.w * 0.36f;
                 int mask = editing ? -1 : dpadMask();
                 if ((mask & Native.UP) != 0) drawDpadArm(canvas, c, 0, -1, s, (c.dpadBits & Native.UP) != 0, a);
@@ -3856,9 +4780,13 @@ final class ControlsView extends View {
                 tmp.set(c.cx - c.w / 2, c.cy - c.h / 2, c.cx + c.w / 2, c.cy + c.h / 2);
                 canvas.drawRoundRect(tmp, c.h / 3, c.h / 3, fill);
                 canvas.drawRoundRect(tmp, c.h / 3, c.h / 3, stroke);
+                if (backdropButton()) {  // the backdrop's switch: the view a tap goes to
+                    if (backdropTouch) drawControllerIcon(canvas, c);  // back to the controller view
+                    else drawTouchScreenIcon(canvas, c);                 // to touching the picture
+                    break;
+                }
                 float iw = c.w * 0.5f, ih = c.h * 0.42f;
                 tmp.set(c.cx - iw / 2, c.cy - ih / 2, c.cx + iw / 2, c.cy + ih / 2);
-                Paint p = drcMode ? fill : stroke;
                 int keep = fill.getColor();
                 if (drcMode) fill.setColor(0xFFFFFFFF);
                 canvas.drawRect(tmp, drcMode ? fill : stroke);
@@ -3871,8 +4799,8 @@ final class ControlsView extends View {
                     float flash = aFlash();
                     if (flash >= 0) drawAFlash(canvas, c.cx, c.cy, Math.min(c.w, c.h) / 2, flash);
                 }
-                float inner = c.shape == SHAPE_DIAMOND ? 0.62f : 1f;  // the icon / name's room: a diamond's is smaller
-                if (c.shape == SHAPE_HEX || c.shape == SHAPE_DIAMOND) {
+                float inner = c.drawShape == SHAPE_DIAMOND ? 0.62f : 1f;  // the icon / name's room: a diamond's is smaller
+                if (c.drawShape == SHAPE_HEX || c.drawShape == SHAPE_DIAMOND) {
                     drawPolygon(canvas, c);
                 } else if (c.round) {
                     float r = Math.min(c.w, c.h) / 2;
@@ -3971,6 +4899,26 @@ final class ControlsView extends View {
         iconSrc.set(0, 0, icon.getWidth(), icon.getHeight());
         tmp.set(x - s / 2, y - s / 2, x + s / 2, y + s / 2);
         canvas.drawBitmap(icon, iconSrc, tmp, iconPaint);
+    }
+
+    /** the context buttons' d-pad with only up (the Wind Waker) to offer: a round button as the others, the size of the
+     *  face buttons, on the d-pad's centre (a touch anywhere on the d-pad presses up); Link conducting
+     *  (GameIcons.LINK_CONDUCT, its pictures looping), else the Wind Waker */
+    private boolean batonOnly() { return contextActive() && !editing && dpadMask() == Native.UP; }
+
+    private boolean drawBatonButton(Canvas canvas, Control c, int a) {
+        android.graphics.Bitmap base = GameIcons.get(getContext(), GameIcons.BASE_ROUND, () -> post(this::invalidate));
+        String t = GameIcons.linkPoses ? GameIcons.LINK_CONDUCT + "*" : "CollectIcon118_15^l";
+        if (GameIcons.linkPoses) t = t.replace("*", Integer.toString(loopFrame(t, GameIcons.pictures(t))));
+        android.graphics.Bitmap icon = GameIcons.get(getContext(), t, () -> post(this::invalidate));
+        if (base == null || icon == null) return false;
+        float r = c.w * 0.38f, k = (c.dpadBits & Native.UP) != 0 ? 0.9f : 1f, bs = r * 2 * 1.14f * k;
+        baseSrc.set(0, 0, base.getWidth(), base.getHeight());
+        tmp.set(c.cx - bs / 2, c.cy - bs / 2, c.cx + bs / 2, c.cy + bs / 2);
+        iconPaint.setAlpha(Math.min(255, a + 70));
+        canvas.drawBitmap(base, baseSrc, tmp, iconPaint);
+        drawCentred(canvas, icon, c.cx + bs * (0.49f - 0.5f), c.cy + bs * (0.46f - 0.5f), r * 2 * 0.78f * k);
+        return true;
     }
 
     private void drawDpadArm(Canvas canvas, Control c, int dx, int dy, float s, boolean on, int a) {

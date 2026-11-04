@@ -38,6 +38,8 @@
 
 #include "gx2/gx2_cmd.h"
 #include "guest_addr.h"
+#include "aspect_picto.h"
+#include "drc_mirror.h"
 #include "hud.h"
 #include "mods/mods.h"
 #include "runtime.h"
@@ -213,6 +215,110 @@ extern "C" void site_024F811C(Cpu* c) { adjust_clipper_args(c); }
 extern "C" void site_024F8168(Cpu* c) { adjust_clipper_args(c); }
 // dScnName_c::setView: C_MTXPerspective (file select)
 extern "C" void site_025ADB38(Cpu* c) { adjust_projection_args(c, 1, 2); }
+// ---- The Picto Box (issue #303, aspect_picto.h): the photo and its subjects are the 16:9 part of the
+// wider (taller) picture, as on a Wii U, not the whole picture squeezed into the 800x450 photo.
+//   dSnap_packet::draw 025BF250: copies the finder's frame out of the TV picture (colour, then depth)
+//     with drawColorTexture / drawDepthTexture(renderer, view, viewport, r6 scale, r7 position):
+//     float pairs on the stack, texture coordinates of the 1280x720 screen. The depth copy reuses
+//     the position (sp+0x28), so it is moved once, at the colour copy.
+//   dSnap_packet::DebugDraw 025BFDC0 (the capture: draw, then the subjects): the TV projection, copied
+//     to the stack and narrowed to the finder's frame, goes to matrixProjectionCtor (r4), which the
+//     subjects are drawn with into the photo's alpha channel (their ids, counted by Judge), and,
+//     halved, to setProjectionMtx(mpProjection, r4), which dSnap_project uses for the subjects'
+//     expected areas (CalcArea2D).
+// The factors are the frame's (game()), as the TV picture's targets and projection. The camera's
+// projection is off-centre in the Picto Box (m[1][2] = 0.35: the finder sits above the screen
+// centre), so in a taller picture its 16:9 part sits off the centre too; the rectangle follows it.
+// At 16:9 nothing is touched.
+namespace {
+bool picto_log() {
+    static const bool on = getenv("WWHD_PICTO_LOG") != nullptr;
+    return on;
+}
+// test aid: WWHD_PICTO_FULL_PICTURE=1 keeps the earlier behaviour (the whole wider picture squeezed
+// into the photo, subjects found in all of it), for comparisons
+bool picto_16x9() {
+    static const bool full = getenv("WWHD_PICTO_FULL_PICTURE") != nullptr;
+    return !full;
+}
+void picto_factors(float& kx, float& ky) {
+    factors(game(), kx, ky);
+    if (!picto_16x9()) kx = ky = 1.0f;
+}
+// the off-centre terms m[0][2], m[1][2] of the TV projection the photo is taken from (DebugDraw's
+// context: frame +0x18 the projection, its matrix at +0x44, as getProjectionMtx 0274D83C returns it)
+float g_picto_m02 = 0.0f, g_picto_m12 = 0.0f;
+// the TV copy's scale (and position) pairs at r6 (r7)
+void picto_crop(Cpu* c, bool movePosition) {
+    float kx, ky;
+    picto_factors(kx, ky);
+    const uint32_t scale = c->r[6], position = c->r[7];
+    float sx = (float)ldf32(scale), sy = (float)ldf32(scale + 4);
+    float px = (float)ldf32(position), py = (float)ldf32(position + 4);
+    if (picto_log())
+        LOG("[picto] %s copy: scale %.4f %.4f position %.4f %.4f, picture x%.4f wide x%.4f tall", movePosition ? "colour" : "depth",
+            sx, sy, px, py, kx, ky);
+    if (kx == 1.0f && ky == 1.0f) return;
+    picto::crop_to_16x9(px, sx, kx, -g_picto_m02);
+    picto::crop_to_16x9(py, sy, ky, g_picto_m12);
+    stf32(scale, sx);
+    stf32(scale + 4, sy);
+    if (!movePosition) return;
+    stf32(position, px);
+    stf32(position + 4, py);
+}
+// a row-major 4x4 projection on the stack
+void picto_projection(uint32_t m) {
+    float kx, ky;
+    picto_factors(kx, ky);
+    if (kx == 1.0f && ky == 1.0f && !picto_log()) return;
+    float v[16];
+    for (int i = 0; i < 16; i++) v[i] = (float)ldf32(m + 4 * i);
+    if (picto_log())
+        LOG("[picto] subject projection: x %.5f %.5f %.5f y %.5f %.5f %.5f, picture x%.4f wide x%.4f tall", v[0], v[1],
+            v[2], v[4], v[5], v[6], kx, ky);
+    if (kx == 1.0f && ky == 1.0f) return;
+    picto::narrow_to_16x9(v, kx, ky);
+    stf32(m, v[0]);
+    stf32(m + 20, v[5]);
+}
+}  // namespace
+// DebugDraw: bl draw(packet, r4 context): note the TV projection's off-centre terms
+extern "C" void site_025BFDF8(Cpu* c) {
+    g_picto_m02 = g_picto_m12 = 0.0f;
+    const uint32_t frame = ld32(c->r[4]), projection = frame ? ld32(frame + 0x18) : 0;
+    if (!projection) return;
+    g_picto_m02 = (float)ldf32(projection + 0x44 + 8);
+    g_picto_m12 = (float)ldf32(projection + 0x44 + 24);
+    if (picto_log()) LOG("[picto] TV projection off-centre %.5f %.5f", g_picto_m02, g_picto_m12);
+}
+// draw: bl drawColorTexture (the finder's frame of the TV colour picture)
+extern "C" void site_025BF5D0(Cpu* c) { picto_crop(c, true); }
+// draw: bl drawDepthTexture (the same frame of the TV depth; the position was moved at the colour copy)
+extern "C" void site_025BF7C0(Cpu* c) { picto_crop(c, false); }
+// DebugDraw: bl matrixProjectionCtor(adjusted, r4 matrix, 0): the subjects' projection
+extern "C" void site_025BFFB0(Cpu* c) { picto_projection(c->r[4]); }
+// DebugDraw: bl setProjectionMtx(mpProjection, r4 matrix, 0): dSnap_project's projection
+extern "C" void site_025C0004(Cpu* c) { picto_projection(c->r[4]); }
+
+// dSnap_packet::Execute, after Judge (r31 the packet): debug, WWHD_PICTO_LOG=1 logs each photo's
+// result and its subjects (registered objects with pixels in the photo: id type, pixels, pixels per
+// expected area, bounding box in the 800x450 photo)
+extern "C" void site_025BE898(Cpu* c) {
+    if (!picto_log()) return;
+    const uint32_t snap = c->r[31];
+    LOG("[picto] photo at aspect %.4f: result %u detail %u, %d registered", game(), ld32(snap + 0xF68),
+        ld8(snap + 0xF6C), (int)ld32(snap + 0x9C));
+    for (int i = 0, n = std::min<int>((int)ld32(snap + 0x9C), 63); i < n; i++) {
+        const uint32_t o = snap + 0xA0 + 0x3C * i;
+        const int pixels = (int)ld32(o + 0x20);
+        if (!pixels) continue;
+        LOG("[picto]   subject %d: type 0x%02X pixels %d ratio %.3f box %d,%d-%d,%d", i, ld8(o + 0x18), pixels,
+            (float)ldf32(o + 0x24), (int16_t)ld16(o + 0x28), (int16_t)ld16(o + 0x2A), (int16_t)ld16(o + 0x2C),
+            (int16_t)ld16(o + 0x2E));
+    }
+}
+
 
 // ---- HD layouts (nw::lyt, WWHD's nw4f): TV draws see the 16:9 layout space centred in the wider
 // screen, panes near the left/right edges move out to the new edges.
@@ -830,15 +936,49 @@ std::string pane_name(uint32_t p) { return std::string((const char*)mem::ptr(p +
 void note_drc_pane(uint32_t pane) {
     const char* n = (const char*)mem::ptr(pane + kPaneName);
     bool target = n[0] == 'B' && n[1] == '_', cursor = !target && name_is(pane, "W_Cursor_00");
-    if (!target && !cursor) return;
+    // a dungeon map's floor (DungeonMapFloor_0x: N_1F_00, N_B1F_00 ...): its room pictures are placed in its own
+    // space; reported with its global scale in w / h (the progress marks on the game's dungeon map, ChartMarks)
+    bool floor = n[0] == 'N' && n[1] == '_' &&
+                 ((isdigit((unsigned char)n[2]) && n[3] == 'F' && !strncmp(n + 4, "_00", 4)) ||
+                  (n[2] == 'B' && isdigit((unsigned char)n[3]) && n[4] == 'F' && !strncmp(n + 5, "_00", 4)));
+    // a dungeon map's figures the app's redrawn map draws again over its own (ChartMarks): the statue and the ship
+    // (DungeonMapStatue_00 / Ship_00), the Forsaken Fortress's outside, searchlights and destination
+    // (DungeonMapFloor_00, Searchlight_00): reported with their turn and global alpha
+    bool fig = !target && !cursor && !floor && n[0] == 'P' && n[1] == '_' &&
+               (name_is(pane, "P_Statue_00") || name_is(pane, "P_Statue_01") || name_is(pane, "P_Ship_00") ||
+                name_is(pane, "P_Searchlight_00") || name_is(pane, "P_Searchlight_01") || name_is(pane, "P_Destination_00") ||
+                name_is(pane, "P_Outdoor_00") ||
+                (name_is(pane, "P_Direction_00") && ld32(pane + kPaneParent) && name_is(ld32(pane + kPaneParent), "N_Rotate_00")));
+    if (!target && !cursor && !floor && !fig) return;
     uint32_t root = pane;
     for (int i = 0; i < 16 && ld32(root + kPaneParent); i++) root = ld32(root + kPaneParent);
     if (ld32(root + kPaneParent) || root_screen(root) != kDrcTarget) return;
     if (cursor) { g_cursor_frame.store(g_swaps, std::memory_order_relaxed); return; }
     const uint32_t m = pane + kPaneGlobal;  // layout space: 1280x720, centre 0,0, y up
     float gx = (float)ldf32(m + 0xC), gy = (float)ldf32(m + 0x1C);
+    if (floor) {
+        float sx = std::hypot((float)ldf32(m), (float)ldf32(m + 0x10)), sy = std::hypot((float)ldf32(m + 4), (float)ldf32(m + 0x14));
+        if (!(sx > 0.01f) || std::fabs(gx) > 4000.0f || std::fabs(gy) > 4000.0f) return;
+        Target t{pane_name(pane), "@floor", 0.5f + gx / 1280.0f, 0.5f - gy / 720.0f, sx, sy, g_swaps};
+        std::lock_guard<std::mutex> lk(g_target_mu);
+        if (g_targets.size() > 512) g_targets.clear();
+        g_targets[pane] = std::move(t);
+        return;
+    }
     float w = (float)ldf32(pane + kPaneSize) * std::hypot((float)ldf32(m), (float)ldf32(m + 0x10));
     float h = (float)ldf32(pane + kPaneSize + 4) * std::hypot((float)ldf32(m + 4), (float)ldf32(m + 0x14));
+    if (fig) {
+        // name "@fig:<turn in degrees, counter-clockwise>:<global alpha>", w / h its size (shown, visible, in view)
+        uint8_t a = ld8(pane + kPaneAlpha + 1);
+        if (!(ld8(pane + kPaneFlags) & 1) || a == 0 || !(w > 0.5f && h > 0.5f) || std::fabs(gx) > 640.0f || std::fabs(gy) > 360.0f) return;
+        char tag[48];
+        snprintf(tag, sizeof tag, "@fig:%.1f:%d", std::atan2((float)ldf32(m + 0x10), (float)ldf32(m)) * 57.29578f, a);
+        Target t{pane_name(pane), tag, 0.5f + gx / 1280.0f, 0.5f - gy / 720.0f, w / 1280.0f, h / 720.0f, g_swaps};
+        std::lock_guard<std::mutex> lk(g_target_mu);
+        if (g_targets.size() > 512) g_targets.clear();
+        g_targets[pane] = std::move(t);
+        return;
+    }
     if (!(w > 1.0f && h > 1.0f) || std::fabs(gx) > 640.0f || std::fabs(gy) > 360.0f) return;  // parked
     Target t{pane_name(pane), pane_name(ld32(pane + kPaneParent)), 0.5f + gx / 1280.0f, 0.5f - gy / 720.0f, w / 1280.0f, h / 720.0f, g_swaps};
     // a chart square's view: its two boxes are always there; the balloon (W_MapBalloon_00) shows while
@@ -950,6 +1090,69 @@ std::string drc_targets() {
 bool drc_game_cursor() { uint64_t f = g_cursor_frame.load(std::memory_order_relaxed); return f && g_swaps - f < 4; }
 }  // namespace aspect
 
+
+// WWHD_PANE_DUMP=1: each GamePad pane kind (vtable) a few times: its bytes and what its pointers point at (to map
+// the nw::lyt classes for the drawn GamePad screen)
+static void pane_probe(uint32_t pane) {
+    using namespace aspect;
+    static const bool on = getenv("WWHD_PANE_DUMP") != nullptr;
+    if (!on) return;
+    uint32_t root = pane;
+    for (int i = 0; i < 16 && ld32(root + kPaneParent); i++) root = ld32(root + kPaneParent);
+    if (root_screen(root) != kDrcTarget) return;
+    static std::mutex mu;
+    static std::unordered_map<uint32_t, int> per;
+    static std::set<std::string> names;
+    std::lock_guard<std::mutex> lk(mu);
+    uint32_t vt = ld32(pane + 8);
+    std::string nm = pane_name(pane);
+    if (per[vt] >= 400 || !names.insert(nm).second) return;
+    per[vt]++;
+    auto hex = [](uint32_t a, int n) {
+        std::string s;
+        char b[12];
+        for (int i = 0; i < n; i += 4) { snprintf(b, sizeof b, "%08X ", ld32(a + i)); s += b; }
+        return s;
+    };
+    LOG("[pane-dump] %s root %s vt %08X", nm.c_str(), pane_name(root).c_str(), vt);
+    for (int o = 0; o < 0x180; o += 0x40) LOG("[pane-dump]  +%03X %s", o, hex(pane + o, 0x40).c_str());
+    auto fl = [](uint32_t a, int n) {
+        std::string s;
+        char b[16];
+        for (int i = 0; i < n; i += 4) { snprintf(b, sizeof b, "%.3g ", (float)ldf32(a + i)); s += b; }
+        return s;
+    };
+    auto mat = [&](const char* what, uint32_t m) {
+        if (!m) return;
+        LOG("[pane-dump]  %s mat %08X: %s", what, m, hex(m, 0x3C).c_str());
+        uint32_t bits = ld32(m + 8), mem = ld32(m + 0x10);
+        if (mem) LOG("[pane-dump]  %s mem %08X (bits %08X): %s", what, mem, bits, hex(mem, 0xA0).c_str());
+    };
+    if (vt == 0x100003C8) mat("pic", ld32(pane + 0xA4));
+    if (vt == 0x1010BE90) {
+        mat("text", ld32(pane + 0xF8));
+        uint32_t d = ld32(pane + 0xFC);
+        LOG("[pane-dump]  dsb %08X: %s", d, hex(d, 0x40).c_str());
+        uint32_t ca = ld32(d + 0x14), vb = ld32(d + 0x18);
+        if (ca) for (int i = 0; i < 2; i++) {
+            LOG("[pane-dump]  ca[%d] %08X: %s", i, ca + i * 0x70, hex(ca + i * 0x70, 0x70).c_str());
+            LOG("[pane-dump]  ca[%d] f: %s", i, fl(ca + i * 0x70, 0x70).c_str());
+        }
+        if (vb) LOG("[pane-dump]  vb %08X: %s", vb, hex(vb, 0x80).c_str());
+        uint32_t t = ld32(d + 0x20);
+        if (t) LOG("[pane-dump]  tex@dsb+20 %08X: %s", t, hex(t, 0xA0).c_str());
+    }
+    if (vt == 0x100006F8) {
+        mat("content", ld32(pane + 0xD4));
+        uint32_t fr = ld32(pane + 0xD0);
+        int n = ld8(pane + 0xCD);
+        for (int i = 0; i < n && i < 8; i++) {
+            LOG("[pane-dump]  frame[%d]: %08X %08X", i, ld32(fr + 8 * i), ld32(fr + 8 * i + 4));
+            mat("frame", ld32(fr + 8 * i + 4));
+        }
+    }
+}
+
 // Pane::Draw(this, DrawInfo&): the render thread reports where each layout root is drawn. The
 // game thread can't tell: TV and GamePad layouts share DrawInfos and are recorded on threads that
 // don't bind the targets.
@@ -968,6 +1171,12 @@ static void draw_pane(Cpu* c) {
         std::lock_guard<std::mutex> lk(mu);
         if (seen.insert(path).second) LOG("[hud] skipped (%s): %s", why, path.c_str());
     };
+    pane_probe(pane);
+    // the GamePad's layouts as drawing orders for a GamePad device (drc_mirror.h)
+    if (drc_mirror::on()) {
+        if (!ld32(pane + kPaneParent)) drc_mirror::root_begin(pane, root_screen(pane) == kDrcTarget);
+        drc_mirror::pane(pane);
+    }
     if (hud_hidden(pane)) return skipped("hidden");  // a HUD element the player hid (hud.h): neither it nor its children
     // hearts faded out completely; not their container N_Default_00, which holds the magic bar too (Main_00.bflyt)
     if (hud_fade_gone(kFadeHearts) && name_is(pane, "L_HeartAll_00")) return skipped("hearts");
@@ -1032,11 +1241,15 @@ extern "C" void hook_02877100(Cpu* c) {
     using namespace aspect;
     uint32_t pane = c->r[3];
     int fade = item_arrow_fade(pane);
-    if (fade < 0) { draw_pane(c); return; }
-    uint8_t a = ld8(pane + kPaneAlpha + 1);  // (+0x46: the alpha it is drawn with)
-    st8(pane + kPaneAlpha + 1, (uint8_t)(a * fade / 255));
-    draw_pane(c);
-    st8(pane + kPaneAlpha + 1, a);
+    if (fade < 0) {
+        draw_pane(c);
+    } else {
+        uint8_t a = ld8(pane + kPaneAlpha + 1);  // (+0x46: the alpha it is drawn with)
+        st8(pane + kPaneAlpha + 1, (uint8_t)(a * fade / 255));
+        draw_pane(c);
+        st8(pane + kPaneAlpha + 1, a);
+    }
+    if (!ld32(pane + kPaneParent)) drc_mirror::root_done(pane);
 }
 
 // the projection matrix uploaded during `fn` is tagged: the render thread narrows it (rows x and y
@@ -1051,7 +1264,10 @@ static void with_tv_projection(Cpu* c, void (*fn)(Cpu*)) {
 }
 namespace aspect {
 bool tagged_projection() { return t_tag > 0; }
-void layout_root_target(uint32_t root, int screen) { set_root_tv(root, screen); }
+void layout_root_target(uint32_t root, int screen) {
+    set_root_tv(root, screen);
+    drc_mirror::root_drawn(root, screen == kDrcTarget);
+}
 }  // namespace aspect
 
 // DrawInfo::LoadProjectionMtx(this): TV layouts are drawn into the wider screen undistorted

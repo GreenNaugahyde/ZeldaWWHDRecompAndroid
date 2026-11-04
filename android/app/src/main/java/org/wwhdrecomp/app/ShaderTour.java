@@ -21,7 +21,15 @@ import java.util.Set;
  * furthest preset's story (the one named 100%, else the most hearts; also after a restart, which loads
  * the slot's story again), and at each walks Link about and turns the camera all round. Extras for further
  * rounds: shader_tour_story=<part of a preset's name> plays the places with that preset's story instead,
- * shader_tour_places_only=true leaves the presets' own spots out. Without a state in that slot this build can
+ * shader_tour_places_only=true leaves the presets' own spots out, shader_tour_fly=true (places only) flies Link
+ * through each room instead of walking: above the ground and through walls along the room's path of
+ * <game>/flypath.txt (mods/flytour.cpp, tools/flypath.py), the camera turning slowly; rooms without a path
+ * get the walk. shader_tour_stages=<stage>,<stage>... plays only those stages' places (no preset spots). shader_tour_fight=true
+ * (boss rooms, with shader_tour_story and _stages) fights at each spot for FIGHT_MS instead of the walk: ZL held
+ * (Link locks on), B swings, now and then X / Y (the items there), walking round; infinite health on, so Link
+ * stays alive. shader_tour_talk=true (houses, shops, minigames) instead walks round for TALK_MS pressing A now and
+ * then (talks, shop counters, a minigame's first choice), the camera turning; infinite rupees on, so games and
+ * shops can be paid for. Without a state in that slot this build can
  * load (a fresh installation) the tour presses A through the title and the file select, and once the save file
  * runs it saves a state there for the restarts. Dialogue after a load gets A presses; a
  * cutscene is waited out (at most EVENT_MAX_MS).
@@ -36,10 +44,19 @@ final class ShaderTour {
     static final String EXTRA = "shader_tour";
     static String storyName;      // shader_tour_story: the places' story preset (null: the furthest)
     static boolean placesOnly;    // shader_tour_places_only: no preset spots
+    static boolean fly;           // shader_tour_fly: through the rooms by air (places only)
+    static String onlyStages;     // shader_tour_stages: only these stages' places (null: all)
+    static boolean fight;         // shader_tour_fight: fights at each spot (boss rooms)
+    static boolean talk;          // shader_tour_talk: talks at each spot (houses, shops, minigames)
+    private static final int FIGHT_MS = 120000, TALK_MS = 90000;
     private static final String IDX = "tour_idx", PENDING = "tour_pending";
     private static final int LOAD_MAX_MS = 40000;   // a warp that hasn't loaded by then is stuck
     private static final int EVENT_MAX_MS = 25000;  // then the moves start anyway
     private static final int SETTLE_MS = 1500;      // after the load, before moving
+    private static final int AHEAD_MAX_MS = 20 * 60000;  // waiting for the pipelines built ahead, at most
+    // unused stages whose rooms crash or hang on every device (each costs a restart and the wait for the head start)
+    private static final Set<String> SKIP_STAGES = new HashSet<>(java.util.Arrays.asList("I_SubAN"));
+    private static final int FLY_MAX_MS = 5 * 60000;     // one room's flight, at most
 
     // the moves at each spot: {milliseconds, left stick x, y, right stick x, y}
     private static final float[][] MOVES = {
@@ -59,11 +76,11 @@ final class ShaderTour {
     private List<WarpCatalog.Point> points;
     private int idx;
     private long stepAt, eventSince, aAt;
-    private int phase;  // 0 waiting for the game, 1 warping, 2 events, 3 settling, 4 moving
+    private int phase;  // 0 waiting for the game, 1 warping, 2 events, 3 settling, 4 moving, 6 flying, 7 fighting / talking
     private int move;
     private final int slot;
     private final boolean boot;  // no state to load: A through the title and file select, then a state saved
-    private long bootA;
+    private long bootA, aheadLog, flyLog;
     private int refused;  // warps refused in a row (a scene change that never ends: game over and the like)
     // the input the tour holds (MainActivity.pushInput sends it while the tour runs)
     int buttons;
@@ -88,11 +105,14 @@ final class ShaderTour {
     /** Starts the list from the beginning (a new tour). */
     static void reset(SharedPreferences prefs) { prefs.edit().remove(IDX).remove(PENDING).commit(); }
 
+    /** Goes on from spot idx (0-based). */
+    static void startAt(SharedPreferences prefs, int idx) { prefs.edit().putInt(IDX, idx).remove(PENDING).commit(); }
+
     private List<WarpCatalog.Point> list() {
         JSONArray cats = WarpCatalog.categories(a, null);
         if (cats == null) return null;
         List<WarpCatalog.Point> presets = WarpCatalog.presetPoints(a);
-        List<WarpCatalog.Point> out = new ArrayList<>(placesOnly ? new ArrayList<>() : presets);
+        List<WarpCatalog.Point> out = new ArrayList<>(placesOnly || fly || onlyStages != null ? new ArrayList<>() : presets);
         StoryPresets.Preset story = null;
         for (WarpCatalog.Point p : presets)
             if (storyName != null ? p.preset.name.contains(storyName) && story == null
@@ -102,7 +122,8 @@ final class ShaderTour {
         Set<String> seen = new HashSet<>();
         for (int c = 0; c < cats.length(); c++)
             for (WarpCatalog.Point p : WarpCatalog.points(cats.optJSONObject(c))) {
-                if (!seen.add(p.stage + "/" + p.room)) continue;
+                if (!seen.add(p.stage + "/" + p.room) || SKIP_STAGES.contains(p.stage)) continue;
+                if (onlyStages != null && !("," + onlyStages + ",").contains("," + p.stage + ",")) continue;
                 out.add(story == null ? p : new WarpCatalog.Point(p.name, p.hint, p.stage, p.room, p.spawn,
                         new StoryPresets.Preset(null, story.name, p.stage, p.room, p.spawn, -1, story.story)));
             }
@@ -119,6 +140,7 @@ final class ShaderTour {
     }
 
     private void next() {
+        Native.setOption("area_flush", 1);  // the spot's pipelines into areas.bin before the warp (a crash may follow)
         prefs.edit().remove(PENDING).putInt(IDX, ++idx).commit();
         warp();
     }
@@ -170,6 +192,16 @@ final class ShaderTour {
             if (points == null) return;  // the catalog is being made
             if (stepAt == 0) stepAt = now;
             if (now - stepAt < (boot ? 8000 : 3000)) return;
+            // every recipe of the head start built first: a draw then tags all recipes that came out as its
+            // pipeline (vk_draw.cpp ahead_found), also in the first areas
+            int left = Native.getOption("pipelines_pending");
+            if (left != 0 && now - stepAt < AHEAD_MAX_MS) {
+                if (now - aheadLog > 30000) {
+                    aheadLog = now;
+                    Log.i(TAG, "[tour] waiting for " + left + " pipelines built ahead");
+                }
+                return;
+            }
             warp();
             return;
         }
@@ -183,6 +215,7 @@ final class ShaderTour {
                 warp();
             } else if (st[0] == 3) {
                 Log.i(TAG, String.format(java.util.Locale.ROOT, "[tour] loaded in %.1f s", st[1] / 1000.0));
+                if (fly) Native.setOption("fly", 0);  // the last room's flight (Link hovered until now)
                 refused = 0;
                 phase = 2;
                 stepAt = now;
@@ -210,9 +243,78 @@ final class ShaderTour {
         }
         if (phase == 3) {
             if (now - stepAt < SETTLE_MS) return;
+            if (fight || talk) {
+                Native.setOption(fight ? "cheat_inf_health" : "cheat_inf_rupees", 1);
+                phase = 7;
+                stepAt = now;
+                return;
+            }
+            if (fly) {
+                Native.setOption("fly", 1);
+                phase = 6;
+                stepAt = now;
+                return;
+            }
             phase = 4;
             move = -1;
             stepAt = 0;
+        }
+        if (phase == 7) {
+            if (now - stepAt > (fight ? FIGHT_MS : TALK_MS)) {
+                Log.i(TAG, fight ? "[tour] fight over" : "[tour] talks over");
+                next();
+                return;
+            }
+            if (st[2] != 0) {  // a cutscene (the boss's entrance, a phase change) or dialogue: A now and then
+                if (st[2] == 1 && now - aAt > 1200) {
+                    aAt = now;
+                    hold(Native.A, 0, 0, 0, 0);
+                } else if (now - aAt > 150) {
+                    hold(0, 0, 0, 0, 0);
+                }
+                return;
+            }
+            long t = now - stepAt;
+            if (talk) {  // A now and then, walking round (a wider circle), the camera turning slowly
+                double a = t / 5000.0;
+                hold(t % 1500 < 150 ? Native.A : 0, (float) Math.sin(a), (float) Math.cos(a), 0.25f, 0);
+                return;
+            }
+            int b = Native.ZL | ((t / 300) % 2 == 0 ? Native.B : 0);
+            if (t % 6000 < 300) b |= (t / 6000) % 2 == 0 ? Native.X : Native.Y;  // an item now and then
+            double a = t / 3000.0;  // walking round
+            hold(b, (float) Math.sin(a), (float) Math.cos(a), 0, 0);
+            return;
+        }
+        if (phase == 6) {
+            int left = Native.getOption("fly_left");
+            if (left == -2) return;  // being started by the game
+            if (left == -1) {  // no path for this room: the walk
+                phase = 4;
+                move = -1;
+                stepAt = 0;
+                return;
+            }
+            String where = Native.warpWhere(), stage = points.get(idx).stage;
+            boolean left_room = !where.startsWith(stage + ",");  // an exit flown into
+            if (left == 0 || left_room || now - stepAt > FLY_MAX_MS) {  // (he hovers until the next warp has loaded)
+                Log.i(TAG, "[tour] flight " + (left == 0 ? "done" : left_room ? "left the stage (" + where + ")"
+                        : "too long (" + left + " points left)") + String.format(java.util.Locale.ROOT, " in %.0f s",
+                        (now - stepAt) / 1000.0));
+                next();
+                return;
+            }
+            if (now - flyLog > 30000) {
+                flyLog = now;
+                Log.i(TAG, "[tour] flying, " + left + " points to go");
+            }
+            if (st[2] == 1 && now - aAt > 1200) {  // dialogue (the flight waits): A
+                aAt = now;
+                hold(Native.A, 0, 0, 0, 0);
+            } else if (now - aAt > 150) {
+                hold(0, 0, 0, 0.35f, 0);  // the camera turning slowly
+            }
+            return;
         }
         if (phase == 4) {
             if (move >= 0 && now - stepAt < MOVES[move][0]) return;

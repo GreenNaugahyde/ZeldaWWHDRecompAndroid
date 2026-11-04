@@ -19,6 +19,7 @@
     <string name="hint_mg_wind">*Arrastra la flecha azul* alrededor de la brújula\npara elegir hacia dónde sopla el viento.\n¡Luego toca el *botón verde*!</string>
     <string name="hint_leaf_glide">Al planear: *toca el botón de la hoja*\npara cerrarla y caer; tócalo otra vez\nal caer para volver a planear.\n¡*Mantenlo* para agitar la hoja en el aire!</string>
     <string name="hint_ring">*Mantén un botón de objeto* para elegir\nsu objeto en una rueda: *desliza* hasta el\nobjeto y *suelta*. Un toque corto lo usa\ncomo antes. ¡Las bolsas abren su propia rueda!</string>
+    <string name="hint_wind_dial">El *dial del viento* del minimapa muestra el viento.\n*Desliza* desde él para girarlo al instante.\nMando: *mantén −*, *inclina el stick derecho*, suelta −.</string>
     <string name="hint_songs_button">Mantén el *botón del micro* (o *L*) y canta,\ntararea o silba una canción aprendida.\n¡*Suelta* al terminar y Link la tocará!</string>
     <string name="hint_songs_auto">Canta, tararea o silba una canción aprendida:\n¡el *micrófono* te escucha!\nHaz una breve pausa tras la *última nota*.</string>
     <string name="hint_songs_try">¿Quieres *probarlo* primero? Mantén el botón\ndel micrófono y canta: verás cada *nota* que aciertes.\nLink no tocará nada mientras practicas.</string>
@@ -32,6 +33,10 @@
     <string name="cheat_bags">Llenar las bolsas</string>
     <string name="cheat_bags_done">Bolsa de botín y bolsa de cebos llenas.</string>
     <string name="cheat_bags_hint">La bolsa de botín y la bolsa de cebos (si faltan), cada tipo de botín ×99, cebos y peras Hyoi</string>
+    <string name="cheat_figurines">Completar la Galería Nintendo</string>
+    <string name="cheat_figurines_hint">Todas las figuras que hace Carlov. Después Carlov deja su taller, como al final del juego</string>
+    <string name="cheat_figurines_done">Todas las figuras están en la galería.</string>
+    <string name="cheat_figurines_member">Primero hazte socio de la Galería Nintendo: dale a Carlov una foto en color.</string>
     <string name="cheat_dungeon">Mapa, brújula y llave del jefe (esta mazmorra)</string>
     <string name="cheat_dungeon_done">Mapa, brújula y llave del jefe de esta mazmorra.</string>
     <string name="cheat_inf_ammo">Flechas y bombas infinitas</string>
@@ -41,6 +46,8 @@
     <string name="cheat_inf_breath_hint">El indicador de nado se queda lleno: Link nunca se cansa ni se hunde en aguas profundas</string>
     <string name="cheat_one_hit">Un golpe basta</string>
     <string name="cheat_one_hit_hint">Los enemigos caen de un solo golpe (salvo los jefes con su propio contador)</string>
+    <string name="cheat_fast_push">Empujar bloques más rápido</string>
+    <string name="cheat_fast_push_hint">Los bloques y las cajas se mueven unas dos veces y media más rápido y arrancan al momento</string>
     <string name="cheat_inf_health">Vida infinita</string>
     <string name="cheat_inf_magic">Magia infinita</string>
     <string name="cheat_inf_rupees">Rupias infinitas</string>
@@ -111,10 +118,13 @@
     <string name="gpu_driver_use">Usar</string>
     <string name="interp_fps">%d fps (interpolado)</string>
     <string name="interp_off">30 fps (original)</string>
+    <string name="fps_generated">60 fps (generados)</string>
     <string name="opt_about">Acerca de</string>
     <string name="opt_aniso">Filtrado anisotrópico 16×</string>
     <string name="opt_ao">Oclusión ambiental</string>
     <string name="opt_ao_hires">Profundidad de oclusión a tamaño completo</string>
+    <string name="opt_area_blur">Desenfoque suave en alta resolución</string>
+    <string name="opt_area_blur_hint">Por encima de 1,5x, el desenfoque de luz y resplandor del juego cubre lo mismo que a 720p: sin rejilla fina alrededor de lo que está en el suelo</string>
     <string name="opt_aspect">Relación de aspecto</string>
     <string name="opt_auto_slot">Guardado automático %1$d</string>
     <string name="opt_auto_state">Estado de guardado automático</string>
@@ -219,7 +229,7 @@
     <string name="opt_display_res">Resolución de pantalla</string>
     <string name="opt_display_res_hint">Auto: la imagen se dibuja al tamaño que necesita y la pantalla la amplía, lo que es más rápido en pantallas de alta resolución; Completa: siempre a la resolución propia de la pantalla</string>
     <string name="opt_drc_display">Pantalla del GamePad</string>
-    <string name="opt_drc_display_hint">Se encontró una segunda pantalla (p. ej. la pantalla inferior de un dispositivo de doble pantalla)</string>
+    <string name="opt_drc_display_hint">Se encontró una segunda pantalla: la inferior de un dispositivo de doble pantalla, o un televisor por envío de pantalla o cable HDMI. Para un televisor elige la imagen del juego: este dispositivo muestra entonces la del GamePad.</string>
     <string name="opt_drc_shape">Imagen del GamePad</string>
     <string name="opt_drc_shape_hint">Llenar: la pantalla del GamePad toma la forma de la pantalla y su fondo llega a los bordes</string>
     <string name="opt_dyn_res">Resolución dinámica</string>
@@ -247,7 +257,7 @@
     <string name="opt_import">Importar partidas</string>
     <string name="opt_import_hint">Restaurarlas desde sus archivos; una partida importada reinicia el juego</string>
     <string name="opt_interp">Tasa de fotogramas</string>
-    <string name="opt_interp_hint">Interpolación de fotogramas: fotogramas intermedios a partir de los 30 fps del juego. Necesita una CPU rápida; un fotograma que no llega a tiempo se omite y el juego mantiene su velocidad</string>
+    <string name="opt_interp_hint">Interpolación de fotogramas: fotogramas intermedios a partir de los 30 fps del juego. Necesita una CPU rápida; un fotograma que no llega a tiempo se omite y el juego mantiene su velocidad. 60 fps (generados): uno de cada dos fotogramas lo crea la GPU a partir del anterior, ligero para la CPU</string>
     <string name="opt_invert_camera_y">Invertir cámara arriba/abajo</string>
     <string name="opt_invert_camera_y_hint">Empuja el stick derecho (o desliza) hacia arriba para mirar hacia abajo. Primera persona y apuntar deja como están la cámara normal y los menús</string>
     <string name="opt_item_ring">Rueda de objetos</string>
@@ -272,11 +282,31 @@
     <string name="opt_mod_climb_fast">Escalada más rápida</string>
     <string name="opt_mod_climb_fast_hint">Escaleras, enredaderas y moverse colgado de un borde</string>
     <string name="opt_mod_climb_hint">Con una rueda de resistencia; B o A para soltarse</string>
+    <string name="opt_mod_leaf_lift">Hoja Deku: agitar para subir</string>
+    <string name="opt_mod_leaf_lift_hint">Al planear, cada sacudida de la hoja (su botón otra vez) eleva un poco a Link</string>
+    <string name="opt_mod_leaf_lift_height">Altura por sacudida</string>
+    <string name="opt_mod_leaf_lift_height_hint">Cuánto eleva a Link cada sacudida; 100 % es más o menos su propia altura</string>
     <string name="opt_mod_direct_camera">Cámara directa con el stick derecho</string>
     <string name="opt_mod_direct_camera_hint">Sin suavizado: la cámara sigue al stick al instante</string>
     <string name="opt_mod_fast_scenes">Cambios de escena rápidos</string>
     <string name="opt_mod_ff_cutscenes">Avance rápido de escenas</string>
     <string name="opt_mod_ff_dialogues">Avance rápido de diálogos</string>
+    <string name="opt_mod_instant_text">Texto instantáneo</string>
+    <string name="opt_mod_instant_text_hint">Los cuadros de texto muestran todo el texto de golpe en vez de letra a letra; B también salta, y se cierran sin esperar a la flecha</string>
+    <string name="opt_mod_text_pauses">Sin pausas en los textos</string>
+    <string name="opt_mod_text_pauses_hint">Quita también las breves pausas escritas en algunos textos</string>
+    <string name="opt_hit_stops">Pausas al golpear</string>
+    <string name="opt_hit_stops_hint">La breve pausa del mundo al acertar un golpe, por tipo; desactivada, el juego sigue sin detenerse</string>
+    <string name="opt_hit_stop_hit">Golpes</string>
+    <string name="opt_hit_stop_hit_hint">Un golpe a un enemigo (1–2 fotogramas)</string>
+    <string name="opt_hit_stop_strong">Golpes fuertes</string>
+    <string name="opt_hit_stop_strong_hint">Un enemigo derribado, un Darknut que pierde su armadura, un Stalfos su cabeza (4–6 fotogramas)</string>
+    <string name="opt_hit_stop_defeat">Enemigos derrotados</string>
+    <string name="opt_hit_stop_defeat_hint">El golpe que derrota a un enemigo (6 fotogramas)</string>
+    <string name="opt_hit_stop_boss">Jefes</string>
+    <string name="opt_hit_stop_boss_hint">Los golpes a un jefe y sus propias pausas (hasta 8 fotogramas)</string>
+    <string name="opt_hit_stop_sign">Carteles</string>
+    <string name="opt_hit_stop_sign_hint">Cortar un cartel (1 fotograma)</string>
     <string name="opt_mod_picto_pages">Páginas del álbum</string>
     <string name="opt_mod_picto_pages_hint">El álbum del pictógrafo tiene tantas páginas de 12 fotos como quieras: cuando está lleno, una foto nueva empieza una página nueva. En el álbum, la barra de arriba (o ZL / L) pasa las páginas. La partida guarda la página en uso, las demás se guardan a su lado</string>
     <string name="picto_page">Página %1$d / %2$d</string>
@@ -322,6 +352,12 @@
     <string name="opt_mod_jump_noauto">Sin saltos automáticos en los bordes</string>
     <string name="opt_mod_jump_noauto_hint">Al correr más allá de un borde, Link cae en vez de saltar: saltas con el botón de salto</string>
     <string name="opt_mod_quick_doors">Puertas rápidas</string>
+    <string name="opt_mod_walk_doors">Puertas sin escena</string>
+    <string name="opt_mod_walk_doors_hint">Las puertas de mazmorras y casas se abren, cruzas tú mismo y se cierran tras de ti: sin escena de puerta</string>
+    <string name="opt_mod_walk_doors_open">Abrir puertas</string>
+    <string name="opt_mod_walk_doors_open_hint">Al acercarse Link, o con A en el aviso Abrir del juego (luego cruza tú mismo)</string>
+    <string name="opt_mod_walk_doors_near">Al acercarte</string>
+    <string name="opt_mod_walk_doors_a">Con A</string>
     <string name="opt_mod_run">Correr más rápido</string>
     <string name="opt_mod_run_always">Siempre</string>
     <string name="opt_mod_run_hint">Link recorre más distancia al correr; los saltos y volteretas no cambian</string>
@@ -350,7 +386,7 @@
     <string name="opt_page_minigames">Minijuegos y consejos</string>
     <string name="opt_page_minigames_hint">Minijuegos y dirigir por toque, consejos táctiles</string>
     <string name="opt_page_hud">Pantalla (HUD)</string>
-    <string name="opt_page_hud_hint">Corazones, rupias, vista del pictógrafo</string>
+    <string name="opt_page_hud_hint">Corazones, rupias, minimapa, vista del pictógrafo</string>
     <string name="opt_page_controller">Mando</string>
     <string name="opt_page_controller_hint">Configurar, botones, detalles del mando</string>
     <string name="cd_title">Detalles del mando</string>
@@ -447,6 +483,284 @@
     <string name="opt_page_advanced_hint">Controlador de GPU, VSync, hilo de grabación, caché de shaders</string>
     <string name="opt_page_songs">Canciones</string>
     <string name="opt_page_songs_hint">Repetir, cantar al micrófono, botones de reproducción</string>
+    <string name="opt_progress">Progreso</string>
+    <string name="opt_progress_hint">Lo que esta partida ha conseguido y lo que aún falta, como lista de control</string>
+    <string name="progress_on_screen">Porcentaje en pantalla</string>
+    <string name="progress_on_screen_hint">Al jugar, arriba en la imagen. Al tocarlo se abre esta lista</string>
+    <string name="progress_show">Mostrar</string>
+    <string name="progress_no_game">Carga primero una partida: la lista muestra la partida en juego.</string>
+    <string name="progress_about">Cada una de las %1$d partes cuenta lo mismo. No se cuentan: las estatuas de Tingle, el ataque huracán, los intercambios de la saca de cartero ni el último combate (el juego ya no guarda nada después).</string>
+    <string name="progress_part_done">Todo conseguido.</string>
+    <string name="progress_part_dungeons">Mazmorras</string>
+    <string name="progress_part_hearts">Corazones</string>
+    <string name="progress_part_items">Objetos</string>
+    <string name="progress_part_equipment">Equipo</string>
+    <string name="progress_part_upgrades">Mejoras</string>
+    <string name="progress_part_songs">Canciones</string>
+    <string name="progress_part_quest">Orbes y Trifuerza</string>
+    <string name="progress_part_charts">Mapas del tesoro</string>
+    <string name="progress_part_sea">Carta náutica</string>
+    <string name="progress_part_figurines">Galería</string>
+    <string name="progress_fire_ice">Flechas de fuego y de hielo</string>
+    <string name="progress_light">Flechas de luz</string>
+    <string name="progress_master_half">Espada maestra (medio poder)</string>
+    <string name="progress_master_full">Espada maestra (todo su poder)</string>
+    <string name="progress_pirate">Amuleto pirata</string>
+    <string name="progress_salvaged">Tesoros rescatados</string>
+    <string name="progress_magic">Magia ×2</string>
+    <string name="progress_deluxe">Caja luminográfica deluxe</string>
+    <string name="progress_square">Casilla %1$d</string>
+    <string name="progress_figurine">Figura %1$d</string>
+    <string name="pmap_title">Mapa</string>
+    <string name="pmap_hint">Dónde se encontró cada cosa en la carta náutica y, si quieres, lo que aún falta</string>
+    <string name="pmap_show">Marcas</string>
+    <string name="pmap_kind">Cosas</string>
+    <string name="pmap_about">Toca una casilla para ver sus cosas. Una marca está donde está una cosa; el número de una casilla cuenta sus cosas, también las de cuevas, barcos y mazmorras. En el juego original cada cosa tiene su propio lugar, así que lo que tiene la partida aparece como encontrado allí.</string>
+    <string name="pmap_boss">Jefe · %1$s</string>
+    <string name="pmap_inside">dentro</string>
+    <string name="pmap_src_chest">Cofre</string>
+    <string name="pmap_src_sub">Submarino</string>
+    <string name="pmap_src_sunken">Tesoro hundido</string>
+    <string name="pmap_src_octo">Gran Octorok</string>
+    <string name="pmap_src_gunboat">Cañonero</string>
+    <string name="pmap_src_ground">En el suelo</string>
+    <string name="pmap_src_reward">Recompensa</string>
+    <string name="pmap_src_auction">Subasta</string>
+    <string name="pmap_src_minigame">Minijuego</string>
+    <string name="pmap_src_letter">Carta</string>
+    <string name="pmap_src_shop">Tienda</string>
+    <string name="pmap_src_boss">Jefe</string>
+    <string name="pmap_src_fishman">Hombre pez</string>
+    <string name="pmap_src_fairy">Gran Hada</string>
+    <string name="pmap_src_unknown">Lugar desconocido</string>
+    <string name="pmap_dungeon_map">Mapa de la mazmorra</string>
+    <string name="pmap_sea">Carta náutica</string>
+    <string name="pmap_floor">Piso</string>
+    <string name="pmap_elsewhere">Sin lugar fijo</string>
+    <string name="pmap_elsewhere_hint">Cosas que se mueven (el Barco fantasma) o cuyo lugar no se conoce. Encontradas jugando, se guarda la isla donde estaba Link.</string>
+    <string name="pmap_found_on">encontrado %1$s</string>
+    <string name="pmap_maybe">encontrado, no se sabe cuál</string>
+    <string name="pmap_none">Nada aquí para esta elección.</string>
+    <string name="pmap_game_map">En el mapa del juego</string>
+    <string name="pmap_game_map_hint">Marcas en la carta náutica del juego (la pantalla del GamePad de +), también en la vista de cerca de una casilla</string>
+    <string name="pmap_mini_map_hint">Las mismas marcas en el minimapa al jugar (también en Controles > Pantalla (HUD))</string>
+    <!-- achievements (Achievements.java) -->
+    <string name="opt_achievements">Logros</string>
+    <string name="opt_achievements_hint">Metas en el juego, conseguidas una vez para siempre</string>
+    <string name="ach_total">%1$d de %2$d conseguidos · %3$d de %4$d puntos</string>
+    <string name="ach_popups">Aviso en pantalla</string>
+    <string name="ach_popups_hint">Al conseguir uno, unos segundos arriba en la imagen del juego</string>
+    <string name="ach_link">Link lo levanta</string>
+    <string name="ach_link_hint">En el aviso Link se da la vuelta y levanta el logro, como cuando encuentra un tesoro</string>
+    <string name="ach_sound">Fanfarria</string>
+    <string name="ach_sound_hint">La fanfarria del juego al encontrar un objeto importante, con el aviso</string>
+    <string name="ach_sound_volume">Volumen de la fanfarria</string>
+    <string name="opt_ach_settings">Logros: ajustes</string>
+    <string name="opt_ach_settings_hint">Aviso, Link, partidas, borrar</string>
+    <string name="ach_each_file">Avisos en cada partida</string>
+    <string name="ach_each_file_hint">Activado: cada partida consigue los suyos y los vuelve a mostrar. Desactivado: solo los logros que ninguna partida tenía</string>
+    <string name="ach_with_cheats">Ganar con trucos</string>
+    <string name="ach_with_cheats_hint">Activado: los trucos y los perfiles de historia ya no pausan los logros</string>
+    <string name="ach_files_about">Cada partida (su número y nombre) guarda sus propios logros, además de la lista de todas las partidas. Una partida nueva empezada en una ranura vuelve a empezar esa lista.</string>
+    <string name="ach_scope">Partidas</string>
+    <string name="ach_scope_all">Todas las partidas</string>
+    <string name="ach_scope_file">Esta partida</string>
+    <string name="ach_file">%1$s · partida %2$d</string>
+    <string name="ach_file_no">Partida %1$d</string>
+    <string name="ach_no_file">No hay ninguna partida en juego: carga una para ver sus propios logros.</string>
+    <string name="ach_about">Todas las partidas: se consiguen con cualquier partida y se quedan aunque la borres. Una partida: lo que ha conseguido ella misma. Las metas ya alcanzadas cuentan al cargar la partida. No se consigue nada mientras haya un truco activo, ni tras un truco único o un preajuste de historia hasta reiniciar la app.</string>
+    <plurals name="ach_paused_on">
+        <item quantity="one">En pausa porque este truco está activo: %1$s</item>
+        <item quantity="other">En pausa porque estos trucos están activos: %1$s</item>
+    </plurals>
+    <string name="ach_paused_used">En pausa hasta que se vuelva a abrir la app, usado en esta sesión: %1$s</string>
+    <string name="ach_paused_title">Logros en pausa</string>
+    <string name="ach_paused_many">En pausa: %1$d trucos</string>
+    <string name="ach_paused_many_hint">Toca para ver cuáles</string>
+    <string name="ach_paused_on_list">Activos ahora:</string>
+    <string name="ach_paused_used_list">Usados en esta sesión (en pausa hasta que se vuelva a abrir la app):</string>
+    <string name="ach_earned_on">Conseguido el %1$s</string>
+    <string name="ach_points">%1$d puntos</string>
+    <string name="ach_popup">Logro conseguido</string>
+    <string name="ach_popup_many">%1$d logros conseguidos</string>
+    <string name="ach_reset">Borrar los logros</string>
+    <string name="ach_reset_hint">Todos vuelven a quedar pendientes, en cada partida; lo que la partida en juego ya alcanzó se consigue de nuevo enseguida</string>
+    <string name="ach_reset_ask">¿Borrar todos los logros?</string>
+    <string name="ach_group_story">Historia</string>
+    <string name="ach_group_items">Objetos y mejoras</string>
+    <string name="ach_group_songs">Melodías</string>
+    <string name="ach_group_quests">Misiones secundarias</string>
+    <string name="ach_group_collect">Colecciones</string>
+    <string name="ach_group_gallery">Galería Nintendo</string>
+    <string name="ach_get">Consigue: %1$s.</string>
+    <string name="ach_learn">Aprende: %1$s.</string>
+    <string name="ach_d_chests">Abre todos los cofres: %1$s.</string>
+    <string name="ach_t_set_sail">¡A la mar!</string>
+    <string name="ach_d_set_sail">Deja la isla en el barco pirata (%1$s).</string>
+    <string name="ach_t_king_red_lions">Un barco que habla</string>
+    <string name="ach_d_king_red_lions">Conoce al Mascarón Rojo.</string>
+    <string name="ach_t_pearl_din">Regalo de los orni</string>
+    <string name="ach_t_pearl_farore">Regalo del bosque</string>
+    <string name="ach_t_pearl_nayru">Regalo del mar</string>
+    <string name="ach_t_tower_rises">La torre emerge</string>
+    <string name="ach_d_tower_rises">Haz que la torre salga del mar (%1$s).</string>
+    <string name="ach_t_bell">Toca la campana</string>
+    <string name="ach_d_bell">Toca la campana en lo más alto (%1$s).</string>
+    <string name="ach_t_master_sword">La espada destructora del mal</string>
+    <string name="ach_t_tetra">Princesa pirata</string>
+    <string name="ach_d_tetra">Descubre quién es Tetra en realidad.</string>
+    <string name="ach_t_sword_half">Medio despierta</string>
+    <string name="ach_d_sword_half">Devuelve a la Espada Maestra la mitad de su poder.</string>
+    <string name="ach_t_sword_full">Totalmente despierta</string>
+    <string name="ach_d_sword_full">Devuelve a la Espada Maestra todo su poder.</string>
+    <string name="ach_t_triforce">El Valor reunido</string>
+    <string name="ach_d_triforce">Encuentra los ocho fragmentos de la Trifuerza.</string>
+    <string name="ach_t_the_end">Una nueva tierra</string>
+    <string name="ach_d_the_end">Termina el juego y guarda la partida acabada.</string>
+    <string name="ach_t_hero_mode">Ni un corazón de regalo</string>
+    <string name="ach_d_hero_mode">Juega una partida en el modo Heroico.</string>
+    <string name="ach_t_the_end_hero">Héroe de la leyenda</string>
+    <string name="ach_d_the_end_hero">Termina el juego en el modo Heroico y guarda la partida acabada.</string>
+    <string name="ach_t_bait_bag">Listo con el cebo</string>
+    <string name="ach_t_wind_waker">Maestro</string>
+    <string name="ach_t_bottle">Embotellado</string>
+    <string name="ach_t_grappling_hook">A balancearse</string>
+    <string name="ach_t_deku_leaf">Lo que el viento se llevó</string>
+    <string name="ach_t_boomerang">Siempre vuelve</string>
+    <string name="ach_t_bombs">Comienzo explosivo</string>
+    <string name="ach_t_tingle_bottle">Mensaje en una botella</string>
+    <string name="ach_t_bow">Cuerda tensa</string>
+    <string name="ach_t_skull_hammer">Hora del martillo</string>
+    <string name="ach_t_fire_ice">Frío y calor</string>
+    <string name="ach_t_iron_boots">Pies de plomo</string>
+    <string name="ach_t_power_bracelets">Brazos fuertes</string>
+    <string name="ach_t_mirror_shield">Reflejos</string>
+    <string name="ach_t_hookshot">Largo alcance</string>
+    <string name="ach_t_light_arrows">Flecha de luz</string>
+    <string name="ach_t_magic_armor">Impenetrable</string>
+    <string name="ach_t_heros_charm">Cara de héroe</string>
+    <string name="ach_t_deluxe_picto">A todo color</string>
+    <string name="ach_t_swift_sail">A toda vela</string>
+    <string name="ach_t_bottles">Coleccionista de botellas</string>
+    <string name="ach_d_bottles">Ten las cuatro botellas.</string>
+    <string name="ach_t_magic">Magia doble</string>
+    <string name="ach_d_magic">Duplica tu barra de magia.</string>
+    <string name="ach_t_hearts">Gran corazón</string>
+    <string name="ach_d_hearts">Ten 20 corazones.</string>
+    <string name="ach_t_wallet_1000">Calderilla</string>
+    <string name="ach_t_wallet_5000">Lluvia de rupias</string>
+    <string name="ach_t_bombs_60">Más bombas</string>
+    <string name="ach_t_bombs_99">Bombas a montones</string>
+    <string name="ach_t_arrows_60">Más flechas</string>
+    <string name="ach_t_arrows_99">Flechas a montones</string>
+    <string name="ach_t_song_requiem">Cambio de viento</string>
+    <string name="ach_t_song_ballad">A lomos del vendaval</string>
+    <string name="ach_t_song_command">Al mando</string>
+    <string name="ach_t_song_earth">Canto de la tierra</string>
+    <string name="ach_t_song_wind">Canto del viento</string>
+    <string name="ach_t_song_passing">Día y noche</string>
+    <string name="ach_t_grandma_chest">El secreto de la abuela</string>
+    <string name="ach_d_grandma_chest">Abre el cofre escondido en casa de la abuela.</string>
+    <string name="ach_t_grandma_soup">Que te mejores</string>
+    <string name="ach_d_grandma_soup">Anima a la abuela con un hada y recibe su sopa.</string>
+    <string name="ach_t_black_pig">Buscador de trufas</string>
+    <string name="ach_d_black_pig">Deja que el cerdo negro desentierre su tesoro (%1$s).</string>
+    <string name="ach_t_orca_500">Entrenamiento con espada</string>
+    <string name="ach_d_orca_500">Acierta 500 golpes en el entrenamiento de Orca.</string>
+    <string name="ach_t_orca_1000">Mil golpes</string>
+    <string name="ach_d_orca_1000">Acierta 1000 golpes en el entrenamiento de Orca.</string>
+    <string name="ach_t_hurricane_spin">Torbellino</string>
+    <string name="ach_d_hurricane_spin">Aprende la última técnica de espada de Orca.</string>
+    <string name="ach_t_killer_bees">El escondite</string>
+    <string name="ach_d_killer_bees">Encuentra a todos los Killer Bees (%1$s).</string>
+    <string name="ach_t_joy_pendant">Regalo de cumpleaños</string>
+    <string name="ach_d_joy_pendant">Lleva un regalo de cumpleaños a la señora Marie.</string>
+    <string name="ach_t_lenzo">Ayudante de fotógrafo</string>
+    <string name="ach_d_lenzo">Haz las tres fotos que te pide Lenzo.</string>
+    <string name="ach_t_anton_linda">Celestino</string>
+    <string name="ach_d_anton_linda">Junta a Anton y Linda.</string>
+    <string name="ach_t_maggie_moe">Cartas de amor</string>
+    <string name="ach_d_maggie_moe">Lleva las cartas entre Maggie y Moe y recibe el agradecimiento de Maggie.</string>
+    <string name="ach_t_lighthouse">Que se haga la luz</string>
+    <string name="ach_d_lighthouse">Vuelve a poner en marcha el faro y recoge la recompensa (%1$s).</string>
+    <string name="ach_t_potions">Maestro de pociones</string>
+    <string name="ach_d_potions">Ayuda al doctor Bandam a preparar la poción verde y la azul.</string>
+    <string name="ach_t_letter_sorting">Bien clasificado</string>
+    <string name="ach_d_letter_sorting">Clasifica 25 cartas para Baito (%1$s).</string>
+    <string name="ach_t_golden_feathers">Pluma de oro</string>
+    <string name="ach_d_golden_feathers">Ayuda al guardia orni a conquistar a su amada y recibe su carta.</string>
+    <string name="ach_t_aryll_letter">Carta de casa</string>
+    <string name="ach_d_aryll_letter">Lee la carta de Abril.</string>
+    <string name="ach_t_flight_record">Por los aires</string>
+    <string name="ach_d_flight_record">Bate el récord de vuelo (%1$s).</string>
+    <string name="ach_t_squid_hunt">Campeón de los barcos</string>
+    <string name="ach_d_squid_hunt">Gana los tres premios del juego de los calamares (%1$s).</string>
+    <string name="ach_t_beedle_silver">Socio de plata</string>
+    <string name="ach_d_beedle_silver">Hazte socio de plata del barco tienda de Beedle.</string>
+    <string name="ach_t_beedle_gold">Socio de oro</string>
+    <string name="ach_d_beedle_gold">Hazte socio de oro del barco tienda de Beedle.</string>
+    <string name="ach_t_trading">Maestro del trueque</string>
+    <string name="ach_d_trading">Termina los trueques de los mercaderes viajeros y recibe la última recompensa.</string>
+    <string name="ach_t_puzzle_1">Primer rompecabezas</string>
+    <string name="ach_d_puzzle_1">Resuelve un rompecabezas deslizante en la casa (%1$s).</string>
+    <string name="ach_t_puzzle_8">Experto en rompecabezas</string>
+    <string name="ach_d_puzzle_8">Resuelve 8 rompecabezas deslizantes en la casa (%1$s).</string>
+    <string name="ach_t_puzzle_16">Maestro del rompecabezas</string>
+    <string name="ach_d_puzzle_16">Resuelve los 16 rompecabezas deslizantes de la casa (%1$s).</string>
+    <string name="ach_t_fire_mountain_fast">Pies fríos, manos calientes</string>
+    <string name="ach_d_fire_mountain_fast">Abre el cofre del interior antes de 1:15 tras congelarla (%1$s).</string>
+    <string name="ach_t_ice_ring_fast">Deshielo exprés</string>
+    <string name="ach_d_ice_ring_fast">Abre el cofre del interior antes de 1:15 tras derretirla (%1$s).</string>
+    <string name="ach_t_trees_fast">Mano verde</string>
+    <string name="ach_d_trees_fast">Riega los 8 árboles marchitos antes de 20 minutos desde el primero.</string>
+    <string name="ach_t_platforms">Saqueador de plataformas</string>
+    <string name="ach_d_platforms">Abre todos los cofres de las plataformas del mar.</string>
+    <string name="ach_t_unarmed_robbery">Robo desarmado</string>
+    <string name="ach_d_unarmed_robbery">Abre los cuatro cofres antes de recuperar tu espada (%1$s).</string>
+    <string name="ach_t_labyrinth_30">Entre fuego y agua</string>
+    <string name="ach_d_labyrinth_30">Llega al tesoro 30 pisos más abajo en la cueva de las pruebas (%1$s).</string>
+    <string name="ach_t_special_charts">Cartófilo</string>
+    <string name="ach_d_special_charts">Reúne las 12 cartas especiales.</string>
+    <string name="ach_t_tingle_statues">Coleccionista de estatuas</string>
+    <string name="ach_d_tingle_statues">Encuentra la estatua de Tingle en cada una de las cinco mazmorras.</string>
+    <string name="ach_t_chests_drc">Botín ardiente</string>
+    <string name="ach_t_chests_fw">Tesoros del bosque</string>
+    <string name="ach_t_chests_totg">Tesoros divinos</string>
+    <string name="ach_t_chests_et">Tesoros enterrados</string>
+    <string name="ach_t_chests_wt">Tesoros en el viento</string>
+    <string name="ach_t_submarines">Cazador de submarinos</string>
+    <string name="ach_d_submarines">Abre los cofres de los 7 submarinos.</string>
+    <string name="ach_t_big_octos">Cazapulpos</string>
+    <string name="ach_d_big_octos">Derrota a los 6 Pulpos Gigantes.</string>
+    <string name="ach_t_charts_20">Lector de cartas</string>
+    <string name="ach_d_charts_20">Reúne 20 cartas.</string>
+    <string name="ach_t_charts_all">Todas las cartas</string>
+    <string name="ach_d_charts_all">Reúne las 49 cartas.</string>
+    <string name="ach_t_salvage_all">Riquezas hundidas</string>
+    <string name="ach_d_salvage_all">Rescata el tesoro de las 49 cartas.</string>
+    <string name="ach_t_sea_half">Medio mar</string>
+    <string name="ach_d_sea_half">Completa 25 casillas de la carta marina.</string>
+    <string name="ach_t_sea_all">Aguas conocidas</string>
+    <string name="ach_d_sea_all">Completa las 49 casillas de la carta marina.</string>
+    <string name="ach_t_progress_100">Cien por cien</string>
+    <string name="ach_d_progress_100">Llega al 100 % de progreso.</string>
+    <string name="ach_t_gallery_open">Amante del arte</string>
+    <string name="ach_d_gallery_open">Abre el camino a la Galería Nintendo.</string>
+    <string name="ach_t_figurine_first">Primera figura</string>
+    <string name="ach_d_figurine_first">Haz que te hagan una figura en la Galería Nintendo.</string>
+    <string name="ach_t_room_outset">Hogar</string>
+    <string name="ach_d_room">Completa la sala de la galería: %1$s.</string>
+    <string name="ach_t_room_windfall">Ciudad animada</string>
+    <string name="ach_t_room_sea">Gente del mar</string>
+    <string name="ach_d_room_sea">Completa la sala del Gran Mar de la galería.</string>
+    <string name="ach_t_room_dragon">Amigos con plumas</string>
+    <string name="ach_t_room_forest">Hojitas</string>
+    <string name="ach_t_room_enemies">Conoce a tu enemigo</string>
+    <string name="ach_d_room_enemies">Completa la sala de los enemigos de la galería.</string>
+    <string name="ach_t_room_fortress">Figuras de la fortaleza</string>
+    <string name="ach_t_figurines_all">Galería completa</string>
+    <string name="ach_d_figurines_all">Consigue las 134 figuras.</string>
+    <!-- end of achievements -->
     <string name="opt_onscreen">Controles en pantalla</string>
     <string name="opt_onscreen_hint">Desactivado: sin botones ni sticks en la pantalla, solo el botón del menú (para jugar solo con un mando)</string>
     <string name="opt_onscreen_size">Tamaño de los controles en pantalla</string>
@@ -491,13 +805,70 @@
     <string name="opt_rumble_hint_missing">En este dispositivo: la vibración de %1$s no llega a las apps aquí (por qué: Mando &gt; Detalles del mando)</string>
     <string name="opt_rupees_change">Rupias solo cuando cambian</string>
     <string name="opt_rupees_change_hint">El contador de rupias aparece al conseguir o gastar rupias, y desaparece tras unos segundos</string>
+    <string name="opt_minimap">Minimapa</string>
+    <string name="opt_minimap_hint">Un mapa en una esquina de la imagen de la TV, al estilo del mapa del GamePad: en el Gran Mar las islas cartografiadas y el Mascarón Rojo, en las mazmorras sus salas, en otros lugares un plano. Tócalo para el siguiente tamaño; muévelo en Disposición de pantalla. Mantenlo pulsado para el mapa completo</string>
+    <string name="opt_minimap_style">Estilo del mapa</string>
+    <string name="opt_minimap_inside">Interior del mapa</string>
+    <string name="opt_minimap_pictures">Imágenes del mapa</string>
+    <string name="opt_minimap_pictures_hint">Islas, salas de mazmorras y planos de interiores: Redibujadas los dibuja de nuevo con bordes suaves y nítidos, HD amplía las imágenes del GamePad con bordes nítidos, Original las muestra tal cual (más suaves en pantallas grandes), Terreno muestra las islas y los suelos como son realmente vistos desde arriba, coloreados según su suelo (en las mazmorras, las salas visitadas)</string>
+    <string name="opt_fullmap">Mapa completo</string>
+    <string name="opt_fullmap_hint">Toda la carta marina en la pantalla: pellizca o haz zoom desde todas las casillas hasta el suelo de una isla. También se abre manteniendo pulsado el minimapa o con el botón de mapa en la carta del menú +</string>
+    <string name="opt_fullmap_pictures">Imágenes del mapa completo</string>
+    <string name="opt_fullmap_deco">Adornos del mapa</string>
+    <string name="opt_fullmap_deco_hint">Un marco de papel con las letras y números de las cuadrículas, la brújula del viento y el fondo azul de los menús; desactivado: el mapa sencillo</string>
+    <string name="opt_chart_pictures">Carta del menú +</string>
+    <string name="opt_chart_pictures_hint">La carta marina y el mapa de la mazmorra del menú +: los del juego, o redibujados con un estilo de Imágenes del mapa (los toques funcionan igual)</string>
+    <string name="fullmap_button">Mapa completo</string>
+    <string name="opt_minimap_sea_zoom">Zoom en el mar</string>
+    <string name="opt_minimap_sea_zoom_hint">Cuánto del Gran Mar muestra el mapa: Auto = un cuarto de cuadrícula con Terreno (las islas a su tamaño real), si no una cuadrícula</string>
+    <string name="opt_minimap_face">Cara de Link</string>
+    <string name="opt_minimap_face_hint">La cara de Link en su lugar del mapa; desactivado: solo su flecha roja, que no tapa las islas</string>
+    <string name="opt_minimap_mark_size">Tamaño de la marca de Link</string>
+    <string name="opt_minimap_arrow_colour">Color de la flecha</string>
+    <string name="opt_minimap_move_zoom">Zoom en movimiento</string>
+    <string name="opt_minimap_move_zoom_hint">El mapa se acerca mientras Link corre o el barco navega, y se aleja cuando se queda quieto</string>
+    <string name="opt_minimap_names">Nombres de las islas</string>
+    <string name="opt_minimap_names_hint">En el Gran Mar: el nombre de cada isla cartografiada aparece debajo de ella</string>
+    <string name="opt_minimap_opacity">Opacidad del mapa</string>
+    <string name="opt_minimap_fade">Más tenue al moverse</string>
+    <string name="opt_minimap_fade_hint">El mapa se vuelve transparente mientras Link o el barco se mueve y vuelve cuando se detiene</string>
+    <string name="opt_minimap_fade_opacity">Opacidad al moverse</string>
+    <string name="opt_minimap_wind">Flecha del viento</string>
+    <string name="opt_minimap_wind_hint">Una flecha en un pequeño dial en la esquina del mapa muestra hacia dónde sopla el viento</string>
+    <string name="opt_minimap_wind_swipe">Cambiar el viento (dial)</string>
+    <string name="opt_minimap_wind_swipe_hint">Desliza desde el dial del viento para girar el viento al instante en esa dirección, sin pausa, en cualquier lugar y sin conocer la canción. Con un mando: mantén − e inclina el stick derecho, suelta − para fijarlo</string>
+    <string name="opt_minimap_charts">Mapas del tesoro</string>
+    <string name="opt_minimap_charts_hint">En el Gran Mar: si Link tiene el mapa de la cuadrícula en la que está y su tesoro sigue en el fondo, aparece junto al mapa con su X y Link</string>
+    <string name="opt_minimap_buttons">Botones del mapa</string>
+    <string name="opt_minimap_buttons_hint">Un botón junto al mapa lo oculta (un botón de mapa lo trae de vuelta)</string>
+    <string name="minimap_chart_treasure">Mapa del tesoro %1$d</string>
+    <string name="minimap_chart_triforce">Mapa de la Trifuerza %1$d</string>
+    <string name="opt_minimap_corner">Esquina</string>
+    <string name="opt_minimap_size">Tamaño</string>
+    <string name="opt_minimap_size_hint">También un toque en el mapa o una pulsación corta de − en un mando: el siguiente tamaño</string>
+    <string name="opt_minimap_turn">Orientación</string>
+    <string name="opt_minimap_marks">Marcas de progreso</string>
+    <string name="opt_minimap_marks_hint">Las cosas del progreso en su lugar: lo que aún falta, o todo</string>
     <string name="opt_saves">Partidas</string>
     <string name="opt_shaders">Borrar la caché de shaders</string>
     <string name="opt_shaders_hint">Reinicia el juego como en su primer inicio</string>
+    <string name="opt_controls_blind">Vista de mando a ciegas</string>
+    <string name="opt_controls_blind_hint">Juego en otra pantalla: cada botón siempre en su sitio, botones grandes, sticks flotantes, una vibración por botón. No: tu diseño táctil</string>
+    <string name="opt_controls_edit_blind">Editar diseño a ciegas</string>
+    <string name="opt_controls_edit_blind_hint">El diseño propio de la vista de mando a ciegas: mover, cambiar tamaño, forma y ocultar cada botón. Restablecer devuelve los sitios iniciales</string>
+    <string name="opt_blind_face">Botones principales</string>
+    <string name="opt_blind_face_hint">Rombo: A, B, X e Y en su sitio. Deslizar: pon el pulgar en cualquier punto de su círculo y deslízalo: arriba X, derecha A, abajo B, izquierda Y (mantenido mientras el pulgar se queda). Un toque es A</string>
+    <string name="opt_classic_face">Botones principales (Clásico)</string>
+    <string name="blind_face_diamond">Rombo</string>
+    <string name="blind_face_swipe">Deslizar</string>
+    <string name="opt_controls_tv_backdrop">Imagen de TV en la vista de mando</string>
+    <string name="opt_controls_tv_backdrop_hint">Juego en otra pantalla: la imagen de TV atenuada tras los botones en lugar de la imagen del GamePad oscurecida, para no perderte nada al mirar el móvil. El botón de pantalla sigue mostrando el GamePad</string>
     <string name="opt_show_sticks">Mostrar los sticks</string>
     <string name="opt_show_sticks_hint">No: los sticks funcionan sobre una pantalla vacía</string>
     <string name="opt_stick_follows">El stick izquierdo sigue al pulgar</string>
     <string name="opt_stick_follows_hint">Si el pulgar se desliza más allá del borde del stick izquierdo, el stick lo sigue. No: el stick se queda en su sitio</string>
+    <string name="opt_z_latch">ZL / ZR siguen activos tras un toque</string>
+    <string name="opt_z_latch_hint">Sí: un toque en ZL mantiene la fijación hasta el siguiente toque, y ZR sigue pulsado para agacharse o para el escudo. No: ZL y ZR solo funcionan mientras se mantienen</string>
     <string name="opt_slot">Estado %1$d</string>
     <string name="opt_slot_empty">Vacío</string>
     <string name="opt_slot_incompatible">%1$s · de otra compilación, no se puede cargar</string>
@@ -528,7 +899,7 @@
     <string name="opt_zl_defeat_release">Soltar</string>
     <string name="opt_zl_defeat_next">Siguiente objetivo</string>
     <string name="opt_upscale">Escalado</string>
-    <string name="opt_upscale_hint">Cómo se amplía la imagen a la pantalla: Nítido mantiene los bordes definidos con resoluciones de renderizado más bajas</string>
+    <string name="opt_upscale_hint">Cómo se amplía la imagen a la pantalla: Nítido mantiene los bordes definidos con resoluciones de renderizado más bajas, Píxeles exactos muestra cada píxel renderizado como un bloque definido</string>
     <string name="opt_warp">Warp (desarrollador)</string>
     <string name="opt_warp_hint">Ir a cualquier lugar, sala y punto de aparición del juego</string>
     <string name="packs_about">Importa mods de archivos .zip y .rar: paquetes gráficos de Cemu (por ejemplo de GameBanana o GitHub) y mods simples de archivos del juego (una carpeta content). Funcionan los parches de código (patch_*.asm), reemplazos de archivos del juego, reemplazos de pixel shaders y reglas de filtrado de texturas; los vertex shaders y las reglas de resolución de texturas, todavía no. Un parche de código solo se aplica a la versión del juego para la que se hizo. Activar o desactivar paquetes, o cambiar sus ajustes, tiene efecto tras reiniciar.</string>
@@ -538,7 +909,21 @@
     <string name="packs_folder">Carpeta: packs/%s</string>
     <string name="packs_groups">Grupos de parches: %1$d para esta versión del juego, %2$d para otras</string>
     <string name="packs_import">Importar paquetes</string>
-    <string name="packs_import_hint">Elige uno o varios archivos .zip o .rar</string>
+    <string name="packs_import_hint">Elige uno o varios archivos .zip o .rar; también modelos de jugador de GameCube (un paquete con un Link.arc, hecho para el randomizer de GameCube): se convierten para HD</string>
+    <string name="packs_gc_model_name">Modelo de jugador de GameCube: %1$s</string>
+    <string name="packs_gc_model_desc">Convertido de un modelo de jugador de GameCube. Elígelo para una partida en la página de modelos de jugador</string>
+    <string name="packs_gc_model_desc_by">Convertido de un modelo de jugador de GameCube de %1$s. Elígelo para una partida en la página de modelos de jugador</string>
+    <string name="packs_gc_converting" formatted="true">Convirtiendo el modelo de jugador %1$d de %2$d: %3$s (%4$d %%)</string>
+    <string name="packs_gc_imported_n">%1$d modelos de jugador de GameCube</string>
+    <string name="packs_gc_model">Modelo de jugador de GameCube</string>
+    <string name="packs_gc_model_hint">Con quién juega cada partida: Link o uno de los %1$d modelos importados</string>
+    <string name="packs_gc_off">Link (ninguno)</string>
+    <string name="packs_gc_current">Activo</string>
+    <string name="packs_gc_switching">Preparando %1$s…</string>
+    <string name="packs_gc_model_about">Modelos importados de paquetes de modelos de GameCube. Cada partida guardada juega con el suyo: elige la partida y luego el modelo. Cambia en el juego al momento, sin reiniciar; también en partidas aleatorias.</string>
+    <string name="packs_gc_file_hint">Cada partida guardada tiene su modelo; cambia en cuanto se juega esa partida</string>
+    <string name="packs_gc_report">Qué se ha convertido</string>
+    <string name="packs_gc_trimming">Liberando espacio: los modelos de jugador de antes guardan solo lo necesario…</string>
     <string name="packs_none">Aún no hay paquetes importados.</string>
     <string name="packs_on_count">%d activos</string>
     <string name="packs_preset">Ajuste</string>
@@ -590,6 +975,92 @@
         <item>Original 16:9 (bandas)</item>
         <item>Estirar a la pantalla</item>
         <item>Llenar la pantalla (bordes cortados)</item>
+    </string-array>
+    <string-array name="minimap_styles">
+        <item>Cuadrado (pergamino)</item>
+        <item>Redondo (brújula)</item>
+    </string-array>
+    <string-array name="minimap_insides">
+        <item>Relleno</item>
+        <item>Solo contornos (transparente)</item>
+    </string-array>
+    <string-array name="minimap_pictures">
+        <item>Redibujadas</item>
+        <item>HD</item>
+        <item>Original</item>
+        <item>Terreno</item>
+    </string-array>
+    <string-array name="chart_pictures">
+        <item>La del juego</item>
+        <item>Redibujadas</item>
+        <item>HD</item>
+        <item>Terreno</item>
+    </string-array>
+    <string-array name="minimap_mark_sizes">
+        <item>Pequeño</item>
+        <item>Normal</item>
+        <item>Grande</item>
+        <item>Muy grande</item>
+    </string-array>
+    <string-array name="minimap_arrow_colours">
+        <item>Rojo</item>
+        <item>Naranja</item>
+        <item>Amarillo</item>
+        <item>Verde</item>
+        <item>Cian</item>
+        <item>Azul</item>
+        <item>Rosa</item>
+        <item>Blanco</item>
+    </string-array>
+    <string-array name="minimap_move_zooms">
+        <item>No</item>
+        <item>1,5x</item>
+        <item>2x</item>
+        <item>3x</item>
+    </string-array>
+    <string-array name="minimap_sea_zooms">
+        <item>Auto</item>
+        <item>1 cuadrícula</item>
+        <item>1/2 cuadrícula</item>
+        <item>1/3 cuadrícula</item>
+        <item>1/4 cuadrícula</item>
+    </string-array>
+    <string-array name="minimap_corners">
+        <item>Abajo a la izquierda</item>
+        <item>Arriba a la izquierda</item>
+        <item>Arriba a la derecha</item>
+        <item>Abajo a la derecha</item>
+        <item>Lugar propio (Disposición de pantalla)</item>
+    </string-array>
+    <string-array name="minimap_sizes">
+        <item>Pequeño</item>
+        <item>Mediano</item>
+        <item>Grande</item>
+    </string-array>
+    <string-array name="minimap_turns">
+        <item>Norte arriba</item>
+        <item>Gira con Link</item>
+    </string-array>
+    <string-array name="minimap_marks">
+        <item>No</item>
+        <item>Solo faltantes</item>
+        <item>Todo</item>
+    </string-array>
+    <string-array name="progress_filters">
+        <item>Todo</item>
+        <item>Lo que falta</item>
+    </string-array>
+    <string-array name="pmap_shows">
+        <item>Encontrado</item>
+        <item>Encontrado y faltante</item>
+        <item>Solo faltante</item>
+    </string-array>
+    <string-array name="pmap_kinds">
+        <item>Todo</item>
+        <item>Corazones</item>
+        <item>Cartas y tesoros</item>
+        <item>Objetos</item>
+        <item>Mazmorras</item>
     </string-array>
     <string-array name="auto_state_modes">
         <item>No</item>
@@ -646,6 +1117,7 @@
     <string-array name="upscale_modes">
         <item>Bilineal (clásico)</item>
         <item>Nítido</item>
+        <item>Píxeles exactos</item>
     </string-array>
     <string-array name="wiiu_buttons">
         <item>A</item>
@@ -821,6 +1293,12 @@
     <string name="crash_share">Compartir el registro del fallo</string>
     <string name="crash_without_fg">Iniciar sin generación de fotogramas</string>
     <string name="crash_share_all">Compartir los registros de fallos</string>
+    <string name="game_log_share">Compartir el registro del juego</string>
+    <string name="game_log_subject">Registro del juego de Wind Waker HD</string>
+    <string name="game_log_failed">No se pudo recopilar el registro del juego.</string>
+    <string name="game_log_text">Reúne el registro del juego desde su último inicio, con lo necesario para reproducir un problema: versión de la app y del juego, dispositivo, GPU y controlador, y los ajustes. Solo se toman las líneas de esta app, nada de otras apps. No contiene nada personal: ni nombres ni cuentas; las rutas de carpetas, enlaces, direcciones de correo, de red y Bluetooth y los ID del dispositivo se omiten. El zip va luego adonde elijas en el menú de compartir.\n\nCon el interruptor se añaden también las partidas guardadas: tu progreso tal como se guardó por última vez en el juego, las fotos y las páginas del álbum. El nombre que le diste a Link pasa a ser \"Link\" en esa copia; tu propia partida queda como está.</string>
+    <string name="game_log_saves">Incluir partidas guardadas</string>
+    <string name="game_log_share_button">Compartir</string>
     <string name="crash_start_game">Iniciar el juego</string>
     <string name="crash_without_packs">Iniciar sin paquetes de mods</string>
     <string name="crash_subject">Registro de fallo de Wind Waker HD</string>
@@ -902,4 +1380,379 @@
     <string name="song_practice_none">Ninguna canción. ¡Inténtalo otra vez!</string>
     <string name="song_wrong_time">%1$s: ¡cántala en %2$s!</string>
     <string name="sing_songs_no_mic">Sin el permiso del micrófono no se pueden oír las canciones. Puedes concederlo en los ajustes del sistema de la app.</string>
+
+    <!-- Game > Randomizer (OptionsMenu.randoPage, MainActivity.runRandomizer) -->
+    <string name="rando_title">Randomizer</string>
+    <string name="rando_hint">Una partida nueva con los objetos en otros sitios (TWWHD Randomizer)</string>
+    <string name="rando_on_now">Activado</string>
+    <string name="rando_about">El randomizer (TWWHD Randomizer 1.2.0 de SuperDude88 y otros) hace de tu juego una partida nueva: los objetos están en otros sitios, el mar está abierto desde el principio, la mayoría de las escenas ya no están. Su lógica asegura que toda partida se pueda terminar. La partida mezclada tiene su propia partida guardada y sus propios estados guardados; el juego tal como es sigue igual.</string>
+    <string name="rando_need_usa">El randomizer no puede usar estos archivos del juego: una versión desconocida del juego.</string>
+    <string name="rando_keep_plain">Conservar el código del juego</string>
+    <string name="rando_keep_plain_hint">Cambiar entre la partida mezclada y el juego tal como es ya no necesita compilar de nuevo. Ocupa unos 60 MB más (todo el código compilado ahora: %1$d MB).</string>
+    <string name="rando_made">Hash de la semilla %1$s (semilla %2$s): la pantalla de título del juego muestra las mismas palabras. Con su partida guardada y sus estados: %3$d MB.</string>
+    <string name="rando_spoiler">Registro de spoilers</string>
+    <string name="rando_spoiler_hint">Dónde está cada objeto. ¡Solo si te atascas!</string>
+    <string name="rando_spoiler_none">No se puede leer el registro de spoilers.</string>
+    <string name="rando_spoiler_about">Semilla %1$s. Todo lo de abajo dice dónde están las cosas: mira solo si te atascas.</string>
+    <string name="rando_spoiler_map">Mapa</string>
+    <string name="rando_spoiler_map_hint">Cada objeto en su sitio en la carta náutica y en las mazmorras</string>
+    <string name="rando_spoiler_way">Camino</string>
+    <string name="rando_spoiler_way_hint">El orden en que se pueden conseguir los objetos importantes</string>
+    <string name="rando_spoiler_way_about">Cada paso solo necesita los objetos de los pasos anteriores (y los del inicio).</string>
+    <string name="rando_spoiler_start">Al inicio</string>
+    <string name="rando_spoiler_step">Paso %1$d</string>
+    <string name="rando_spoiler_all">Dónde está todo</string>
+    <string name="rando_spoiler_all_hint">El objeto de cada sitio, por isla y mazmorra</string>
+    <string name="rando_spoiler_important">Solo objetos importantes</string>
+    <string name="rando_spoiler_important_hint">Los objetos del camino; el resto son rupias y otras cosas menores</string>
+    <string name="rando_spoiler_charts">Adónde llevan las cartas</string>
+    <string name="rando_spoiler_hints">Pistas</string>
+    <string name="rando_spoiler_entrances">Entradas</string>
+    <string name="rando_spoiler_text">El registro como texto</string>
+    <string name="rando_spoiler_text_hint">Todo el registro del randomizer, para leer o compartir</string>
+    <string name="rando_spoiler_show">Mostrar</string>
+    <string name="rando_spoiler_elsewhere">Sin sitio fijo (correo, Gran Mar)</string>
+    <string-array name="rando_spoiler_groups">
+        <item>Objetos importantes</item>
+        <item>Todo</item>
+        <item>Corazones</item>
+        <item>Cartas</item>
+        <item>Objetos de mazmorra</item>
+    </string-array>
+    <string name="rando_settings">Ajustes para la próxima partida</string>
+    <string name="rando_preset">Usar un ajuste predefinido</string>
+    <string name="rando_preset_hint">Principiante, Estándar o Todo mezclado</string>
+    <string name="rando_preset_ask">Un ajuste predefinido sustituye todos los ajustes de abajo (también la semilla).\n\nPrincipiante: menos sitios que buscar, pistas, daño normal.\nEstándar: los ajustes del randomizer.\nTodo: objetos casi en cualquier sitio.</string>
+    <string name="rando_preset_beginner">Principiante</string>
+    <string name="rando_preset_standard">Estándar</string>
+    <string name="rando_preset_all">Todo</string>
+    <string name="rando_places">Sitios con objetos importantes</string>
+    <string name="rando_places_hint">Qué tipos de sitios pueden tener los objetos que necesitas</string>
+    <string name="rando_places_about">Los sitios desactivados solo tienen rupias y otras cosas menores: nunca tienes que buscar en ellos.</string>
+    <string name="rando_progress_dungeons_hint">Carrera: solo las mazmorras que debes terminar tienen objetos importantes</string>
+    <string name="rando_dungeons">Mazmorras y llaves</string>
+    <string name="rando_dungeons_hint">Dónde están las llaves, los mapas y las brújulas</string>
+    <string name="rando_small_keys">Llaves pequeñas</string>
+    <string name="rando_big_keys">Llaves grandes</string>
+    <string name="rando_maps">Mapas y brújulas de las mazmorras</string>
+    <string name="rando_required">Mazmorras que terminar</string>
+    <string name="rando_required_hint">Para la carrera (Sitios): cuántas mazmorras hacen falta para llegar a la torre de Ganon</string>
+    <string name="rando_entrances">Entradas</string>
+    <string name="rando_entrances_hint">Puertas y cuevas que llevan a otro sitio</string>
+    <string name="rando_entrances_about">Las entradas mezcladas llevan a otras mazmorras, cuevas o salas. Orientarse se vuelve mucho más difícil.</string>
+    <string name="rando_caves">Entradas de cuevas</string>
+    <string name="rando_hints">Pistas</string>
+    <string name="rando_hints_hint">Quién te dice dónde están las cosas</string>
+    <string name="rando_start">Inicio y dificultad</string>
+    <string name="rando_start_hint">Corazones al empezar, espadas, daño</string>
+    <string name="rando_start_hearts">Contenedores de corazón al empezar</string>
+    <string name="rando_start_pieces">Piezas de corazón al empezar</string>
+    <string name="rando_no_swords">Sin espadas</string>
+    <string name="rando_no_swords_hint">Link nunca consigue una espada (para jugadores expertos)</string>
+    <string name="rando_damage">Daño recibido</string>
+    <string name="rando_damage_hint">× 2 es el estándar del randomizer, × 1 como en el juego</string>
+    <string name="rando_convenience">Comodidades</string>
+    <string name="rando_convenience_hint">Texto más rápido, toda la carta náutica y más</string>
+    <string name="rando_seed">Semilla</string>
+    <string name="rando_seed_hint">La misma semilla y los mismos ajustes dan la misma partida</string>
+    <string name="rando_permalink">Enlace permanente</string>
+    <string name="rando_permalink_hint">Todos los ajustes y la semilla en un texto: compártelo o pega uno del randomizer de PC</string>
+    <string name="rando_permalink_paste">Pegar uno</string>
+    <string name="rando_share">Compartir</string>
+    <string name="rando_defaults">Volver a los ajustes estándar</string>
+    <string name="rando_defaults_hint">Los ajustes del randomizer y una semilla nueva</string>
+    <string name="rando_pending">Se creará una partida nueva en el próximo inicio.</string>
+    <string name="rando_make">Crear una nueva partida mezclada</string>
+    <string name="rando_make_ask">La app se reinicia y crea una partida nueva con estos ajustes (unos segundos); luego se vuelve a compilar el código del juego (la primera partida mezclada: entero, tanto como en el primer inicio; después solo las partes cambiadas) y empieza la partida nueva.\n\nTus partidas se quedan, cada una con su propia partida guardada; en cada inicio la app pregunta cuál jugar. Una partida mezclada ocupa alrededor de medio gigabyte.</string>
+    <string name="rando_make_go">Crear</string>
+    <string name="rando_make_same">%1$s se creó con estos ajustes y esta semilla: sería la misma partida otra vez. ¿Crear una con una semilla nueva?</string>
+    <string name="rando_make_new_seed">Semilla nueva, crear</string>
+    <string name="rando_games">Tus partidas</string>
+    <string name="rando_games_about">En cada inicio la app pregunta cuál jugar. Cada partida mezclada tiene su propia partida guardada y sus propios estados guardados.</string>
+    <string name="rando_pick_title">¿Qué partida quieres jugar?</string>
+    <string name="rando_pick_plain">El juego tal como es</string>
+    <string name="rando_playing_now">En juego</string>
+    <string name="rando_game_name">Randomizer %1$d: %2$s</string>
+    <string name="rando_game_name_nohash">Randomizer %1$d</string>
+    <string name="rando_playing_this">Estás jugando esta partida ahora.</string>
+    <string name="rando_play_this">Jugar esta partida</string>
+    <string name="rando_delete">Borrar esta partida</string>
+    <string name="rando_delete_ask">Esta partida mezclada se borra. El juego tal como es y las otras partidas mezcladas se quedan.</string>
+    <string name="rando_delete_ask_progress">Esta partida mezclada se borra con su partida guardada y sus estados guardados. El juego tal como es y las otras partidas mezcladas se quedan.</string>
+    <string name="rando_delete_playing">Estás jugando esta partida: se borra con su partida guardada y sus estados guardados, y la app se reinicia con el juego tal como es.</string>
+    <string name="rando_delete_go">Borrar</string>
+    <string name="rando_look">Colores de Link</string>
+    <string name="rando_look_hint">Su ropa, pelo y ojos en otros colores, o su ropa de diario desde el principio</string>
+    <string name="rando_look_about">Estos colores van a la próxima partida aleatoria que se cree. Una partida ya creada los recibe con «Rehacer con los colores de Link» en su página: la misma partida, con su guardado y sus estados.</string>
+    <string name="rando_casual">Ropa de diario</string>
+    <string name="rando_casual_hint">Una partida nueva empieza con la ropa de diario de Link en vez del traje de héroe (los colores de aquí son entonces los de esa ropa)</string>
+    <string name="rando_look_preset">Juego de colores</string>
+    <string name="rando_look_default">Los colores del juego</string>
+    <string name="rando_look_own">Colores propios</string>
+    <string name="rando_look_random">Colores al azar que combinan</string>
+    <string name="rando_look_chaotic">Cada color al azar</string>
+    <string name="rando_look_reset">Volver a los colores del juego</string>
+    <string name="rando_color_hue">Tono</string>
+    <string name="rando_color_sat">Saturación</string>
+    <string name="rando_color_value">Brillo</string>
+    <string name="rando_color_random">Tono al azar</string>
+    <string name="rando_color_default">Su color habitual</string>
+    <string name="look_hint">Su ropa, pelo y ojos en otros colores en el juego (las partidas aleatorias tienen los suyos)</string>
+    <string name="look_on">Usar estos colores</string>
+    <string name="look_on_hint">En el juego tal cual, para esta partida guardada; las partidas aleatorias conservan los colores con los que se crearon</string>
+    <string name="look_on_short">Sí</string>
+    <string name="look_model_note">La partida %1$d juega con el modelo de jugador %2$s, que conserva sus propios colores: los colores de Link no se pueden ajustar para ella. Para colorear a Link en esta partida, elige Link (ninguno) en Mods > Paquetes de mods > Modelo de jugador de GameCube.</string>
+    <string name="look_about">Link lleva primero la ropa de la isla y luego la del héroe: cada una tiene sus colores. La piel, la boca y los ojos son iguales en ambas, salvo con Piel, boca y ojos propios.</string>
+    <string name="look_clothes">Ropa</string>
+    <string name="look_clothes_hint">La ropa cuyos colores se muestran y cambian aquí</string>
+    <string name="look_clothes_hero">Ropa del héroe</string>
+    <string name="look_clothes_casual">Ropa de la isla</string>
+    <string name="look_making">Cambiando los colores de Link…</string>
+    <string name="look_separate">Piel, boca y ojos propios</string>
+    <string name="look_separate_hint">No: un color para ambas ropas. Sí: cada ropa el suyo, cambia junto con la ropa de Link</string>
+    <string name="look_shared_hint">Igual en ambas ropas (Piel, boca y ojos propios: cada una el suyo)</string>
+    <string name="look_file">Partida guardada</string>
+    <string name="look_file_n">Partida %1$d</string>
+    <string name="look_file_hint">Cada partida guardada tiene sus colores; los cambios se ven al momento en el juego</string>
+    <string name="look_rando_note">Ahora se juega una partida aleatoria: tiene sus propios colores. Estos se ven en el juego tal cual.</string>
+    <string name="names_title">Nombres de las partidas</string>
+    <string name="names_hint">Dar otro nombre a una partida durante el juego, hasta 16 caracteres</string>
+    <string name="names_file_hint">La partida cuyo nombre se muestra y cambia aquí</string>
+    <string name="names_about">El juego usa el nuevo nombre al instante; guarda en el juego para conservarlo. Hasta %1$d caracteres: el propio juego guarda los primeros %2$d, y la selección de archivos muestra esos. Esta app guarda el resto y vuelve a poner el nombre entero cada vez que se juega esa partida. Con un nombre largo, los cuadros de texto cortan la línea antes.</string>
+    <string name="names_no_game">Los nombres vienen del juego: inícialo (carga una partida) para cambiar uno.</string>
+    <string name="names_name">Nombre</string>
+    <string name="names_name_hint">Toca para cambiarlo</string>
+    <string name="names_bad_char">El juego no tiene el carácter \"%1$s\". Usa otras letras.</string>
+    <string name="rando_remake">Rehacer con los colores de Link</string>
+    <string name="rando_remake_ask">Al reiniciar, esta partida se rehace con los colores de Randomizer > Colores de Link. Todo lo demás se queda igual: los mismos objetos en los mismos sitios, su guardado y sus estados.</string>
+    <string name="rando_remake_go">Rehacer</string>
+    <string name="rando_remake_pending">%1$s se rehará con los colores de Link en el próximo inicio.</string>
+    <string-array name="rando_color_names">
+        <item>Pelo</item>
+        <item>Piel</item>
+        <item>Boca</item>
+        <item>Ojos</item>
+        <item>Blanco de los ojos</item>
+        <item>Túnica</item>
+        <item>Camiseta</item>
+        <item>Pantalones</item>
+        <item>Botas</item>
+        <item>Cinturón</item>
+        <item>Hebilla</item>
+        <item>Camisa</item>
+        <item>Emblema de la camisa</item>
+        <item>Brazaletes</item>
+        <item>Zapatos</item>
+        <item>Suelas</item>
+    </string-array>
+    <string name="rando_running">Creando la partida mezclada…</string>
+    <string name="rando_failed">El randomizer no pudo crear la partida:\n\n%1$s</string>
+    <string name="rando_play_plain">Jugar el juego tal como es</string>
+    <string name="rando_no_map">El mapa de dónde se encuentran las cosas está desactivado en la partida mezclada: muestra dónde las tiene el propio juego.</string>
+
+    <string-array name="rando_progress_names">
+        <item>Mazmorras</item>
+        <item>Grandes hadas</item>
+        <item>Cuevas de acertijos</item>
+        <item>Cuevas de combate</item>
+        <item>Misiones secundarias cortas</item>
+        <item>Misiones secundarias largas</item>
+        <item>Trueque de botín</item>
+        <item>Minijuegos</item>
+        <item>Regalos</item>
+        <item>Correo</item>
+        <item>Plataformas y balsas</item>
+        <item>Submarinos</item>
+        <item>Cofres de los arrecifes de ojo</item>
+        <item>Grandes Octoroks y cañoneros</item>
+        <item>Cartas de la Trifuerza</item>
+        <item>Cartas del tesoro</item>
+        <item>Compras caras</item>
+        <item>Otros sitios</item>
+        <item>Cofres de Tingle</item>
+        <item>Juego de hundir la flota</item>
+        <item>Laberinto salvaje</item>
+        <item>Acertijos de las islas</item>
+        <item>Secretos de las mazmorras</item>
+        <item>Sitios escondidos</item>
+    </string-array>
+    <string-array name="rando_progress_dungeons">
+        <item>Desactivado</item>
+        <item>Activado</item>
+        <item>Carrera</item>
+    </string-array>
+    <string-array name="rando_placement">
+        <item>Donde siempre están</item>
+        <item>En su propia mazmorra</item>
+        <item>En cualquier mazmorra</item>
+        <item>Fuera de las mazmorras</item>
+        <item>En cualquier sitio</item>
+    </string-array>
+    <string-array name="rando_caves">
+        <item>Como están</item>
+        <item>Cuevas mezcladas</item>
+        <item>Cuevas y fuentes</item>
+    </string-array>
+    <string-array name="rando_entrance_names">
+        <item>Entradas de mazmorras mezcladas</item>
+        <item>Puertas de jefes mezcladas</item>
+        <item>Puertas de minijefes mezcladas</item>
+        <item>Puertas mezcladas</item>
+        <item>Otras entradas mezcladas</item>
+        <item>Mezclar las mazmorras con las demás</item>
+        <item>Mezclar las puertas de jefes con las demás</item>
+        <item>Mezclar las puertas de minijefes con las demás</item>
+        <item>Mezclar las cuevas con las demás</item>
+        <item>Mezclar las puertas con las demás</item>
+        <item>Mezclar las otras entradas con las demás</item>
+        <item>Entradas de un solo sentido (la vuelta es otra)</item>
+        <item>Isla de inicio al azar</item>
+    </string-array>
+    <string-array name="rando_hint_names">
+        <item>Pistas de los Ho Ho</item>
+        <item>Los Ho Ho sobre los fragmentos de la Trifuerza</item>
+        <item>Pistas del barco</item>
+        <item>El barco sobre la espada</item>
+        <item>Dónde está el arco (una pista)</item>
+        <item>Pistas más claras</item>
+        <item>Pistas sobre los sitios siempre importantes</item>
+        <item>Las pistas dicen lo importante que es un objeto</item>
+    </string-array>
+    <string-array name="rando_hint_count_names">
+        <item>Pistas de camino</item>
+        <item>Pistas de zonas vacías</item>
+        <item>Pistas de objetos</item>
+        <item>Pistas de sitios</item>
+    </string-array>
+    <string-array name="rando_convenience_names">
+        <item>Texto al instante</item>
+        <item>Toda la carta náutica desde el principio</item>
+        <item>Vela rápida silenciosa</item>
+        <item>Sin revanchas de jefes en la torre de Ganon</item>
+        <item>Teletransportes entre las mazmorras</item>
+        <item>Probabilidades fijas (menos suerte)</item>
+        <item>Brújula marina invertida izquierda/derecha</item>
+        <item>Sin música</item>
+        <item>Cartas mezcladas</item>
+        <item>Los cofres muestran su contenido (tipo)</item>
+    </string-array>
+    <!-- Android TV (MainActivity.isTv): the setup with the remote, files without a file chooser -->
+    <string name="tv_setup_text">En un televisor: juegas con un mando (Bluetooth o USB); el mando a distancia funciona en los menús. Si este televisor no tiene selector de archivos, copia los archivos en esta carpeta (con adb push o un gestor de archivos que pueda escribir allí) y elige «Usar los archivos de la carpeta de la app»:\n%1$s</string>
+    <string name="tv_import_button">Usar los archivos de la carpeta de la app</string>
+    <string name="tv_import_title">Archivos de la carpeta de la app</string>
+    <string name="tv_import_empty">La carpeta está vacía. Copia tu imagen de disco con sus dos claves, o un archivo Cemu (.wua), en:\n%1$s\n\nPor ejemplo desde un ordenador: adb push MiJuego.wua %1$s/</string>
+    <string name="tv_no_chooser_title">Sin selector de archivos</string>
+    <string name="tv_no_chooser">Este dispositivo no tiene selector de archivos para apps (habitual en televisores). Instala un gestor de archivos que lo ofrezca, o copia los archivos en esta carpeta con adb push:\n%1$s</string>
+    <!-- a phone as the TV's GamePad (PadHost, PadActivity) -->
+    <string name="pad_title">Móvil como GamePad</string>
+    <string name="opt_page_devices">Otros dispositivos</string>
+    <string name="opt_page_devices_hint">Móviles, tabletas y televisores juntos en la misma Wi-Fi: uno ejecuta el juego, los demás son su GamePad o su pantalla</string>
+    <string name="devices_note">Un dispositivo ejecuta el juego, los demás se unen a él en la misma Wi-Fi.\n\nEl juego aquí, la imagen en un televisor o tableta: activa «Otros pueden unirse» abajo. Luego en el televisor o la tableta: Juego > Otros dispositivos > Ser la pantalla de otro dispositivo.\n\nEl juego en un televisor, este dispositivo como GamePad: Jugar en otra pantalla.\n\nUn dispositivo sin el juego se une enseguida: mantén pulsado el icono de la app (GamePad o Pantalla), o los botones de su pantalla de configuración.</string>
+    <string name="devices_note_tv">Un dispositivo ejecuta el juego, los demás se unen a él en la misma Wi-Fi.\n\nEl juego aquí, un móvil o tableta como GamePad: deja activado «Otros pueden unirse». En el móvil: Juego > Otros dispositivos > Jugar en otra pantalla, o mantén pulsado el icono de la app > GamePad.\n\nEl juego en un móvil, este televisor como su pantalla: en el móvil activa Juego > Otros dispositivos > «Otros pueden unirse», y luego elige aquí Ser la pantalla de otro dispositivo.</string>
+    <string name="opt_pad_host">Otros pueden unirse</string>
+    <string name="opt_pad_host_hint">Este dispositivo ejecuta el juego: móviles, tabletas y televisores con la app en la misma Wi-Fi lo encuentran y se convierten en su GamePad o su pantalla. Activado por defecto en un televisor.</string>
+    <string name="opt_pad_play">Jugar en otra pantalla</string>
+    <string name="opt_pad_play_hint">Este dispositivo se convierte en el GamePad de un televisor, móvil o tableta con esta app en la misma red: ese muestra el juego, esta pantalla la del GamePad. Tus partidas van contigo.</string>
+    <string name="pad_become_text">El juego aquí se cierra (guardado como con Salir) y este dispositivo busca televisores, móviles y tabletas con la app en tu red.</string>
+    <string name="pad_become">Buscar</string>
+    <string name="pad_searching">Buscando dispositivos con la app en esta red…</string>
+    <string name="pad_none_hint">En el otro dispositivo: la app abierta, Juego > Otros dispositivos > Otros pueden unirse activado, y ambos en la misma Wi-Fi.</string>
+    <string name="pad_address">Introducir dirección…</string>
+    <string name="pad_address_hint">La dirección del televisor en la red (por ejemplo 192.168.1.20), si no se encuentra solo:</string>
+    <string name="pad_leave_search">¿Dejar de buscar y volver al inicio?</string>
+    <string name="pad_keep_looking">Seguir buscando</string>
+    <string name="pad_back_to_game">Volver al juego</string>
+    <string name="pad_connecting">Conectando con %1$s…</string>
+    <string name="pad_failed">Sin conexión: %1$s</string>
+    <string name="pad_lost">Se perdió la conexión con el otro dispositivo. Reintentando…</string>
+    <string name="pad_code_title">Código</string>
+    <string name="pad_code_text">Escribe el código que muestra el otro dispositivo:</string>
+    <string name="pad_code_wrong">Código incorrecto. Escribe el código que muestra el otro dispositivo:</string>
+    <string name="pad_old_version">El televisor tiene otra versión de la app. Instala la misma en ambos.</string>
+    <string name="pad_waiting">Conectado con %1$s. La imagen llega en cuanto el juego funcione allí.</string>
+    <string name="pad_send_game_title">%1$s no tiene los archivos del juego</string>
+    <string name="pad_send_game_text">¿Enviar los archivos del juego de este dispositivo (%1$s) a %2$s? Después prepara el juego, lo que lleva un rato.</string>
+    <string name="pad_send">Enviar</string>
+    <string name="pad_no_game_here">Este dispositivo tampoco tiene archivos del juego que enviar.</string>
+    <string name="pad_sending">Enviando %1$s: %2$d %%</string>
+    <string name="pad_send_failed">El envío falló.</string>
+    <string name="pad_space_states">%1$s solo tiene %2$s de almacenamiento libre: algunos estados guardados (%3$s) se quedan en este dispositivo, el resto se envía ahora. Libera espacio allí para llevarlos también.</string>
+    <string name="pad_space_none">%1$s solo tiene %2$s de almacenamiento libre y hacen falta unos %3$s: no se ha enviado nada. Libera espacio allí y vuelve a conectar.</string>
+    <string name="pad_tv_preparing">%1$s prepara el juego. La imagen llega en cuanto funcione.</string>
+    <string name="pad_saves_restart">Tus partidas están en %1$s: se reinicia con ellas…</string>
+    <string name="pad_end_saving">Recuperando las partidas…</string>
+    <string name="pad_touch_buttons">Botones táctiles</string>
+    <string name="pad_saves_to">Llevar mis partidas</string>
+    <string name="pad_saves_back">Recuperar las partidas al salir</string>
+    <string name="pad_other_tv">Otro dispositivo</string>
+    <string name="pad_end">Terminar</string>
+    <string name="pad_what_game">los archivos del juego</string>
+    <string name="pad_what_saves">las partidas</string>
+    <string name="pad_tv_code">%1$s quiere ser el GamePad. Escribe allí este código: %2$s</string>
+    <string name="pad_tv_joined">%1$s es ahora el GamePad.</string>
+    <string name="pad_tv_left">%1$s ya no es el GamePad.</string>
+    <string name="pad_tv_receiving">Recibiendo %1$s de %2$s: %3$d %%</string>
+    <string name="pad_tv_game_failed">No se pudieron colocar los archivos del juego.</string>
+    <string name="pad_tv_restart">Las partidas del móvil están aquí: el juego se reinicia.</string>
+    <string name="pad_picture">Imagen del GamePad</string>
+    <string name="pad_picture_text">El tamaño en que el otro dispositivo envía la imagen del GamePad (ahora: %1$s). Más grande es más nítida pero exige más a ambos dispositivos y a la red. Ninguna: este dispositivo es solo un mando; el otro conserva la imagen del GamePad (+ la muestra allí) y no envía nada.</string>
+    <string name="pad_picture_none">Ninguna (mando)</string>
+    <string name="pad_picture_drawn">Dibujado aquí</string>
+    <string name="pad_picture_drawn_video">Dibujado aquí, las pantallas propias del juego en vídeo</string>
+    <string name="pad_screen_items">OBJETOS</string>
+    <string name="pad_screen_collection">COLECCIÓN</string>
+    <string name="pad_screen_wait">Los objetos aparecen aquí en cuanto el juego se ejecute allí.</string>
+    <string name="pad_screen_options">OPCIONES</string>
+    <string name="pad_screen_map">MAPA</string>
+    <string name="pad_screen_save">Guardar</string>
+    <string name="pad_screen_options_button">Opciones</string>
+    <string name="pad_screen_back">Volver</string>
+    <string name="pad_screen_collection_hint">Tu viaje hasta ahora: %1$d%%. Toca algo para ver su nombre.</string>
+    <string name="pad_picture_on_tv">La imagen del GamePad se queda en el televisor: + la muestra allí.</string>
+    <string name="pad_other_release">El otro dispositivo juega la versión %1$s del juego, este la versión %2$s. La partida va igualmente (adaptada a la otra versión); los estados guardados no: pertenecen al juego de una versión, así que se quedan donde están.</string>
+    <string name="pad_screen_title">Pantalla para otro dispositivo</string>
+    <string name="pad_screen_become_text">El juego aquí se cierra (guardado como con Salir) y este dispositivo busca un dispositivo con la app en tu red para ser su pantalla: muestra el juego y reproduce su sonido, el otro ejecuta el juego y muestra el GamePad.</string>
+    <string name="pad_screen_picture">Imagen del juego</string>
+    <string name="pad_screen_picture_text">El tamaño en que el otro dispositivo envía la imagen del juego (ahora: %1$s). Más grande es más nítida pero exige más a la red.</string>
+    <string name="opt_pad_screen">Ser la pantalla de otro dispositivo</string>
+    <string name="opt_pad_screen_hint">Este dispositivo muestra el juego de un móvil o tableta con esta app en la misma red (y reproduce su sonido): ese ejecuta el juego, muestra el GamePad y es el mando. Para un dispositivo poco potente con pantalla grande.</string>
+    <string name="pad_tv_screen_joined">%1$s es ahora la pantalla.</string>
+    <string name="pad_sound_screen">Sonido aquí</string>
+    <string name="pad_sound_pad">Sonidos del GamePad aquí</string>
+    <string name="pad_delays">Retardo: imagen %1$s ms, ida y vuelta de red %2$s ms, sonido %3$s ms</string>
+    <string name="shortcut_pad">GamePad</string>
+    <string name="shortcut_pad_long">GamePad de otro dispositivo</string>
+    <string name="shortcut_screen">Pantalla</string>
+    <string name="shortcut_screen_long">Pantalla de otro dispositivo</string>
+    <string name="pad_console_options">Opciones de la consola</string>
+    <string name="pad_send_game_code_text">¿Enviar los archivos del juego de este dispositivo (%1$s) a %2$s? Este dispositivo prepara primero el código del juego para su procesador (aquí unos minutos), así %2$s inicia el juego enseguida en vez de prepararlo él mismo, lo que allí tarda mucho más.</string>
+    <string name="pad_preparing_code">Preparando el código del juego para %1$s: %2$d de %3$d</string>
+    <string name="pad_what_code">el código del juego</string>
+    <string name="tv_setup_screen">O sin ningún archivo del juego aquí: elige «Ser la pantalla de otro dispositivo». Un móvil o tableta con la app y tu juego lo ejecuta y es el GamePad; este televisor muestra el juego y reproduce el sonido.</string>
+    <string name="drc_game_there">Imagen del juego allí (TV por Cast o cable)</string>
+    <string name="pad_code_title_other">%1$s prepara su código del juego</string>
+    <string name="pad_code_offer">%1$s prepara él mismo el código del juego para su procesador, lo que allí puede tardar mucho (en un TV box hasta una hora). Este dispositivo lo hace en unos minutos y lo envía; %1$s inicia entonces el juego. ¿Prepararlo aquí?</string>
+    <string name="pad_code_prepare">Preparar aquí</string>
+    <string name="choice_text">¿Cómo quieres jugar ahora?</string>
+    <string name="choice_here">Jugar aquí</string>
+    <string name="choice_here_text">El juego se ejecuta en este dispositivo.</string>
+    <string name="choice_pad">Ser un GamePad</string>
+    <string name="choice_pad_text">Otro dispositivo ejecuta el juego, este es su GamePad.</string>
+    <string name="choice_screen">Esperar un dispositivo</string>
+    <string name="choice_screen_text">Este dispositivo muestra el juego de un móvil o tableta que se une.</string>
+    <string name="choice_later">Esta página sale en cada inicio: Juego > Otros dispositivos > Elegir al iniciar.</string>
+    <string name="pad_none_hint_screen">En el móvil o la tableta con el juego: Juego > Otros dispositivos > Mostrar en una TV, y elige este dispositivo. O este lo encuentra aquí en cuanto allí Otros pueden unirse esté activado (ambos en la misma Wi-Fi): se une al primer dispositivo encontrado.</string>
+    <string name="receiver_close">Cerrar</string>
+    <string name="receiver_leave">¿Dejar de buscar y cerrar?</string>
+    <string name="search_splash">¡Plaf!</string>
+    <string name="search_boom">¡Bum!</string>
+    <string name="opt_start_choice">Elegir al iniciar</string>
+    <string name="opt_start_choice_hint">Cada inicio de la app pregunta primero: jugar aquí, ser el GamePad de otro dispositivo, o esperar un dispositivo y ser su pantalla.</string>
+    <string name="pad_tv_code_screen">%1$s quiere ser la pantalla de este dispositivo. Escribe allí este código: %2$s</string>
+    <string name="opt_pad_cast">Mostrar en una TV</string>
+    <string name="opt_pad_cast_hint">Elige una TV o tableta que espera ser la pantalla (allí la app de pantalla abierta, o Ser la pantalla de otro dispositivo): muestra el juego y reproduce su sonido, este dispositivo sigue siendo el GamePad. Sin código que escribir.</string>
+    <string name="pad_cast_looking">Buscando pantallas en esta Wi-Fi… En la TV: la app de pantalla abierta (o allí Juego > Otros dispositivos > Ser la pantalla de otro dispositivo).</string>
+    <string name="pad_cast_pick">Estos esperan ser la pantalla. Elige uno: se une a este dispositivo.</string>
+    <string name="pad_cast_sent">Pidiendo a %1$s que sea la pantalla…</string>
+    <string name="pad_cast_failed">%1$s no ha respondido. ¿Sigue abierta su página de búsqueda?</string>
 </resources>

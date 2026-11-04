@@ -16,8 +16,10 @@
 #include "../disc/wud.h"
 #include "../disc/wua.h"
 #include "../crash_info.h"
+#include "../drc_mirror.h"
 #include "../hud.h"
 #include "link_icons.h"
+#include "map_plan.h"
 #include "ui_icons.h"
 #include "warp_catalog.h"
 #include "../gx2/gx2.h"
@@ -43,11 +45,16 @@ void set_ao_mode(int m);
 bool aniso_enabled();
 void set_aniso(bool v);
 bool vsync();
+void set_drc_window_fps(int fps);
+void set_tvout_window_fps(int fps);
+void set_drc_window_tv(bool on);
 void set_vsync(bool v);
 int upscale_mode();
 void set_upscale_mode(int m);
 bool ao_hires_enabled();
 void set_ao_hires(bool v);
+bool area_blur_enabled();
+void set_area_blur(bool v);
 void request_capture();
 }  // namespace gfx
 
@@ -59,6 +66,13 @@ jclass g_native_class = nullptr;
 jmethodID g_request_text = nullptr;
 jmethodID g_rumble = nullptr, g_rumble_hold = nullptr;
 std::atomic<bool> g_started{false};
+
+std::u16string jstr16(JNIEnv* env, jstring s) {
+    const jsize n = env->GetStringLength(s);
+    std::u16string out(n, u'\0');
+    env->GetStringRegion(s, 0, n, (jchar*)out.data());
+    return out;
+}
 
 std::string jstr(JNIEnv* env, jstring s) {
     if (!s) return {};
@@ -129,7 +143,12 @@ extern "C" JNIEXPORT jint JNI_OnLoad(JavaVM* vm, void*) {
 #define JNI_FN(ret, name) extern "C" JNIEXPORT ret JNICALL Java_org_wwhdrecomp_app_Native_##name
 
 namespace gx2 { void set_clock_rate(double rate); }  // gx2_core.cpp
-namespace ax { void set_gamepad_sounds(bool on); bool gamepad_sounds(); }  // hle/ax.cpp
+namespace ax {  // hle/ax.cpp
+void set_gamepad_sounds(bool on);
+bool gamepad_sounds();
+void set_remote_audio(int bits);
+int take_remote_audio(int stream, int16_t* out, int maxFrames);
+}
 
 // null if `gameDir` holds the executable this build was recompiled from, else a message
 
@@ -167,6 +186,18 @@ JNI_FN(jstring, gameRelease)(JNIEnv* env, jclass, jstring gameDir) {
 // the crash log's context from the app ("app": version, device, settings), see crash_info.h
 JNI_FN(void, setCrashInfo)(JNIEnv* env, jclass, jstring section, jstring text) {
     crash_info::set(jstr(env, section), jstr(env, text));
+}
+
+// About > Share game log's header: the GPU and its driver, how long the game ran and where it is,
+// then the crash log's context (app, game release, code, env, options set while running)
+int run_place(char* buf, int cap);  // main.cpp
+JNI_FN(jstring, reportInfo)(JNIEnv* env, jclass) {
+    char place[192];
+    run_place(place, sizeof place);
+    const char* gpu = gfx::gpu_name();
+    std::string s = std::string("  GPU ") + (*gpu ? gpu : "(renderer not started)") + ", driver " + gfx::driver_info() + "\n  " +
+                    place + "\n" + crash_info::text();
+    return env->NewStringUTF(s.c_str());
 }
 
 // touch controls: the right side turns the camera by swiping (mods/camera.cpp's mouse camera)
@@ -210,6 +241,16 @@ JNI_FN(jintArray, windCompass)(JNIEnv* env, jclass) {
 }
 // minigames played by touch (mods/minigames.cpp)
 JNI_FN(jint, minigameMode)(JNIEnv*, jclass) { return mods::minigame_mode(); }
+
+// sound for another device (PadHost): stream 1 the TV sound, 2 the GamePad-only sounds; interleaved stereo frames
+// into `out` (at most its length / 2), the number taken
+JNI_FN(jint, takeRemoteAudio)(JNIEnv* env, jclass, jint stream, jshortArray out) {
+    jsize len = env->GetArrayLength(out);
+    jshort* p = env->GetShortArrayElements(out, nullptr);
+    int n = ax::take_remote_audio(stream, p, len / 2);
+    env->ReleaseShortArrayElements(out, p, 0);
+    return n;
+}
 JNI_FN(void, minigameTouch)(JNIEnv*, jclass, jint action, jfloat x, jfloat y) { mods::minigame_touch(action, x, y); }
 JNI_FN(jfloatArray, minigameMarks)(JNIEnv* env, jclass) {
     float v[2 * mods::kMinigameMarks];
@@ -226,6 +267,7 @@ JNI_FN(jintArray, songState)(JNIEnv* env, jclass) {
     return a;
 }
 JNI_FN(void, playSong)(JNIEnv*, jclass, jint melody) { mods::play_song(melody); }
+JNI_FN(void, setWind)(JNIEnv*, jclass, jint angle) { mods::set_wind(angle); }
 JNI_FN(void, countBeat)(JNIEnv*, jclass, jint time, jboolean last) { mods::count_beat(time, last); }
 JNI_FN(jintArray, actionTexts)(JNIEnv* env, jclass) {
     int32_t v[mods::kActionCodes];
@@ -239,6 +281,79 @@ JNI_FN(jintArray, touchState)(JNIEnv* env, jclass) {
     mods::touch_state(v);
     jintArray a = env->NewIntArray(mods::kTouchStateLen);
     env->SetIntArrayRegion(a, 0, mods::kTouchStateLen, (const jint*)v);
+    return a;
+}
+JNI_FN(jfloatArray, miniMapState)(JNIEnv* env, jclass) {
+    float v[mods::kMiniMapLen];
+    mods::minimap_state(v);
+    jfloatArray a = env->NewFloatArray(mods::kMiniMapLen);
+    env->SetFloatArrayRegion(a, 0, mods::kMiniMapLen, v);
+    return a;
+}
+JNI_FN(jstring, miniMapStage)(JNIEnv* env, jclass) { return env->NewStringUTF(mods::minimap_stage().c_str()); }
+JNI_FN(jbyteArray, progressData)(JNIEnv* env, jclass) {
+    uint8_t v[mods::kProgressLen];
+    int n = mods::progress_data(v);
+    jbyteArray a = env->NewByteArray(n);
+    env->SetByteArrayRegion(a, 0, n, (const jbyte*)v);
+    return a;
+}
+JNI_FN(jfloatArray, miniMapStageInfo)(JNIEnv* env, jclass, jstring gameDir, jstring stage) {
+    std::vector<float> v;
+    if (!map_plan::stage_info(jstr(env, gameDir), jstr(env, stage), v)) return nullptr;
+    jfloatArray a = env->NewFloatArray((jsize)v.size());
+    env->SetFloatArrayRegion(a, 0, (jsize)v.size(), v.data());
+    return a;
+}
+// the charts' list (map_plan::chart_list) from the first of the folders that has one, or null
+JNI_FN(jbyteArray, miniMapCharts)(JNIEnv* env, jclass, jobjectArray dirs) {
+    std::vector<uint8_t> v;
+    for (jsize i = 0, n = env->GetArrayLength(dirs); i < n && v.empty(); i++) {
+        auto d = (jstring)env->GetObjectArrayElement(dirs, i);
+        if (d && !map_plan::chart_list(jstr(env, d), v)) v.clear();
+        env->DeleteLocalRef(d);
+    }
+    if (v.empty()) return nullptr;
+    jbyteArray a = env->NewByteArray((jsize)v.size());
+    env->SetByteArrayRegion(a, 0, (jsize)v.size(), (const jbyte*)v.data());
+    return a;
+}
+JNI_FN(jfloatArray, miniMapMarks)(JNIEnv* env, jclass, jstring gameDir, jstring stage) {
+    std::vector<float> v;
+    if (!map_plan::marks(jstr(env, gameDir), jstr(env, stage), v)) return nullptr;
+    jfloatArray a = env->NewFloatArray((jsize)v.size());
+    env->SetFloatArrayRegion(a, 0, (jsize)v.size(), v.data());
+    return a;
+}
+// {w, h, x0, z0, units per pixel (float bits), ARGB pixels...} or null
+JNI_FN(jintArray, miniMapPlan)(JNIEnv* env, jclass, jstring gameDir, jstring stage, jfloat yMin, jfloat yMax, jint style,
+                              jlong lit, jlong dim, jfloatArray window, jfloat fineUpp) {
+    map_plan::Plan p;
+    float win[4];
+    bool hasWin = window && env->GetArrayLength(window) >= 4 && fineUpp > 0;
+    if (hasWin) env->GetFloatArrayRegion(window, 0, 4, win);
+    if (!map_plan::room_plan(jstr(env, gameDir), jstr(env, stage), yMin, yMax, p, style, (uint64_t)lit, (uint64_t)dim,
+                             hasWin ? win : nullptr, fineUpp))
+        return nullptr;
+    std::vector<int32_t> v = {p.w, p.h, 0, 0, 0};
+    memcpy(&v[2], &p.x0, 4);
+    memcpy(&v[3], &p.z0, 4);
+    memcpy(&v[4], &p.upp, 4);
+    v.insert(v.end(), p.argb.begin(), p.argb.end());
+    jintArray a = env->NewIntArray((jsize)v.size());
+    env->SetIntArrayRegion(a, 0, (jsize)v.size(), (const jint*)v.data());
+    return a;
+}
+JNI_FN(jintArray, miniMapTerrain)(JNIEnv* env, jclass, jstring gameDir, jint room) {
+    map_plan::Plan p;
+    if (!map_plan::sea_terrain(jstr(env, gameDir), room, p)) return nullptr;
+    std::vector<int32_t> v = {p.w, p.h, 0, 0, 0};
+    memcpy(&v[2], &p.x0, 4);
+    memcpy(&v[3], &p.z0, 4);
+    memcpy(&v[4], &p.upp, 4);
+    v.insert(v.end(), p.argb.begin(), p.argb.end());
+    jintArray a = env->NewIntArray((jsize)v.size());
+    env->SetIntArrayRegion(a, 0, (jsize)v.size(), (const jint*)v.data());
     return a;
 }
 JNI_FN(void, setHudHidden)(JNIEnv* env, jclass, jstring names) { hud_set_hidden(jstr(env, names)); }
@@ -400,19 +515,24 @@ extern "C" const char wwhd_ops_bc[], wwhd_ops_bc_end[], wwhd_hooks[], wwhd_hooks
 static std::atomic<size_t> g_compile_done{0}, g_compile_total{0};
 static std::atomic<bool> g_compile_cancel{false};
 
-// recompiles the game with LLVM on the device into `outDir`, logging time and memory; "" or why not
-static std::string compile_code(const std::string& gameDir, const std::string& outDir, std::vector<std::string>& objects) {
+// recompiles the game with LLVM on the device into `outDir`, logging time and memory; "" or why not. `features` /
+// `tune`: for another device's CPU (its cpuFeatures / cpuModel), "" for this one
+static std::string compile_code(const std::string& gameDir, const std::string& outDir, std::vector<std::string>& objects,
+                                 const std::string& features = "", const std::string& tune = "") {
     recomp::CompileOptions opt;
     opt.rpxPath = gameDir + "/code/cking.rpx";
     opt.opsBitcode.assign(wwhd_ops_bc, wwhd_ops_bc_end);
     opt.hooksText.assign(wwhd_hooks, wwhd_hooks_end);
     opt.hotText.assign(wwhd_hot, wwhd_hot_end);
     opt.outDir = outDir;
-    opt.baseKey = recomp::code_base_key(opt.rpxPath);
-    // about 500 MB per job; more than 4 barely help on big.LITTLE CPUs
+    opt.baseKey = recomp::code_base_key(opt.rpxPath, features);
+    opt.features = features;
+    opt.tune = tune;
+    // about 500 MB per job; more than 4 barely help on big.LITTLE CPUs. Under ~3.5 GB (3 GB TV boxes; 4 GB phones
+    // report 3.6-3.8): one, two took 1.4 GB and Android ended the app on a 3 GB TV box at module 7 of 33
     struct sysinfo si;
     unsigned long long ram = sysinfo(&si) == 0 ? (unsigned long long)si.totalram * si.mem_unit : 0;
-    opt.jobs = ram >= (7ull << 30) ? 4 : ram >= (5ull << 30) ? 3 : 2;
+    opt.jobs = ram >= (7ull << 30) ? 4 : ram >= (5ull << 30) ? 3 : ram >= (7ull << 29) ? 2 : 1;
     if (const char* j = getenv("WWHD_RECOMPILE_JOBS")) opt.jobs = (unsigned)atoi(j);
     if (const char* o = getenv("WWHD_RECOMPILE_OPT")) opt.optLevel = atoi(o);  // testing
     g_compile_done = 0;
@@ -448,6 +568,49 @@ static std::string compile_code(const std::string& gameDir, const std::string& o
 #endif
 
 #ifdef WWHD_DEVICE_RECOMP
+JNI_FN(void, setKeepPlainCode)(JNIEnv*, jclass, jboolean on) { recomp::set_keep_plain_code(on); }
+#else
+JNI_FN(void, setKeepPlainCode)(JNIEnv*, jclass, jboolean) {}
+#endif
+
+// the randomizer's output folder to play (packs.h set_randomizer), null for the game as it is; before
+// needsCompile / compileGame / start
+JNI_FN(void, setRandomizer)(JNIEnv* env, jclass, jstring outDir) { packs::set_randomizer(outDir ? jstr(env, outDir) : ""); }
+// Link's colours' folder (packs.h set_link_colors), null for none; any time (the runtime reads the files again)
+JNI_FN(void, setLinkColors)(JNIEnv* env, jclass, jstring dir) { packs::set_link_colors(dir ? jstr(env, dir) : ""); }
+// player models per save file (mods/player_models.cpp): the played permanent_3d.pack, the mod packs' folder, each save
+// file's model folder (null or "": HD Link); any time (taken over live)
+JNI_FN(void, setPlayerModels)(JNIEnv* env, jclass, jstring basePack, jstring packsDir, jstring f1, jstring f2, jstring f3) {
+    std::vector<std::string> folders;
+    for (jstring f : {f1, f2, f3}) folders.push_back(f ? jstr(env, f) : "");
+    mods::set_player_models(basePack ? jstr(env, basePack) : "", packsDir ? jstr(env, packsDir) : "", folders);
+}
+
+// save file names (mods/save_names.cpp): each file's name over 8 characters (null or shorter: none); any time
+JNI_FN(void, setSaveNames)(JNIEnv* env, jclass, jstring n1, jstring n2, jstring n3) {
+    std::array<std::u16string, 3> names;
+    int i = 0;
+    for (jstring n : {n1, n2, n3}) names[i++] = n ? jstr16(env, n) : std::u16string();
+    mods::set_long_save_names(names);
+}
+// renames save file `file` (1..3) in memory at the next frame (the game's Save keeps it)
+JNI_FN(void, renameSaveFile)(JNIEnv* env, jclass, jint file, jstring name) {
+    if (name) mods::rename_save_file(file - 1, jstr16(env, name));
+}
+// the three names in memory, null when the game has none there yet
+JNI_FN(jobjectArray, saveNames)(JNIEnv* env, jclass) {
+    std::array<std::u16string, 3> names;
+    if (!mods::save_names(names)) return nullptr;
+    jobjectArray out = env->NewObjectArray(3, env->FindClass("java/lang/String"), nullptr);
+    for (int i = 0; i < 3; i++) {
+        jstring s = env->NewString((const jchar*)names[i].data(), (jsize)names[i].size());
+        env->SetObjectArrayElement(out, i, s);
+        env->DeleteLocalRef(s);
+    }
+    return out;
+}
+
+#ifdef WWHD_DEVICE_RECOMP
 // ---- the game code, compiled on the device (runtime/src/recomp): the app checks the cache
 // before starting and runs the compile on a Java thread with a progress screen
 
@@ -480,10 +643,32 @@ JNI_FN(jlongArray, compileProgress)(JNIEnv* env, jclass) {
 }
 
 JNI_FN(void, compileCancel)(JNIEnv*, jclass) { g_compile_cancel = true; }
+
+// ---- the game code for another device (PadActivity: a phone prepares it for a TV): that device's CPU features
+// and model, and the compile with them into a code cache of their own (the plain game: no mod packs)
+JNI_FN(jstring, cpuFeatures)(JNIEnv* env, jclass) { return env->NewStringUTF(recomp::host_features().c_str()); }
+
+JNI_FN(jstring, cpuModel)(JNIEnv* env, jclass) { return env->NewStringUTF(recomp::host_cpu_model().c_str()); }
+
+JNI_FN(jstring, compileGameFor)(JNIEnv* env, jclass, jstring gameDir, jstring codeDir, jstring features, jstring tune) {
+    std::string game = jstr(env, gameDir), dir = jstr(env, codeDir), feat = jstr(env, features);
+    if (feat.empty()) return env->NewStringUTF("no CPU features");
+    std::string key = recomp::code_cache_key(game + "/code/cking.rpx", feat);
+    if (key.empty()) return env->NewStringUTF("cannot read the game executable");
+    recomp::begin_code_cache(dir);
+    std::vector<std::string> objects;
+    LOG("[recomp] for another device: CPU features %s, model %s", feat.c_str(), jstr(env, tune).c_str());
+    std::string err = compile_code(game, dir, objects, feat, jstr(env, tune));
+    if (err.empty()) recomp::finish_code_cache(dir, key, objects, err);
+    return err.empty() ? nullptr : env->NewStringUTF(err.c_str());
+}
 JNI_FN(jboolean, buildsGameCode)(JNIEnv*, jclass) { return true; }
 #else
 JNI_FN(jboolean, needsCompile)(JNIEnv*, jclass, jstring, jstring) { return false; }
 JNI_FN(jboolean, buildsGameCode)(JNIEnv*, jclass) { return false; }
+JNI_FN(jstring, cpuFeatures)(JNIEnv* env, jclass) { return env->NewStringUTF(""); }  // (game code in the APK: none to prepare)
+JNI_FN(jstring, cpuModel)(JNIEnv* env, jclass) { return env->NewStringUTF(""); }
+JNI_FN(jstring, compileGameFor)(JNIEnv* env, jclass, jstring, jstring, jstring, jstring) { return env->NewStringUTF("not in this build"); }
 #endif
 
 // boots the runtime and starts the game (once per process)
@@ -550,12 +735,20 @@ JNI_FN(void, drcSurfaceChanged)(JNIEnv* env, jclass, jobject surface) {
     if (w) ANativeWindow_release(w);  // the renderer holds its own reference
 }
 
+JNI_FN(void, tvOutSurfaceChanged)(JNIEnv* env, jclass, jobject surface) {
+    ANativeWindow* w = surface ? ANativeWindow_fromSurface(env, surface) : nullptr;
+    gfx::set_tv_out_window(w);
+    if (w) ANativeWindow_release(w);
+}
+
 JNI_FN(void, setLayout)(JNIEnv* env, jclass, jfloatArray tv, jfloatArray drc, jboolean drcVisible) {
     gfx::ScreenRect t, d;
     if (tv && env->GetArrayLength(tv) >= 4) env->GetFloatArrayRegion(tv, 0, 4, &t.x);
     if (drc && env->GetArrayLength(drc) >= 4) env->GetFloatArrayRegion(drc, 0, 4, &d.x);
     gfx::set_layout(t, d, drcVisible);
 }
+
+JNI_FN(void, setBackdropTv)(JNIEnv*, jclass, jboolean on) { gfx::set_backdrop_tv(on); }
 
 JNI_FN(void, setPad)(JNIEnv*, jclass, jint buttons, jfloat lx, jfloat ly, jfloat rx, jfloat ry) {
     input::set_pad((uint32_t)buttons, lx, ly, rx, ry);
@@ -595,12 +788,23 @@ JNI_FN(void, setPaused)(JNIEnv*, jclass, jboolean paused) {
 // settings shown in the app's menu
 JNI_FN(void, setOption)(JNIEnv* env, jclass, jstring name, jint value) {
     std::string n = jstr(env, name);
-    if (n != "capture") crash_info::option(n, value);
+    if (n != "capture" && n != "area_flush" && n != "fly" && n != "memory_headroom" && n != "memory_threshold") crash_info::option(n, value);
     if (n == "ao_mode") gfx::set_ao_mode(value);
     else if (n == "ao_hires") gfx::set_ao_hires(value != 0);
+    else if (n == "area_blur") gfx::set_area_blur(value != 0);
     else if (n == "aniso") gfx::set_aniso(value != 0);
     else if (n == "vsync") gfx::set_vsync(value != 0);
+    else if (n == "drc_window_fps") gfx::set_drc_window_fps(value);
+    else if (n == "tvout_window_fps") gfx::set_tvout_window_fps(value);
+    else if (n == "drc_window_tv") gfx::set_drc_window_tv(value != 0);
     else if (n == "trim_memory") gfx::trim_memory();
+    else if (n == "memory_headroom") {
+        ss::set_memory_headroom(value);
+        gfx::set_memory_headroom(value);
+    }
+    else if (n == "memory_threshold") gfx::set_memory_threshold(value);
+    else if (n == "area_flush") gfx::area_flush();
+    else if (n == "fly") value ? mods::fly_start() : mods::fly_stop();
     else if (n == "upscale") gfx::set_upscale_mode(value);
     else if (n == "pro_controller") input::set_pro_controller(value != 0);
     else if (n == "invert_camera_y") mods::set_invert_y(value);
@@ -630,6 +834,11 @@ JNI_FN(void, setOption)(JNIEnv* env, jclass, jstring name, jint value) {
         if (value) interp::set_fps(value);
         interp::set_mode(value ? 1 : 0);
     }
+    // 60 fps (generated, vk/reproj.cpp): the game at its own 30, every other frame made on the GPU
+    else if (n == "fps_generated") {
+        if (value) interp::set_mode(0);
+        gfx::request_builtin_frame_generation(value != 0);
+    }
     // gameplay mods (runtime/src/mods)
     else if (n == "mod_direct_camera") mods::set_direct_camera(value != 0);
     else if (n == "mod_camera_speed") mods::set_camera_speed(value / 100.0f);
@@ -639,7 +848,14 @@ JNI_FN(void, setOption)(JNIEnv* env, jclass, jstring name, jint value) {
     else if (n == "mod_jump") mods::set_jump_anywhere(value != 0);
     else if (n == "mod_jump_double") mods::set_double_jump(value != 0);
     else if (n == "mod_jump_noauto") mods::set_no_auto_jump(value != 0);
+    else if (n == "mod_leaf_lift") mods::set_leaf_lift(value != 0);
+    else if (n == "mod_instant_text") mods::set_instant_text(value != 0);
+    else if (n == "mod_text_pauses_off") mods::set_text_pauses_off(value != 0);
+    else if (n == "mod_leaf_lift_height") mods::set_leaf_lift_height(value);
     else if (n == "mod_quick_doors") mods::set_quick_doors(value != 0);
+    else if (n == "mod_walk_doors") mods::set_walk_doors(value != 0);
+    else if (n == "mod_walk_doors_a") mods::set_walk_doors_by_a(value != 0);
+    else if (n == "mod_hit_stop_off") mods::set_hit_stop_off(value);
     else if (n == "mod_fast_scenes") mods::set_fast_scenes(value != 0);
     else if (n == "mod_ff_cutscenes") mods::set_ff_cutscenes(value != 0);
     else if (n == "mod_ff_dialogues") mods::set_ff_dialogues(value != 0);
@@ -651,6 +867,7 @@ JNI_FN(void, setOption)(JNIEnv* env, jclass, jstring name, jint value) {
     else if (n == "link_clothes") mods::set_link_clothes(value);
     else if (n == "postbox_mail") mods::set_postbox_mail(value != 0);
     else if (n == "gamepad_sounds") ax::set_gamepad_sounds(value != 0);
+    else if (n == "remote_audio") ax::set_remote_audio(value);
     else if (n == "postbox_same_day") mods::set_postbox_same_day(value != 0);
     else if (n == "postbox_present") mods::postbox_present();
     else if (n == "picto_page") mods::picto_page_request(value);
@@ -671,6 +888,7 @@ JNI_FN(void, setOption)(JNIEnv* env, jclass, jstring name, jint value) {
     else if (n == "cheat_inf_bags") mods::set_infinite(mods::kInfBags, value != 0);
     else if (n == "cheat_inf_breath") mods::set_infinite(mods::kInfBreath, value != 0);
     else if (n == "cheat_one_hit") mods::set_infinite(mods::kOneHit, value != 0);
+    else if (n == "cheat_fast_push") mods::set_infinite(mods::kFastPush, value != 0);
     else if (n == "cheat_moon_jump") mods::set_infinite(mods::kMoonJump, value != 0);
     else if (n == "cheat_moon_nofall") mods::set_infinite(mods::kMoonNoFall, value != 0);
     else if (n == "cheat_moon_anims") mods::set_infinite(mods::kMoonAllAnims, value != 0);
@@ -703,6 +921,7 @@ JNI_FN(jint, getOption)(JNIEnv* env, jclass, jstring name) {
     if (n == "ao_mode") return gfx::ao_mode();
     if (n == "auto_state") return ss::auto_interval();
     if (n == "ao_hires") return gfx::ao_hires_enabled();
+    if (n == "area_blur") return gfx::area_blur_enabled();
     if (n == "aniso") return gfx::aniso_enabled();
     if (n == "vsync") return gfx::vsync();
     if (n == "upscale") return gfx::upscale_mode();
@@ -713,11 +932,14 @@ JNI_FN(jint, getOption)(JNIEnv* env, jclass, jstring name) {
     if (n == "tv_aspect") return gfx::tv_aspect();
     if (n == "bench_frames") return gfx::benchmark_frames();
     if (n == "work_done") return gfx::work_done();
+    if (n == "pipelines_pending") return gfx::pipelines_pending();
+    if (n == "fly_left") return mods::fly_left();
     if (n == "boot_message") return hud_boot_message() ? 1 : 0;
     if (n == "album_screen") return hud_album_screen() ? 1 : 0;
     if (n == "dyn_res_min") return (int)lroundf(gfx::dynamic_resolution_min() * 100);
     if (n == "render_aspect") return aspect::mode() == aspect::kWindow ? 1 : 0;
     if (n == "interp_fps") return interp::mode() == 1 ? interp::fps() : 0;
+    if (n == "fps_generated") return gfx::builtin_frame_generation() ? 1 : 0;
     if (n == "mod_direct_camera") return mods::direct_camera();
     if (n == "mod_camera_speed") return (int)lroundf(mods::camera_speed() * 100);
     if (n == "swipe_boat") return (int)lroundf(mods::swipe_boat() * 100);
@@ -726,7 +948,14 @@ JNI_FN(jint, getOption)(JNIEnv* env, jclass, jstring name) {
     if (n == "mod_jump") return mods::jump_anywhere();
     if (n == "mod_jump_double") return mods::double_jump();
     if (n == "mod_jump_noauto") return mods::no_auto_jump();
+    if (n == "mod_leaf_lift") return mods::leaf_lift();
+    if (n == "mod_instant_text") return mods::instant_text();
+    if (n == "mod_text_pauses_off") return mods::text_pauses_off();
+    if (n == "mod_leaf_lift_height") return mods::leaf_lift_height();
     if (n == "mod_quick_doors") return mods::quick_doors();
+    if (n == "mod_walk_doors") return mods::walk_doors();
+    if (n == "mod_walk_doors_a") return mods::walk_doors_by_a();
+    if (n == "mod_hit_stop_off") return mods::hit_stop_off();
     if (n == "mod_fast_scenes") return mods::fast_scenes();
     if (n == "mod_ff_cutscenes") return mods::ff_cutscenes();
     if (n == "mod_ff_dialogues") return mods::ff_dialogues();
@@ -758,6 +987,7 @@ JNI_FN(jint, getOption)(JNIEnv* env, jclass, jstring name) {
     if (n == "cheat_inf_bags") return mods::infinite(mods::kInfBags);
     if (n == "cheat_inf_breath") return mods::infinite(mods::kInfBreath);
     if (n == "cheat_one_hit") return mods::infinite(mods::kOneHit);
+    if (n == "cheat_fast_push") return mods::infinite(mods::kFastPush);
     if (n == "cheat_moon_jump") return mods::infinite(mods::kMoonJump);
     if (n == "cheat_moon_nofall") return mods::infinite(mods::kMoonNoFall);
     if (n == "cheat_moon_anims") return mods::infinite(mods::kMoonAllAnims);
@@ -830,6 +1060,42 @@ JNI_FN(void, loadState)(JNIEnv*, jclass, jint slot) { ss::request_load(slot); }
 JNI_FN(void, setStartHold)(JNIEnv*, jclass, jboolean on) { ss::set_start_hold(on); }
 JNI_FN(jint, startHoldState)(JNIEnv*, jclass) { return ss::start_hold_state(); }
 JNI_FN(jint, frontScreen)(JNIEnv*, jclass) { return g_started ? ss::front_screen() : 4; }
+// the game's own GamePad screens as drawing orders for a GamePad device (drc_mirror.h; PadHost)
+JNI_FN(void, drcMirror)(JNIEnv*, jclass, jboolean on) { drc_mirror::set_on(on); }
+JNI_FN(jbyteArray, drcMirrorFrame)(JNIEnv* env, jclass) {
+    std::vector<uint8_t> v;
+    if (!g_started || !drc_mirror::frame(v)) return nullptr;
+    jbyteArray a = env->NewByteArray((jsize)v.size());
+    env->SetByteArrayRegion(a, 0, (jsize)v.size(), (const jbyte*)v.data());
+    return a;
+}
+// a texture of the frames: width, height (int each, little-endian), then RGBA (not premultiplied, the texture's
+// component selection applied); null if it can't be decoded (any more)
+JNI_FN(jbyteArray, drcMirrorTexture)(JNIEnv* env, jclass, jint id) {
+    drc_mirror::TexInfo t;
+    if (!g_started || !drc_mirror::texture((uint32_t)id, t)) return nullptr;
+    std::vector<uint8_t> raw;
+    uint32_t ch = 0;
+    if (!ui_icons::decode_surface(mem::ptr(t.image), t.size, t.w, t.h, t.format, t.tile, t.swizzle, raw, ch, t.slice, t.depth) || !ch) {
+        static std::atomic<int> n{0};
+        if (n++ < 20) LOG("[drc-mirror] texture %08X: format %X %ux%u not decoded", (uint32_t)id, t.format, t.w, t.h);
+        return nullptr;
+    }
+    size_t px = (size_t)t.w * t.h;
+    std::vector<uint8_t> out(8 + px * 4);
+    memcpy(&out[0], &t.w, 4);
+    memcpy(&out[4], &t.h, 4);
+    uint8_t sel[4];
+    for (int k = 0; k < 4; k++) sel[k] = (t.compSel >> (24 - 8 * k)) & 0xFF;
+    for (size_t i = 0; i < px; i++) {
+        const uint8_t* s = &raw[i * ch];
+        uint8_t* d = &out[8 + i * 4];
+        for (int k = 0; k < 4; k++) d[k] = sel[k] < ch ? s[sel[k]] : sel[k] == 5 ? 255 : 0;
+    }
+    jbyteArray a = env->NewByteArray((jsize)out.size());
+    env->SetByteArrayRegion(a, 0, (jsize)out.size(), (const jbyte*)out.data());
+    return a;
+}
 JNI_FN(jstring, drcTargets)(JNIEnv* env, jclass) { return env->NewStringUTF(g_started ? aspect::drc_targets().c_str() : ""); }
 JNI_FN(jboolean, drcGameCursor)(JNIEnv*, jclass) { return g_started && aspect::drc_game_cursor(); }
 // the world stops for a few frames: the play scene's hit-stop timer (dScnPly_ply_c::nextPauseTimer 101EACB7,
@@ -837,7 +1103,9 @@ JNI_FN(jboolean, drcGameCursor)(JNIEnv*, jclass) { return g_started && aspect::d
 // menu's pause switch (dMenu_flag 101EA069): the game's own Options / Save states set that one and don't start
 // while it is already on. Called each frame while wanted; it runs out by itself.
 JNI_FN(void, setGamePaused)(JNIEnv*, jclass, jboolean on) {
-    if (g_started && on) st8(GD(0x101EACB7), 3);
+    if (!on) return;
+    mods::app_pause();  // (before the timer: no hit freeze's clearing leaves it alone)
+    if (g_started) st8(GD(0x101EACB7), 3);
 }
 // the game's pause kind (101F8348, 0270E320): 0 while it plays, else one of its own pausing states runs
 // (2 Options / Save on the GamePad, 4 "look at the GamePad")

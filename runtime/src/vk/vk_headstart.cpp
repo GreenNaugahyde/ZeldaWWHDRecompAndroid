@@ -34,6 +34,9 @@ bool headstart_known(uint64_t key);
 uint64_t headstart_replay(uint32_t* regs, bool vertex, const uint8_t* code, uint32_t size, const uint8_t* fsBytes,
                           uint32_t fsSize, bool linked, uint32_t vsMask);
 bool headstart_queue_pipeline(const uint8_t* raw, size_t size);
+void headstart_area_load(const uint8_t* pipes, uint32_t n, const std::vector<std::string>& areas,
+                         const std::unordered_map<uint64_t, std::vector<uint32_t>>& tags,
+                         const std::vector<std::pair<uint32_t, uint32_t>>& links);  // vk_draw.cpp
 size_t headstart_pipeline_size();
 void headstart_progress(int state, uint64_t done, uint64_t total, uint64_t shaders);
 
@@ -79,10 +82,15 @@ struct Template {
     size_t pipeSize = 0;
     struct Program { uint64_t hash; uint32_t size; bool vertex; };
     std::vector<Program> programs;  // distinct, in order of first use
+    // version 2: the areas each recipe was drawn in (recipe hash -> indices into areas)
+    std::vector<std::string> areas;
+    std::unordered_map<uint64_t, std::vector<uint32_t>> tags;
+    std::vector<std::pair<uint32_t, uint32_t>> links;  // areas that lead into each other
 };
 
 bool read_template(const Bytes& file, Template& t) {
-    if (file.size() < 12 || memcmp(file.data(), "WWHV", 4) != 0 || le32(&file[4]) != 1) return false;
+    const uint32_t version = file.size() >= 12 ? le32(&file[4]) : 0;
+    if (file.size() < 12 || memcmp(file.data(), "WWHV", 4) != 0 || version < 1 || version > 2) return false;
     uLongf rawSize = le32(&file[8]);
     if (rawSize > (1u << 30)) return false;
     t.raw.resize(rawSize);
@@ -129,9 +137,48 @@ bool read_template(const Bytes& file, Template& t) {
         t.states.push_back(s);
     }
     if (!u32(t.npipes)) return false;
+    if (version == 1) {
+        t.pipes = p;
+        t.pipeSize = t.npipes ? (size_t)(end - p) / t.npipes : 0;
+        return !t.npipes || t.pipeSize * t.npipes == (size_t)(end - p);
+    }
+    uint32_t pipeSize, nareas, ntags;
+    if (!u32(pipeSize) || (uint64_t)pipeSize * t.npipes > (uint64_t)(end - p)) return false;
+    t.pipeSize = pipeSize;
     t.pipes = p;
-    t.pipeSize = t.npipes ? (size_t)(end - p) / t.npipes : 0;
-    return !t.npipes || t.pipeSize * t.npipes == (size_t)(end - p);
+    p += (size_t)pipeSize * t.npipes;
+    if (!u32(nareas) || nareas > 100000) return false;
+    for (uint32_t i = 0; i < nareas; i++) {
+        uint32_t len;
+        if (!u32(len) || len > 255 || p + len > end) return false;
+        t.areas.emplace_back((const char*)p, len);
+        p += len;
+    }
+    if (!u32(ntags) || ntags > 4000000) return false;
+    t.tags.reserve(ntags);
+    for (uint32_t i = 0; i < ntags; i++) {
+        uint64_t h;
+        uint32_t n;
+        if (p + 8 > end) return false;
+        memcpy(&h, p, 8);
+        p += 8;
+        if (!u32(n) || (uint64_t)n * 4 > (uint64_t)(end - p)) return false;
+        auto& v = t.tags[h];
+        for (uint32_t k = 0; k < n; k++) {
+            uint32_t a = le32(p + k * 4);
+            if (a >= nareas) return false;
+            v.push_back(a);
+        }
+        p += n * 4;
+    }
+    uint32_t nlinks = 0;
+    if (p != end && (!u32(nlinks) || (uint64_t)nlinks * 8 != (uint64_t)(end - p))) return false;
+    for (uint32_t i = 0; i < nlinks; i++) {
+        uint32_t a = le32(p + i * 8), b = le32(p + i * 8 + 4);
+        if (a >= nareas || b >= nareas) return false;
+        t.links.push_back({a, b});
+    }
+    return true;
 }
 
 // ---------------------------------------------------------------- the game's shader archives
@@ -338,10 +385,6 @@ uint64_t fingerprint(const Bytes& templateFile) {
 // cache_load (render thread, before the first draw), after the cache's own records
 void headstart_vk_load(const std::string& dir) {
     if (const char* e = getenv("WWHD_HEADSTART"); e && !strcmp(e, "0")) return;
-    if (low_memory()) {  // its pipelines would take ~400 MB (vk_draw.cpp, low_memory)
-        LOG("[gfx] shader head start: off on a low memory device");
-        return;
-    }
     auto t0 = std::chrono::steady_clock::now();
     Bytes file;
     std::string packPath = dir + "/headstart-programs.bin";
@@ -352,6 +395,20 @@ void headstart_vk_load(const std::string& dir) {
     Template t;
     if (!read_template(file, t)) {
         LOG("[gfx] shader head start: template unreadable");
+        return;
+    }
+    // by area (vk_draw.cpp, area head start) with WWHD_AREA_HEADSTART=1 (MainActivity: devices under 7 GB) or on
+    // a low memory device, when the template carries area tags (a full shader tour tags ~40% of its recipes:
+    // the rest were never drawn on the tour and are made when drawn); 0 never
+    size_t tagged = 0;
+    for (uint32_t i = 0; i < t.npipes && !t.tags.empty(); i++) tagged += t.tags.count(headstart_hash(t.pipes + i * t.pipeSize, t.pipeSize));
+    const char* ae = getenv("WWHD_AREA_HEADSTART");
+    const bool areaMode = ae ? atoi(ae) != 0 : low_memory();
+    const bool byArea = areaMode && tagged && t.pipeSize == headstart_pipeline_size();
+    if (!t.tags.empty() && !byArea)
+        LOG("[gfx] shader head start: %zu of %u pipelines with area tags: all built ahead", tagged, t.npipes);
+    if (low_memory() && !byArea) {  // all its pipelines would take ~300 MB (vk_draw.cpp, low_memory)
+        LOG("[gfx] shader head start: off on a low memory device");
         return;
     }
     const uint64_t fp = fingerprint(file);
@@ -391,7 +448,9 @@ void headstart_vk_load(const std::string& dir) {
         else translated++;
     }
     size_t queued = 0;
-    for (uint32_t i = 0; i < t.npipes; i++) queued += headstart_queue_pipeline(t.pipes + i * t.pipeSize, t.pipeSize);
+    if (byArea) headstart_area_load(t.pipes, t.npipes, t.areas, t.tags, t.links);
+    else
+        for (uint32_t i = 0; i < t.npipes; i++) queued += headstart_queue_pipeline(t.pipes + i * t.pipeSize, t.pipeSize);
     LOG("[gfx] shader head start: %zu states (%zu already cached, %zu translated, %zu failed, %zu programs missing, "
         "%zu with another key), %zu of %u pipelines queued (%.0f ms, %.0f reading)",
         t.states.size(), known, translated, failed, missing, keyMismatch, queued, t.npipes, ms_since(t0), tRead);

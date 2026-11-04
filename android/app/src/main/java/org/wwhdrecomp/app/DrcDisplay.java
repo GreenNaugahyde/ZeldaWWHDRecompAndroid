@@ -11,6 +11,10 @@ import android.view.Display;
 import android.view.MotionEvent;
 import android.view.SurfaceHolder;
 import android.view.SurfaceView;
+import android.widget.FrameLayout;
+import android.view.View;
+import android.graphics.RectF;
+import android.graphics.Canvas;
 import android.view.WindowInsets;
 import android.view.WindowInsetsController;
 import android.view.WindowManager;
@@ -52,7 +56,57 @@ final class DrcDisplay implements DisplayManager.DisplayListener {
         return null;
     }
 
-    boolean active() { return screen != null; }
+    boolean active() { return (screen != null && !screen.tv) || remote != null; }
+
+    /** the GamePad picture goes to a GamePad device (PadHost), not to a display of this device */
+    boolean remoteOnly() { return remote != null; }
+
+    // the second display shows the game picture instead (a TV by casting or a cable): this device shows the GamePad's
+    private boolean tvPicture;
+
+    /** the game picture on the second display (true) or the GamePad picture (false) */
+    void setTvPicture(boolean tv) {
+        if (tv == tvPicture) return;
+        tvPicture = tv;
+        if (screen != null) {  // made again for the other picture
+            Screen s = screen;
+            screen = null;
+            s.dismiss();
+            listener.onDrcDisplayChanged(false);
+        }
+        update();
+    }
+
+    /** the game picture is on the second display now */
+    boolean tvShown() { return screen != null && screen.tv; }
+
+    // a phone as the GamePad (PadHost): the picture goes into its video encoder's surface instead of a display
+    private android.view.Surface remote;
+    private float remoteAspect;  // the video's shape
+
+    /** the GamePad picture into `s` (another device as the GamePad), null: back to a display or the main window */
+    void setRemote(android.view.Surface s, float aspect) {
+        remoteAspect = aspect;
+        if (s == remote) return;
+        if (remote != null) {
+            remote = null;
+            Native.drcSurfaceChanged(null);
+            applyAspect();
+            listener.onDrcDisplayChanged(false);
+        }
+        if (s != null) {
+            if (screen != null) {  // (a second display gives way while the phone is the GamePad)
+                Screen old = screen;
+                screen = null;
+                old.dismiss();
+            }
+            remote = s;
+            Native.drcSurfaceChanged(s);
+            applyAspect();
+            listener.onDrcDisplayChanged(true);
+        }
+        update();
+    }
 
     /** show the GamePad picture there whenever possible (false: keep it in the main window) */
     void setWanted(boolean w) {
@@ -68,7 +122,9 @@ final class DrcDisplay implements DisplayManager.DisplayListener {
 
     private void applyAspect() {
         Screen s = screen;
-        Native.setDrcAspect(fill && s != null && s.w > 0 && s.h > 0 ? s.w / (float) s.h : 0);
+        if (s != null && s.tv) return;  // (the game picture there: the GamePad picture's shape is the main window's)
+        if (remote != null) Native.setDrcAspect(fill ? remoteAspect : 0);  // (a phone as the GamePad)
+        else Native.setDrcAspect(fill && s != null && s.w > 0 && s.h > 0 ? s.w / (float) s.h : 0);
     }
 
     void release() {
@@ -78,7 +134,7 @@ final class DrcDisplay implements DisplayManager.DisplayListener {
     }
 
     private void update() {
-        Display d = wanted ? available() : null;
+        Display d = wanted && remote == null ? available() : null;
         if (screen != null && (d == null || screen.getDisplay().getDisplayId() != d.getDisplayId())) {
             Screen s = screen;
             screen = null;
@@ -86,9 +142,9 @@ final class DrcDisplay implements DisplayManager.DisplayListener {
             applyAspect();
             listener.onDrcDisplayChanged(false);
         }
-        if (screen == null && d != null) {
+        if (screen == null && d != null && remote == null) {
             try {
-                Screen s = new Screen(activity, d, this::applyAspect);
+                Screen s = new Screen(activity, d, this::applyAspect, () -> remote != null, tvPicture);
                 // closed by someone else (the system): the GamePad picture goes back to the main window
                 s.setOnDismissListener(x -> {
                     if (screen == s) {
@@ -119,10 +175,14 @@ final class DrcDisplay implements DisplayManager.DisplayListener {
     private static final class Screen extends Presentation implements SurfaceHolder.Callback {
         private int w, h;
         private final Runnable sizeChanged;
+        private final java.util.function.BooleanSupplier remoteActive;
+        final boolean tv;  // the game picture (the renderer's TV picture output) instead of the GamePad's
 
-        Screen(Context outer, Display d, Runnable sizeChanged) {
+        Screen(Context outer, Display d, Runnable sizeChanged, java.util.function.BooleanSupplier remoteActive, boolean tv) {
             super(outer, d);
             this.sizeChanged = sizeChanged;
+            this.remoteActive = remoteActive;
+            this.tv = tv;
         }
 
         @Override
@@ -135,8 +195,22 @@ final class DrcDisplay implements DisplayManager.DisplayListener {
             SurfaceView v = new SurfaceView(getContext());
             v.setBackgroundColor(Color.TRANSPARENT);
             v.getHolder().addCallback(this);
-            v.setOnTouchListener((view, e) -> touch(e));
-            setContentView(v);
+            if (!tv) v.setOnTouchListener((view, e) -> touch(e));
+            // over the picture: the progress marks on the game's sea chart (ChartMarks)
+            marks = new View(getContext()) {
+                private final RectF pic = new RectF();
+
+                @Override
+                protected void onDraw(Canvas c) {
+                    if (pictureRect(pic)) ChartMarks.I.draw(c, pic, getContext(), this);
+                }
+            };
+            marks.setWillNotDraw(false);
+            if (!tv) ChartMarks.I.attach(marks);
+            FrameLayout root = new FrameLayout(getContext());
+            root.addView(v, new FrameLayout.LayoutParams(-1, -1));
+            root.addView(marks, new FrameLayout.LayoutParams(-1, -1));
+            setContentView(root);
             getWindow().getDecorView().setBackgroundColor(Color.BLACK);
             WindowInsetsController c = getWindow().getInsetsController();
             if (c != null) {
@@ -150,6 +224,11 @@ final class DrcDisplay implements DisplayManager.DisplayListener {
 
         @Override
         public void surfaceChanged(SurfaceHolder holder, int format, int width, int height) {
+            if (tv) {  // the game picture: it takes this display's shape (renderer)
+                Native.tvOutSurfaceChanged(holder.getSurface());
+                return;
+            }
+            if (remoteActive.getAsBoolean()) return;
             w = width;
             h = height;
             Native.drcSurfaceChanged(holder.getSurface());
@@ -158,7 +237,31 @@ final class DrcDisplay implements DisplayManager.DisplayListener {
 
         @Override
         public void surfaceDestroyed(SurfaceHolder holder) {
-            Native.drcSurfaceChanged(null);
+            if (tv) {
+                Native.tvOutSurfaceChanged(null);
+                return;
+            }
+            if (!remoteActive.getAsBoolean()) Native.drcSurfaceChanged(null);  // (else the phone's surface has it now)
+        }
+
+        private View marks;
+
+        @Override
+        protected void onStop() {
+            if (marks != null && !tv) ChartMarks.I.detach(marks);
+            super.onStop();
+        }
+
+        /** where the picture lies on the display (as touch fits it), false before the surface has a size */
+        private boolean pictureRect(RectF out) {
+            if (w == 0 || h == 0) return false;
+            float pa = Native.drcPictureAspect();
+            if (!(pa > 0.1f)) pa = 16f / 9f;
+            float pw = w, ph = h;
+            if (pw / ph > pa) pw = ph * pa;
+            else ph = pw / pa;
+            out.set((w - pw) / 2, (h - ph) / 2, (w + pw) / 2, (h + ph) / 2);
+            return true;
         }
 
         // the GamePad picture fills the display in its own shape (16:9, or the display's when the
@@ -179,6 +282,11 @@ final class DrcDisplay implements DisplayManager.DisplayListener {
             boolean down = a != MotionEvent.ACTION_UP && a != MotionEvent.ACTION_CANCEL;
             float tx = Math.max(0, Math.min(1, (e.getX() - px) / pw)), ty = Math.max(0, Math.min(1, (e.getY() - py) / ph));
             Native.setDrcTouch(down, tx, ty);  // a taller (wider) picture: its 16:9 middle is the touch screen
+            // (on the game's 16:9 screen, as ControlsView's: MainActivity tells which chart square a finger opened)
+            float pa16 = Native.drcPictureAspect(), kx = pa16 > 16f / 9f ? pa16 / (16f / 9f) : 1f,
+                    ky = pa16 > 0.1f && pa16 < 16f / 9f ? (16f / 9f) / pa16 : 1f;
+            ControlsView.fingerX = (tx - 0.5f) * kx + 0.5f;
+            ControlsView.fingerY = (ty - 0.5f) * ky + 0.5f;
             if (DEBUG) android.util.Log.d("wwhd", "GamePad display touch " + (down ? "down" : "up") + " " + tx + "," + ty);
             return true;
         }

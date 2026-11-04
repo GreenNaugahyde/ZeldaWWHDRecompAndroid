@@ -25,6 +25,13 @@
 
 using namespace Latte;
 
+#ifdef __ANDROID__
+namespace gfx::rp {  // 60 fps (generated), vk/reproj.cpp
+void layout_root(const uint32_t* regs, bool tv);
+void note_camera(const float eye[3], const float center[3], const float up[3], float fovy, float znear, float zfar);
+}  // namespace gfx::rp
+#endif
+
 namespace gx2 {
 
 // ---------------------------------------------------------------- register file and context states
@@ -362,6 +369,18 @@ static void emit_host(Op op, std::initializer_list<uint32> payload) {
     execute_one(op, payload.begin(), (uint32)payload.size());
 }
 
+// 60 fps (generated, vk/reproj.cpp): the 3D camera of the frame being drawn, in order with its drawing
+void framegen_camera(const float v[12]) {
+    uint32 w[12];
+    memcpy(w, v, sizeof w);
+    if (g_render_thread) {
+        enqueue(OP_FRAMEGEN_CAMERA, w, 12);
+        return;
+    }
+    std::lock_guard<std::recursive_mutex> lk(g_exec_mutex);
+    execute_one(OP_FRAMEGEN_CAMERA, w, 12);
+}
+
 void warm_while_held() { emit_host(OP_WARM, {}); }
 
 void set_regs(uint32 first, const uint32* values, uint32 count) {
@@ -483,8 +502,20 @@ static void execute_one(Op op, const uint32* p, uint32 n) {
     case OP_LAYOUT_ROOT: {
         uint32 w = g_regs[mmCB_COLOR0_TILE] & 0xFFFF, h = g_regs[mmCB_COLOR0_FRAG];
         aspect::layout_root_target(p[0], gfx::target_is_tv(w, h) ? aspect::kTvTarget : gfx::target_is_drc(w, h) ? aspect::kDrcTarget : aspect::kOtherTarget);
+#ifdef __ANDROID__
+        gfx::rp::layout_root(g_regs, gfx::target_is_tv(w, h));  // the scene is complete: copied aside (reproj.cpp)
+#endif
         break;
     }
+#ifdef __ANDROID__
+    case OP_FRAMEGEN_CAMERA:
+        if (n >= 12) {
+            float v[12];
+            memcpy(v, p, sizeof v);
+            gfx::rp::note_camera(v, v + 3, v + 6, v[9], v[10], v[11]);
+        }
+        break;
+#endif
     case OP_SWAP:
         if (n) gfx::set_frame_aspect(gx2::bitsf(p[0]), n > 1 ? gx2::bitsf(p[1]) : 0.0f);  // aspect ratios from the next frame on (aspect.cpp)
         gfx::swap();

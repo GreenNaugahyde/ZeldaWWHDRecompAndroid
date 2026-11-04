@@ -25,7 +25,9 @@ import java.util.List;
  * A dialog in the style of the in-game menu (GameUi): a parchment card over the dimmed screen,
  * the title on a cyan plate, a message (scrolling when long), optional ON/OFF rows and bar buttons.
  * Controller buttons as in the menu and the game: the bottom button cancels, the right one presses
- * the button selected with the D-pad (none is preselected, so nothing is confirmed by accident).
+ * the button selected with the D-pad. With a controller connected one is selected from the start (the first
+ * row of the content / toggles, else the last, green button; a press held from before the dialog doesn't count),
+ * and the right stick scrolls a long message.
  */
 final class GameDialog extends Dialog {
     interface Toggle { void set(boolean on); }
@@ -39,10 +41,31 @@ final class GameDialog extends Dialog {
 
     GameDialog(Context c) { super(c, android.R.style.Theme_Translucent_NoTitleBar_Fullscreen); }
 
+    // (open dialogs: a remote GamePad's controller works the top one, MainActivity.padKey)
+    @Override
+    protected void onStart() {
+        super.onStart();
+        MainActivity.dialogShown(this);
+    }
+
+    @Override
+    protected void onStop() {
+        MainActivity.dialogGone(this);
+        super.onStop();
+    }
+
     GameDialog title(int res) { title = getContext().getString(res); return this; }
     GameDialog title(CharSequence t) { title = t; return this; }
     GameDialog message(int res) { message = getContext().getString(res); return this; }
     GameDialog message(CharSequence m) { message = m; return this; }
+
+    private TextView messageView;
+
+    /** a shown dialog's message changed (main thread): a progress line */
+    void setMessage(CharSequence m) {
+        message = m;
+        if (messageView != null) messageView.setText(m);
+    }
     GameDialog content(View v) { content = v; return this; }
 
     /** An ON/OFF row; `set` gets each change. */
@@ -57,6 +80,12 @@ final class GameDialog extends Dialog {
     /** The same, greyed out and without effect when `enabled` is false. */
     GameDialog button(int label, Runnable run, boolean enabled) {
         buttons.add(new Object[] {getContext().getString(label), run, enabled});
+        return this;
+    }
+
+    /** a button with a text of its own (not a resource) */
+    GameDialog button(CharSequence label, Runnable run) {
+        buttons.add(new Object[] {label.toString(), run, true});
         return this;
     }
 
@@ -117,6 +146,8 @@ final class GameDialog extends Dialog {
                 if (analogHeld.add(c)) watch.key(c, true);
             return true;
         }
+        if (capture == null && InputMapper.isController(e.getDevice()) && e.getAction() == android.view.MotionEvent.ACTION_MOVE)
+            rightStick(e);
         if (capture == null || !InputMapper.isController(e.getDevice())) return super.dispatchGenericMotionEvent(e);
         java.util.List<Integer> held = InputMapper.analogButtons(e);
         if (captureCode == 0 && !held.isEmpty()) captureCode = held.get(0);
@@ -127,6 +158,71 @@ final class GameDialog extends Dialog {
     private static boolean isAnalog(int code) {
         return code == KeyEvent.KEYCODE_BUTTON_L2 || code == KeyEvent.KEYCODE_BUTTON_R2 || code == KeyEvent.KEYCODE_DPAD_UP
                 || code == KeyEvent.KEYCODE_DPAD_DOWN || code == KeyEvent.KEYCODE_DPAD_LEFT || code == KeyEvent.KEYCODE_DPAD_RIGHT;
+    }
+
+    // the right stick scrolls the message (each frame while held, faster the further it is pushed)
+    private ScrollView scroll;
+    private float stickY;
+    private boolean stickRunning;
+
+    private void rightStick(android.view.MotionEvent e) {
+        android.view.InputDevice dev = e.getDevice();
+        boolean zrz = dev.getMotionRange(android.view.MotionEvent.AXIS_Z) != null
+                && dev.getMotionRange(android.view.MotionEvent.AXIS_RZ) != null;
+        int ax = zrz ? android.view.MotionEvent.AXIS_RZ : android.view.MotionEvent.AXIS_RY;
+        android.view.InputDevice.MotionRange r = dev.getMotionRange(ax, e.getSource());
+        float v = r == null ? 0 : e.getAxisValue(ax);
+        float flat = r == null ? 0 : Math.max(r.getFlat(), 0.2f);
+        stickY = Math.abs(v) < flat ? 0 : (v - Math.signum(v) * flat) / (1f - flat);
+        if (stickY != 0 && !stickRunning && scroll != null) {
+            stickRunning = true;
+            android.view.Choreographer.getInstance().postFrameCallback(stickFrame);
+        }
+    }
+
+    private final android.view.Choreographer.FrameCallback stickFrame = new android.view.Choreographer.FrameCallback() {
+        @Override
+        public void doFrame(long t) {
+            if (stickY == 0 || scroll == null || !isShowing()) { stickRunning = false; return; }
+            float s = Math.signum(stickY) * stickY * stickY;  // (fine control near the centre)
+            scroll.scrollBy(0, Math.round(s * px(22)));
+            android.view.Choreographer.getInstance().postFrameCallback(this);
+        }
+    };
+
+    /** a controller is connected (InputMapper.isController) */
+    private static boolean controllerConnected() {
+        for (int id : android.view.InputDevice.getDeviceIds())
+            if (InputMapper.isController(android.view.InputDevice.getDevice(id))) return true;
+        return false;
+    }
+
+    /** With a controller, the first row of the content / toggles, else the last enabled button (the green one). */
+    private void preselect(View body, List<View> rows) {
+        if (capture != null || watch != null || !controllerConnected()) return;
+        View target = null;
+        ArrayList<View> f = body.getFocusables(View.FOCUS_DOWN);
+        if (!f.isEmpty()) target = f.get(0);
+        else if (!rows.isEmpty()) target = rows.get(0);
+        else for (int i = buttonViews.size() - 1; i >= 0 && target == null; i--)
+            if (buttonViews.get(i).isEnabled()) target = buttonViews.get(i);
+        if (target == null) return;
+        View t = target;
+        t.post(() -> {
+            t.requestFocusFromTouch();  // (leaves touch mode, so it shows selected and the right button presses it)
+            if (scroll != null && isInside(t, scroll)) {
+                // the message's start stays in view when the row fits on the first screenful as well
+                android.graphics.Rect r = new android.graphics.Rect();
+                t.getDrawingRect(r);
+                scroll.offsetDescendantRectToMyCoords(t, r);
+                if (r.bottom + scroll.getScrollY() <= scroll.getHeight()) scroll.scrollTo(0, 0);
+            }
+        });
+    }
+
+    private static boolean isInside(View v, View ancestor) {
+        for (android.view.ViewParent p = v.getParent(); p != null; p = p.getParent()) if (p == ancestor) return true;
+        return false;
     }
 
     private void captured() {
@@ -196,6 +292,7 @@ final class GameDialog extends Dialog {
         body.setOrientation(LinearLayout.VERTICAL);
         if (message != null) {
             TextView m = GameUi.text(c, true);
+            messageView = m;
             m.setText(message);
             m.setTextColor(GameUi.INK);
             m.setTextSize(17);
@@ -215,13 +312,22 @@ final class GameDialog extends Dialog {
             }
         };
         scroll.addView(body);
+        this.scroll = scroll;
         card.addView(scroll, new LinearLayout.LayoutParams(-1, -2, 1));
-        for (Object[] t : toggles) card.addView(toggleRow(t));
+        List<View> rows = new ArrayList<>();
+        // (more than a few: they scroll with the message, else they and the buttons would not fit a phone held
+        // sideways, the GamePad device's menu)
+        boolean scrollToggles = toggles.size() > 3;
+        for (Object[] t : toggles) {
+            View r = toggleRow(t);
+            rows.add(r);
+            if (scrollToggles) body.addView(r);
+            else card.addView(r);
+        }
 
         if (!buttons.isEmpty()) {
-            LinearLayout row = new LinearLayout(c);
-            row.setGravity(Gravity.END);
-            row.setPadding(0, px(18), 0, 0);
+            // right-aligned like before; buttons that don't fit go on to a second row (never cut off)
+            GameUi.ButtonRows row = new GameUi.ButtonRows(c, px(12));
             for (int i = 0; i < buttons.size(); i++) {
                 Object[] b = buttons.get(i);
                 Runnable run = (Runnable) b[1];
@@ -237,13 +343,14 @@ final class GameDialog extends Dialog {
                     v.setAlpha(0.4f);
                 }
                 buttonViews.add(v);
-                LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-2, px(52));
-                lp.leftMargin = px(12);
-                row.addView(v, lp);
+                row.addView(v, new android.view.ViewGroup.LayoutParams(-2, px(52)));
             }
-            card.addView(row, new LinearLayout.LayoutParams(-1, -2));
+            LinearLayout.LayoutParams rowLp = new LinearLayout.LayoutParams(-1, -2);
+            rowLp.topMargin = px(18);
+            card.addView(row, rowLp);
         }
         setContentView(root);
+        preselect(body, rows);
         WindowInsetsController ic = w.getInsetsController();
         if (ic != null) {
             ic.hide(WindowInsets.Type.systemBars());

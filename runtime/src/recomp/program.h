@@ -27,6 +27,12 @@ struct CodePatch {
     std::vector<Write> writes;  // anywhere; those in .text and the cave change the code
     uint32_t caveLo = 0, caveHi = 0;
     std::vector<uint32_t> entries;
+    // an executable compiled instead of the given one (the randomizer's, packs.h); the modules stay cut
+    // by the given one's entries (compile.cpp), so its unchanged code keeps its objects
+    std::string rpx;
+    // from here on (the given executable's .text end) the code is the randomizer's: it and the functions branching
+    // into it pass values in any register (emit.cpp marks them "wwhd-noeabi", locals.cpp); 0 none
+    uint32_t noEabiLo = 0;
     std::string key;  // for the code cache key ("" without patches)
 };
 // the patch Program::load applies (set once at startup, before the code is compiled or loaded)
@@ -43,7 +49,12 @@ struct Program {
     uint32_t entry = 0;  // ELF entry point
     uint32_t textLo = 0, textHi = 0;
     std::vector<uint32_t> words;  // .text, host order
+    struct RelocFix {
+        uint32_t addr, size, value;  // size 4 (a word) or 2 (an address half)
+    };
+    std::vector<RelocFix> relocFixes;  // CodePatch::rpx: its relocations' values (applied to `words`, packs.cpp: memory)
     uint32_t caveLo = 0, caveHi = 0;  // code cave (CodePatch), empty without one
+    uint32_t noEabiLo = 0;            // CodePatch::noEabiLo (the randomizer's code from here to textHi)
     std::vector<uint32_t> caveWords;
     std::vector<bool> caveIsCode;  // per cave word: reached by control flow (functions end where data starts)
     uint32_t word(uint32_t addr) const { return addr >= textLo ? words[(addr - textLo) >> 2] : caveWords[(addr - caveLo) >> 2]; }
@@ -67,8 +78,10 @@ private:
         for (size_t i = 0; i < caveWords.size(); i++)
             if (caveIsCode[i]) f(caveLo + 4 * (uint32_t)i, caveWords[i]);
     }
-    bool parse(const std::vector<uint8_t>& f, std::string& err);
     void discover();
+
+public:
+    bool parse(const std::vector<uint8_t>& f, std::string& err);  // sections, symbols, relocations (no analysis)
 };
 
 }  // namespace recomp

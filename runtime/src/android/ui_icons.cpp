@@ -25,7 +25,7 @@ namespace ui_icons {
 using game_archive::Bytes;
 
 bool decode_surface(const uint8_t* b, uint32_t dataSize, uint32_t w, uint32_t h, uint32_t gx2Format, uint32_t tileMode,
-                    uint32_t swizzle, Bytes& out, uint32_t& ch) {
+                    uint32_t swizzle, Bytes& out, uint32_t& ch, uint32_t slice, uint32_t depth) {
     struct F { uint32_t bpb; bool comp; gfx::Convert cv; };
     F f;
     switch (gx2Format & 0x3F) {
@@ -40,7 +40,8 @@ bool decode_surface(const uint8_t* b, uint32_t dataSize, uint32_t w, uint32_t h,
     }
     if (!w || !h) return false;
     LatteAddrLib::AddrSurfaceInfo_OUT info{};
-    LatteAddrLib::GX2CalculateSurfaceInfo((Latte::E_GX2SURFFMT)gx2Format, w, h, 1, Latte::E_DIM::DIM_2D,
+    if (!depth) depth = 1;
+    LatteAddrLib::GX2CalculateSurfaceInfo((Latte::E_GX2SURFFMT)gx2Format, w, h, depth, depth > 1 ? Latte::E_DIM::DIM_2D_ARRAY : Latte::E_DIM::DIM_2D,
                                           Latte::MakeGX2TileMode((Latte::E_HWTILEMODE)(tileMode & 31)), 0, 0, &info);
     auto tm = (Latte::E_HWTILEMODE)info.hwTileMode;
     uint32_t pipe = (swizzle >> 8) & 1, bank = (swizzle >> 9) & 3;
@@ -51,11 +52,11 @@ bool decode_surface(const uint8_t* b, uint32_t dataSize, uint32_t w, uint32_t h,
         for (uint32_t x = 0; x < bw; x++) {
             uint32_t off;
             if (tm == Latte::E_HWTILEMODE::TM_LINEAR_GENERAL || tm == Latte::E_HWTILEMODE::TM_LINEAR_ALIGNED)
-                off = LatteAddrLib::ComputeSurfaceAddrFromCoordLinear(x, y, 0, 0, bpp, info.pitch, info.height, 1);
+                off = LatteAddrLib::ComputeSurfaceAddrFromCoordLinear(x, y, slice, 0, bpp, info.pitch, info.height, depth);
             else if (!Latte::TM_IsMacroTiled(tm))
-                off = LatteAddrLib::ComputeSurfaceAddrFromCoordMicroTiled(x, y, 0, bpp, info.pitch, info.height, tm, false);
+                off = LatteAddrLib::ComputeSurfaceAddrFromCoordMicroTiled(x, y, slice, bpp, info.pitch, info.height, tm, false);
             else
-                off = LatteAddrLib::ComputeSurfaceAddrFromCoordMacroTiled(x, y, 0, 0, bpp, info.pitch, info.height, 1, tm, false, pipe, bank);
+                off = LatteAddrLib::ComputeSurfaceAddrFromCoordMacroTiled(x, y, slice, 0, bpp, info.pitch, info.height, 1, tm, false, pipe, bank);
             if (off + f.bpb <= dataSize) memcpy(&lin[((size_t)y * bw + x) * f.bpb], &b[off], f.bpb);
         }
     // texels: decoded blocks have 4 rows per block row; channels per texel as convert_row writes them

@@ -19,6 +19,8 @@
 #include "../packs.h"
 #include "../runtime.h"
 #include "../savestate.h"
+#include "os_time.h"
+#include "picto_quest.h"
 
 namespace {
 
@@ -217,15 +219,44 @@ HLE(coreinit, FSCloseFile) {
     ret(c, FS_OK);
 }
 
+// Quest Logs that earlier builds stamped with the time since the start instead of the date (os_time.h)
+// get the file's last-modified time as their date when the game reads them, and converted GameCube
+// files stuck in Lenzo's Picto Box test get the Deluxe Picto Box (picto_quest.h); the game writes the
+// result back with its next save. (Original project, devel 2dd617a3 / 42f6e3d3: #322, #306.)
+bool story_file(uint32_t h) {
+    std::lock_guard<std::mutex> lk(g_fs_mutex);
+    auto it = g_files.find(h);
+    if (it == g_files.end()) return false;
+    const std::string& p = it->second.path;
+    return p.size() >= 9 && !strcasecmp(p.c_str() + p.size() - 9, "cking.sav");
+}
+void repair_save_blocks(FILE* f, uint64_t start, uint32_t dst, size_t n) {
+    struct stat st;
+    if (fstat(fileno(f), &st) != 0) return;
+    const int64_t stamp = os_time::from_unix((int64_t)st.st_mtime);
+    for (uint32_t k = 0; k < 3; k++) {
+        const uint64_t block = (uint64_t)k * os_time::kSaveBlock;
+        if (block < start || block + os_time::kSaveBlock > start + n) continue;
+        uint8_t* data = mem::ptr(dst + (uint32_t)(block - start));
+        if (os_time::repair_save_stamp(data, stamp))
+            LOG("[save] Quest Log %u had no save date (earlier builds): using the file's date", k + 1);
+        if (picto_quest::repair(data))
+            LOG("[save] Quest Log %u (converted GameCube save): Lenzo's test passed without the Deluxe Picto Box, "
+                "given now as in HD", k + 1);
+    }
+}
+
 HLE(coreinit, FSReadFile) {
     uint32_t dst = arg(c, 2), size = arg(c, 3), count = arg(c, 4);
     FILE* f = file(arg(c, 5));
     if (!f || size == 0) { ret(c, 0); return; }
+    const long start = story_file(arg(c, 5)) ? ftell(f) : -1;
     size_t n;
     {
         BlockingScope b;  // the calling thread waits for the disc; others on its core run
         ss::prepare_host_write(dst, size * count);
         n = fread(mem::ptr(dst), 1, (size_t)size * count, f);
+        if (start >= 0) repair_save_blocks(f, (uint64_t)start, dst, n);
         memw::mark(dst, (uint32_t)n);  // DMA on the console: no flush follows
     }
     ret(c, (uint32_t)(n / size));

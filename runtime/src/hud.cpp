@@ -281,10 +281,15 @@ std::atomic<int64_t> g_choice_ms{0}, g_cursor_ms{0};
 std::atomic<int64_t> g_hide_choice_until{0};  // hud_hide_choice
 std::atomic<int64_t> g_key_icon_ms{0};  // the message's "go on" icon (L_KeyIcon_00, under the text)
 std::atomic<int64_t> g_number_ms{0};  // P_SelNumber_00 (the message's number entry: the auction's bid) shown
-// the message window's box (P_MsgWindow_00 of MsgWindowMain_00: 900 x 280, normally centred 200 below the middle),
-// as last drawn: its centre and half size (the global matrix's scale), layout units
+// the message window's box (P_MsgWindow_00 of MsgWindowMain_00: 900 x 280, normally centred 200 below the middle;
+// or MsgWindowScroll_00's P_Paper_00 / P_Stone_00 / P_Wood_00: letters, stone tablets, signs), as last drawn: its
+// centre and half size (the global matrix's scale), layout units
 std::atomic<int> g_msgwin_x{0}, g_msgwin_y{0}, g_msgwin_hw{0}, g_msgwin_hh{0};
 std::atomic<int64_t> g_msgwin_ms{0};
+// a system question's buttons (L_BtnSeqenceL_00 / R_00 / C_00 of SequenceWindow_00), as last drawn: centre and the
+// size of its N_Btn_00 (the cursor's one is larger)
+std::atomic<int> g_seq_x[3], g_seq_y[3], g_seq_sel[3];
+std::atomic<int64_t> g_seq_ms[3];
 // the wind compass after the Wind's Requiem (ControlWind_00): its centre (P_WindDirectionBase_00), as last drawn
 std::atomic<int> g_wind_x{0}, g_wind_y{0};
 std::atomic<int64_t> g_wind_ms{0};
@@ -297,7 +302,8 @@ void note_choice(uint32_t pane, const char* n) {
             g_wind_ms = now_ms();
         }
         if (!strncmp(n, "P_SelNumber_00", 24) && pane_alpha(pane)) g_number_ms = now_ms();
-        if (!strncmp(n, "P_MsgWindow_00", 24) && pane_alpha(pane)) {
+        if ((!strncmp(n, "P_MsgWindow_00", 24) || !strncmp(n, "P_Paper_00", 24) || !strncmp(n, "P_Stone_00", 24)
+                    || !strncmp(n, "P_Wood_00", 24)) && pane_alpha(pane)) {
             const uint32_t m = pane + kPaneGlobal;
             g_msgwin_x = (int)global_x(pane);
             g_msgwin_y = (int)global_y(pane);
@@ -309,6 +315,17 @@ void note_choice(uint32_t pane, const char* n) {
     }
     if (!strncmp(n, "L_KeyIcon_00", 24)) {
         if (pane_alpha(pane)) g_key_icon_ms = now_ms();
+    } else if (!strncmp(n, "L_BtnSeqence", 12) && !strncmp(n + 13, "_00", 11)) {
+        int i = n[12] == 'L' ? 0 : n[12] == 'R' ? 1 : n[12] == 'C' ? 2 : -1;
+        if (i < 0 || !pane_alpha(pane)) return;
+        // the one the cursor is on is drawn larger (the Select animation scales N_Btn_00; P_BtnSelect_00's pane alpha
+        // stays 100 on all of them): its width scale, per mille
+        uint32_t btn = find_pane(pane, "N_Btn_00", 5);
+        const uint32_t m = (btn ? btn : pane) + kPaneGlobal;
+        g_seq_x[i] = (int)global_x(pane);
+        g_seq_y[i] = (int)global_y(pane);
+        g_seq_sel[i] = btn ? (int)std::lround(1000 * std::hypot((float)ldf32(m), (float)ldf32(m + 0x10))) : -1;
+        g_seq_ms[i] = now_ms();
     } else if (!strncmp(n, "W_Cursor_00", 24)) {
         if (!pane_alpha(pane)) return;
         g_cursor_y = (int)global_y(pane);
@@ -337,6 +354,17 @@ void hud_msg_window(int32_t out[5]) {
     out[2] = on ? g_msgwin_y.load() : 0;
     out[3] = on ? g_msgwin_hw.load() : 0;
     out[4] = on ? g_msgwin_hh.load() : 0;
+}
+
+void hud_sequence_buttons(int32_t out[12]) {
+    int64_t t = now_ms();
+    for (int i = 0; i < 3; i++) {
+        bool on = t - g_seq_ms[i].load() < 250;
+        out[4 * i] = on;
+        out[4 * i + 1] = on ? g_seq_x[i].load() : 0;
+        out[4 * i + 2] = on ? g_seq_y[i].load() : 0;
+        out[4 * i + 3] = on ? g_seq_sel[i].load() : 0;
+    }
 }
 
 bool hud_wind_compass(int32_t out[2]) {

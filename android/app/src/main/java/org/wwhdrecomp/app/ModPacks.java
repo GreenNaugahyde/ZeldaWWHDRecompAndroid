@@ -153,7 +153,7 @@ final class ModPacks {
         writeEnabled(base, prefs);
     }
 
-    private static void deleteTree(File f) {
+    static void deleteTree(File f) {
         File[] kids = f.listFiles();
         if (kids != null)
             for (File k : kids) deleteTree(k);
@@ -170,7 +170,18 @@ final class ModPacks {
      * Packs without a rules.txt get one. Returns the imported folder names (an existing pack of the
      * same name is replaced).
      */
-    static List<String> importArchive(File base, String gameDir, ContentResolver cr, Uri uri, String name) throws IOException {
+    /** what an import is at, for its progress line (on the importing thread) */
+    interface Progress {
+        void at(String text);
+    }
+
+    static List<String> importArchive(android.content.Context ctx, File base, String gameDir, ContentResolver cr, Uri uri, String name)
+            throws IOException {
+        return importArchive(ctx, base, gameDir, cr, uri, name, null);
+    }
+
+    static List<String> importArchive(android.content.Context ctx, File base, String gameDir, ContentResolver cr, Uri uri, String name,
+                                      Progress progress) throws IOException {
         File packs = dir(base), stage = new File(packs, ".import");
         deleteTree(stage);
         //noinspection ResultOfMethodCallIgnored
@@ -183,6 +194,56 @@ final class ModPacks {
         String base0 = clean(name.replaceAll("(?i)\\.(zip|rar|7z)$", ""));
         List<String> out = new ArrayList<>();
         try {
+            // GameCube player models (custom model packs for the GameCube randomizer: a Link.arc each, with
+            // metadata.txt): converted into the game's own permanent_3d.pack (runtime/src/gcmodel)
+            List<File> arcs = new ArrayList<>();
+            List<String> failed = new ArrayList<>();
+            findNamed(stage, "Link.arc", arcs);
+            if (!arcs.isEmpty()) {
+                File gamePack = new File(gameDir, "content/Common/Pack/permanent_3d.pack");
+                if (!gamePack.isFile()) throw new IOException("the game's permanent_3d.pack is missing");
+                int k = 0;
+                for (File arc : arcs) {
+                    File dir = arc.getParentFile();
+                    String model = dir.equals(stage) ? base0 : dir.getName();
+                    File root = new File(stage, ".gcmodel" + k++), szs = new File(root, MODEL_SZS);
+                    //noinspection ResultOfMethodCallIgnored
+                    szs.getParentFile().mkdirs();
+                    final int nr = k;
+                    if (progress != null) {
+                        progress.at(ctx.getString(R.string.packs_gc_converting, nr, arcs.size(), model, 0));
+                        Native.gcProgressListener = pc -> progress.at(ctx.getString(R.string.packs_gc_converting, nr, arcs.size(), model, pc));
+                    }
+                    String report;
+                    try {
+                        report = Native.convertGcModel(arc.getAbsolutePath(), gamePack.getAbsolutePath(), szs.getAbsolutePath());
+                    } finally {
+                        Native.gcProgressListener = null;
+                    }
+                    if (report == null || report.startsWith("!")) {
+                        String why = model + ": " + (report == null ? "failed" : report.substring(1));
+                        if (arcs.size() == 1) throw new IOException(why);
+                        failed.add(why);  // (one model of many: the others still come in)
+                        continue;
+                    }
+                    try (OutputStream o = new FileOutputStream(new File(root, "conversion.txt"))) {
+                        o.write(report.getBytes(StandardCharsets.UTF_8));
+                    }
+                    String author = metadata(new File(dir, "metadata.txt"), "author");
+                    String title = ctx.getString(R.string.packs_gc_model_name, model);
+                    String desc = author != null ? ctx.getString(R.string.packs_gc_model_desc_by, author) : ctx.getString(R.string.packs_gc_model_desc);
+                    String folder = clean(PLAYER_MODEL + model);
+                    if (new File(packs, folder).isDirectory() && isPlayerModel(folder)) {
+                        // (a model imported again: replaced; PlayerModels.handOver after the import makes the runtime read it again)
+                        deleteTree(new File(packs, folder));
+                    }
+                    out.add(install(packs, root, folder,
+                            "[Definition]\ntitleIds = 0005000010143400,0005000010143500,0005000010143600\nname = \"" + title.replace("\"", "'")
+                                    + "\"\ndescription = " + desc.replace("\n", " ") + "\nversion = 6\n"));
+                }
+                if (!failed.isEmpty()) lastFailures = failed;
+                return out;
+            }
             List<File> rules = new ArrayList<>(), contents = new ArrayList<>();
             find(stage, rules, contents);
             if (!rules.isEmpty()) {
@@ -205,6 +266,120 @@ final class ModPacks {
             deleteTree(stage);
         }
         return out;
+    }
+
+    static final String PLAYER_MODEL = "gcmodel-";
+    // a player model pack keeps only its converted Link.szs (PlayerModels: put into the game's memory per save file);
+    // MODEL_PACK is where packs from before had the game's permanent_3d.pack with it (choosePlayerModel takes them out)
+    static final String MODEL_SZS = "model/Link.szs", MODEL_PACK = "content/Common/Pack/permanent_3d.pack";
+    /** the models of the last import that could not be converted (null if none); taken by the caller */
+    static volatile List<String> lastFailures;
+
+    /** the player model packs, sorted by their names */
+    static List<String> playerModels(File base) {
+        List<String> out = new ArrayList<>();
+        for (String f : list(base)) if (isPlayerModel(f)) out.add(f);
+        out.sort((x, y) -> playerModelName(base, x).compareToIgnoreCase(playerModelName(base, y)));
+        return out;
+    }
+
+    /** a player model's name (the model's folder in its pack: "Cloud") */
+    static String playerModelName(File base, String folder) {
+        return folder.startsWith(PLAYER_MODEL) ? folder.substring(PLAYER_MODEL.length()) : folder;
+    }
+
+    /** the permanent_3d.pack a game plays: a randomized game's own (its changes, Link's colours among them), else the game's */
+    static File basePack(String gameDir, String randoOut) {
+        if (randoOut != null) {
+            File r = new File(randoOut, "content/Common/Pack/permanent_3d.pack");
+            if (r.isFile()) return r;
+        }
+        return new File(gameDir, "content/Common/Pack/permanent_3d.pack");
+    }
+
+    private static String baseStamp(File base) { return base.getAbsolutePath() + "\t" + base.length() + "\t" + base.lastModified(); }
+
+    /** player model packs from before keep a full permanent_3d.pack each (25 MB): choosePlayerModel trims them */
+    static boolean needsTrim(File base) {
+        for (String f : list(base))
+            if (isPlayerModel(f) && !new File(new File(dir(base), f), MODEL_SZS).isFile()) return true;
+        return false;
+    }
+
+    /** the player model switched on, or null */
+    static String playerModelOn(File base, SharedPreferences prefs) {
+        for (String f : list(base)) if (isPlayerModel(f) && prefs.getBoolean("pack_on_" + f, false)) return f;
+        return null;
+    }
+
+    /**
+     * Switches player model `folder` on (null: none): its permanent_3d.pack made from the game's and its Link.szs, the
+     * others' removed; packs from before keeping only Link.szs are trimmed on the way. Null when done, else why not.
+     * Not on the main thread (seconds).
+     */
+    static String choosePlayerModel(File base, String gameDir, SharedPreferences prefs, String folder, Progress progress) {
+        File packs = dir(base), gamePack = new File(gameDir, "content/Common/Pack/permanent_3d.pack");
+        List<String> models = new ArrayList<>();
+        for (String f : list(base)) if (isPlayerModel(f)) models.add(f);
+        int i = 0;
+        String err = null;
+        for (String f : models) {
+            File d = new File(packs, f), szs = new File(d, MODEL_SZS), pack = new File(d, MODEL_PACK);
+            if (!szs.isFile() && pack.isFile()) {  // (made before: Link.szs out of its full pack)
+                if (progress != null) progress.at(f + " (" + (++i) + "/" + models.size() + ")");
+                //noinspection ResultOfMethodCallIgnored
+                szs.getParentFile().mkdirs();
+                if (!Native.extractGcModel(pack.getAbsolutePath(), szs.getAbsolutePath())) continue;
+            }
+            if (!f.equals(folder)) {
+                deleteTree(new File(d, "content"));
+                prefs.edit().putBoolean("pack_on_" + f, false).apply();
+            }
+        }
+        if (folder != null) {
+            File d = new File(packs, folder), pack = new File(d, MODEL_PACK);
+            //noinspection ResultOfMethodCallIgnored
+            pack.getParentFile().mkdirs();
+            if (progress != null) progress.at(playerModelName(base, folder));
+            err = Native.assembleGcModel(gamePack.getAbsolutePath(), new File(d, MODEL_SZS).getAbsolutePath(), pack.getAbsolutePath());
+            if (err == null)
+                try {
+                    java.nio.file.Files.write(new File(d, "content/.base").toPath(), baseStamp(gamePack).getBytes(StandardCharsets.UTF_8));
+                } catch (IOException ignored) {
+                }
+            prefs.edit().putBoolean("pack_on_" + folder, err == null).apply();
+        }
+        prefs.edit().commit();
+        writeEnabled(base, prefs);
+        return err;
+    }
+
+    /** a pack made from a GameCube player model (they replace the same file: one at a time) */
+    static boolean isPlayerModel(String folder) { return folder.startsWith(PLAYER_MODEL); }
+
+    private static void findNamed(File d, String name, List<File> out) {
+        File[] kids = d.listFiles();
+        if (kids == null) return;
+        for (File k : kids) {
+            if (k.isDirectory()) findNamed(k, name, out);
+            else if (k.getName().equalsIgnoreCase(name)) out.add(k);
+        }
+    }
+
+    /** a "key: value" line of a model pack's metadata.txt, or null */
+    private static String metadata(File f, String key) {
+        if (!f.isFile()) return null;
+        try {
+            for (String line : new String(java.nio.file.Files.readAllBytes(f.toPath()), StandardCharsets.UTF_8).split("\n")) {
+                int c = line.indexOf(':');
+                if (c > 0 && line.substring(0, c).trim().equalsIgnoreCase(key)) {
+                    String v = line.substring(c + 1).trim();
+                    return v.isEmpty() ? null : v;
+                }
+            }
+        } catch (IOException ignored) {
+        }
+        return null;
     }
 
     private static String clean(String n) {

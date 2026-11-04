@@ -254,6 +254,22 @@ final class InputMapper {
         return a != null && a.inputMapper().map[0] == KeyEvent.KEYCODE_BUTTON_A ? KeyEvent.KEYCODE_BUTTON_A : KeyEvent.KEYCODE_BUTTON_B;
     }
 
+    /** A controller's A / B on a plain Android page (the start page, the screen / GamePad search) as the app's menus
+     *  take them: Android clicks with A and goes back with B, the menus go by the controller's map (by position the
+     *  right button selects; a Wii U player pressed B to choose and left the app). The select button becomes the
+     *  d-pad's centre (clicks the focused view), the back one Back if `back`, else nothing (null); other keys: e */
+    static KeyEvent pageKey(android.content.SharedPreferences p, KeyEvent e, boolean back) {
+        int code = e.getKeyCode();
+        if (code != KeyEvent.KEYCODE_BUTTON_A && code != KeyEvent.KEYCODE_BUTTON_B) return e;
+        InputDevice d = e.getDevice();
+        InputMapper m = new InputMapper();
+        m.loadMap(d != null ? p.getString("pad_map@" + d.getDescriptor(), p.getString("pad_map", "")) : p.getString("pad_map", ""));
+        int select = m.map[0] == KeyEvent.KEYCODE_BUTTON_A ? KeyEvent.KEYCODE_BUTTON_A : KeyEvent.KEYCODE_BUTTON_B;
+        if (code != select && !back) return null;
+        return new KeyEvent(e.getDownTime(), e.getEventTime(), e.getAction(), code == select ? KeyEvent.KEYCODE_DPAD_CENTER : KeyEvent.KEYCODE_BACK,
+                e.getRepeatCount(), e.getMetaState(), e.getDeviceId(), e.getScanCode(), e.getFlags(), e.getSource());
+    }
+
     static int menuBack() { return menuSelect() == KeyEvent.KEYCODE_BUTTON_A ? KeyEvent.KEYCODE_BUTTON_B : KeyEvent.KEYCODE_BUTTON_A; }
 
     /** a PlayStation controller (Sony's vendor id, or its name): its face buttons have symbols, not letters */

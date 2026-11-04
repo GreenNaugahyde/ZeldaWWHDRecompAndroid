@@ -1,8 +1,9 @@
-# Controls guide (0.9.7)
+# Controls guide (0.9.9)
 
 Version 0.9.6 brought new on-screen controls, a setup for game controllers, an item ring, touch
 controls for the minigames and new ways to conduct the Wind Waker's songs; 0.9.7 adds talks, answers
-and shops by touch without buttons and more animated button icons. This page explains every
+and shops by touch without buttons and more animated button icons; 0.9.9 a mini map, a full map and a
+controller view for a TV by cast or cable. This page explains every
 option and how they work together. Everything here can be changed at any time, and almost
 everything can be switched back to the game's original behaviour.
 
@@ -19,7 +20,8 @@ everything can be switched back to the game's original behaviour.
 - [Minigames, shops and menus by touch](#minigames-shops-and-menus-by-touch)
 - [Conducting the songs](#conducting-the-songs)
 - [Game controllers](#game-controllers)
-- [The HUD: hearts, rupees, Picto Box](#the-hud-hearts-rupees-picto-box)
+- [The HUD: hearts, rupees, mini map, Picto Box](#the-hud-hearts-rupees-mini-map-picto-box)
+- [A TV by cast or cable: the controller view](#a-tv-by-cast-or-cable-the-controller-view)
 - [Picto Box album, postboxes and Link's clothes](#picto-box-album-postboxes-and-links-clothes)
 - [All options at a glance](#all-options-at-a-glance)
 
@@ -135,7 +137,8 @@ How they behave in the main situations:
 
 - **Walking**: the sword on B, the items on X / Y / R, A only when there is something to do, the
   d-pad's up (Wind Waker) while Link has it. ZL targets; tapped once it latches (stays on) until you
-  tap it again.
+  tap it again (Controls › Touch › **ZL / ZR stay on after a tap**, on; off: ZL and ZR work only while
+  held, like any button).
 - **Talking, reading, cutscenes**: with Minigames by touch on (the default), no button shows in a
   talk: **tap anywhere** on the picture to go on. **Hold to go on in talks** (Game, on):
   keep the finger down (or hold A on a controller) and the talk goes on by itself, page by page, and
@@ -159,7 +162,9 @@ How they behave in the main situations:
 
 Related options on Controls › Touch:
 
-- **ZL when the target is defeated**: with a tapped ZL, **Let go** (default) releases the lock once
+- **ZL / ZR stay on after a tap** (on): a tap on ZL keeps targeting until the next tap, and ZR stays
+  held for crouching or the shield. Off: both work only while held. (Classic always latches.)
+- **ZL when the target is defeated** (only with the latch): with a tapped ZL, **Let go** (default) releases the lock once
   the enemy is defeated; **Next target** keeps ZL on and locks the next enemy in reach.
 - **Link in the button icons**, see above.
 
@@ -463,7 +468,7 @@ Controls › Controller › **Controller details**: what Android reports about e
 (the one in use first): name, vendor and product IDs, connection, battery, rumble motors, motion
 sensors, lights, buttons and axes. Handy when a controller doesn't behave as expected.
 
-## The HUD: hearts, rupees, Picto Box
+## The HUD: hearts, rupees, mini map, Picto Box
 
 ![The large Picto Box view](screenshots/picto-view.jpg)
 
@@ -472,10 +477,54 @@ Controls › **Screen (HUD)**:
 - **Hearts only in combat**: the hearts fade out while the sword is put away and come back when it is
   drawn, when Link is hurt or heals. The magic bar shows by itself while magic is used.
 - **Rupees only when they change**: the rupee count fades in when you collect or spend rupees.
+- **Mini map** (on): a map in a corner of the TV picture, drawn in the GamePad map's style with the
+  game's own artwork. On the Great Sea it shows the charted islands around Link (a question mark where
+  the fishman hasn't filled the chart in yet) and the King of Red Lions; in the dungeons the GamePad's
+  room pictures of the floor Link is on, with the chests (once you have the compass), doors and
+  stairs; in houses, caves and elsewhere a floor plan. A tap on it in play makes it the next size.
+  - **Map style**: Square (parchment) or Round (in the sailing compass's bezel, N / E / S / W on its rim).
+  - **Map inside**: Filled, or Outlines only (see-through: only the outlines of the islands and rooms
+    over the game picture).
+  - **Map facing**: North up, or Turns with Link (his way always up).
+  - **Corner**: bottom left (as on the GameCube), top left, top right, bottom right, or Own place: put
+    it anywhere in the layout editor.
+  - **Size**: Small, Medium, Large.
+  - **Progress marks** (Off): the things of Game › Game progress at their places, Missing only or
+    Everything.
+  - **Map pictures**: Redrawn (smooth and sharp, with **Island names**), Terrain (the islands as they
+    really are, houses and caves by their ground; **Sea zoom** sets how much sea it shows), HD (the
+    GamePad art enlarged) or Original.
+  - **Wind arrow**: a small dial shows which way the wind blows. **Change the wind (dial)**: a swipe
+    from the dial turns the wind that way at once, anywhere and without the Wind's Requiem; with a
+    controller hold − and tilt the right stick, let go of − to set it.
+  - **Map opacity**, **Fainter while moving**, **Zoom while moving**, **Link's face** (off: only his
+    arrow), **Link's mark size**, **Arrow colour**, **Treasure charts** (the chart of the square beside
+    the map while its treasure is still down there), **Map buttons** (one hides the map).
+- **Full map**: the whole sea chart on the screen, pinched or zoomed from all squares down to an
+  island's ground; indoors the stage Link is in, one floor at a time (ZL / ZR change it). It also opens
+  by holding the mini map. **Full map pictures** as above, **Map decorations** (a paper frame with the
+  squares' letters and numbers, the wind compass, the menus' blue background). **+ menu chart**: the
+  sea chart and dungeon map in the + menu, the game's own or drawn anew in a Map pictures style.
 - **Large Picto Box view** (Flexible with context buttons, on by default): the Picto Box's
   viewfinder fills the screen, pinch to zoom (the telescope too), the shutter and the other buttons
   sit at fixed places like a phone's camera app, and the album is browsed by swiping. Off: the game's
   original Picto Box and telescope screens.
+
+## A TV by cast or cable: the controller view
+
+With the game picture on a TV (screen casting, Miracast or a USB-C to HDMI cable: Graphics › Screens ›
+GamePad screen › **Game picture there**), the device shows the GamePad picture with the touch controls
+over it, made for playing without looking at it:
+
+- **Eyes-free controller view** (Controls › Touch, on): every button always at its place, big face
+  buttons, floating sticks and a vibration per button, so the thumbs find them by feel; the TV shows
+  the game's own button icons. **Face buttons**: Diamond, or Swipe (the thumb down anywhere in their
+  circle, slid up X, right A, down B, left Y). **Edit eyes-free layout** gives it a layout of its own.
+- **TV picture in the controller view**: the TV picture dimmed behind the buttons (50 % by default), or
+  Off. A button below the screen button switches the background; held, it steps the brightness.
+- Conducting goes by the note pads, with the game's conducting bar on the device; the wind compass
+  after the Wind's Requiem is worked with the stick and A as on the TV.
+- The screen button switches to the touch screen view (the GamePad's own screen, touchable).
 
 ## Picto Box album, postboxes and Link's clothes
 
@@ -516,7 +565,7 @@ Defaults in brackets.
 - On-screen controls (on) · Touch controls (Classic) · Edit on-screen layout · Motion controls (on) · Rumble (on)
 - **Touch**: On-screen controls size (100 %) · Menu button in the game (off) · Left stick follows the
   thumb (on) · *Flexible only*: Show sticks (on), Context buttons (off), Item buttons (Tap), Only
-  aiming buttons while aiming (on) · Link
+  aiming buttons while aiming (on), ZL / ZR stay on after a tap (on) · Link
   in the button icons (on) · ZL when the target is defeated
   (Let go)
 - **Item ring**: Item ring (on) · While the ring is open (Slow motion) · Item button names (Auto)
@@ -525,22 +574,25 @@ Defaults in brackets.
   Camera swings behind Link (off), Swing starts after (1 s) · *Flexible*: Camera (right half) (Stick),
   Swipe speed, Swipe speed on the boat (1×)
 - **Minigames & hints**: Minigames by touch (on) · Note pads for conducting (on) · Touch hints (on)
-- **Screen (HUD)**: Hearts only in combat (off) · Rupees only when they change (off) · Large Picto
-  Box view (on)
+- **Screen (HUD)**: Hearts only in combat (off) · Rupees only when they change (off) · Mini map (on),
+  Map style (Square), Map inside (Filled), Map facing (North up), Corner (Bottom left), Size, Progress
+  marks (Off) · Large Picto Box view (on)
 - **Controller**: Set up controller · Controller buttons · L turns the GamePad page (off) · Controller details
 
 **Game**: Game language · Menu language (English) · Quick doors · Fast scene changes · Fast forward cutscenes · Fast forward
 dialogues · Hold to go on in talks (on), Fast forward while held (off) · Album pages (off) · Picto subjects (on) · Mail pictos at postboxes (on), Same day delivery
-(off) · Link's clothes (As in the story) · GamePad sounds (on) · **Songs**: Replay conducted songs (off), Sing the songs (off), Mic button (on), Play
+(off) · Link's clothes (As in the story) · GamePad sounds (on) · Game progress (Percent on screen
+(off), Show, Map) · Achievements (Pop-up on screen (on), Link holds it up (on), Jingle (on), Jingle volume (70 %),
+Earn with cheats (off), Pop-ups in every save game, Reset) · **Songs**: Replay conducted songs (off), Sing the songs (off), Mic button (on), Play
 buttons in the song list (on), Play button in song scenes (on)
 
 **Mods**: Jump anywhere (Controller button, Double jump, No automatic ledge jumps) · Moon jump
 (Controller button, Rise speed, Flight speed, No fall damage, Random lift-off animations) · Climb any
-wall · Faster running / swimming / climbing / sidling · Cheats · Mod packs
+wall · Faster running / swimming / climbing / sidling · Deku Leaf: wave to rise (off) · Cheats · Mod packs
 
 **Graphics**: Preset · Find the best settings · Rendering resolution · Frame rate · Frame generation ·
 **Resolution & upscaling** (Dynamic resolution, Upscaling, Display resolution) · **Picture quality**
-(Ambient occlusion, Full-size occlusion depth, 16× anisotropic filtering) · **Screens** (Widescreen,
+(Ambient occlusion, Full-size occlusion depth, Smooth blur at high resolution (on), 16× anisotropic filtering) · **Screens** (Widescreen,
 Field of view, Aspect ratio, GamePad screen and picture with a second display, Screen layout) ·
 **Performance overlay** · **Advanced** (GPU driver, VSync, Command recording thread, Delete shader
 cache)

@@ -110,6 +110,8 @@ struct SingleBitsPass : llvm::PassInfoMixin<SingleBitsPass> {
 // tested device, and a crash on a Dimensity 8350 points at it (issue #24); WWHD_SVE=1 uses them where
 // the kernel enables them (MediaTek Dimensity, Google Tensor; the code stays vector-length
 // agnostic). SME stays off: streaming mode isn't something compiled game code can use.
+std::string host_cpu_model() { return llvm::sys::getHostCPUName().str(); }
+
 std::string host_features() {
     std::string f;
 #if defined(__aarch64__) && defined(__linux__)
@@ -156,8 +158,8 @@ bool compile_game(const CompileOptions& opt, CompileResult& res, std::string& er
     const llvm::Target* target = llvm::TargetRegistry::lookupTarget(triple, err);
     if (!target) return false;
     std::string cpu = opt.cpu.empty() ? "generic" : opt.cpu;
-    std::string features = opt.cpu.empty() ? host_features() : "";
-    std::string tune = opt.cpu.empty() ? llvm::sys::getHostCPUName().str() : "";
+    std::string features = !opt.features.empty() ? opt.features : opt.cpu.empty() ? host_features() : "";
+    std::string tune = !opt.features.empty() ? opt.tune : opt.cpu.empty() ? llvm::sys::getHostCPUName().str() : "";
 
     // Modules are cut at every perModule-th entry of the unpatched executable, so mod pack patches
     // (CodePatch) change only the modules that hold patched code; code caves get modules of their own.

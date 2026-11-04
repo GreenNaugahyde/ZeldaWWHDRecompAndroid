@@ -1,0 +1,6 @@
+# Ignore all stuff in generated folders
+build/*
+conan/*
+
+# Ignore generated files in the src dir
+base64pp/include/base64pp/base64pp_export.h

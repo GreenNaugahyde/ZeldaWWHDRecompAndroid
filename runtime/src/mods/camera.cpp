@@ -221,6 +221,7 @@ void filter_pad(input::PadState& s) {
     test_goto(s);
     picto_pad(s);
     postbox_pad(s);
+    leaf_pad(s);
     uint64_t now = step();
     // inverted up/down for the stick (the mouse / swipe camera below flips its own movement)
     const bool look = in_first_person() || aiming_item(link_proc());

@@ -19,6 +19,7 @@
     <string name="hint_mg_wind">*青い矢印をドラッグ*して\n風の向きを決めます\n*緑のボタン*をタッチで決定！</string>
     <string name="hint_leaf_glide">滑空中に*葉っぱのボタンをタップ*すると\n葉っぱをとじて落下、落下中にもう一度で\nふたたび滑空します\n*おしつづける*と空中で葉っぱをあおぎます！</string>
     <string name="hint_ring">*アイテムボタンを長押し*すると\nリングからアイテムを選べます\n*スライド*して*はなす*と決定\n短く押すと今までどおり使います\n袋はそれぞれのリングが開きます！</string>
+    <string name="hint_wind_dial">ミニマップの*風の文字盤*が風の向きを示します。\n文字盤から*スワイプ*するとすぐに風が変わります。\nコントローラー：*−を押したまま右スティック*、−を離す。</string>
     <string name="hint_songs_button">*マイクボタン*（または*L*）をおしたまま\n覚えた唄を歌うか ハミングかくちぶえで！\n*はなす*と リンクがその唄を振ります</string>
     <string name="hint_songs_auto">覚えた唄を歌うか ハミングかくちぶえで！\n*マイク*が聞いています\n*最後の音*のあとに 少し間をあけてね</string>
     <string name="hint_songs_try">まず *ためして* みますか？\nマイクボタンを押したまま歌うと\nとどいた*音*が見えます（リンクは演奏しません）</string>
@@ -32,6 +33,10 @@
     <string name="cheat_bags">ふくろを満たす</string>
     <string name="cheat_bags_done">えものぶくろとエサぶくろを満たしました。</string>
     <string name="cheat_bags_hint">えものぶくろとエサぶくろ（ない場合）、すべてのえもの×99、エサとヒョイの実</string>
+    <string name="cheat_figurines">ニンテンドーギャラリーをコンプリート</string>
+    <string name="cheat_figurines_hint">カーロフが作るすべてのフィギュア。そのあとカーロフはゲームの最後のようにアトリエを去ります</string>
+    <string name="cheat_figurines_done">すべてのフィギュアがギャラリーにそろいました。</string>
+    <string name="cheat_figurines_member">先にニンテンドーギャラリーの会員になりましょう：カーロフにカラーの写し絵をわたしてください。</string>
     <string name="cheat_dungeon">マップ、コンパス、ボスのカギ（このダンジョン）</string>
     <string name="cheat_dungeon_done">このダンジョンのマップ、コンパス、ボスのカギ。</string>
     <string name="cheat_inf_ammo">矢とバクダン無限</string>
@@ -41,6 +46,8 @@
     <string name="cheat_inf_breath_hint">泳ぎのゲージが満タンのまま：リンクは疲れず、深い水でもしずみません</string>
     <string name="cheat_one_hit">一撃で倒す</string>
     <string name="cheat_one_hit_hint">敵は一撃で倒れます（独自のカウンターを持つボスは除く）</string>
+    <string name="cheat_fast_push">ブロックを速く押す</string>
+    <string name="cheat_fast_push_hint">ブロックや箱がすぐに動き出し、約2.5倍の速さで動きます</string>
     <string name="cheat_inf_health">ライフ無限</string>
     <string name="cheat_inf_magic">魔力無限</string>
     <string name="cheat_inf_rupees">ルピー無限</string>
@@ -111,10 +118,13 @@
     <string name="gpu_driver_use">使う</string>
     <string name="interp_fps">%d fps（補間）</string>
     <string name="interp_off">30 fps（オリジナル）</string>
+    <string name="fps_generated">60 fps（生成）</string>
     <string name="opt_about">このアプリについて</string>
     <string name="opt_aniso">16×異方性フィルタリング</string>
     <string name="opt_ao">アンビエントオクルージョン</string>
     <string name="opt_ao_hires">フルサイズのオクルージョン深度</string>
+    <string name="opt_area_blur">高解像度での滑らかなぼかし</string>
+    <string name="opt_area_blur_hint">1.5倍を超える解像度で、ゲームの光とブルームのぼかしが720pと同じ範囲を覆います。地面の物の周りに細かい格子が出ません</string>
     <string name="opt_aspect">アスペクト比</string>
     <string name="opt_auto_slot">オートセーブ %1$d</string>
     <string name="opt_auto_state">自動ステートセーブ</string>
@@ -219,7 +229,7 @@
     <string name="opt_display_res">表示解像度</string>
     <string name="opt_display_res_hint">オート：必要なサイズで描いて画面が拡大します。高解像度の画面では速くなります。フル：常に画面そのものの解像度</string>
     <string name="opt_drc_display">Wii U GamePadの画面</string>
-    <string name="opt_drc_display_hint">2つ目の画面が見つかりました（例：2画面端末の下の画面）</string>
+    <string name="opt_drc_display_hint">2つ目の画面が見つかりました：2画面端末の下の画面、または画面キャストやHDMIケーブルのテレビです。テレビならゲーム画面を選んでください：この端末にはGamePadの画面が映ります。</string>
     <string name="opt_drc_shape">Wii U GamePadの映像</string>
     <string name="opt_drc_shape_hint">いっぱい：GamePadの画面がディスプレイの形になり、背景が端まで広がります</string>
     <string name="opt_dyn_res">動的解像度</string>
@@ -247,7 +257,7 @@
     <string name="opt_import">セーブを読み込む</string>
     <string name="opt_import_hint">ファイルから元にもどします。読み込んだセーブデータはゲームを再起動します</string>
     <string name="opt_interp">フレームレート</string>
-    <string name="opt_interp_hint">フレーム補間：ゲームの30fpsから中間フレームを作ります。速いCPUが必要です。間に合わないフレームは省かれ、ゲームの速さは保たれます</string>
+    <string name="opt_interp_hint">フレーム補間：ゲームの30fpsから中間フレームを作ります。速いCPUが必要です。間に合わないフレームは省かれ、ゲームの速さは保たれます。60 fps（生成）：1フレームおきにGPUが直前のフレームから作ります。CPUの負担は小さいです</string>
     <string name="opt_invert_camera_y">カメラの上下を反転</string>
     <string name="opt_invert_camera_y_hint">右スティック（またはスワイプ）を上で下を見ます。「一人称とねらい」では通常のカメラとメニューはそのままです</string>
     <string name="opt_item_ring">アイテムリング</string>
@@ -272,11 +282,31 @@
     <string name="opt_mod_climb_fast">速く登る</string>
     <string name="opt_mod_climb_fast_hint">はしご、ツタ、ぶら下がっての横移動</string>
     <string name="opt_mod_climb_hint">スタミナのリング付き。BかAで手をはなします</string>
+    <string name="opt_mod_leaf_lift">デクの葉：あおいで上昇</string>
+    <string name="opt_mod_leaf_lift_hint">滑空中に葉をあおぐ（もう一度そのボタン）たびにリンクが少し上がります</string>
+    <string name="opt_mod_leaf_lift_height">1回あおいだ高さ</string>
+    <string name="opt_mod_leaf_lift_height_hint">1回あおぐごとにリンクが上がる高さ。100%でほぼリンクの背丈です</string>
     <string name="opt_mod_direct_camera">右スティックのダイレクトカメラ</string>
     <string name="opt_mod_direct_camera_hint">なめらかにせず、カメラがすぐにスティックに従います</string>
     <string name="opt_mod_fast_scenes">場面切り替えを速く</string>
     <string name="opt_mod_ff_cutscenes">イベントシーンを早送り</string>
     <string name="opt_mod_ff_dialogues">会話を早送り</string>
+    <string name="opt_mod_instant_text">テキスト即時表示</string>
+    <string name="opt_mod_instant_text_hint">メッセージを一文字ずつではなく一度に全文表示。Bでも送れ、矢印を待たずに閉じる</string>
+    <string name="opt_mod_text_pauses">テキストの間をなくす</string>
+    <string name="opt_mod_text_pauses_hint">一部のテキストにある短い間も省く</string>
+    <string name="opt_hit_stops">ヒットストップ</string>
+    <string name="opt_hit_stops_hint">攻撃が当たったときに世界が一瞬止まる演出を種類ごとに切り替えます。オフにするとゲームは止まらずに続きます</string>
+    <string name="opt_hit_stop_hit">攻撃</string>
+    <string name="opt_hit_stop_hit_hint">敵への攻撃（1〜2フレーム）</string>
+    <string name="opt_hit_stop_strong">強い攻撃</string>
+    <string name="opt_hit_stop_strong_hint">敵が倒れ込む、タートナックの鎧やスタルフォスの頭が外れる（4〜6フレーム）</string>
+    <string name="opt_hit_stop_defeat">敵を倒す</string>
+    <string name="opt_hit_stop_defeat_hint">敵を倒した攻撃（6フレーム）</string>
+    <string name="opt_hit_stop_boss">ボス</string>
+    <string name="opt_hit_stop_boss_hint">ボスへの攻撃とボス自身の停止（最大8フレーム）</string>
+    <string name="opt_hit_stop_sign">看板</string>
+    <string name="opt_hit_stop_sign_hint">看板を切る（1フレーム）</string>
     <string name="opt_mod_picto_pages">アルバムのページ</string>
     <string name="opt_mod_picto_pages_hint">写し絵の箱のアルバムに12枚ずつのページをいくつでも追加します。いっぱいになると、新しい写し絵は新しいページに入ります。アルバムでは上のバー(またはZL / L)でページをめくります。セーブデータには表示中のページが残り、ほかのページはその横に保存されます</string>
     <string name="picto_page">%1$d / %2$d ページ</string>
@@ -322,6 +352,12 @@
     <string name="opt_mod_jump_noauto">がけでの自動ジャンプなし</string>
     <string name="opt_mod_jump_noauto_hint">がけから走り出ると、リンクは飛ばずに落ちます：ジャンプはジャンプボタンで</string>
     <string name="opt_mod_quick_doors">扉を速く</string>
+    <string name="opt_mod_walk_doors">扉を歩いて通る</string>
+    <string name="opt_mod_walk_doors_hint">ダンジョンと家の扉が開き、自分で通り抜けると閉まる：扉の演出なし</string>
+    <string name="opt_mod_walk_doors_open">扉の開け方</string>
+    <string name="opt_mod_walk_doors_open_hint">リンクが近づいたとき、またはゲームの「開ける」表示でAを押す（その後は自分で通る）</string>
+    <string name="opt_mod_walk_doors_near">近づくと開く</string>
+    <string name="opt_mod_walk_doors_a">Aで開ける</string>
     <string name="opt_mod_run">速く走る</string>
     <string name="opt_mod_run_always">いつも</string>
     <string name="opt_mod_run_hint">走るときに進む距離が長くなります。ジャンプと前転はそのままです</string>
@@ -350,7 +386,7 @@
     <string name="opt_page_minigames">ミニゲームとヒント</string>
     <string name="opt_page_minigames_hint">ミニゲームと指揮をタッチで、タッチのヒント</string>
     <string name="opt_page_hud">画面（HUD）</string>
-    <string name="opt_page_hud_hint">ハート、ルピー、写し絵の箱の表示</string>
+    <string name="opt_page_hud_hint">ハート、ルピー、ミニマップ、写し絵の箱の表示</string>
     <string name="opt_page_controller">コントローラー</string>
     <string name="opt_page_controller_hint">設定、ボタン、コントローラーの詳細</string>
     <string name="cd_title">コントローラーの詳細</string>
@@ -447,6 +483,284 @@
     <string name="opt_page_advanced_hint">GPUドライバー、VSync、記録スレッド、シェーダーキャッシュ</string>
     <string name="opt_page_songs">歌</string>
     <string name="opt_page_songs_hint">もう一度演奏、マイクで歌う、再生ボタン</string>
+    <string name="opt_progress">ゲームの進み具合</string>
+    <string name="opt_progress_hint">このデータで集めたものとまだ足りないものをチェックリストで表示します</string>
+    <string name="progress_on_screen">画面にパーセント</string>
+    <string name="progress_on_screen_hint">プレイ中、ゲーム画面の上に表示します。タッチするとこのリストが開きます</string>
+    <string name="progress_show">表示</string>
+    <string name="progress_no_game">先にセーブデータをロードしてください。リストはプレイ中のデータを表示します。</string>
+    <string name="progress_about">%1$d つの項目はどれも同じ重さです。数えないもの:チンクル像、大回転斬り、郵便袋の交換、最後の戦い(そのあとゲームは何も保存しません)。</string>
+    <string name="progress_part_done">すべて集めました。</string>
+    <string name="progress_part_dungeons">ダンジョン</string>
+    <string name="progress_part_hearts">ハート</string>
+    <string name="progress_part_items">アイテム</string>
+    <string name="progress_part_equipment">装備</string>
+    <string name="progress_part_upgrades">強化</string>
+    <string name="progress_part_songs">歌</string>
+    <string name="progress_part_quest">珠とトライフォース</string>
+    <string name="progress_part_charts">宝の地図</string>
+    <string name="progress_part_sea">海図</string>
+    <string name="progress_part_figurines">ギャラリー</string>
+    <string name="progress_fire_ice">炎と氷の矢</string>
+    <string name="progress_light">光の矢</string>
+    <string name="progress_master_half">マスターソード(半分の力)</string>
+    <string name="progress_master_full">マスターソード(真の力)</string>
+    <string name="progress_pirate">海賊のお守り</string>
+    <string name="progress_salvaged">引き揚げた宝</string>
+    <string name="progress_magic">魔力 ×2</string>
+    <string name="progress_deluxe">デラックス写し絵の箱</string>
+    <string name="progress_square">マス %1$d</string>
+    <string name="progress_figurine">フィギュア %1$d</string>
+    <string name="pmap_title">マップ</string>
+    <string name="pmap_hint">海図のどこで見つけたか、お好みでまだ足りないものも</string>
+    <string name="pmap_show">マーク</string>
+    <string name="pmap_kind">表示するもの</string>
+    <string name="pmap_about">マスをタップすると中身を一覧します。マークは物のある場所に、マスの数字はそのマスの物の数です（洞窟・船・ダンジョンの中も含む）。元のゲームでは物ごとに場所が決まっているので、持っている物はその場所で見つけたと表示されます。</string>
+    <string name="pmap_boss">ボス · %1$s</string>
+    <string name="pmap_inside">中</string>
+    <string name="pmap_src_chest">宝箱</string>
+    <string name="pmap_src_sub">潜水艦</string>
+    <string name="pmap_src_sunken">沈んだ宝</string>
+    <string name="pmap_src_octo">大ダコ</string>
+    <string name="pmap_src_gunboat">砲艦</string>
+    <string name="pmap_src_ground">地面</string>
+    <string name="pmap_src_reward">ほうび</string>
+    <string name="pmap_src_auction">オークション</string>
+    <string name="pmap_src_minigame">ミニゲーム</string>
+    <string name="pmap_src_letter">手紙</string>
+    <string name="pmap_src_shop">店</string>
+    <string name="pmap_src_boss">ボス</string>
+    <string name="pmap_src_fishman">サカナ男</string>
+    <string name="pmap_src_fairy">大妖精</string>
+    <string name="pmap_src_unknown">場所不明</string>
+    <string name="pmap_dungeon_map">ダンジョンマップ</string>
+    <string name="pmap_sea">海図</string>
+    <string name="pmap_floor">フロア</string>
+    <string name="pmap_elsewhere">決まった場所なし</string>
+    <string name="pmap_elsewhere_hint">動くもの（幽霊船）や場所が分からないもの。プレイ中に見つけると、リンクがいた島を記録します。</string>
+    <string name="pmap_found_on">見つけた日 %1$s</string>
+    <string name="pmap_maybe">見つけた（どれかは不明）</string>
+    <string name="pmap_none">この選択ではここに何もありません。</string>
+    <string name="pmap_game_map">ゲームのマップに</string>
+    <string name="pmap_game_map_hint">ゲーム自体の海図（+ のゲームパッド画面）にマーク。マスの拡大表示にも</string>
+    <string name="pmap_mini_map_hint">プレイ中のミニマップにも同じマーク（そうさ > 画面 (HUD) にもあります）</string>
+    <!-- achievements (Achievements.java) -->
+    <string name="opt_achievements">実績</string>
+    <string name="opt_achievements_hint">ゲームの中の目標。一度達成すればずっと残ります</string>
+    <string name="ach_total">%2$d個中%1$d個達成 · %4$dポイント中%3$dポイント</string>
+    <string name="ach_popups">画面に表示</string>
+    <string name="ach_popups_hint">達成したとき、ゲーム画面の上に数秒間</string>
+    <string name="ach_link">リンクが掲げる</string>
+    <string name="ach_link_hint">表示の中でリンクが振り向き、宝物を見つけたときのように実績を高く掲げます</string>
+    <string name="ach_sound">ファンファーレ</string>
+    <string name="ach_sound_hint">大事なアイテムを見つけたときのゲームのファンファーレを表示と一緒に</string>
+    <string name="ach_sound_volume">ファンファーレの音量</string>
+    <string name="opt_ach_settings">実績の設定</string>
+    <string name="opt_ach_settings_hint">表示、リンク、セーブデータ、リセット</string>
+    <string name="ach_each_file">セーブデータごとに表示</string>
+    <string name="ach_each_file_hint">オン:セーブデータごとに実績を達成し、もう一度表示します。オフ:どのセーブデータでもまだ達成していない実績だけ</string>
+    <string name="ach_with_cheats">チート中も獲得</string>
+    <string name="ach_with_cheats_hint">オン: チートやストーリープリセットを使っても実績が一時停止しません</string>
+    <string name="ach_files_about">すべてのセーブデータの一覧とは別に、セーブデータ(番号と名前)ごとに実績が記録されます。その枠で新しくはじめると、その一覧も最初からになります。</string>
+    <string name="ach_scope">セーブデータ</string>
+    <string name="ach_scope_all">すべてのセーブデータ</string>
+    <string name="ach_scope_file">このセーブデータ</string>
+    <string name="ach_file">%1$s · データ%2$d</string>
+    <string name="ach_file_no">データ%1$d</string>
+    <string name="ach_no_file">プレイ中のセーブデータがありません。読み込むとそのデータの実績が見られます。</string>
+    <string name="ach_about">すべてのセーブデータ:どのデータでも達成でき、データを消しても残ります。セーブデータごと:そのデータ自身が達成したもの。達成済みの目標はデータを読み込むと数えられます。チートがオンの間は達成されず、一回だけのチートやストーリープリセットの後はアプリを再起動するまで達成されません。</string>
+    <plurals name="ach_paused_on">
+        <item quantity="one">一時停止中。このチートがオンです: %1$s</item>
+        <item quantity="other">一時停止中。これらのチートがオンです: %1$s</item>
+    </plurals>
+    <string name="ach_paused_used">アプリを再起動するまで一時停止。今回の起動中に使用: %1$s</string>
+    <string name="ach_paused_title">実績は一時停止中</string>
+    <string name="ach_paused_many">一時停止中: チート %1$d 件</string>
+    <string name="ach_paused_many_hint">タップで内容を表示</string>
+    <string name="ach_paused_on_list">オン:</string>
+    <string name="ach_paused_used_list">今回の起動中に使用 (アプリを再起動するまで一時停止):</string>
+    <string name="ach_earned_on">%1$s に達成</string>
+    <string name="ach_points">%1$dポイント</string>
+    <string name="ach_popup">実績を達成</string>
+    <string name="ach_popup_many">%1$d個の実績を達成</string>
+    <string name="ach_reset">実績をリセット</string>
+    <string name="ach_reset_hint">すべてのセーブデータで、すべて未達成に戻ります。プレイ中のデータで達成済みのものはすぐにもう一度達成されます</string>
+    <string name="ach_reset_ask">すべての実績をリセットしますか?</string>
+    <string name="ach_group_story">ストーリー</string>
+    <string name="ach_group_items">アイテムと強化</string>
+    <string name="ach_group_songs">歌</string>
+    <string name="ach_group_quests">寄り道</string>
+    <string name="ach_group_collect">コレクション</string>
+    <string name="ach_group_gallery">ニンテンドーギャラリー</string>
+    <string name="ach_get">%1$sを手に入れる。</string>
+    <string name="ach_learn">%1$sを覚える。</string>
+    <string name="ach_d_chests">%1$sの宝箱をすべて開ける。</string>
+    <string name="ach_t_set_sail">いざ出航</string>
+    <string name="ach_d_set_sail">海賊船で%1$sを出る。</string>
+    <string name="ach_t_king_red_lions">しゃべる舟</string>
+    <string name="ach_d_king_red_lions">赤獅子の王に出会う。</string>
+    <string name="ach_t_pearl_din">リト族の宝</string>
+    <string name="ach_t_pearl_farore">森の宝</string>
+    <string name="ach_t_pearl_nayru">海の宝</string>
+    <string name="ach_t_tower_rises">塔の出現</string>
+    <string name="ach_d_tower_rises">%1$sを海から出現させる。</string>
+    <string name="ach_t_bell">鐘を鳴らせ</string>
+    <string name="ach_d_bell">%1$sの頂上で鐘を鳴らす。</string>
+    <string name="ach_t_master_sword">退魔の剣</string>
+    <string name="ach_t_tetra">海賊の姫</string>
+    <string name="ach_d_tetra">テトラの正体を知る。</string>
+    <string name="ach_t_sword_half">半分の目覚め</string>
+    <string name="ach_d_sword_half">マスターソードの力を半分取り戻す。</string>
+    <string name="ach_t_sword_full">完全な目覚め</string>
+    <string name="ach_d_sword_full">マスターソードの力をすべて取り戻す。</string>
+    <string name="ach_t_triforce">そろった勇気</string>
+    <string name="ach_d_triforce">トライフォースのかけらを8つすべて見つける。</string>
+    <string name="ach_t_the_end">新しい大地</string>
+    <string name="ach_d_the_end">ゲームをクリアしてクリアデータを保存する。</string>
+    <string name="ach_t_hero_mode">ハートは落ちていない</string>
+    <string name="ach_d_hero_mode">ハードモードでゲームを遊ぶ。</string>
+    <string name="ach_t_the_end_hero">伝説の勇者</string>
+    <string name="ach_d_the_end_hero">ハードモードでゲームをクリアしてクリアデータを保存する。</string>
+    <string name="ach_t_bait_bag">エサの用意</string>
+    <string name="ach_t_wind_waker">マエストロ</string>
+    <string name="ach_t_bottle">ビン詰め</string>
+    <string name="ach_t_grappling_hook">ぶら下がり</string>
+    <string name="ach_t_deku_leaf">風と共に</string>
+    <string name="ach_t_boomerang">戻ってくる</string>
+    <string name="ach_t_bombs">爆発的スタート</string>
+    <string name="ach_t_tingle_bottle">ボトルメール</string>
+    <string name="ach_t_bow">弓の弦</string>
+    <string name="ach_t_skull_hammer">ハンマータイム</string>
+    <string name="ach_t_fire_ice">熱くて冷たい</string>
+    <string name="ach_t_iron_boots">重い足取り</string>
+    <string name="ach_t_power_bracelets">力持ち</string>
+    <string name="ach_t_mirror_shield">反射</string>
+    <string name="ach_t_hookshot">手を伸ばして</string>
+    <string name="ach_t_light_arrows">光の矢</string>
+    <string name="ach_t_magic_armor">鉄壁</string>
+    <string name="ach_t_heros_charm">勇者の顔</string>
+    <string name="ach_t_deluxe_picto">フルカラー</string>
+    <string name="ach_t_swift_sail">全速前進</string>
+    <string name="ach_t_bottles">ビン集め</string>
+    <string name="ach_d_bottles">ビンを4本すべて持つ。</string>
+    <string name="ach_t_magic">魔力倍増</string>
+    <string name="ach_d_magic">魔法メーターを2倍にする。</string>
+    <string name="ach_t_hearts">大きなハート</string>
+    <string name="ach_d_hearts">ハートを20個にする。</string>
+    <string name="ach_t_wallet_1000">おこづかい</string>
+    <string name="ach_t_wallet_5000">ルピー長者</string>
+    <string name="ach_t_bombs_60">もっと爆弾</string>
+    <string name="ach_t_bombs_99">爆弾いっぱい</string>
+    <string name="ach_t_arrows_60">もっと矢</string>
+    <string name="ach_t_arrows_99">矢いっぱい</string>
+    <string name="ach_t_song_requiem">風向きを変えて</string>
+    <string name="ach_t_song_ballad">疾風に乗って</string>
+    <string name="ach_t_song_command">あやつって</string>
+    <string name="ach_t_song_earth">大地の歌</string>
+    <string name="ach_t_song_wind">風の歌</string>
+    <string name="ach_t_song_passing">昼と夜</string>
+    <string name="ach_t_grandma_chest">おばあちゃんの秘密</string>
+    <string name="ach_d_grandma_chest">おばあちゃんの家に隠された宝箱を開ける。</string>
+    <string name="ach_t_grandma_soup">お大事に</string>
+    <string name="ach_d_grandma_soup">妖精でおばあちゃんを元気にしてスープをもらう。</string>
+    <string name="ach_t_black_pig">トリュフ探し</string>
+    <string name="ach_d_black_pig">%1$sで黒ブタに宝を掘り出させる。</string>
+    <string name="ach_t_orca_500">剣の修行</string>
+    <string name="ach_d_orca_500">オルカの修行で500回当てる。</string>
+    <string name="ach_t_orca_1000">千回の打ち込み</string>
+    <string name="ach_d_orca_1000">オルカの修行で1000回当てる。</string>
+    <string name="ach_t_hurricane_spin">回転斬り</string>
+    <string name="ach_d_hurricane_spin">オルカから最後の剣技を教わる。</string>
+    <string name="ach_t_killer_bees">かくれんぼ</string>
+    <string name="ach_d_killer_bees">%1$sでキラービーをみんな見つける。</string>
+    <string name="ach_t_joy_pendant">誕生日プレゼント</string>
+    <string name="ach_d_joy_pendant">マリエ先生に誕生日プレゼントを届ける。</string>
+    <string name="ach_t_lenzo">写し絵の助手</string>
+    <string name="ach_d_lenzo">レンゾーに頼まれた写し絵を3枚とも撮る。</string>
+    <string name="ach_t_anton_linda">縁結び</string>
+    <string name="ach_d_anton_linda">アントンとリンダを結びつける。</string>
+    <string name="ach_t_maggie_moe">ラブレター</string>
+    <string name="ach_d_maggie_moe">マギーとモーの手紙を届けてマギーのお礼をもらう。</string>
+    <string name="ach_t_lighthouse">灯台に光を</string>
+    <string name="ach_d_lighthouse">%1$sの灯台を直してお礼をもらう。</string>
+    <string name="ach_t_potions">薬の名人</string>
+    <string name="ach_d_potions">ドク・バンダムが緑と青の薬を作るのを手伝う。</string>
+    <string name="ach_t_letter_sorting">仕分け完了</string>
+    <string name="ach_d_letter_sorting">%1$sでバイトのために手紙を25通仕分ける。</string>
+    <string name="ach_t_golden_feathers">金の羽根</string>
+    <string name="ach_d_golden_feathers">リト族の番兵の恋を手伝って手紙をもらう。</string>
+    <string name="ach_t_aryll_letter">家からの手紙</string>
+    <string name="ach_d_aryll_letter">アリルの手紙を読む。</string>
+    <string name="ach_t_flight_record">大空へ</string>
+    <string name="ach_d_flight_record">%1$sで記録を破る。</string>
+    <string name="ach_t_squid_hunt">イカ撃ち名人</string>
+    <string name="ach_d_squid_hunt">%1$sのイカ撃ちで賞品を3つとももらう。</string>
+    <string name="ach_t_beedle_silver">シルバー会員</string>
+    <string name="ach_d_beedle_silver">ベラの店の船でシルバー会員になる。</string>
+    <string name="ach_t_beedle_gold">ゴールド会員</string>
+    <string name="ach_d_beedle_gold">ベラの店の船でゴールド会員になる。</string>
+    <string name="ach_t_trading">交換の達人</string>
+    <string name="ach_d_trading">旅の商人たちとの交換を終えて最後のお礼をもらう。</string>
+    <string name="ach_t_puzzle_1">スライドパズル入門</string>
+    <string name="ach_d_puzzle_1">%1$sの別荘でスライドパズルを1つ解く。</string>
+    <string name="ach_t_puzzle_8">スライドパズル上級</string>
+    <string name="ach_d_puzzle_8">%1$sの別荘でスライドパズルを8つ解く。</string>
+    <string name="ach_t_puzzle_16">スライドパズル名人</string>
+    <string name="ach_d_puzzle_16">%1$sの別荘でスライドパズルを16個すべて解く。</string>
+    <string name="ach_t_fire_mountain_fast">冷たい足、熱い手</string>
+    <string name="ach_d_fire_mountain_fast">%1$sを凍らせてから1分15秒以内に中の宝箱を開ける。</string>
+    <string name="ach_t_ice_ring_fast">すばやい雪解け</string>
+    <string name="ach_d_ice_ring_fast">%1$sを溶かしてから1分15秒以内に中の宝箱を開ける。</string>
+    <string name="ach_t_trees_fast">緑の指</string>
+    <string name="ach_d_trees_fast">最初の1本から20分以内に枯れた木を8本すべて元気にする。</string>
+    <string name="ach_t_platforms">見張り台荒らし</string>
+    <string name="ach_d_platforms">海の見張り台の宝箱をすべて開ける。</string>
+    <string name="ach_t_unarmed_robbery">丸腰の泥棒</string>
+    <string name="ach_d_unarmed_robbery">剣を取り戻す前に%1$sの宝箱を4つすべて開ける。</string>
+    <string name="ach_t_labyrinth_30">火と水を越えて</string>
+    <string name="ach_d_labyrinth_30">%1$sの試練の洞窟で30階下の宝にたどり着く。</string>
+    <string name="ach_t_special_charts">海図マニア</string>
+    <string name="ach_d_special_charts">特別な海図を12枚すべて集める。</string>
+    <string name="ach_t_tingle_statues">像コレクター</string>
+    <string name="ach_d_tingle_statues">5つのダンジョンでチンクル像を見つける。</string>
+    <string name="ach_t_chests_drc">熱いお宝</string>
+    <string name="ach_t_chests_fw">森のお宝</string>
+    <string name="ach_t_chests_totg">神々のお宝</string>
+    <string name="ach_t_chests_et">眠るお宝</string>
+    <string name="ach_t_chests_wt">風のお宝</string>
+    <string name="ach_t_submarines">潜水艦ハンター</string>
+    <string name="ach_d_submarines">7つの潜水艦の宝箱をすべて開ける。</string>
+    <string name="ach_t_big_octos">大ダコ退治</string>
+    <string name="ach_d_big_octos">大ダコを6匹すべて倒す。</string>
+    <string name="ach_t_charts_20">海図読み</string>
+    <string name="ach_d_charts_20">海図を20枚集める。</string>
+    <string name="ach_t_charts_all">すべての海図</string>
+    <string name="ach_d_charts_all">海図を49枚すべて集める。</string>
+    <string name="ach_t_salvage_all">沈んだ財宝</string>
+    <string name="ach_d_salvage_all">49枚すべての海図の宝を引き上げる。</string>
+    <string name="ach_t_sea_half">海の半分</string>
+    <string name="ach_d_sea_half">海図のマスを25個うめる。</string>
+    <string name="ach_t_sea_all">海図の完成</string>
+    <string name="ach_d_sea_all">海図のマスを49個すべてうめる。</string>
+    <string name="ach_t_progress_100">100パーセント</string>
+    <string name="ach_d_progress_100">ゲームの進み具合を100%にする。</string>
+    <string name="ach_t_gallery_open">芸術好き</string>
+    <string name="ach_d_gallery_open">ニンテンドーギャラリーへの道を開く。</string>
+    <string name="ach_t_figurine_first">最初のフィギュア</string>
+    <string name="ach_d_figurine_first">ニンテンドーギャラリーでフィギュアを作ってもらう。</string>
+    <string name="ach_t_room_outset">ふるさと</string>
+    <string name="ach_d_room">ギャラリーの%1$sの部屋をそろえる。</string>
+    <string name="ach_t_room_windfall">にぎやかな街</string>
+    <string name="ach_t_room_sea">海の人々</string>
+    <string name="ach_d_room_sea">ギャラリーの大海原の部屋をそろえる。</string>
+    <string name="ach_t_room_dragon">羽のある友</string>
+    <string name="ach_t_room_forest">小さな葉っぱ</string>
+    <string name="ach_t_room_enemies">敵を知る</string>
+    <string name="ach_d_room_enemies">ギャラリーの敵の部屋をそろえる。</string>
+    <string name="ach_t_room_fortress">要塞のフィギュア</string>
+    <string name="ach_t_figurines_all">ギャラリー完成</string>
+    <string name="ach_d_figurines_all">フィギュアを134体すべて集める。</string>
+    <!-- end of achievements -->
     <string name="opt_onscreen">画面上の操作</string>
     <string name="opt_onscreen_hint">オフ:画面にボタンやスティックを出さず、メニューボタンだけ(コントローラーだけで遊ぶとき)</string>
     <string name="opt_onscreen_size">画面上の操作の大きさ</string>
@@ -491,13 +805,70 @@
     <string name="opt_rumble_hint_missing">この端末で振動：%1$s の振動はこの端末ではアプリに届きません（理由：コントローラー &gt; コントローラーの詳細）</string>
     <string name="opt_rupees_change">ルピーは変わったときだけ</string>
     <string name="opt_rupees_change_hint">ルピーを手に入れたり使ったりすると数が現れ、数秒後にまた消えます</string>
+    <string name="opt_minimap">ミニマップ</string>
+    <string name="opt_minimap_hint">テレビ画面の隅に、Wii U GamePadのマップと同じ絵柄のマップを表示します：大海原では海図に載った島と赤獅子の王、ダンジョンでは部屋、そのほかの場所では見取り図。タップで次の大きさに。画面レイアウトで動かせます。長押しで全体マップ</string>
+    <string name="opt_minimap_style">マップの形</string>
+    <string name="opt_minimap_inside">マップの中</string>
+    <string name="opt_minimap_pictures">マップの絵</string>
+    <string name="opt_minimap_pictures_hint">島、ダンジョンの部屋、屋内の間取り：描き直しはなめらかでくっきりした輪郭で描き直します。HDはゲームパッドの絵をくっきりした輪郭で拡大します。オリジナルはそのまま表示します（大きな画面ではぼやけます）。地形は島や床を上から見た実際の姿で、地面ごとに色分けして表示します（ダンジョンでは訪れた部屋）</string>
+    <string name="opt_fullmap">全体マップ</string>
+    <string name="opt_fullmap_hint">海図全体を画面に表示：ピンチやズームで全マスから島の地面まで拡大できます。ミニマップの長押しや、＋メニューの海図のマップボタンでも開きます</string>
+    <string name="opt_fullmap_pictures">全体マップの絵</string>
+    <string name="opt_fullmap_deco">マップの飾り</string>
+    <string name="opt_fullmap_deco_hint">マス目の文字と数字が入った紙の枠、風のコンパス、メニューの青い背景。オフ：飾りのないマップ</string>
+    <string name="opt_chart_pictures">＋メニューの海図</string>
+    <string name="opt_chart_pictures_hint">＋メニューの海図とダンジョンマップ：ゲームのもの、またはマップの絵のスタイルで描き直したもの（タッチ操作はそのまま）</string>
+    <string name="fullmap_button">全体マップ</string>
+    <string name="opt_minimap_sea_zoom">海のズーム</string>
+    <string name="opt_minimap_sea_zoom_hint">マップに映す大海原の広さ：自動＝地形（島を実際の大きさで表示）では区画の4分の1、それ以外は1区画</string>
+    <string name="opt_minimap_face">リンクの顔</string>
+    <string name="opt_minimap_face_hint">マップ上のリンクの位置に顔を表示します。オフ：赤い矢印だけになり、島が隠れません</string>
+    <string name="opt_minimap_mark_size">リンクの印の大きさ</string>
+    <string name="opt_minimap_arrow_colour">矢印の色</string>
+    <string name="opt_minimap_move_zoom">移動中のズーム</string>
+    <string name="opt_minimap_move_zoom_hint">リンクが走ったり船で進んだりしている間はマップを拡大し、止まると元に戻します</string>
+    <string name="opt_minimap_names">島の名前</string>
+    <string name="opt_minimap_names_hint">大海原で：海図に載った島の下にその名前を表示します</string>
+    <string name="opt_minimap_opacity">マップの不透明度</string>
+    <string name="opt_minimap_fade">移動中は薄く</string>
+    <string name="opt_minimap_fade_hint">リンクや船が動いている間はマップが透けて、止まると元に戻ります</string>
+    <string name="opt_minimap_fade_opacity">移動中の不透明度</string>
+    <string name="opt_minimap_wind">風の矢印</string>
+    <string name="opt_minimap_wind_hint">マップの隅の小さな文字盤の矢印が風の向きを示します</string>
+    <string name="opt_minimap_wind_swipe">風向きを変える（文字盤）</string>
+    <string name="opt_minimap_wind_swipe_hint">風の文字盤からスワイプすると、ポーズなしで、どこでも、曲を覚えていなくてもその向きへすぐに風が変わります。コントローラーでは−を押したまま右スティックを倒し、−を離すと決まります</string>
+    <string name="opt_minimap_charts">宝の地図</string>
+    <string name="opt_minimap_charts_hint">大海原で：今いる区画の地図を持っていて宝がまだ沈んでいるとき、マップの横にその地図を×印とリンクの位置つきで表示します</string>
+    <string name="opt_minimap_buttons">マップのボタン</string>
+    <string name="opt_minimap_buttons_hint">マップの横のボタンで隠します（マップボタンで戻ります）</string>
+    <string name="minimap_chart_treasure">宝の地図%1$d</string>
+    <string name="minimap_chart_triforce">トライフォースの地図%1$d</string>
+    <string name="opt_minimap_corner">位置</string>
+    <string name="opt_minimap_size">大きさ</string>
+    <string name="opt_minimap_size_hint">マップをタップ、またはコントローラーの−を短く押しても次の大きさになります</string>
+    <string name="opt_minimap_turn">向き</string>
+    <string name="opt_minimap_marks">進行状況のマーク</string>
+    <string name="opt_minimap_marks_hint">ゲーム進行状況の物をその場所に：足りない物だけ、またはすべて</string>
     <string name="opt_saves">セーブ</string>
     <string name="opt_shaders">シェーダーキャッシュを削除</string>
     <string name="opt_shaders_hint">最初の起動と同じようにゲームを再起動します</string>
+    <string name="opt_controls_blind">見ないで使うコントローラー表示</string>
+    <string name="opt_controls_blind_hint">ゲームが別の画面のとき：ボタンは常に同じ位置、大きなボタン、浮動スティック、ボタンごとの振動。オフ：いつものタッチ配置</string>
+    <string name="opt_controls_edit_blind">見ないで使う配置を編集</string>
+    <string name="opt_controls_edit_blind_hint">見ないで使うコントローラー表示専用の配置：各ボタンの移動・サイズ・形・非表示。リセットで最初の配置に戻る</string>
+    <string name="opt_blind_face">メインボタン</string>
+    <string name="opt_blind_face_hint">ひし形：A・B・X・Yをそれぞれの位置に。スワイプ：円の中のどこかに親指を置いてずらす：上X、右A、下B、左Y（指を離すまで押したまま）。タップはA</string>
+    <string name="opt_classic_face">メインボタン（クラシック）</string>
+    <string name="blind_face_diamond">ひし形</string>
+    <string name="blind_face_swipe">スワイプ</string>
+    <string name="opt_controls_tv_backdrop">コントローラー表示にテレビ画面</string>
+    <string name="opt_controls_tv_backdrop_hint">ゲームが別の画面のとき：暗くしたGamePad画面の代わりに、薄くしたテレビ画面をボタンの後ろに表示。スマホを見ても何も見逃さない。画面ボタンでいつでもGamePad画面</string>
     <string name="opt_show_sticks">スティックを表示</string>
     <string name="opt_show_sticks_hint">オフ：何もない画面でスティックが動きます</string>
     <string name="opt_stick_follows">左スティックが親指についていく</string>
     <string name="opt_stick_follows_hint">親指が左スティックのふちを越えると、スティックもいっしょに動きます。オフ：スティックはその場所にとどまります</string>
+    <string name="opt_z_latch">ZL / ZRをタップでオンのままにする</string>
+    <string name="opt_z_latch_hint">オン：ZLをタップすると次のタップまで注目が続き、ZRはしゃがみや盾のために押されたままになります。オフ：ZLとZRは押している間だけはたらきます</string>
     <string name="opt_slot">ステート %1$d</string>
     <string name="opt_slot_empty">空き</string>
     <string name="opt_slot_incompatible">%1$s · 別のビルドのもの、読み込めません</string>
@@ -528,7 +899,7 @@
     <string name="opt_zl_defeat_release">はなす</string>
     <string name="opt_zl_defeat_next">次のターゲット</string>
     <string name="opt_upscale">アップスケール</string>
-    <string name="opt_upscale_hint">画面への拡大のしかた：シャープは低いレンダリング解像度でもふちをくっきり保ちます</string>
+    <string name="opt_upscale_hint">画面への拡大のしかた：シャープは低いレンダリング解像度でもふちをくっきり保ち、ピクセルパーフェクトは描画された1ピクセルずつをくっきりしたブロックで表示します</string>
     <string name="opt_warp">ワープ（開発者）</string>
     <string name="opt_warp_hint">ゲームのどの場所、部屋、出現地点にも行けます</string>
     <string name="packs_about">.zipと.rarファイルからmodを読み込みます：Cemuのグラフィックパック（例えばGameBananaやGitHubから）と、シンプルなゲームファイルのmod（contentフォルダー）。コードパッチ（patch_*.asm）、ゲームファイルの置き換え、ピクセルシェーダーの置き換え、テクスチャフィルタリングのルールは動きます。頂点シェーダーとテクスチャ解像度のルールはまだです。コードパッチは作られたゲームのバージョンにだけ適用されます。パックのオン・オフや設定の変更は再起動後に有効になります。</string>
@@ -538,7 +909,21 @@
     <string name="packs_folder">フォルダー：packs/%s</string>
     <string name="packs_groups">パッチグループ：このゲームのバージョン用 %1$d、ほか用 %2$d</string>
     <string name="packs_import">パックを読み込む</string>
-    <string name="packs_import_hint">.zipか.rarファイルを1つ以上選びます</string>
+    <string name="packs_import_hint">.zipか.rarファイルを1つ以上選びます。ゲームキューブのプレイヤーモデル（ゲームキューブ版ランダマイザー用のLink.arc入りパック）も選べ、HD用に変換されます</string>
+    <string name="packs_gc_model_name">ゲームキューブのプレイヤーモデル：%1$s</string>
+    <string name="packs_gc_model_desc">ゲームキューブのプレイヤーモデルから変換しました。プレイヤーモデルのページでセーブファイルごとに選べます</string>
+    <string name="packs_gc_model_desc_by">%1$sさんのゲームキューブのプレイヤーモデルから変換しました。プレイヤーモデルのページでセーブファイルごとに選べます</string>
+    <string name="packs_gc_converting" formatted="true">プレイヤーモデルを変換中 %1$d / %2$d：%3$s（%4$d %%）</string>
+    <string name="packs_gc_imported_n">ゲームキューブのプレイヤーモデル %1$d 個</string>
+    <string name="packs_gc_model">ゲームキューブのプレイヤーモデル</string>
+    <string name="packs_gc_model_hint">セーブファイルごとにだれで遊ぶか：リンク、またはインポートした %1$d 個のモデル</string>
+    <string name="packs_gc_off">リンク（なし）</string>
+    <string name="packs_gc_current">使用中</string>
+    <string name="packs_gc_switching">%1$s を準備中…</string>
+    <string name="packs_gc_model_about">ゲームキューブのモデルパックからインポートしたモデルです。セーブファイルごとに別のモデルで遊べます：ファイルを選んでからモデルを選びます。再起動なしですぐゲームに出ます。ランダマイザーのゲームでも使えます。</string>
+    <string name="packs_gc_file_hint">セーブファイルごとにモデルがあります。そのファイルで遊ぶとすぐ変わります</string>
+    <string name="packs_gc_report">変換した内容</string>
+    <string name="packs_gc_trimming">空き容量を作っています：以前のプレイヤーモデルは必要なものだけ残します…</string>
     <string name="packs_none">まだパックがありません。</string>
     <string name="packs_on_count">%d個オン</string>
     <string name="packs_preset">設定</string>
@@ -590,6 +975,92 @@
         <item>オリジナル 16:9（帯あり）</item>
         <item>画面に引きのばす</item>
         <item>画面いっぱい（端を切る）</item>
+    </string-array>
+    <string-array name="minimap_styles">
+        <item>四角（羊皮紙）</item>
+        <item>丸（コンパス）</item>
+    </string-array>
+    <string-array name="minimap_insides">
+        <item>塗りつぶし</item>
+        <item>輪郭だけ（透明）</item>
+    </string-array>
+    <string-array name="minimap_pictures">
+        <item>描き直し</item>
+        <item>HD</item>
+        <item>オリジナル</item>
+        <item>地形</item>
+    </string-array>
+    <string-array name="chart_pictures">
+        <item>ゲームのもの</item>
+        <item>描き直し</item>
+        <item>HD</item>
+        <item>地形</item>
+    </string-array>
+    <string-array name="minimap_mark_sizes">
+        <item>小</item>
+        <item>標準</item>
+        <item>大</item>
+        <item>特大</item>
+    </string-array>
+    <string-array name="minimap_arrow_colours">
+        <item>赤</item>
+        <item>オレンジ</item>
+        <item>黄</item>
+        <item>緑</item>
+        <item>シアン</item>
+        <item>青</item>
+        <item>ピンク</item>
+        <item>白</item>
+    </string-array>
+    <string-array name="minimap_move_zooms">
+        <item>オフ</item>
+        <item>1.5倍</item>
+        <item>2倍</item>
+        <item>3倍</item>
+    </string-array>
+    <string-array name="minimap_sea_zooms">
+        <item>自動</item>
+        <item>1区画</item>
+        <item>1/2区画</item>
+        <item>1/3区画</item>
+        <item>1/4区画</item>
+    </string-array>
+    <string-array name="minimap_corners">
+        <item>左下</item>
+        <item>左上</item>
+        <item>右上</item>
+        <item>右下</item>
+        <item>好きな位置（画面レイアウト）</item>
+    </string-array>
+    <string-array name="minimap_sizes">
+        <item>小</item>
+        <item>中</item>
+        <item>大</item>
+    </string-array>
+    <string-array name="minimap_turns">
+        <item>北が上</item>
+        <item>リンクに合わせて回転</item>
+    </string-array>
+    <string-array name="minimap_marks">
+        <item>オフ</item>
+        <item>足りない物だけ</item>
+        <item>すべて</item>
+    </string-array>
+    <string-array name="progress_filters">
+        <item>すべて</item>
+        <item>足りないもの</item>
+    </string-array>
+    <string-array name="pmap_shows">
+        <item>見つけた物</item>
+        <item>見つけた物と足りない物</item>
+        <item>足りない物だけ</item>
+    </string-array>
+    <string-array name="pmap_kinds">
+        <item>すべて</item>
+        <item>ハート</item>
+        <item>海図と宝</item>
+        <item>アイテム</item>
+        <item>ダンジョン</item>
     </string-array>
     <string-array name="auto_state_modes">
         <item>オフ</item>
@@ -646,6 +1117,7 @@
     <string-array name="upscale_modes">
         <item>バイリニア（クラシック）</item>
         <item>シャープ</item>
+        <item>ピクセルパーフェクト</item>
     </string-array>
     <string-array name="wiiu_buttons">
         <item>A</item>
@@ -821,6 +1293,12 @@
     <string name="crash_share">クラッシュログを共有</string>
     <string name="crash_without_fg">フレーム生成なしで起動</string>
     <string name="crash_share_all">クラッシュログを共有</string>
+    <string name="game_log_share">ゲームログを共有</string>
+    <string name="game_log_subject">Wind Waker HD ゲームログ</string>
+    <string name="game_log_failed">ゲームログを収集できませんでした。</string>
+    <string name="game_log_text">このゲームの今回の起動からのログを、問題の再現に必要な情報(アプリとゲームのバージョン、端末、GPUとドライバー、設定)と一緒にまとめます。このアプリ自身の行だけを集め、ほかのアプリの行は含みません。個人的な情報は含まれません:名前やアカウントはなく、フォルダーのパス、リンク、メール・ネットワーク・Bluetoothのアドレス、端末IDは除かれます。zipは共有メニューで選んだ先に送られます。\n\nスイッチをオンにすると、セーブデータも加えます:ゲーム内で最後にセーブした進行状況、写し絵、アルバムのページ。リンクに付けた名前はそのコピーでは「Link」になります。あなたのセーブデータはそのままです。</string>
+    <string name="game_log_saves">セーブデータを含める</string>
+    <string name="game_log_share_button">共有</string>
     <string name="crash_start_game">ゲームを起動</string>
     <string name="crash_without_packs">Modパックなしで起動</string>
     <string name="crash_subject">風のタクト HD クラッシュログ</string>
@@ -902,4 +1380,379 @@
     <string name="song_practice_none">唄が聞きとれませんでした もう一度！</string>
     <string name="song_wrong_time">%1$s：%2$sで歌ってね</string>
     <string name="sing_songs_no_mic">マイクの許可がないと唄を聞き取れません。アプリのシステム設定で許可できます。</string>
+
+    <!-- Game > Randomizer (OptionsMenu.randoPage, MainActivity.runRandomizer) -->
+    <string name="rando_title">ランダマイザー</string>
+    <string name="rando_hint">アイテムの場所が変わった新しいゲーム（TWWHD Randomizer）</string>
+    <string name="rando_on_now">オン</string>
+    <string name="rando_about">ランダマイザー（SuperDude88 ほかによる TWWHD Randomizer 1.2.0）は、あなたのゲームから新しいゲームを作ります。アイテムは別の場所にあり、海は最初から開いていて、ほとんどのイベントシーンはありません。どのゲームも必ずクリアできるようにロジックが確かめます。ランダムなゲームには専用のセーブデータとセーブステートがあり、元のゲームはそのままです。</string>
+    <string name="rando_need_usa">ランダマイザーはこのゲームのファイルを使えません：不明な版のゲームです。</string>
+    <string name="rando_keep_plain">元のゲームのコードを残す</string>
+    <string name="rando_keep_plain_hint">ランダムなゲームと元のゲームの切り替えでコンパイルが不要になります。約60 MB多く使います（今のコンパイル済みコード全体：%1$d MB）。</string>
+    <string name="rando_made">シードハッシュ %1$s（シード %2$s）：ゲームのタイトル画面にも同じ言葉が出ます。セーブデータとセーブステートを含めて %3$d MB。</string>
+    <string name="rando_spoiler">ネタバレログ</string>
+    <string name="rando_spoiler_hint">すべてのアイテムの場所。行き詰まったときだけ！</string>
+    <string name="rando_spoiler_none">ネタバレログを読めません。</string>
+    <string name="rando_spoiler_about">シードハッシュ %1$s。以下はすべて物の場所を明かします：行き詰まったときだけ見てください。</string>
+    <string name="rando_spoiler_map">地図</string>
+    <string name="rando_spoiler_map_hint">海図とダンジョンで、各アイテムをその場所に</string>
+    <string name="rando_spoiler_way">攻略の流れ</string>
+    <string name="rando_spoiler_way_hint">大事なアイテムを手に入れられる順番</string>
+    <string name="rando_spoiler_way_about">各ステップには、それより前のステップ（と最初）のアイテムだけが必要です。</string>
+    <string name="rando_spoiler_start">最初に</string>
+    <string name="rando_spoiler_step">ステップ %1$d</string>
+    <string name="rando_spoiler_all">すべての場所</string>
+    <string name="rando_spoiler_all_hint">各場所のアイテム、島とダンジョンごと</string>
+    <string name="rando_spoiler_important">大事なアイテムだけ</string>
+    <string name="rando_spoiler_important_hint">攻略の流れにあるアイテム。残りはルピーなどの小物です</string>
+    <string name="rando_spoiler_charts">海図の行き先</string>
+    <string name="rando_spoiler_hints">ヒント</string>
+    <string name="rando_spoiler_entrances">入口</string>
+    <string name="rando_spoiler_text">ログをテキストで</string>
+    <string name="rando_spoiler_text_hint">ランダマイザーのログ全体、読むか共有</string>
+    <string name="rando_spoiler_show">表示</string>
+    <string name="rando_spoiler_elsewhere">決まった場所なし（手紙、大海原）</string>
+    <string-array name="rando_spoiler_groups">
+        <item>大事なアイテム</item>
+        <item>すべて</item>
+        <item>ハート</item>
+        <item>海図</item>
+        <item>ダンジョンのアイテム</item>
+    </string-array>
+    <string name="rando_settings">次のゲームの設定</string>
+    <string name="rando_preset">プリセットを使う</string>
+    <string name="rando_preset_hint">初心者・標準・すべてシャッフル</string>
+    <string name="rando_preset_ask">プリセットは下の設定をすべて置き換えます（シードも）。\n\n初心者：探す場所が少なく、ヒントあり、ダメージは通常どおり。\n標準：ランダマイザーの設定。\nすべて：ほぼすべての場所にアイテム。</string>
+    <string name="rando_preset_beginner">初心者</string>
+    <string name="rando_preset_standard">標準</string>
+    <string name="rando_preset_all">すべて</string>
+    <string name="rando_places">大事なアイテムのある場所</string>
+    <string name="rando_places_hint">必要なアイテムが置かれうる場所の種類</string>
+    <string name="rando_places_about">オフの場所にはルピーなどの小物しかないので、探す必要はありません。</string>
+    <string name="rando_progress_dungeons_hint">レース：クリアが必要なダンジョンだけに大事なアイテムがあります</string>
+    <string name="rando_dungeons">ダンジョンとカギ</string>
+    <string name="rando_dungeons_hint">カギ、地図、コンパスの場所</string>
+    <string name="rando_small_keys">小さなカギ</string>
+    <string name="rando_big_keys">ボスのカギ</string>
+    <string name="rando_maps">ダンジョンの地図とコンパス</string>
+    <string name="rando_required">クリアするダンジョン</string>
+    <string name="rando_required_hint">レース（場所）用：ガノン城へ行くのに必要なダンジョンの数</string>
+    <string name="rando_entrances">入口</string>
+    <string name="rando_entrances_hint">別の場所につながる扉や洞窟</string>
+    <string name="rando_entrances_about">シャッフルされた入口は、別のダンジョン、洞窟、部屋につながります。道に迷いやすくなります。</string>
+    <string name="rando_caves">洞窟の入口</string>
+    <string name="rando_hints">ヒント</string>
+    <string name="rando_hints_hint">物の場所を教えてくれる人</string>
+    <string name="rando_start">スタートと難しさ</string>
+    <string name="rando_start_hint">最初のハート、剣、ダメージ</string>
+    <string name="rando_start_hearts">最初のハートの器</string>
+    <string name="rando_start_pieces">最初のハートのかけら</string>
+    <string name="rando_no_swords">剣なし</string>
+    <string name="rando_no_swords_hint">リンクは剣を手に入れません（上級者向け）</string>
+    <string name="rando_damage">受けるダメージ</string>
+    <string name="rando_damage_hint">× 2 がランダマイザーの標準、× 1 はゲームどおり</string>
+    <string name="rando_convenience">便利機能</string>
+    <string name="rando_convenience_hint">速い文字表示、海図全体など</string>
+    <string name="rando_seed">シード</string>
+    <string name="rando_seed_hint">同じシードと設定からは同じゲームができます</string>
+    <string name="rando_permalink">パーマリンク</string>
+    <string name="rando_permalink_hint">すべての設定とシードを一つの文字列に：共有するか、PC版ランダマイザーのものを貼り付け</string>
+    <string name="rando_permalink_paste">貼り付ける</string>
+    <string name="rando_share">共有</string>
+    <string name="rando_defaults">標準の設定に戻す</string>
+    <string name="rando_defaults_hint">ランダマイザーの設定と新しいシード</string>
+    <string name="rando_pending">次の起動時に新しいゲームが作られます。</string>
+    <string name="rando_make">新しいランダムなゲームを作る</string>
+    <string name="rando_make_ask">アプリが再起動し、この設定で新しいゲームを作ります（数秒）。そのあとゲームのコードをもう一度コンパイルし（最初のランダムなゲームでは全部で、初回起動と同じくらいかかります。その後は変わった部分だけ）、新しいゲームが始まります。\n\n今あるゲームはそれぞれのセーブデータと一緒に残り、起動するたびにどれを遊ぶか聞かれます。ランダムなゲームは1つあたり約0.5 GBを使います。</string>
+    <string name="rando_make_go">作る</string>
+    <string name="rando_make_same">%1$s はこの設定とこのシードで作られました。同じゲームがもう一度できてしまいます。新しいシードで作りますか？</string>
+    <string name="rando_make_new_seed">新しいシードで作る</string>
+    <string name="rando_games">あなたのゲーム</string>
+    <string name="rando_games_about">起動するたびに、どれを遊ぶかアプリが聞きます。ランダムなゲームはそれぞれ自分のセーブデータとセーブステートを持ちます。</string>
+    <string name="rando_pick_title">どのゲームを遊びますか？</string>
+    <string name="rando_pick_plain">元のゲーム</string>
+    <string name="rando_playing_now">プレイ中</string>
+    <string name="rando_game_name">ランダマイザー %1$d：%2$s</string>
+    <string name="rando_game_name_nohash">ランダマイザー %1$d</string>
+    <string name="rando_playing_this">今このゲームを遊んでいます。</string>
+    <string name="rando_play_this">このゲームを遊ぶ</string>
+    <string name="rando_delete">このゲームを削除</string>
+    <string name="rando_delete_ask">このランダムなゲームを削除します。元のゲームとほかのランダムなゲームは残ります。</string>
+    <string name="rando_delete_ask_progress">このランダムなゲームを、そのセーブデータとセーブステートごと削除します。元のゲームとほかのランダムなゲームは残ります。</string>
+    <string name="rando_delete_playing">今遊んでいるゲームです。セーブデータとセーブステートごと削除し、アプリは元のゲームで再起動します。</string>
+    <string name="rando_delete_go">削除</string>
+    <string name="rando_look">リンクの色</string>
+    <string name="rando_look_hint">服・髪・目の色を変える、または最初から普段着で</string>
+    <string name="rando_look_about">この色は次に作るランダマイザーのゲームに入ります。作ったゲームには、そのページの「リンクの色で作り直す」で入ります。同じゲームのままで、セーブとセーブステートも残ります。</string>
+    <string name="rando_casual">普段着</string>
+    <string name="rando_casual_hint">新しいファイルは勇者の服ではなくリンクの普段着で始まります（ここの色はその服の色になります）</string>
+    <string name="rando_look_preset">カラーセット</string>
+    <string name="rando_look_default">ゲームの色</string>
+    <string name="rando_look_own">自分の色</string>
+    <string name="rando_look_random">合うランダムな色</string>
+    <string name="rando_look_chaotic">色をそれぞれランダムに</string>
+    <string name="rando_look_reset">ゲームの色に戻す</string>
+    <string name="rando_color_hue">色相</string>
+    <string name="rando_color_sat">彩度</string>
+    <string name="rando_color_value">明るさ</string>
+    <string name="rando_color_random">ランダムな色相</string>
+    <string name="rando_color_default">いつもの色</string>
+    <string name="look_hint">ゲームでの服・髪・目の色を変える（ランダマイザーのゲームは別の色）</string>
+    <string name="look_on">この色を使う</string>
+    <string name="look_on_hint">そのままのゲームで、このセーブファイルに。ランダマイザーのゲームは作ったときの色のまま</string>
+    <string name="look_on_short">オン</string>
+    <string name="look_model_note">セーブファイル %1$d はプレイヤーモデル %2$s で遊びます。モデルは自分の色のままなので、リンクの色は設定できません。このファイルでリンクに色をつけるには、Mod > Modパック > ゲームキューブのプレイヤーモデル で「リンク（なし）」を選んでください。</string>
+    <string name="look_about">リンクは島の服を着て、のちに勇者の服を着ます。それぞれに色があります。肌・口・目は「肌・口・目を服ごとに」がオフのとき両方で同じです。</string>
+    <string name="look_clothes">服</string>
+    <string name="look_clothes_hint">ここで見て変える色の服</string>
+    <string name="look_clothes_hero">勇者の服</string>
+    <string name="look_clothes_casual">島の服</string>
+    <string name="look_making">リンクの色を変えています…</string>
+    <string name="look_separate">肌・口・目を服ごとに</string>
+    <string name="look_separate_hint">オフ：両方の服で同じ色。オン：服ごとの色で、リンクが着替えると変わります</string>
+    <string name="look_shared_hint">両方の服で同じ（肌・口・目を服ごとに：それぞれの色）</string>
+    <string name="look_file">セーブファイル</string>
+    <string name="look_file_n">ファイル%1$d</string>
+    <string name="look_file_hint">セーブファイルごとに色があります。変えるとすぐゲームに出ます</string>
+    <string name="look_rando_note">いまはランダマイザーのゲームです。そのゲームの色のままです。この色はそのままのゲームで出ます。</string>
+    <string name="names_title">セーブファイルの名前</string>
+    <string name="names_hint">プレイ中にセーブファイルの名前を変える（16文字まで）</string>
+    <string name="names_file_hint">ここで表示・変更する名前のファイル</string>
+    <string name="names_about">新しい名前はすぐにゲームで使われます。残すにはゲーム内でセーブしてください。%1$d文字まで：ゲーム自体のセーブには最初の%2$d文字が残り、ファイル選択にはそれが表示されます。残りはこのアプリが覚えていて、そのファイルを遊ぶたびに名前全体を戻します。長い名前ではテキストボックスの改行が早くなります。</string>
+    <string name="names_no_game">名前はゲームから読みます：変えるにはゲームを始めて（セーブファイルをロードして）ください。</string>
+    <string name="names_name">名前</string>
+    <string name="names_name_hint">タップして変更</string>
+    <string name="names_bad_char">ゲームに「%1$s」の文字がありません。ほかの文字を使ってください。</string>
+    <string name="rando_remake">リンクの色で作り直す</string>
+    <string name="rando_remake_ask">再起動のとき、このゲームを「ランダマイザー ＞ リンクの色」の色で作り直します。ほかは変わりません。同じアイテムが同じ場所にあり、セーブとセーブステートも残ります。</string>
+    <string name="rando_remake_go">作り直す</string>
+    <string name="rando_remake_pending">次の起動で %1$s をリンクの色で作り直します。</string>
+    <string-array name="rando_color_names">
+        <item>髪</item>
+        <item>肌</item>
+        <item>口</item>
+        <item>目</item>
+        <item>白目</item>
+        <item>服</item>
+        <item>肌着</item>
+        <item>ズボン</item>
+        <item>ブーツ</item>
+        <item>ベルト</item>
+        <item>バックル</item>
+        <item>シャツ</item>
+        <item>シャツのマーク</item>
+        <item>腕輪</item>
+        <item>くつ</item>
+        <item>くつの底</item>
+    </string-array>
+    <string name="rando_running">ランダムなゲームを作っています…</string>
+    <string name="rando_failed">ランダマイザーはゲームを作れませんでした：\n\n%1$s</string>
+    <string name="rando_play_plain">元のゲームを遊ぶ</string>
+    <string name="rando_no_map">ランダムなゲームでは、物の見つかる場所の地図はオフです：元のゲームでの場所を示すためです。</string>
+
+    <string-array name="rando_progress_names">
+        <item>ダンジョン</item>
+        <item>大妖精</item>
+        <item>謎解きの洞窟</item>
+        <item>戦いの洞窟</item>
+        <item>短いサブイベント</item>
+        <item>長いサブイベント</item>
+        <item>戦利品の交換</item>
+        <item>ミニゲーム</item>
+        <item>贈り物</item>
+        <item>手紙</item>
+        <item>見張り台とイカダ</item>
+        <item>潜水艦</item>
+        <item>目玉岩礁の宝箱</item>
+        <item>大オクタと砲艦</item>
+        <item>トライフォースの海図</item>
+        <item>宝の海図</item>
+        <item>高い買い物</item>
+        <item>その他の場所</item>
+        <item>チンクルの宝箱</item>
+        <item>海戦ゲーム</item>
+        <item>野生の迷宮</item>
+        <item>島の謎解き</item>
+        <item>ダンジョンの隠し場所</item>
+        <item>わかりにくい場所</item>
+    </string-array>
+    <string-array name="rando_progress_dungeons">
+        <item>オフ</item>
+        <item>オン</item>
+        <item>レース</item>
+    </string-array>
+    <string-array name="rando_placement">
+        <item>いつもの場所</item>
+        <item>そのダンジョン内</item>
+        <item>どこかのダンジョン</item>
+        <item>ダンジョンの外</item>
+        <item>どこでも</item>
+    </string-array>
+    <string-array name="rando_caves">
+        <item>そのまま</item>
+        <item>洞窟をシャッフル</item>
+        <item>洞窟と泉</item>
+    </string-array>
+    <string-array name="rando_entrance_names">
+        <item>ダンジョンの入口をシャッフル</item>
+        <item>ボスの扉をシャッフル</item>
+        <item>中ボスの扉をシャッフル</item>
+        <item>扉をシャッフル</item>
+        <item>その他の入口をシャッフル</item>
+        <item>ダンジョンをほかと混ぜる</item>
+        <item>ボスの扉をほかと混ぜる</item>
+        <item>中ボスの扉をほかと混ぜる</item>
+        <item>洞窟をほかと混ぜる</item>
+        <item>扉をほかと混ぜる</item>
+        <item>その他の入口をほかと混ぜる</item>
+        <item>一方通行の入口（帰り道は別）</item>
+        <item>スタートの島をランダムに</item>
+    </string-array>
+    <string-array name="rando_hint_names">
+        <item>ホーホー族のヒント</item>
+        <item>トライフォースのかけらについてホーホー族が</item>
+        <item>船のヒント</item>
+        <item>剣について船が</item>
+        <item>弓の場所（ヒント）</item>
+        <item>わかりやすいヒント</item>
+        <item>いつも大事な場所のヒント</item>
+        <item>ヒントがアイテムの大事さを言う</item>
+    </string-array>
+    <string-array name="rando_hint_count_names">
+        <item>道のヒント</item>
+        <item>何もない地域のヒント</item>
+        <item>アイテムのヒント</item>
+        <item>場所のヒント</item>
+    </string-array>
+    <string-array name="rando_convenience_names">
+        <item>文字を一気に表示</item>
+        <item>最初から海図全体</item>
+        <item>静かな高速帆</item>
+        <item>ガノン城のボス再戦なし</item>
+        <item>ダンジョン間のワープ</item>
+        <item>確率を固定（運が減る）</item>
+        <item>海のコンパスを左右反転</item>
+        <item>音楽なし</item>
+        <item>海図をシャッフル</item>
+        <item>宝箱の見た目で中身の種類がわかる</item>
+    </string-array>
+    <!-- Android TV (MainActivity.isTv): the setup with the remote, files without a file chooser -->
+    <string name="tv_setup_text">テレビでは：コントローラー（Bluetooth または USB）で遊びます。メニューはリモコンでも操作できます。このテレビにファイル選択がない場合は、ファイルをこのフォルダにコピーして（adb push、または書き込みできるファイルマネージャーで）「アプリのフォルダのファイルを使う」を選んでください：\n%1$s</string>
+    <string name="tv_import_button">アプリのフォルダのファイルを使う</string>
+    <string name="tv_import_title">アプリのフォルダのファイル</string>
+    <string name="tv_import_empty">フォルダは空です。ディスクイメージと2つのキー、または Cemu アーカイブ（.wua）を次の場所にコピーしてください：\n%1$s\n\nたとえばパソコンから：adb push MyGame.wua %1$s/</string>
+    <string name="tv_no_chooser_title">ファイル選択がありません</string>
+    <string name="tv_no_chooser">この端末にはアプリ用のファイル選択がありません（テレビによくあります）。ファイル選択のあるファイルマネージャーを入れるか、adb push でファイルをこのフォルダにコピーしてください：\n%1$s</string>
+    <!-- a phone as the TV's GamePad (PadHost, PadActivity) -->
+    <string name="pad_title">スマホをGamePadに</string>
+    <string name="opt_page_devices">ほかの端末</string>
+    <string name="opt_page_devices_hint">同じWi-Fiのスマホ・タブレット・テレビをいっしょに：1台がゲームを動かし、ほかはそのGamePadや画面になります</string>
+    <string name="devices_note">1台がゲームを動かし、ほかの端末は同じWi-Fiでそこに加わります。\n\nゲームはここ、画面はテレビやタブレット：下の「ほかの端末が加われる」をオンにして、テレビやタブレットで ゲーム > ほかの端末 > ほかの端末の画面になる を選びます。\n\nゲームはテレビ、この端末がGamePad：ほかの画面で遊ぶ を選びます。\n\nゲームのない端末はすぐに加われます：アプリのアイコンを長押し（GamePad または 画面）、またはその設定画面のボタンから。</string>
+    <string name="devices_note_tv">1台がゲームを動かし、ほかの端末は同じWi-Fiでそこに加わります。\n\nゲームはここ、スマホやタブレットがGamePad：「ほかの端末が加われる」はオンのままにして、スマホで ゲーム > ほかの端末 > ほかの画面で遊ぶ（またはアプリのアイコンを長押し > GamePad）。\n\nゲームはスマホ、このテレビがその画面：スマホで ゲーム > ほかの端末 >「ほかの端末が加われる」をオンにして、ここで ほかの端末の画面になる を選びます。</string>
+    <string name="opt_pad_host">ほかの端末が加われる</string>
+    <string name="opt_pad_host_hint">この端末がゲームを動かします：同じWi-Fiにあるアプリ入りのスマホ・タブレット・テレビがこの端末を見つけ、GamePadや画面になります。テレビでは最初からオン。</string>
+    <string name="opt_pad_play">ほかの画面で遊ぶ</string>
+    <string name="opt_pad_play_hint">この端末を、同じネットワークにあるこのアプリのテレビ・スマホ・タブレットのGamePadにします：そちらにゲーム、この画面にGamePadの画面が映ります。セーブも一緒に移ります。</string>
+    <string name="pad_become_text">ここのゲームは終了し（「おわる」と同じく保存）、この端末はネットワーク内のアプリのあるテレビ・スマホ・タブレットを探します。</string>
+    <string name="pad_become">探す</string>
+    <string name="pad_searching">このネットワークでアプリのある端末を探しています…</string>
+    <string name="pad_none_hint">相手の端末側：アプリを開き、ゲーム > ほかの端末 > ほかの端末が加われる をオンにして、両方を同じWi-Fiにつないでください。</string>
+    <string name="pad_address">アドレスを入力…</string>
+    <string name="pad_address_hint">自動で見つからない場合、ネットワーク上のテレビのアドレス（例：192.168.1.20）：</string>
+    <string name="pad_leave_search">検索をやめて最初の画面に戻りますか？</string>
+    <string name="pad_keep_looking">検索を続ける</string>
+    <string name="pad_back_to_game">ゲームに戻る</string>
+    <string name="pad_connecting">%1$s に接続中…</string>
+    <string name="pad_failed">接続できません：%1$s</string>
+    <string name="pad_lost">相手の端末との接続が切れました。再試行しています…</string>
+    <string name="pad_code_title">コード</string>
+    <string name="pad_code_text">相手の端末に表示されたコードを入力してください：</string>
+    <string name="pad_code_wrong">コードが違います。相手の端末に表示されたコードを入力してください：</string>
+    <string name="pad_old_version">テレビのアプリのバージョンが違います。両方に同じバージョンを入れてください。</string>
+    <string name="pad_waiting">%1$s に接続しました。そちらでゲームが動き出すと画面が映ります。</string>
+    <string name="pad_send_game_title">%1$s にゲームファイルがありません</string>
+    <string name="pad_send_game_text">この端末のゲームファイル（%1$s）を %2$s に送りますか？ そのあとゲームを準備します（しばらくかかります）。</string>
+    <string name="pad_send">送る</string>
+    <string name="pad_no_game_here">この端末にも送れるゲームファイルがありません。</string>
+    <string name="pad_sending">%1$s を送信中：%2$d %%</string>
+    <string name="pad_send_failed">送信に失敗しました。</string>
+    <string name="pad_space_states">%1$sの空き容量は%2$sしかありません。一部のステートセーブ（%3$s）はこの端末に残し、残りを今から送ります。持っていくには、そちらの容量を空けてください。</string>
+    <string name="pad_space_none">%1$sの空き容量は%2$sしかなく、約%3$s必要です。何も送っていません。そちらの容量を空けてから、もう一度接続してください。</string>
+    <string name="pad_tv_preparing">%1$s がゲームを準備しています。動き出すと画面が映ります。</string>
+    <string name="pad_saves_restart">セーブが %1$s に届きました：再起動します…</string>
+    <string name="pad_end_saving">セーブを持ち帰っています…</string>
+    <string name="pad_touch_buttons">タッチボタン</string>
+    <string name="pad_saves_to">自分のセーブを持っていく</string>
+    <string name="pad_saves_back">終わるときにセーブを持ち帰る</string>
+    <string name="pad_other_tv">別の端末</string>
+    <string name="pad_end">終わる</string>
+    <string name="pad_what_game">ゲームファイル</string>
+    <string name="pad_what_saves">セーブ</string>
+    <string name="pad_tv_code">%1$s がGamePadになろうとしています。そちらにこのコードを入力：%2$s</string>
+    <string name="pad_tv_joined">%1$s がGamePadになりました。</string>
+    <string name="pad_tv_left">%1$s はGamePadではなくなりました。</string>
+    <string name="pad_tv_receiving">%2$s から %1$s を受信中：%3$d %%</string>
+    <string name="pad_tv_game_failed">ゲームファイルを配置できませんでした。</string>
+    <string name="pad_tv_restart">スマホからのセーブが届きました：ゲームを再起動します。</string>
+    <string name="pad_picture">GamePadの画面</string>
+    <string name="pad_picture_text">相手の端末がGamePadの画面を送るサイズ（いま：%1$s）。大きいほどくっきりしますが、両方の端末とネットワークの負担が増えます。なし：この端末はコントローラーだけになり、GamePadの画面は相手に残ります（そこで + で表示）。何も送りません。</string>
+    <string name="pad_picture_none">なし（コントローラー）</string>
+    <string name="pad_picture_drawn">ここで描画</string>
+    <string name="pad_picture_drawn_video">ここで描画（ゲーム独自の画面は映像）</string>
+    <string name="pad_screen_items">アイテム</string>
+    <string name="pad_screen_collection">コレクション</string>
+    <string name="pad_screen_wait">向こうでゲームが始まると、ここにアイテムが表示されます。</string>
+    <string name="pad_screen_options">オプション</string>
+    <string name="pad_screen_map">マップ</string>
+    <string name="pad_screen_save">セーブ</string>
+    <string name="pad_screen_options_button">オプション</string>
+    <string name="pad_screen_back">もどる</string>
+    <string name="pad_screen_collection_hint">これまでの冒険: %1$d%%。タッチすると名前が出ます。</string>
+    <string name="pad_picture_on_tv">GamePadの画面はテレビに残ります：そこで + で表示します。</string>
+    <string name="pad_other_release">相手の端末はゲームの%1$s版、この端末は%2$s版です。ゲームのセーブは相手の版に合わせて移しますが、ステートセーブは版ごとのゲームのものなので、そのままにします。</string>
+    <string name="pad_screen_title">ほかの端末の画面になる</string>
+    <string name="pad_screen_become_text">ここのゲームは終了し（「おわる」と同じく保存）、この端末はネットワーク内のアプリのある端末を探して、その画面になります：ゲームを映して音を鳴らし、相手がゲームを動かしてGamePadを表示します。</string>
+    <string name="pad_screen_picture">ゲームの画面</string>
+    <string name="pad_screen_picture_text">相手の端末がゲームの画面を送るサイズ（いま：%1$s）。大きいほどくっきりしますが、ネットワークの負担が増えます。</string>
+    <string name="opt_pad_screen">ほかの端末の画面になる</string>
+    <string name="opt_pad_screen_hint">同じネットワークにあるこのアプリのスマホやタブレットのゲームを、この端末に映します（音も鳴らします）：相手がゲームを動かし、GamePadを表示してコントローラーになります。性能は低いけれど画面の大きい端末向けです。</string>
+    <string name="pad_tv_screen_joined">%1$s が画面になりました。</string>
+    <string name="pad_sound_screen">音をこの端末で</string>
+    <string name="pad_sound_pad">GamePadの音をこの端末で</string>
+    <string name="pad_delays">遅れ：画面 %1$s ms、ネットワーク往復 %2$s ms、音 %3$s ms</string>
+    <string name="shortcut_pad">GamePad</string>
+    <string name="shortcut_pad_long">ほかの端末のGamePad</string>
+    <string name="shortcut_screen">画面</string>
+    <string name="shortcut_screen_long">ほかの端末の画面</string>
+    <string name="pad_console_options">本体のオプション</string>
+    <string name="pad_send_game_code_text">この端末のゲームファイル（%1$s）を %2$s に送りますか？ 先にこの端末が %2$s のプロセッサー向けにゲームコードを用意するので（ここでは数分）、%2$s は自分で準備せず（そちらではずっと時間がかかります）すぐにゲームを始められます。</string>
+    <string name="pad_preparing_code">%1$s 向けのゲームコードを準備中：%3$d 中 %2$d</string>
+    <string name="pad_what_code">ゲームコード</string>
+    <string name="tv_setup_screen">またはここにゲームファイルがなくても：「ほかの端末の画面になる」を選んでください。アプリとゲームの入ったスマホやタブレットがゲームを動かしてGamePadになり、このテレビにゲームが映り音が鳴ります。</string>
+    <string name="drc_game_there">ゲーム画面をそちらに（キャストやケーブルのテレビ）</string>
+    <string name="pad_code_title_other">%1$s がゲームコードを準備中</string>
+    <string name="pad_code_offer">%1$s は自分のプロセッサー向けのゲームコードを準備していますが、そちらでは長くかかることがあります（TVボックスでは最大1時間）。この端末なら数分で用意して送れます。そのあと %1$s がゲームを始めます。ここで準備しますか？</string>
+    <string name="pad_code_prepare">ここで準備</string>
+    <string name="choice_text">どの遊び方にしますか？</string>
+    <string name="choice_here">ここで遊ぶ</string>
+    <string name="choice_here_text">この端末でゲームを動かします。</string>
+    <string name="choice_pad">GamePadになる</string>
+    <string name="choice_pad_text">ほかの端末がゲームを動かし、この端末がそのGamePadになります。</string>
+    <string name="choice_screen">端末を待つ</string>
+    <string name="choice_screen_text">つないできたスマホやタブレットのゲームをこの端末に映します。</string>
+    <string name="choice_later">このページは毎回の起動で出ます：ゲーム > ほかの端末 > 起動時に選ぶ。</string>
+    <string name="pad_none_hint_screen">ゲームのあるスマホやタブレット側：ゲーム > ほかの端末 > テレビに映す でこの端末を選んでください。または、そちらで ほかの端末が加われる をオンにすると（両方を同じWi-Fiに）、ここで見つかります。最初に見つかった端末につなぎます。</string>
+    <string name="receiver_close">閉じる</string>
+    <string name="receiver_leave">探すのをやめて閉じますか？</string>
+    <string name="search_splash">ドボン！</string>
+    <string name="search_boom">ドカーン！</string>
+    <string name="opt_start_choice">起動時に選ぶ</string>
+    <string name="opt_start_choice_hint">アプリを起動するたびにまず聞きます：ここで遊ぶ、ほかの端末のGamePadになる、端末を待ってその画面になる。</string>
+    <string name="pad_tv_code_screen">%1$s がこの端末の画面になろうとしています。そちらにこのコードを入力：%2$s</string>
+    <string name="opt_pad_cast">テレビに映す</string>
+    <string name="opt_pad_cast_hint">画面として待っているテレビやタブレットを選びます（そちらで画面アプリを開くか、ほかの端末の画面になる）。ゲームの映像と音はそちらに、この端末はGamePadのままです。コードの入力は不要です。</string>
+    <string name="pad_cast_looking">このWi-Fiで画面を探しています… テレビ側：画面アプリを開いてください（またはそちらでゲーム > ほかの端末 > ほかの端末の画面になる）。</string>
+    <string name="pad_cast_pick">画面になるのを待っている端末です。選ぶとこの端末につながります。</string>
+    <string name="pad_cast_sent">%1$sに画面になるよう頼んでいます…</string>
+    <string name="pad_cast_failed">%1$sから応答がありません。そちらの検索画面はまだ開いていますか？</string>
 </resources>

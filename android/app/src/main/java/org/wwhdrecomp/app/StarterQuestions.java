@@ -25,6 +25,10 @@ final class StarterQuestions {
     static boolean offer(MainActivity a, Runnable then) {
         SharedPreferences p = a.prefs;
         if (p.getBoolean(DONE, false) || !MainActivity.NEW_TOUCH_CONTROLS) return false;
+        if (a.tv) {  // a TV: played with a controller, no touch screen to ask about
+            askJump(a, then);
+            return true;
+        }
         new GameDialog(a).title(R.string.st_touch_title).message(R.string.st_touch_text).cancelable(false)
                 .button(R.string.st_touch_no, () -> askJump(a, then))
                 .button(R.string.st_touch_yes, () -> {
@@ -52,6 +56,11 @@ final class StarterQuestions {
     }
 
     private static void askSinging(MainActivity a, Runnable then) {
+        if (!a.getPackageManager().hasSystemFeature(android.content.pm.PackageManager.FEATURE_MICROPHONE)) {
+            a.prefs.edit().putBoolean("conduct_pads", true).apply();  // nothing to sing into (most TVs)
+            finish(a, then);
+            return;
+        }
         new GameDialog(a).title(R.string.st_sing_title).message(R.string.st_sing_text).cancelable(false)
                 .button(R.string.st_sing_no, () -> {
                     a.prefs.edit().putBoolean("conduct_pads", true).apply();

@@ -17,7 +17,9 @@ import android.os.SystemClock;
  * isn't put on the button either: Link conducts with it (Native.conductWith and a press of the button
  * after CONDUCT_DELAY_MS; the button's item comes back once he conducts). On the boat the ring also
  * has the cannon and the salvage arm (with the bombs / the grappling hook owned): picked, they press the
- * d-pad's left / right as the game's d-pad does, and go on no button. A button with an item also has an empty
+ * d-pad's left / right as the game's d-pad does, and go on no button; items the boat's Link can't use
+ * (daPy_lk_c::procShipPaddle's list: not the Deku Leaf, Skull Hammer, Iron Boots, spoils / delivery bag) aren't in
+ * the ring there (picked, the item would only be dropped on the button). A button with an item also has an empty
  * entry (a struck-through circle): picked, the button is left empty. Meanwhile the game keeps running, runs in slow motion
  * or pauses (Controls > While the ring is open: pref item_ring_pace 0 / 1 / 2, Native.setGamePace).
  *
@@ -40,6 +42,8 @@ final class ItemRing {
     private int dpadBit;
     // the bags' inventory slots (spoils, bait, delivery) and their contents' slots on a button
     private static final int[] BAG_SLOTS = {4, 11, 18}, BAG_FIRST = {24, 36, 48};
+    // of no use on the boat: spoils bag, iron boots, delivery bag, skull hammer, Deku Leaf
+    private static final int[] NOT_ON_SHIP = {0x24, 0x29, 0x30, 0x33, 0x34};
     // Link aiming or using an item (mPlayerStatus words, touchState 12 / 13; GameCube daPyStts0/1):
     // bow 0x1000, first person 0x2000, hookshot 0x4000, grappling hook 0x20000, boomerang 0x80000,
     // telescope view 0x200000; conducting 0x1, Picto Box view 0x8, Deku Leaf flight 0x20 / fan 0x40, sail 0x400
@@ -68,7 +72,8 @@ final class ItemRing {
         this.view = view;
     }
 
-    boolean enabled() { return MainActivity.NEW_TOUCH_CONTROLS && a.prefs.getBoolean("item_ring", true); }
+    // (not in the eyes-free layout: the ring is drawn on the phone, nobody looks there)
+    boolean enabled() { return MainActivity.NEW_TOUCH_CONTROLS && a.prefs.getBoolean("item_ring", true) && !view.blind(); }
 
     /** the button held for the open ring (its press isn't moved to another button meanwhile) */
     boolean holds(int bit) { return open >= 0 && BITS[open] == bit; }
@@ -176,12 +181,12 @@ final class ItemRing {
         }
         boolean empty = bag < 0 && open >= 0 && onButtons[open] != 0xFF;
         int n = (cannon ? 1 : 0) + (salvage ? 1 : 0) + (empty ? 1 : 0);
-        for (int k = 0; k < count; k++) if (r[from + k] != 0xFF) n++;
+        for (int k = 0; k < count; k++) if (shown(r[from + k], bag)) n++;
         slots = new int[n];
         items = new int[n];
         n = 0;
         for (int k = 0; k < count; k++)
-            if (r[from + k] != 0xFF) {
+            if (shown(r[from + k], bag)) {
                 slots[n] = bag < 0 ? k : BAG_FIRST[bag] + k;
                 items[n++] = r[from + k];
             }
@@ -194,6 +199,14 @@ final class ItemRing {
         inBag = bag;
         sel = -1;
         view.invalidate();
+    }
+
+    // an entry for the ring: owned, and on the boat of use there
+    private boolean shown(int item, int bag) {
+        if (item == 0xFF) return false;
+        if (!onShip || bag >= 0) return true;
+        for (int no : NOT_ON_SHIP) if (item == no) return false;
+        return true;
     }
 
     private int bagOf(int slot) {
@@ -241,6 +254,21 @@ final class ItemRing {
         tapUntil[i] = now + delay + TAP_MS;
         h.postDelayed(a::repushInput, delay);
         h.postDelayed(a::repushInput, delay + TAP_MS + 10);
+    }
+
+    /** the Wind Waker tapped on the GamePad device's item screen (PadScreen): conducts with it, from its button if it
+     *  is on one, else from X for one press */
+    void conductFromPad(int slot) {
+        long now = SystemClock.uptimeMillis();
+        int[] st = Native.itemRing();
+        int on = -1;
+        for (int b = 0; b < 3; b++) if (st != null && st.length > 23 && st[21 + b] == slot) on = b;
+        if (on >= 0) {
+            tap(on, now, 0);
+        } else {
+            Native.conductWith(0, slot);
+            tap(0, now, CONDUCT_DELAY_MS);
+        }
     }
 
     private void confirm() {

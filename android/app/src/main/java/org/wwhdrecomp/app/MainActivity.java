@@ -96,6 +96,8 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     }
 
     static final long LOW_MEMORY_MB = 4608;
+    static final long VERY_LOW_MEMORY_MB = 3584;
+    static final long AREA_HEADSTART_MB = 7168;
 
     // Android low on memory (it no longer tells running apps through onTrimMemory): the renderer frees the
     // pipelines unused lately (made again when needed); checked every 2 s, at most every 30 s
@@ -109,6 +111,10 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         if (am == null) return;
         android.app.ActivityManager.MemoryInfo mi = new android.app.ActivityManager.MemoryInfo();
         am.getMemoryInfo(mi);
+        // save states check it before they start (savestate.cpp set_memory_headroom)
+        Native.setOption("memory_headroom", (int) Math.max(0, (mi.availMem - mi.threshold) >> 20));
+        // the line itself: dynamic resolution reads the free memory more often than this check (vk_dynres.cpp)
+        Native.setOption("memory_threshold", (int) (mi.threshold >> 20));
         if ((mi.lowMemory || mi.availMem < mi.threshold + (256L << 20)) && now - memoryTrimmedAt > 30000) {
             memoryTrimmedAt = now;
             Log.i(TAG, "memory low: " + (mi.availMem >> 20) + " MB available (threshold " + (mi.threshold >> 20) + " MB)");
@@ -125,6 +131,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
             if (controls != null && !benchRunning && tour == null) {
                 int[] ts = Native.touchState();
                 controls.ringHint(ts);
+                controls.windDialHint(ts);
                 controls.pictoPages(ts);
             }
             boolean noPad = !controllerConnected();
@@ -185,6 +192,23 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     @Override
     protected void onCreate(Bundle state) {
         super.onCreate(state);
+        // the icon's shortcuts (res/xml/shortcuts.xml): this device as another's GamePad or screen, the game here
+        // not started at all
+        int padRole = BuildConfig.REMOTE_PLAY ? getIntent().getIntExtra(EXTRA_PAD_ROLE, 0) : 0;
+        if (padRole != 0 && !libraryLoaded) {
+            PadActivity.open(this, padRole);
+            finish();
+            return;
+        }
+        // Game > Other devices > Choose at the start: play here, the GamePad or the screen of another device (the start
+        // page in PadActivity's process: nothing of the game loaded for the other two); "play here" comes back with
+        // EXTRA_CHOSEN
+        if (BuildConfig.REMOTE_PLAY && !libraryLoaded && state == null && !getIntent().getBooleanExtra(EXTRA_CHOSEN, false)
+                && getSharedPreferences("settings", MODE_PRIVATE).getBoolean(PREF_START_CHOICE, false)) {
+            PadActivity.open(this, PadActivity.ROLE_CHOOSE);
+            finish();
+            return;
+        }
         instance = this;
         prefs = getSharedPreferences("settings", MODE_PRIVATE);
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
@@ -197,8 +221,14 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
             String t = getIntent().getStringExtra(ShaderTour.EXTRA);
             tourSlot = t != null ? Integer.parseInt(t) : 0;
             if (getIntent().getBooleanExtra("shader_tour_reset", false)) ShaderTour.reset(prefs);
+            // --ei shader_tour_idx <n>: on from that spot (0-based; after another tour run in between)
+            if (getIntent().hasExtra("shader_tour_idx")) ShaderTour.startAt(prefs, getIntent().getIntExtra("shader_tour_idx", 0));
             ShaderTour.storyName = getIntent().getStringExtra("shader_tour_story");
             ShaderTour.placesOnly = getIntent().getBooleanExtra("shader_tour_places_only", false);
+            ShaderTour.fly = getIntent().getBooleanExtra("shader_tour_fly", false);
+            ShaderTour.onlyStages = getIntent().getStringExtra("shader_tour_stages");
+            ShaderTour.fight = getIntent().getBooleanExtra("shader_tour_fight", false);
+            ShaderTour.talk = getIntent().getBooleanExtra("shader_tour_talk", false);
         }
         if (benchExtra != null)
             prefs.edit().putBoolean(Benchmark.PENDING, true).putBoolean(Benchmark.WITH_FG, benchExtra.contains("fg"))
@@ -218,8 +248,19 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
             // frame interpolation (Graphics > Frame rate): 0 off, 60 or 120 fps
             int interp = prefs.getInt("interp_fps", 0);
             if (interp != 0 && !Benchmark.pending(prefs)) setenv("WWHD_INTERP_FPS", String.valueOf(interp));
+            // 60 fps (generated): in-between frames made on the GPU (vk/reproj.cpp); goes before LSFG
+            if (prefs.getBoolean("fps_generated", false) && !Benchmark.pending(prefs)) setenv("WWHD_FPS_GENERATED", "1");
             // little RAM (4 GB devices report ~3.6-3.8 GB): no shader pipelines made ahead, a budget for them (vk_draw.cpp)
             if (GraphicsPresets.ramMb(this) < LOW_MEMORY_MB) setenv("WWHD_LOW_MEMORY", "1");
+            // under ~3.5 GB (3 GB TV boxes; 4 GB phones report 3.6-3.8): no shader head start at all. It translated
+            // ~91,000 shaders at the start and Android ended the game on a 3 GB Tegra X1 TV box; without it the game
+            // ran there (the shaders come as they are first used). wwhd.env may set WWHD_HEADSTART (read after this)
+            if (GraphicsPresets.ramMb(this) < VERY_LOW_MEMORY_MB) setenv("WWHD_HEADSTART", "0");
+            // under 7 GB (6 GB devices report ~5.5 GB): shader pipelines made ahead only for the area the player
+            // is in and its neighbours (~400 MB less than all of them; vk_headstart.cpp, area head start). A
+            // shader tour builds all of them: its draws tag every recipe of a pipeline only when all were built
+            if (tourSlot != 0) setenv("WWHD_AREA_HEADSTART", "0");
+            else if (GraphicsPresets.ramMb(this) < AREA_HEADSTART_MB) setenv("WWHD_AREA_HEADSTART", "1");
             applyEnvironment();
             CrashLogs.deleteShared(this, prefs);  // shared in an earlier run
             // a shader dump (WWHD_DUMP_SHADERS=<files>/shaders, debugging) left from an earlier start
@@ -227,6 +268,22 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
             System.loadLibrary("wwhd");
             libraryLoaded = true;
         }
+        // testing (not in published releases): WWHD_TV=1 in wwhd.env acts as a TV on a phone or tablet
+        tv = isTv(this) || (!BuildConfig.PUBLIC_RELEASE && "1".equals(Os.getenv("WWHD_TV")));
+        // (test only: WWHD_TV_1080=1 switches the display to 1080p; the user found the TV's mode change not nice,
+        // the game's own surface at 1080 lines (updateBufferSize) is the default way)
+        if (tv && GraphicsPresets.ramMb(this) < VERY_LOW_MEMORY_MB && "1".equals(Os.getenv("WWHD_TV_1080"))) displayMode1080();
+        // saves a phone brought while the game ran here (PadHost): in place before the game reads them
+        Backup.deleteTree(new File(baseDir(), PadLink.RECEIVING));  // (a transfer that broke off: never used)
+        File syncIn = new File(baseDir(), PadLink.INCOMING);
+        if (syncIn.isDirectory()) {
+            try {
+                PadLink.applySaves(baseDir(), syncIn);
+            } catch (IOException e) {
+                Log.w(TAG, "saves from the phone not applied", e);
+            }
+        }
+        if (BuildConfig.REMOTE_PLAY && prefs.getBoolean("pad_host", tv)) startPadHost();  // (a TV by default; a phone or tablet when switched on)
         // debug: WWHD_DUMP_UI=1 writes every 2D pack texture to captures/ui (to look at them on a PC)
         if (Os.getenv("WWHD_DUMP_UI") != null) {
             File out = new File(baseDir(), "captures/ui");
@@ -304,8 +361,471 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         return f != null ? f : getFilesDir();
     }
 
+    // ------------------------------------------------------------------ Android TV
+    // On a TV (the TV launcher, or no touch screen) the game is played with a controller and the app is
+    // set up with the remote: no on-screen controls by default, no touch or microphone questions, the
+    // setup's buttons reached with the d-pad, and the game files also from the app's own folder (many
+    // TVs have no file chooser for other apps).
+
+    /** a TV, or another device without a touch screen */
+    static boolean isTv(android.content.Context c) {
+        android.content.pm.PackageManager pm = c.getPackageManager();
+        android.app.UiModeManager ui = c.getSystemService(android.app.UiModeManager.class);
+        return pm.hasSystemFeature(android.content.pm.PackageManager.FEATURE_LEANBACK)
+                || (ui != null && ui.getCurrentModeType() == android.content.res.Configuration.UI_MODE_TYPE_TELEVISION)
+                || !pm.hasSystemFeature(android.content.pm.PackageManager.FEATURE_TOUCHSCREEN);
+    }
+
+    boolean tv;  // isTv, at the start
+
+    /** Controls > On-screen controls: on by default, off on a TV */
+    boolean onscreenControls() { return prefs.getBoolean("onscreen_controls", !tv); }
+
+    /** the folder for game files copied onto the device by hand (adb push, a file manager with access):
+     *  Android/data/org.wwhdrecomp.app/files/import */
+    File importDir() { return new File(baseDir(), "import"); }
+
+    // ------------------------------------------------------------------ a phone as the GamePad
+    // On a TV (PadHost): announced in the local network; a phone running the app (PadActivity) becomes the
+    // GamePad: its buttons and touches come in here, the GamePad picture goes to it as video, it brings the
+    // game files and saves. On a phone: Game > Play on a TV turns it into that GamePad.
+    private PadHost padHost;
+
+    void startPadHost() {
+        if (padHost == null) padHost = new PadHost(this);
+        padHost.start();
+    }
+
+    /** Game > Other devices' value: who is joined now, else whether others can join this device */
+    String padHostState() {
+        String who = padHost != null ? padHost.joined() : "";
+        if (!who.isEmpty()) return who;
+        return getString(prefs.getBoolean("pad_host", tv) ? R.string.opt_on : R.string.opt_off);
+    }
+
+    /** the options arrow tapped on a GamePad device: the whole options (the inventory's page slides in over this
+     *  device's own GamePad picture, which isn't shown here: it would come over empty), unless a dialog is open */
+    /** the GamePad device's own item screen (PadScreen): a slot put on X / Y / R */
+    void padEquip(int button, int slot) {
+        if (!gameStarted() || button < 0 || button > 2) return;
+        Native.equipItem(button, slot);
+    }
+
+    /** ... its Save button: the game's own (the Save button of its GamePad item page, tapped there; the Items tab
+     *  first where the game's GamePad screen shows another page) */
+    void padSaveGame() {
+        if (gameStarted()) tapDrcPart(new String[] {"L_MenuSave_00", "L_MenuSave_01"}, "L_BtnMenu_00", 0);
+    }
+
+    /** taps the game's GamePad screen on a part's touch box (Native.drcTargets: the first of `parts` shown); if none
+     *  shows, `first` (a tab; or, on the page left of the items, where the console's options page slides the inventory,
+     *  the game's arrow right) and again a moment later */
+    private void tapDrcPart(String[] parts, String first, int tries) {
+        float[] at = drcTarget(parts);
+        if (at == null) {
+            float[] tab = tries < 3 && first != null ? drcTarget(new String[] {first, "L_MenuArrowR_00"}) : null;
+            Log.i(TAG, "GamePad host: " + parts[0] + " not on the game's GamePad screen" + (tab != null ? ", its tab first" : ""));
+            if (tab != null) {
+                drcTap(tab);
+                keyHandler.postDelayed(() -> tapDrcPart(parts, first, tries + 1), 700);
+            }
+            return;
+        }
+        drcTap(at);
+    }
+
+    private float[] drcTarget(String[] parts) {
+        for (String part : parts)
+            for (String t : Native.drcTargets().split(";")) {
+                String[] f = t.trim().split(" ");
+                if (f.length != 6 || !f[1].equals(part)) continue;
+                try {
+                    float x = Float.parseFloat(f[2]), y = Float.parseFloat(f[3]);
+                    if (x > 0f && x < 1f && y > 0f && y < 1f) return new float[] {x, y};
+                } catch (NumberFormatException ignored) {
+                }
+            }
+        return null;
+    }
+
+    private void drcTap(float[] at) {
+        float u = ControlsView.pictureU(at[0]), v = ControlsView.pictureV(at[1]);
+        Native.setDrcTouch(true, u, v);
+        keyHandler.postDelayed(() -> Native.setDrcTouch(false, u, v), 100);
+    }
+
+    /** ... the Wind Waker tapped there: Link conducts (the item ring's way) */
+    void padConduct(int slot) {
+        if (gameStarted() && itemRing != null) itemRing.conductFromPad(slot);
+    }
+
+    void padOptions() {
+        android.app.Dialog d = topDialog();
+        Log.i(TAG, "GamePad host: options arrow tapped there (" + (d != null ? "a dialog is open: " + d.getClass().getSimpleName()
+                : !started ? "game not started" : "options open") + ")");
+        if (d == null && started) padMenu();
+    }
+
+    // the options opened from a GamePad device: shown there only (see-through here, OptionsMenu.onlyOnGamePad); here
+    // again if it leaves while they are open
+    private OptionsMenu padOnlyMenu;
+
+    private void padMenu() {
+        OptionsMenu m = new OptionsMenu(this);
+        m.onlyOnGamePad(true);
+        m.setOnDismissListener(x -> { if (padOnlyMenu == m) padOnlyMenu = null; });
+        padOnlyMenu = m;
+        m.show();
+    }
+
+    /** the GamePad device's picture came or went (PadHost): the targets and the arrow are followed for it */
+    void padPictureChanged() {
+        if (padPicture() && controls != null) startFocusTick();
+    }
+
+    /** a GamePad device shows the GamePad picture now (not the TV's behind its buttons, not away): its targets and
+     *  the options arrow are followed as for the GamePad picture here */
+    boolean padPicture() { return padHost != null && padHost.padPicture(); }
+
+    void setPadHost(boolean on) {
+        prefs.edit().putBoolean("pad_host", on).apply();
+        if (on) startPadHost();
+        else if (padHost != null) {
+            padHost.stop();
+            padHost = null;
+            padRemote(null, 0);
+            padTvOut(null);
+            pushInput();
+        }
+    }
+
+    boolean gameStarted() { return started; }
+
+    boolean hasGameFiles() { return Native.checkGame(gameDir()) == null; }
+
+    private int padButtons() { return padHost != null && topDialog() == null ? padHost.buttons : 0; }
+
+    /** a remote GamePad's stick, none while one of the app's dialogs has its controller */
+    private float padAxis(float v) { return padHost != null && topDialog() == null ? v : 0; }
+
+    // ---- the app's dialogs (OptionsMenu, GameDialog) open on this device, the newest last: a remote GamePad's
+    // controller works the top one as a controller connected here would (its game input waits meanwhile)
+    private static final List<android.app.Dialog> openDialogs = new ArrayList<>();
+
+    static void dialogShown(android.app.Dialog d) {
+        openDialogs.remove(d);
+        openDialogs.add(d);
+        dialogsChanged();
+    }
+
+    static void dialogGone(android.app.Dialog d) {
+        openDialogs.remove(d);
+        dialogsChanged();
+    }
+
+    // the dialog on top goes to a remote GamePad too (PadUi), once it has settled
+    private static void dialogsChanged() {
+        MainActivity a = instance;
+        if (a != null && a.padHost != null) a.keyHandler.post(() -> { if (a.padHost != null) a.padHost.ui.update(topDialog()); });
+    }
+
+    private static android.app.Dialog topDialog() {
+        for (int i = openDialogs.size() - 1; i >= 0; i--)
+            if (openDialogs.get(i).isShowing()) return openDialogs.get(i);
+        return null;
+    }
+
+    private boolean padSelectDown;
+    private boolean remoteController;
+    private boolean remotePlay;  // that controller is what's played with (ControlsView.setPadPlay), until a touch here  // a GamePad or screen device's controller pressed a button (applySlotLabels)
+    private boolean padSelectFromScreen;  // held on a screen device's controller: the options (that one shows the TV picture)
+    private final Runnable padSelectHeld = () -> {
+        if (padSelectDown) Log.i(TAG, "GamePad host: − held there: " + (padSelectFromScreen ? "the options" : drcScreen() ? "back" : "the options"));
+        if (padSelectDown && padSelectFromScreen) onMenu();
+        else if (padSelectDown) menuOrBack();
+        padSelectDown = false;
+    };
+
+    /**
+     * A controller key on a remote GamePad (PadLink.KEY): into the app's dialog on top if one is open (the options,
+     * the start-state choice...); else Home opens the options, and Select held for 0.6 s (as here; a short press
+     * is the GamePad's − like a controller's here, which went with its buttons).
+     */
+    void padKey(int action, int code, int repeat, boolean fromScreen) {
+        long now = android.os.SystemClock.uptimeMillis();
+        if (KeyEvent.isGamepadButton(code) && action == KeyEvent.ACTION_DOWN) {
+            if (!remoteController) {  // a controller there: its letters on the item buttons
+                remoteController = true;
+                applySlotLabels(controllerConnected());
+            }
+            // and in use as one here is: the touch controls hide, and what they do by themselves with them (the
+            // sword / leaf put away by itself...) stops
+            if (started && topDialog() == null) controllerUsed();
+            if (!remotePlay) {  // (as inputSource: A puts the sword away, nothing goes by itself)
+                Log.i(TAG, "GamePad host: a controller there (" + KeyEvent.keyCodeToString(code) + ")");
+                remotePlay = true;
+                if (controls != null) controls.setPadPlay(true);
+            }
+        }
+        android.app.Dialog d = topDialog();
+        if (d != null) {
+            // out of touch mode first, as a key from a controller connected here would be (else the d-pad finds no focus)
+            // and with a focus in it (its window needn't have the system's focus: the keys come from here)
+            View root = d.getWindow() != null ? d.getWindow().getDecorView() : null;
+            if (root != null && action == KeyEvent.ACTION_DOWN) {
+                View f = d.getCurrentFocus();
+                if (f != null && root.isInTouchMode()) f.requestFocusFromTouch();
+                else if (f == null) {
+                    root.requestFocusFromTouch();
+                    if (d.getCurrentFocus() == null) root.requestFocus(View.FOCUS_DOWN);
+                    if (d.getCurrentFocus() != null && code >= KeyEvent.KEYCODE_DPAD_UP && code <= KeyEvent.KEYCODE_DPAD_RIGHT) return;
+                }
+            }
+            boolean used = d.dispatchKeyEvent(new KeyEvent(now, now, action, code, repeat, 0, android.view.KeyCharacterMap.VIRTUAL_KEYBOARD,
+                    0, 0, InputDevice.SOURCE_GAMEPAD));
+            // the d-pad's focus moves are Android's input system's (before a window sees the key): done here
+            int dir = code == KeyEvent.KEYCODE_DPAD_UP ? View.FOCUS_UP : code == KeyEvent.KEYCODE_DPAD_DOWN ? View.FOCUS_DOWN
+                    : code == KeyEvent.KEYCODE_DPAD_LEFT ? View.FOCUS_LEFT : code == KeyEvent.KEYCODE_DPAD_RIGHT ? View.FOCUS_RIGHT : 0;
+            View f = d.getCurrentFocus();
+            if (!used && dir != 0 && action == KeyEvent.ACTION_DOWN && f != null) {
+                View next = f.focusSearch(dir);
+                if (next != null && next.requestFocus(dir)) MenuSounds.play(this, MenuSounds.CURSOR);
+            }
+            return;
+        }
+        if (!started) return;
+        if (code == KeyEvent.KEYCODE_BUTTON_SELECT && repeat == 0)
+            Log.i(TAG, "GamePad host: − " + (action == KeyEvent.ACTION_DOWN ? "down" : "up") + " on " + (fromScreen ? "the screen device" : "the GamePad device"));
+        if (code == KeyEvent.KEYCODE_BUTTON_MODE && action == KeyEvent.ACTION_UP) {
+            if (drcScreen()) menuOrBack();
+            else padMenu();  // (opened there: shown there only)
+        }
+        if (code == KeyEvent.KEYCODE_BUTTON_SELECT && repeat == 0) {
+            padSelectDown = action == KeyEvent.ACTION_DOWN;
+            keyHandler.removeCallbacks(padSelectHeld);
+            padSelectFromScreen = fromScreen;
+            if (padSelectDown) {
+                windPad = false;
+                windPadAngle = Integer.MIN_VALUE;
+                keyHandler.postDelayed(padSelectHeld, SELECT_HOLD_MS);
+            } else if (windPad) {  // − held with the right stick there: the wind chosen (as selectButton here)
+                windPad = false;
+                int w = windPadAngle;
+                windPadAngle = Integer.MIN_VALUE;
+                if (controls != null) controls.miniMap.setWindPreview(Integer.MIN_VALUE);
+                if (w != Integer.MIN_VALUE) setWind(w);
+                pushInput();
+            }
+        }
+    }
+
+    /** the phone's buttons or sticks changed */
+    void padInput() { if (started) pushInput(); }
+
+    /** a touch on the phone's GamePad picture (0..1, 16:9) */
+    void padTouch(boolean down, float u, float v) {
+        if (!started) return;
+        Native.setDrcTouch(down, u, v);  // (a wider or taller picture: its 16:9 middle is the touch screen, as DrcDisplay's)
+        float pa = Native.drcPictureAspect(), kx = pa > 16f / 9f ? pa / (16f / 9f) : 1f,
+                ky = pa > 0.1f && pa < 16f / 9f ? (16f / 9f) / pa : 1f;
+        ControlsView.fingerX = (u - 0.5f) * kx + 0.5f;
+        ControlsView.fingerY = (v - 0.5f) * ky + 0.5f;
+    }
+
+    /** the GamePad picture into another device's video (null: back here) */
+    void padRemote(android.view.Surface s, float aspect) {
+        if (drcDisplay == null && s == null) return;
+        updateDrcDisplay();
+        drcDisplay.setRemote(s, aspect);
+    }
+
+    private boolean tvOut;  // the TV picture goes to another device (its screen)
+
+    /** the TV picture into another device's video, its own output (null: only here again) */
+    void padTvOut(android.view.Surface s) {
+        Native.tvOutSurfaceChanged(s);
+        boolean was = tvOut;
+        tvOut = s != null;
+        updateLayout();
+        if (was != tvOut && controls != null) applyControlsAppearance();  // (the game's buttons on the TV: hudContext)
+    }
+
+    /** another device shows the TV picture: this one shows the GamePad picture with the touch controls over it */
+    boolean screenRemote() { return tvOut || (drcDisplay != null && drcDisplay.tvShown()); }
+
+    void padGameReceived(boolean ok) {
+        if (!ok) {
+            padStatus(getString(R.string.pad_tv_game_failed));
+            return;
+        }
+        padStatus(null);
+        if (!started) checkAndStart();
+    }
+
+    /** another device became the GamePad or left: this one's touch controls go or come back */
+    void padConnectedChanged() {
+        if (remoteController && (padHost == null || (!padHost.connected() && !padHost.screenConnected()))) {
+            remoteController = false;
+            remotePlay = false;
+            if (controls != null) controls.setPadPlay(lastController != null);
+            applySlotLabels(controllerConnected());
+        }
+        applyControlsAppearance();
+        if (padOnlyMenu != null && (padHost == null || !padHost.connected())) {
+            padOnlyMenu.onlyOnGamePad(false);
+            padOnlyMenu = null;
+        }
+        if (padHost != null) padHost.ui.update(topDialog());
+    }
+
+    private boolean padCodeArrived;
+
+    /** whether this device needs its game code (it has the game files): a phone can compile it instead (PadActivity) */
+    boolean padNeedsCode() {
+        if (!hasGameFiles()) return false;
+        return WorkService.Work.running() == WorkService.Work.COMPILE || Native.needsCompile(gameDir(), codeDir().getAbsolutePath());
+    }
+
+    /** the game code from a phone is in the code cache: this device's own compile stops, then the game starts */
+    void padCodeReceived() {
+        if (!hasGameFiles() || started) return;  // (no game files yet: they come next, padGameReceived starts it)
+        if (WorkService.Work.running() == WorkService.Work.COMPILE) {
+            padCodeArrived = true;
+            Native.compileCancel();  // (parts in progress still finish: workFinished then)
+        } else {
+            checkAndStart();
+        }
+    }
+
+    void padRestartForSaves() {
+        padStatus(getString(R.string.pad_tv_restart));
+        keyHandler.postDelayed(this::restartApp, 1500);
+    }
+
+    private TextView padStatus;
+    private final Runnable padStatusHide = () -> { if (padStatus != null) padStatus.setVisibility(View.GONE); };
+
+    /** a line at the top of the screen for a few seconds, over whatever shows (null: away) */
+    void padStatus(String text) {
+        if (padStatus == null) {
+            padStatus = GameUi.text(this, false);
+            padStatus.setTextColor(0xFFFFFFFF);
+            padStatus.setTextSize(18);
+            padStatus.setBackgroundColor(0xC0102040);
+            int p = GameUi.px(this, 12);
+            padStatus.setPadding(2 * p, p, 2 * p, p);
+            FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(-2, -2, Gravity.TOP | Gravity.CENTER_HORIZONTAL);
+            lp.topMargin = GameUi.px(this, 16);
+            ((FrameLayout) getWindow().getDecorView()).addView(padStatus, lp);
+        }
+        keyHandler.removeCallbacks(padStatusHide);
+        if (text == null) {
+            padStatus.setVisibility(View.GONE);
+            return;
+        }
+        padStatus.setText(text);
+        padStatus.setVisibility(View.VISIBLE);
+        padStatus.bringToFront();
+        keyHandler.postDelayed(padStatusHide, 5000);
+    }
+
+    /** a phone or tablet: the game here ends (saved as with Quit) and this device looks for a TV to be its GamePad */
+    static final String EXTRA_PAD_ROLE = "pad_role";
+    static final String EXTRA_CHOSEN = "start_chosen";  // the start page chose to play here (PadActivity.startGameHere)
+    static final String PREF_START_CHOICE = "start_choice";  // PadLink.ROLE_*: the icon's shortcuts
+
+    @Override
+    protected void onNewIntent(Intent i) {
+        super.onNewIntent(i);
+        int role = i.getIntExtra(EXTRA_PAD_ROLE, 0);  // a shortcut while the game runs: it ends first (saved as with Quit)
+        if (BuildConfig.REMOTE_PLAY && role != 0 && started) becomePad(role);
+    }
+
+    void becomePad() { becomePad(PadLink.ROLE_PAD); }
+
+    /** the same as the screen of another device: the TV picture and sound only */
+    void becomeScreen() { becomePad(PadLink.ROLE_SCREEN); }
+
+    /** Show on a TV: a device waiting to be a screen invited (Others can join this device switched on first) */
+    void inviteScreen(ScreenFinder.Screen s, java.util.function.Consumer<Boolean> done) {
+        if (padHost == null) setPadHost(true);
+        PadHost h = padHost;
+        padStatus(getString(R.string.pad_cast_sent, s.name));
+        new Thread(() -> {
+            int port = -1;
+            for (int i = 0; i < 30 && (port = h.port()) < 0; i++) {  // (just switched on: its socket opens in a moment)
+                try {
+                    Thread.sleep(100);
+                } catch (InterruptedException e) {
+                    return;
+                }
+            }
+            boolean ok = port > 0 && ScreenFinder.invite(s, PadHost.deviceName(this), port, h.ticket());
+            runOnUiThread(() -> {
+                if (!ok) padStatus(getString(R.string.pad_cast_failed, s.name));
+                done.accept(ok);
+            });
+        }, "wwhd-invite").start();
+    }
+
+    private void becomePad(int role) {
+        boolean screen = role == PadLink.ROLE_SCREEN;
+        new GameDialog(this).title(screen ? R.string.pad_screen_title : R.string.pad_title)
+                .message(screen ? R.string.pad_screen_become_text : R.string.pad_become_text)
+                .button(R.string.opt_cancel, null)
+                .button(R.string.pad_become, () -> {
+                    onExit = () -> PadActivity.open(this, role);
+                    quitApp();
+                }).show();
+    }
+
+    /** A file chooser (ACTION_OPEN_DOCUMENT / CREATE_DOCUMENT); a device without one (many TVs) gets told
+     *  where to copy files instead. False then. */
+    boolean startPicker(Intent i, int request) { return startPicker(i, request, null); }
+
+    /** as startPicker; `noChooser` runs after the notice when there is no chooser */
+    boolean startPicker(Intent i, int request, Runnable noChooser) {
+        try {
+            startActivityForResult(i, request);
+            return true;
+        } catch (android.content.ActivityNotFoundException e) {
+            Log.w(TAG, "no file chooser: " + e);
+            new GameDialog(this).title(R.string.tv_no_chooser_title)
+                    .message(getString(R.string.tv_no_chooser, importDir().getAbsolutePath()))
+                    .button(R.string.opt_ok, noChooser).show();
+            return false;
+        }
+    }
+
+    /** whether this device has a file chooser for other apps */
+    private boolean hasPicker() {
+        Intent i = new Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("*/*");
+        return i.resolveActivity(getPackageManager()) != null;
+    }
+
+    /** the setup's "Use the files in the app's folder": the image, keys or .wua in importDir() */
+    private void extractFromImportDir() {
+        File dir = importDir();
+        //noinspection ResultOfMethodCallIgnored
+        dir.mkdirs();
+        File[] list = dir.listFiles(File::isFile);
+        List<String[]> files = new ArrayList<>();
+        if (list != null)
+            for (File f : list) files.add(new String[] {f.getName(), android.net.Uri.fromFile(f).toString()});
+        if (files.isEmpty()) {
+            new GameDialog(this).title(R.string.tv_import_title)
+                    .message(getString(R.string.tv_import_empty, dir.getAbsolutePath()))
+                    .button(R.string.opt_ok, null).show();
+            return;
+        }
+        extractFrom(files);
+    }
+
     // testing hooks (launch extras) only in debuggable builds: in a shared APK other apps could pass them
     boolean debuggable() { return (getApplicationInfo().flags & android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) != 0; }
+
+    /** The folder with save/ and states/ of the game this run plays: files, or the randomized game's (Randomizer). */
+    File playDir() { return Randomizer.playDir(this); }
 
     String gameDir() {
         String extra = debuggable() ? getIntent().getStringExtra("gameDir") : null;
@@ -380,6 +900,8 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         return true;
     }
 
+    private boolean linkColorsTried;
+
     private void checkAndStart() {
         if (preview()) return;
         if (WorkService.Work.running() != 0) {  // opened again while extracting or compiling
@@ -391,6 +913,30 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         String problem = Os.getenv("WWHD_SELFTEST") != null ? null : Native.checkGame(gameDir());
         if (problem != null) {
             showSetup(problem);
+            return;
+        }
+        // Game > Randomizer: a new randomized game to make first; then the game to play (its executable, its files)
+        if (Randomizer.pending(prefs)) {
+            runRandomizer();
+            return;
+        }
+        // with randomized games made: which game, at each start of the app (a restart of its own keeps the one played)
+        if (!gameAsked) {
+            gameAsked = true;
+            if (tourSlot == 0 && !Benchmark.pending(prefs) && !getIntent().getBooleanExtra(RestartActivity.EXTRA_RESTARTED, false)
+                    && askGame()) return;
+        }
+        Native.setRandomizer(Randomizer.runtimeDir(this));
+        Native.setKeepPlainCode(prefs.getBoolean(Randomizer.PREF_KEEP_PLAIN, true));
+        // the save files' player models to the runtime (put in live when a file is played; the pack this game plays is the base)
+        PlayerModels.prepare(this);
+        // the save files' long names to the runtime (Mods > Save file names)
+        SaveNames.handOver(this);
+        // Link's colours in the game as it is (Mods > Link's colours): their pack made first when they changed (the game
+        // starts without them if that fails)
+        if (!linkColorsTried && LinkColors.needsMaking(this)) {
+            linkColorsTried = true;  // (once: a failure doesn't hold the start up)
+            withProgress(R.string.look_making, () -> LinkColors.make(this), r -> checkAndStart());
             return;
         }
         if (Native.needsCompile(gameDir(), codeDir().getAbsolutePath())) {
@@ -432,7 +978,8 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         installShaderTemplate();
         String failedDriver = applyGpuDriver();
         // the save state picker before the intro: the game waits for it from its first frame on
-        boolean offerStates = !bench && (tourSlot != 0 || startMode() != START_INTRO) && !usedStateSlots(base).isEmpty();
+        File play = playDir();  // (the randomized game's own save and states while it is played)
+        boolean offerStates = !bench && (tourSlot != 0 || startMode() != START_INTRO) && !usedStateSlots(play).isEmpty();
         if (offerStates) Native.setStartHold(true);
         // the last run's frame generation mark is read (crash dialog); frame generation switched off there
         // since the library loaded (the renderer reads WWHD_LSFG_DLL when it starts)
@@ -444,13 +991,15 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
             } catch (ErrnoException ignored) {
             }
         }
-        firstStart = !new File(base, "save/user/cking.sav").exists();  // (the game makes its save at this start)
-        Native.start(gameDir(), new File(base, "save").getAbsolutePath(),
+        firstStart = !new File(play, "save/user/cking.sav").exists();  // (the game makes its save at this start)
+        Achievements.saveDir = new File(play, "save");
+        Native.start(gameDir(), new File(play, "save").getAbsolutePath(),
                 new File(getNoBackupFilesDir(), "shadercache").getAbsolutePath(), base.getAbsolutePath());
         started = true;
         applyOptions();
         startMotion();
         showGame();
+        if (padHost != null) padHost.gameStarted();
         frontHandler.post(frontPoll);
         if (bench) Benchmark.run(this, (FrameLayout) surface.getParent());
         else showCacheLoading();
@@ -463,6 +1012,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     }
 
     private boolean crashOffered;  // once per process: the offer before the game starts
+    private boolean gameAsked;  // once per process: the game as it is or a randomized one (askGame)
     private boolean benchCrashChecked;
     private boolean benchRunning;  // the graphics benchmark runs in this process: no save states
     private static int tourSlot;  // the shader tour's save state slot (0: no tour); ShaderTour
@@ -547,8 +1097,20 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         setenv("WWHD_GPU_DRIVER_LIB", d.library);
         // Turnip: always render in tiles (GMEM). Its automatic choice falls back to direct rendering for
         // many of the game's passes, which measured slower on an Adreno 740 (25 -> 28.5 fps in a heavy
-        // scene; from pull request #8 by SSunnKing); a TU_DEBUG in wwhd.env wins
-        if (d.library.contains("freedreno") && Os.getenv("TU_DEBUG") == null) setenv("TU_DEBUG", "gmem");
+        // scene; from pull request #8 by SSunnKing). On Adreno 6xx its own choice instead (forced GMEM
+        // measured slower on an Adreno 650: 22.7 against 17.0 ms per frame), and without UBWC
+        // compression: with it, Turnip 26.0 to 26.3 above 1x resolution restarted an SD865 / Adreno 650
+        // phone (kernel 4.19) at the first frame (a fatal bus error, TZBSP_ERR_FATAL_NOC_ERROR); without it
+        // 1.5x runs and 1x is as fast (WindWakerHD-Android-Plus d2ef429, b3db777). A TU_DEBUG in wwhd.env wins
+        if (d.turnip() && Os.getenv("TU_DEBUG") == null) {
+            java.util.List<String> dbg = new java.util.ArrayList<>();
+            String gpu = GpuDrivers.gpuModel();
+            boolean a6xx = gpu.startsWith("Adreno6");
+            if (d.library.contains("freedreno") && !a6xx) dbg.add("gmem");
+            if (a6xx) dbg.add("noubwc");
+            Log.i(TAG, "Turnip on " + (gpu.isEmpty() ? "an unknown GPU" : gpu) + ": TU_DEBUG=" + String.join(",", dbg));
+            if (!dbg.isEmpty()) setenv("TU_DEBUG", String.join(",", dbg));
+        }
         setenv("WWHD_GPU_HOOK_DIR", GpuDrivers.hookDir(this).getAbsolutePath() + "/");
         try {
             //noinspection ResultOfMethodCallIgnored
@@ -601,7 +1163,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         Intent i = new Intent(Intent.ACTION_OPEN_DOCUMENT);
         i.addCategory(Intent.CATEGORY_OPENABLE);
         i.setType("*/*");
-        startActivityForResult(i, PICK_DRIVER);
+        startPicker(i, PICK_DRIVER, this::driverPickDone);
     }
 
     private void installDriver(android.net.Uri uri) {
@@ -729,6 +1291,8 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         lp.topMargin = (int) (24 * d);
         lp.bottomMargin = (int) (24 * d);
         root.addView(card, lp);
+        // a TV: the remote's d-pad starts on the first button (else its first press goes to the scrolling text)
+        if (tv && !buttons.isEmpty()) root.post(() -> buttons.get(0).requestFocus());
         return root;
     }
 
@@ -791,12 +1355,32 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         } else {
             t.setText(getString(R.string.setup_text, gameDir(), problem));
         }
-        t.setTextIsSelectable(true);
+        boolean picker = hasPicker();
+        if (tv || !picker) {
+            //noinspection ResultOfMethodCallIgnored
+            importDir().mkdirs();  // (there for adb push to copy into)
+            t.append("\n\n" + getString(R.string.tv_setup_text, importDir().getAbsolutePath()));
+            if (tv && BuildConfig.REMOTE_PLAY) t.append("\n\n" + getString(R.string.tv_setup_screen));  // (the screen of a phone that runs the game)
+        }
+        t.setTextIsSelectable(!tv);  // (on a TV the remote's d-pad goes to the buttons)
         box.addView(t);
         // the files themselves, not their folder: some devices' folder picker lists nothing on the
         // internal storage (Android 16 with AOSP DocumentsUI, on a Snapdragon and a Unisoc device)
-        box.addView(cardButton(getText(R.string.setup_extract_files), v -> pickDiscFiles()), cardButtonLp());
+        if (picker) box.addView(cardButton(getText(R.string.setup_extract_files), v -> pickDiscFiles()), cardButtonLp());
+        if (tv || !picker) box.addView(cardButton(getText(R.string.tv_import_button), v -> extractFromImportDir()), cardButtonLp());
         box.addView(cardButton(getText(R.string.setup_retry), v -> checkAndStart()), cardButtonLp());
+        // without game files too: this device as another's GamePad or screen (a TV: its screen only; a phone or
+        // tablet runs the game and is the GamePad, the TV needs no game files and no compile)
+        if (!tv && BuildConfig.REMOTE_PLAY)
+            box.addView(cardButton(getText(R.string.opt_pad_play), v -> {
+                PadActivity.open(this, PadLink.ROLE_PAD);
+                finish();
+            }), cardButtonLp());
+        if (BuildConfig.REMOTE_PLAY)
+            box.addView(cardButton(getText(R.string.opt_pad_screen), v -> {
+                PadActivity.open(this, PadLink.ROLE_SCREEN);
+                finish();
+            }), cardButtonLp());
         box.addView(cardButton(getText(R.string.menu_about), v -> showLicenses()), cardButtonLp());
         setContentView(seaScreen(box));
     }
@@ -817,7 +1401,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         controls = new ControlsView(this, this);
         itemRing = new ItemRing(this, controls);
         controls.setItemRing(itemRing);
-        controls.setPadPlay(lastController != null);
+        controls.setPadPlay(lastController != null || remotePlay);
         root.addView(controls, new FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT,
                 Gravity.CENTER));
         // the file select's Back (B) while no controller is connected, in the game's green button style
@@ -826,7 +1410,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         filesBack.setTextColor(0xFFFFFFFF);  // white lettering outlined in dark green, as the game's buttons
         filesBack.setTypeface(android.graphics.Typeface.create("sans-serif", android.graphics.Typeface.BOLD));
         filesBack.setShadowLayer(GameUi.px(this, 2.5f), 0, 0, 0xFF1F5E14);
-        filesBack.setVisibility(filesTouch ? View.VISIBLE : View.GONE);
+        filesBack.setVisibility(filesTouch && !tv ? View.VISIBLE : View.GONE);
         int m = GameUi.px(this, 12);
         FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(GameUi.px(this, 120), GameUi.px(this, 48), Gravity.TOP | Gravity.END);
         lp.setMargins(m, m, m, m);
@@ -846,7 +1430,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         i.addCategory(Intent.CATEGORY_OPENABLE);
         i.setType("*/*");
         i.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true);
-        startActivityForResult(i, PICK_PRESET_SAVE);
+        startPicker(i, PICK_PRESET_SAVE);
     }
 
     // one file: its slots get a name asked for (a WWHD save is always cking.sav); several (e.g. a
@@ -1055,7 +1639,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
                     return;
                 }
                 boolean any = false;
-                for (int slot : usedStateSlots(baseDir())) {
+                for (int slot : usedStateSlots(playDir())) {
                     String[] info = Native.saveSlotInfo(slot);
                     any |= info[0].equals("1") && info[1].equals("1");
                 }
@@ -1076,6 +1660,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     private void applyOptions() {
         Native.setOption("ao_mode", prefs.getInt("ao_mode", Native.getOption("ao_mode")));
         Native.setOption("ao_hires", prefs.getBoolean("ao_hires", Native.getOption("ao_hires") != 0) ? 1 : 0);
+        Native.setOption("area_blur", prefs.getBoolean("area_blur", Native.getOption("area_blur") != 0) ? 1 : 0);
         Native.setOption("aniso", prefs.getBoolean("aniso", Native.getOption("aniso") != 0) ? 1 : 0);
         Native.setOption("vsync", prefs.getBoolean("vsync", false) ? 1 : 0);
         Native.setOption("upscale", prefs.getInt("upscale", Native.getOption("upscale")));
@@ -1096,6 +1681,10 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         for (String c : CHEATS_INFINITE) Native.setOption(c, prefs.getBoolean(c, false) ? 1 : 0);
         Native.setOption("cheat_moon_rise", prefs.getInt("cheat_moon_rise", 100));
         Native.setOption("cheat_moon_fly", prefs.getInt("cheat_moon_fly", 100));
+        Native.setOption("mod_leaf_lift_height", prefs.getInt("mod_leaf_lift_height", 100));
+        Native.setOption("mod_walk_doors_a", prefs.getBoolean("mod_walk_doors_a", false) ? 1 : 0);
+        Native.setOption("mod_text_pauses_off", prefs.getBoolean("mod_text_pauses_off", false) ? 1 : 0);
+        Native.setOption("mod_hit_stop_off", hitStopOff());
         Native.setOption("mod_camera_speed", prefs.getInt("mod_camera_speed", 100));
         Native.setOption("swipe_boat", prefs.getInt("swipe_boat", 100));
         Native.setOption("mod_jump", prefs.getBoolean("mod_jump", false) ? 1 : 0);
@@ -1120,19 +1709,26 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         if (controls == null) return;
         GameIcons.linkPoses = prefs.getBoolean("link_poses", true);  // (before the redraws below)
         // Controls > On-screen controls (back for #63; its own pref: the old switch's controls_visible stays ignored)
-        boolean visible = prefs.getBoolean("onscreen_controls", true) && !autoHidden;
-        controls.setMenuAlone(!prefs.getBoolean("onscreen_controls", true));
+        // (not while another device is the GamePad: it is the controller then)
+        boolean visible = onscreenControls() && !autoHidden && !(padHost != null && padHost.connected());
+        controls.setMenuAlone(!onscreenControls());
+        controls.setTouchless(tv);
         final boolean nw = NEW_TOUCH_CONTROLS;
         controls.setAppearance(visible, prefs.getFloat("controls_scale", 1f), nw ? prefs.getFloat("controls_opacity", 0.45f) : 0.45f);
         boolean flexible = nw && prefs.getInt("controls_style", 0) == 1, swipe = prefs.getInt("touch_camera", 0) == 1;
         controls.setStyle(flexible, prefs.getBoolean("controls_show_sticks", true), swipe);
+        controls.setBlindLayout(nw && prefs.getBoolean("controls_blind", true));  // (the backdrop's controller view)
+        controls.setBlindSwipe(prefs.getInt("controls_blind_face", 1) == 1);  // (its face buttons: diamond / swipe)
+        controls.setClassicSwipe(nw && prefs.getInt("controls_classic_face", 0) == 1);  // (the classic style's, the same choice)
+        controls.setTvBackdrop(prefs.getInt("controls_tv_backdrop", 50) / 100f);  // (that view: the TV picture there)
         controls.setSwipeSpeed(prefs.getFloat("swipe_speed", SWIPE_SPEED_DEFAULT));
         controls.setFilled(nw && prefs.getBoolean("controls_filled", false));
         // context buttons: the game's button cluster (X, Y, R, B, ZR, A's seat and floating label) is hidden.
         // The large Picto Box view (off: the game's original Picto Box and telescope screens): the finder
         // twice its size (aspect.cpp), zoomed by pinching; the zoom bar and the stick guides (Zoom / Look
         // around) of the Picto Box and the telescope are hidden, and the album's d-pad icons (swiped instead)
-        boolean context = flexible && prefs.getBoolean("context_buttons", false);
+        // (not in the eyes-free layout: plain letters on the phone, the game's own button icons on the TV)
+        boolean context = flexible && prefs.getBoolean("context_buttons", false) && !controls.blind();
         boolean pictoBig = context && prefs.getBoolean("picto_big", true);
         controls.setContext(context);
         controls.setPictoBig(pictoBig);
@@ -1142,9 +1738,33 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         controls.setConductPads(prefs.getBoolean("conduct_pads", true));
         controls.setStickFollows(prefs.getBoolean("stick_follows", true));
         controls.setAfterDefeat(nw ? prefs.getInt("zl_after_defeat", 0) : 0);
+        controls.setZLatch(!flexible || prefs.getBoolean("z_latch", true));
         controls.setItemTap(nw && prefs.getBoolean("item_tap", true));
         controls.setAimFocus(prefs.getBoolean("item_tap_focus", true));
-        hudContext = context && visible;  // touch controls hidden (by hand, or a controller in use): the game's own back
+        controls.miniMap.setEnabled(prefs.getBoolean("minimap", true));
+        controls.miniMap.setProgressMarks(prefs.getInt("minimap_marks", MiniMap.MARKS_OFF));
+        // (the progress places are the game's own: in a randomized game they'd tell the wrong things)
+        controls.setChartMarks(Randomizer.playing(this) ? MiniMap.MARKS_OFF : prefs.getInt("chart_marks", MiniMap.MARKS_OFF));
+        ChartMarks.I.setPictures(prefs.getInt("chart_pictures", ChartMarks.GAME_CHART), prefs.getBoolean("minimap_names", true));
+        ownDisplayMarks();
+        controls.progressBadge.setEnabled(prefs.getBoolean("progress_hud", false));
+        controls.achievementPopup.setEnabled(prefs.getBoolean("achievement_popup", true));
+        controls.achievementPopup.setLink(prefs.getBoolean("achievement_link", true));
+        controls.achievementPopup.setSound(prefs.getBoolean("achievement_sound", true));
+        MenuSounds.itemGetScale = prefs.getInt("achievement_sound_volume", MenuSounds.JINGLE_DEFAULT) / 100f;
+        controls.miniMap.setPlace(prefs.getInt("minimap_corner", MiniMap.CORNER_BOTTOM_LEFT), prefs.getInt("minimap_size", 1),
+                prefs.getBoolean("minimap_turn", false), prefs.getFloat("minimap_x", 0), prefs.getFloat("minimap_y", 1),
+                prefs.getBoolean("minimap_round", false), prefs.getBoolean("minimap_outline", false));
+        controls.miniMap.setMark(prefs.getBoolean("minimap_face", true), prefs.getInt("minimap_mark_size", 1),
+                prefs.getInt("minimap_arrow_colour", 0), prefs.getInt("minimap_move_zoom", 0));
+        controls.miniMap.setPictures(MiniMap.pictures(prefs), prefs.getBoolean("minimap_names", true), MiniMap.seaZoom(prefs));
+        controls.miniMap.setExtras(prefs.getBoolean("minimap_wind", true), prefs.getInt("minimap_opacity", 100),
+                prefs.getBoolean("minimap_fade", false), prefs.getInt("minimap_fade_opacity", 50),
+                prefs.getBoolean("minimap_charts", true), prefs.getBoolean("minimap_buttons", false), prefs.getBoolean("minimap_hidden", false));
+        controls.miniMap.setWindSwipe(prefs.getBoolean("minimap_wind_swipe", true));
+        // touch controls hidden (by hand, or a controller in use): the game's own back; and while the TV picture shows on
+        // another device (its screen): there the game's buttons are what's seen, the touch ones are on this one
+        hudContext = context && visible && !screenRemote();
         hudPicto = pictoBig;
         applyHudHidden();
         Native.setOption("picto_big", pictoBig ? 1 : 0);
@@ -1152,8 +1772,11 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         Native.setHudFade(0, nw && prefs.getBoolean("hearts_combat", false));
         Native.setHudFade(2, nw && prefs.getBoolean("hearts_combat", false));  // the magic bar: on its own while used
         Native.setHudFade(1, nw && prefs.getBoolean("rupees_on_change", false));
-        if (!controls.editing()) controls.setLayoutString(nw ? controlsLayout() : "");
-        Native.setTouchSwipeCamera(flexible && swipe);
+        if (!controls.editing()) {
+            controls.setLayoutString(nw ? controlsLayout() : "");
+            controls.setBlindLayoutString(nw ? prefs.getString("controls_layout_blind", "") : "");
+        }
+        Native.setTouchSwipeCamera(controls.flexibleNow() && swipe);
         updateLayout();
     }
 
@@ -1189,7 +1812,9 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
 
     void applySlotLabels(boolean pad) {
         int mode = prefs.getInt("slot_labels", 0);
-        String[] l = mode == 2 ? SLOT_LETTER.clone() : mode == 1 || !pad ? SLOT_ACTION.clone() : new String[3];
+        // (a controller on another device, none here: the Wii U's letters, as that one's buttons go as the Wii U's)
+        boolean remote = !pad && remoteController;
+        String[] l = mode == 2 || (mode == 0 && remote) ? SLOT_LETTER.clone() : mode == 1 || !pad ? SLOT_ACTION.clone() : new String[3];
         StringBuilder hide = new StringBuilder();
         for (int k = 0; k < 3; k++) {
             if (l[k] != null) continue;
@@ -1236,7 +1861,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         if (on == filesTouch) return;
         filesTouch = on;
         applyHudHidden();
-        if (filesBack != null) filesBack.setVisibility(on ? View.VISIBLE : View.GONE);
+        if (filesBack != null) filesBack.setVisibility(on && !tv ? View.VISIBLE : View.GONE);
     }
 
     private static boolean controllerConnected() { return firstController() != null; }
@@ -1294,8 +1919,16 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
 
     boolean drcOnSecondDisplay() { return prefs.getBoolean("drc_second_display", true); }
 
+    /** the second display shows the game picture (a TV by casting or an HDMI cable), this device the GamePad's */
+    boolean gameOnSecondDisplay() { return prefs.getBoolean("second_display_game", false); }
+
     void setDrcOnSecondDisplay(boolean on) {
-        prefs.edit().putBoolean("drc_second_display", on).apply();
+        prefs.edit().putBoolean("drc_second_display", on).putBoolean("second_display_game", false).apply();
+        updateDrcDisplay();
+    }
+
+    void setGameOnSecondDisplay() {
+        prefs.edit().putBoolean("second_display_game", true).apply();
         updateDrcDisplay();
     }
 
@@ -1313,13 +1946,42 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
 
     private void updateDrcDisplay() {
         if (drcDisplay == null) {
-            drcDisplay = new DrcDisplay(this, active -> updateLayout());
+            drcDisplay = new DrcDisplay(this, active -> {
+                updateLayout();
+                ownDisplayMarks();
+            });
             drcDisplay.setFill(drcFill());
         }
-        drcDisplay.setWanted(started && resumed && drcOnSecondDisplay());
+        drcDisplay.setTvPicture(gameOnSecondDisplay());
+        drcDisplay.setWanted(started && resumed && (drcOnSecondDisplay() || gameOnSecondDisplay()));
     }
 
     private boolean drcOnOwnDisplay() { return drcDisplay != null && drcDisplay.active(); }
+
+    // the GamePad on its own display: the chart's boxes followed each frame for the marks there (ChartMarks; on a
+    // single screen focusTick does it while the GamePad picture shows)
+    private boolean ownMarksTicking;
+    private final android.view.Choreographer.FrameCallback ownMarksTick = new android.view.Choreographer.FrameCallback() {
+        @Override
+        public void doFrame(long now) {
+            if (controls == null || !drcOnOwnDisplay() || !ChartMarks.I.active()) {
+                ownMarksTicking = false;
+                if (controls != null) controls.setChart(false, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+                ChartMarks.I.setDungeon(0, 0, 0, 0, null);
+                return;
+            }
+            readTargets();
+            trackView();
+            chartMarks();
+            android.view.Choreographer.getInstance().postFrameCallback(this);
+        }
+    };
+
+    void ownDisplayMarks() {
+        if (ownMarksTicking || !drcOnOwnDisplay() || !ChartMarks.I.active()) return;
+        ownMarksTicking = true;
+        android.view.Choreographer.getInstance().postFrameCallback(ownMarksTick);
+    }
 
     // Graphics > Screen layout: TV only by default; with a second display (dual-screen devices) the
     // GamePad inset, used when the GamePad is set to show in the layout instead of on that display
@@ -1336,14 +1998,22 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
             layout = LAYOUT_TV;
             drcShown = false;
         }
+        boolean screenRemote = screenRemote();
+        if (screenRemote) drcShown = false;  // (another device shows the TV picture: the GamePad's here, controls over it)
         controls.setScreenButton(layout == LAYOUT_ON_DEMAND, drcShown);
+        controls.setDrcBackdrop(screenRemote());
         controls.setMenuInInventory(menuInInventory());
         Native.setItemSheetLeft(menuInInventory());
         // the inset sits between the shoulder buttons, sized to leave them free
         float insetW = Math.min(W * 0.3f, W - 2 * (Math.min(W, H) / 7f * 3.6f));
         RectF inset = new RectF((W - insetW) / 2, 0, (W + insetW) / 2, insetW / DRC_ASPECT);
         if (drcShown) layout = -1;  // + (or the screen button): only the GamePad picture
+        if (screenRemote) layout = -2;
         switch (layout) {
+            case -2:  // the GamePad picture, the touch controls over it (a touch on the picture is the GamePad's)
+                tv = new RectF(0, 0, -1, -1);
+                drc = full;
+                break;
             case -1:  // width -1: the TV picture is not drawn
                 tv = new RectF(0, 0, -1, -1);
                 drc = full;
@@ -1375,6 +2045,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         if (!drcOnOwnDisplay()) Native.setDrcAspect(fillDrc ? W / H : 0);
         controls.setDrcRect(drc == null ? null : fillDrc ? drc : fit(drc, DRC_ASPECT));
         controls.setTvRect(tv.right < 0 ? null : fit(tv, TV_ASPECT));
+        controls.setTvArea(tv.right < 0 ? null : tvFillsScreen() ? tv : fit(tv, TV_ASPECT));  // (the picture's own corners)
         controls.setClimbHud(prefs.getBoolean("mod_climb", false));
         controls.setPerfHud(prefs.getBoolean("perf_hud", false));
         controls.setPerfItems(prefs.getInt("perf_items", ControlsView.PERF_ALL));
@@ -1408,7 +2079,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         if (controls == null) return;
         // − only swapped the TV and GamePad pictures (the GamePad is the only controller now): never sent
         int touchB = controls.buttons();
-        int b = (touchB | mapper.padButtons | mapper.keyButtons) & ~Native.MINUS;
+        int b = (touchB | mapper.padButtons | mapper.keyButtons | padButtons()) & ~Native.MINUS;
         // an item button on d-pad down (InputMapper.setExtraItem) only in play: elsewhere it is d-pad down
         int downItem = mapper.downItemBits();
         if (downItem != 0 && !padInPlay()) b &= ~downItem;
@@ -1433,7 +2104,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         if ((b & Native.L) != 0 && !prefs.getBoolean("l_drc_pages", false) && padInPlay()) b &= ~Native.L;
         // + (touch or controller) shows or hides the full GamePad picture, unless the GamePad has a
         // display of its own: there + goes to the game
-        if (!drcOnOwnDisplay() && front != Native.FRONT_OPENING) {  // (the opening: + is the game's skip)
+        if (!drcOnOwnDisplay() && !screenRemote() && front != Native.FRONT_OPENING) {  // (the opening: + is the game's skip)
             boolean plus = (b & Native.PLUS) != 0, press = plus && !plusHeld;
             plusHeld = plus;
             if (press) controls.post(this::plusToggle);  // not inside this call: the switch releases the touch controls
@@ -1462,15 +2133,15 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
             }
             focusPad = pad;
         }
-        if (focus || drcScreen()) startFocusTick();
-        float lx = ownStick ? 0 : pick(controls.stickX(0), mapper.lx, mapper.keyLX());
-        float ly = ownStick ? 0 : pick(controls.stickY(0), mapper.ly, mapper.keyLY());
+        if (focus || drcScreen() || screenRemote() || padPicture()) startFocusTick();
+        float lx = ownStick ? 0 : pick(controls.stickX(0), mapper.lx, mapper.keyLX(), padHost != null ? padAxis(padHost.lx) : 0);
+        float ly = ownStick ? 0 : pick(controls.stickY(0), mapper.ly, mapper.keyLY(), padHost != null ? padAxis(padHost.ly) : 0);
         if (itemRing != null) {  // X / Y / R held for the item ring (ItemRing)
             b = itemRing.filter(b, touchB, pick(0, mapper.lx, mapper.keyLX()), pick(0, mapper.ly, mapper.keyLY()));
             if (itemRing.takesLeftStick()) lx = ly = 0;
         }
-        float rx = pick(controls.stickX(1), mapper.rx, mapper.keyRX());
-        float ry = pick(controls.stickY(1), mapper.ry, mapper.keyRY());
+        float rx = pick(controls.stickX(1), mapper.rx, mapper.keyRX(), padHost != null ? padAxis(padHost.rx) : 0);
+        float ry = pick(controls.stickY(1), mapper.ry, mapper.keyRY(), padHost != null ? padAxis(padHost.ry) : 0);
         if (mapper.keyLX() != 0 && mapper.keyLY() != 0) { lx *= 0.7071f; ly *= 0.7071f; }
         if (controls.conductPads()) {  // conducting by the note pads: the time pad is the stick, the note pad the C stick (ControlsView)
             int beat = controls.conductTime(), dir = controls.conductNote();
@@ -1495,6 +2166,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
             rx = 0;
             ry = 1;
         }
+        if (windByPad(rx, ry)) rx = ry = 0;  // − held, the right stick chooses the wind (the camera gets none of it)
         Native.setPad(b, lx, ly, rx, ry);
     }
 
@@ -1591,6 +2263,8 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     private void readTargets() {
         targets.clear();
         chart = null;
+        floors.clear();
+        figs.clear();
         java.util.HashMap<String, Integer> seen = new java.util.HashMap<>();
         for (String t : Native.drcTargets().split(";")) {
             String[] f = t.trim().split(" ");
@@ -1601,6 +2275,16 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
                 g.y = Float.parseFloat(f[3]);
                 g.w = Float.parseFloat(f[4]);
                 g.h = Float.parseFloat(f[5]);
+                if (f[1].startsWith("@fig:")) {  // a dungeon map's figure: "@fig:<turn>:<alpha>" (ChartMarks), not a target
+                    String[] q = f[1].split(":");
+                    if (q.length == 3) figs.add(new ChartMarks.Fig(f[0], g.x, g.y, g.w, g.h, Float.parseFloat(q[1]), Integer.parseInt(q[2])));
+                    continue;
+                }
+                if (f[1].equals("@floor")) {  // a dungeon map's floor: its place and scale (ChartMarks), not a target
+                    g.name = f[0];
+                    floors.add(g);
+                    continue;
+                }
                 if (f[0].equals("B_Area_00") && f[1].equals("N_All_00")) {  // the sea chart: one area, 7 x 7 squares
                     chart = g;
                     for (int r = 0; r < 7; r++)
@@ -1650,6 +2334,9 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     private float keptX, keptY;
 
     private Target chart;  // the sea chart's area (readTargets), or null
+    private final java.util.ArrayList<Target> floors = new java.util.ArrayList<>();  // a dungeon map's floors drawn (readTargets)
+    // ... and its figures (statue, ship, searchlights ...: ChartMarks.Fig) drawn
+    private final java.util.ArrayList<ChartMarks.Fig> figs = new java.util.ArrayList<>();
 
     private static final String TILE = "N_All_00/B_Area_00/";
     // the chart square (row * 10 + column) whose view is open: the one A opened, or the one a finger
@@ -1733,23 +2420,30 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         @Override
         public void doFrame(long now) {
             boolean game = Native.drcGameCursor(), screen = drcScreen();
+            // the GamePad picture as the backdrop (the game picture on another device): its targets, arrow and marks
+            // as in the GamePad view of +, but the game goes on (it is shown elsewhere)
+            boolean backdrop = !screen && (screenRemote() || padPicture()) && front == 0;
             if (controls == null || !focusMode()) {
                 if (focusTouch) touchTo(false, touchX, touchY);
                 touchAt = 0;
                 touchSlot = -1;
                 if (controls != null) controls.setFocus(false, 0, 0, 0, 0, false);
-                if (controls == null || !screen) {
+                if (controls == null || !(screen || backdrop)) {
+                    if (controls != null) controls.setChart(false, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+                    ChartMarks.I.setDungeon(0, 0, 0, 0, null);
                     pauseForMenu(false);
                     if (controls != null) controls.setOptionsArrow(false, 0, 0, 0, 0);
+                    if (padHost != null) padHost.sendArrow(false, 0, 0, 0, 0, 0);
                     focusTicking = false;
                     return;
                 }
-                pauseForMenu(true);
+                pauseForMenu(screen);
                 readTargets();  // touch only: still follows the chart views (which square a finger opened)
                 slotHold(now / 1000000);
                 optionsArrow();
                 strayPages();
                 trackView();
+                chartMarks();
                 android.view.Choreographer.getInstance().postFrameCallback(this);
                 return;
             }
@@ -1759,6 +2453,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
             optionsArrow();
             strayPages();
             trackView();
+            chartMarks();
             Target cur = game ? null : focused();
             if (cur != null) setFocused(cur);
             focusFrame(game, cur);
@@ -1776,6 +2471,37 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     /** the GamePad picture is shown on its own (the screen the controller and the fingers work) */
     private boolean drcScreen() {
         return drcShown && !drcForFiles && front == 0 && !drcOnOwnDisplay();
+    }
+
+    /** the progress marks on the game's sea chart (ControlsView.setChart): its area, and the square view open (the
+     *  square trackView knows); none while another chart lies over it (Tingle's Chart: backOnly) */
+    private void chartMarks() {
+        if (controls == null) return;
+        // a dungeon's map: its floors drawn and the floor map's box (N_MapArea_00)
+        Target box = null;
+        for (Target t : targets) if (t.key.startsWith("N_MapArea_00/")) box = t;
+        float[] fl = new float[floors.size() * 5];
+        for (int i = 0; i < floors.size(); i++) {
+            Target t = floors.get(i);
+            String n = t.name;  // N_1F_00 / N_B1F_00
+            int f = n.charAt(2) == 'B' ? -(n.charAt(3) - '0') : n.charAt(2) - '1';
+            fl[i * 5] = f;
+            fl[i * 5 + 1] = t.x;
+            fl[i * 5 + 2] = t.y;
+            fl[i * 5 + 3] = t.w;
+            fl[i * 5 + 4] = t.h;
+        }
+        ChartMarks.I.setFigures(figs);
+        if (box != null && fl.length > 0) ChartMarks.I.setDungeon(box.x, box.y, box.w, box.h, fl);
+        else ChartMarks.I.setDungeon(0, 0, 0, 0, null);
+        Target v = chartView();
+        if (chart == null || backOnly || v != null && tile < 0) {
+            controls.setChart(false, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+            return;
+        }
+        int sq = v != null ? tile / 10 * 7 + tile % 10 + 1 : 0;
+        if (v == null) controls.setChart(true, chart.x, chart.y, chart.w, chart.h, 0, 0, 0, 0, 0);
+        else controls.setChart(true, chart.x, chart.y, chart.w, chart.h, sq, v.x, v.y, v.w, v.h);
     }
 
     /** a chart square's view opening and closing: which square it belongs to, the highlight back there after */
@@ -1808,7 +2534,10 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     // from the left and go back to the inventory (OptionsMenu inInventory)
     private static final String OPTIONS_ARROW = "app/options";
 
-    boolean menuInInventory() { return !prefs.getBoolean("menu_overlay", false) && !drcOnOwnDisplay(); }
+    // (a GamePad device: its picture has the arrow too, drawn there, PadActivity)
+    boolean menuInInventory() {
+        return !prefs.getBoolean("menu_overlay", false) && (!drcOnOwnDisplay() || drcDisplay.remoteOnly());
+    }
 
     void setMenuOverlay(boolean on) {
         prefs.edit().putBoolean("menu_overlay", on).apply();
@@ -1826,7 +2555,9 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
             if (t.key.startsWith("L_MenuArrowR_")) r = t;
             if (t.key.startsWith("L_MenuArrowL_") || t.key.startsWith("L_BtnBack_")) leftArrow = true;
         }
-        if (r == null || leftArrow || Native.drcGameCursor() || !menuInInventory()) return;
+        // (where the game shows its own cursor the arrow stays out; on the console's GamePad view, the game going on
+        // elsewhere, + is the game's menu: the arrow is there too)
+        if (r == null || leftArrow || (Native.drcGameCursor() && !screenRemote() && !padPicture()) || !menuInInventory()) return;
         Target a = new Target();
         a.key = a.name = OPTIONS_ARROW;
         a.x = 1f - r.x;  // (the game's arrows sit mirrored: L_MenuArrowL_00 at -686, R at +686)
@@ -1845,11 +2576,16 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     private void optionsArrow() {
         for (Target a : targets)  // (it fades as the pages move: gone once the options page is out)
             if (a.key.equals(OPTIONS_ARROW) && Native.itemPageX() < 1279f) {
-                controls.setOptionsArrow(true, a.x, a.y, a.w, a.h * 148f / 128f);  // (its hit box is 128 of the part's 148 units high)
-                controls.setOptionsArrowAlpha(1f - Math.min(1f, Math.abs(Native.itemPageX()) / 1280f));  // (out as another page comes in)
+                float h = a.h * 148f / 128f, alpha = 1f - Math.min(1f, Math.abs(Native.itemPageX()) / 1280f);
+                controls.setOptionsArrow(true, a.x, a.y, a.w, h);  // (its hit box is 128 of the part's 148 units high)
+                controls.setOptionsArrowAlpha(alpha);  // (out as another page comes in)
+                if (padHost != null)  // (a GamePad device draws it over its picture: PadActivity)
+                    padHost.sendArrow(true, alpha, ControlsView.pictureU(a.x - a.w / 2), ControlsView.pictureV(a.y - h / 2),
+                            ControlsView.pictureU(a.x + a.w / 2), ControlsView.pictureV(a.y + h / 2));
                 return;
             }
         controls.setOptionsArrow(false, 0, 0, 0, 0);
+        if (padHost != null) padHost.sendArrow(false, 0, 0, 0, 0, 0);
     }
 
     private OptionsMenu optionsPage;
@@ -1858,7 +2594,8 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     // the page is built a moment after the inventory opens (~0.2 s of views on a phone, which held up the arrow's
     // tap): the tap then only shows it
     private final Runnable prepareOptionsPage = () -> {
-        if (!drcScreen() || !menuInInventory() || pageReady || (optionsPage != null && optionsPage.isShowing())) return;
+        // (the GamePad view of +, or the console's GamePad view with the game picture elsewhere)
+        if (!(drcScreen() || screenRemote() || padPicture()) || !menuInInventory() || pageReady || (optionsPage != null && optionsPage.isShowing())) return;
         optionsPage = new OptionsMenu(this, false, true);
         optionsPage.create();
         optionsPage.layOutAhead();
@@ -1893,7 +2630,8 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     @Override
     public boolean pageSwipeFrom(float x, float y) {
         if (pageArrow("L_MenuArrowR_") == null && pageArrow("L_MenuArrowL_") == null) return false;  // not the item pages
-        if (Native.drcGameCursor() || backButton() != null) return false;  // its Options / Save, an open bag
+        // its Options / Save, an open bag (the game's cursor: not on the console's GamePad view, where + is the game's menu)
+        if ((Native.drcGameCursor() && !screenRemote() && !padPicture()) || backButton() != null) return false;
         for (Target t : targets)
             if (Math.abs(x - t.x) <= t.w / 2 && Math.abs(y - t.y) <= t.h / 2) return false;
         return true;
@@ -2078,6 +2816,8 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         return v;
     }
 
+    private static float pick(float a, float b, float c, float d) { return pick(pick(a, b, c), d, 0); }
+
     // ------------------------------------------------------------------ motion and rumble
     // The GamePad's gyro (MotionInput) and rumble (Rumble) follow the controller in use, or this
     // device while playing by touch.
@@ -2235,6 +2975,11 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         if (controls != null) controls.setEditing(true);
     }
 
+    /** the editor on the eyes-free controller view's own layout (Controls > Touch) */
+    void editBlindControls() {
+        if (controls != null) controls.setEditing(true, true);
+    }
+
     // Classic and Flexible each keep their own layout; Flexible starts from the layout both shared before
     private String controlsLayoutKey() {
         return NEW_TOUCH_CONTROLS && prefs.getInt("controls_style", 0) == 1 ? "controls_layout_flex" : "controls_layout";
@@ -2246,8 +2991,8 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     }
 
     @Override
-    public void onLayoutEdited(String layout, float opacity, boolean filled) {
-        prefs.edit().putString(controlsLayoutKey(), layout).putFloat("controls_opacity", opacity).putBoolean("controls_filled", filled).apply();
+    public void onLayoutEdited(String layout, float opacity, boolean filled, boolean blindLayout) {
+        prefs.edit().putString(blindLayout ? "controls_layout_blind" : controlsLayoutKey(), layout).putFloat("controls_opacity", opacity).putBoolean("controls_filled", filled).apply();
         applyControlsAppearance();
     }
 
@@ -2312,10 +3057,16 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
 
     @Override
     public boolean dispatchTouchEvent(MotionEvent e) {
-        // hidden because a controller is in use: touching the screen brings the controls back
-        if (autoHidden && e.getActionMasked() == MotionEvent.ACTION_DOWN) {
+        // hidden because a controller is in use: touching the screen brings the controls back (not on the GamePad
+        // view with the game elsewhere while a controller is connected: a phone in a controller clamp, its touches
+        // are the GamePad screen's)
+        if (autoHidden && e.getActionMasked() == MotionEvent.ACTION_DOWN && !(screenRemote() && controllerConnected())) {
             autoHidden = false;
             applyControlsAppearance();
+        }
+        if (e.getActionMasked() == MotionEvent.ACTION_DOWN && remotePlay) {  // playing by touch (a remote controller's too)
+            remotePlay = false;
+            if (controls != null && lastController == null) controls.setPadPlay(false);
         }
         if (e.getActionMasked() == MotionEvent.ACTION_DOWN && lastController != null) inputSource(null);  // playing by touch
         return super.dispatchTouchEvent(e);
@@ -2323,7 +3074,10 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
 
     @Override
     public boolean dispatchKeyEvent(KeyEvent e) {
-        if (!started) return super.dispatchKeyEvent(e);
+        if (!started) {  // the start page: a controller's A / B as in the menus; its back button does nothing (it left the app)
+            KeyEvent k = prefs == null ? e : InputMapper.pageKey(prefs, e, false);
+            return k == null || super.dispatchKeyEvent(k);
+        }
         int code = e.getKeyCode();
         boolean controller = InputMapper.isController(e.getDevice()) || KeyEvent.isGamepadButton(code);
         if (code == KeyEvent.KEYCODE_BACK && !controller) {  // the menu's shortcut, in the + menu a step back instead
@@ -2350,7 +3104,8 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     }
 
     // A controller's Select (View): held for 0.6 s it opens the menu, a shorter press is the Wii U button
-    // assigned to it (sent on release, held for a few frames so the game sees it; − is dropped in pushInput)
+    // assigned to it (sent on release, held for a few frames so the game sees it); the − (dropped in pushInput)
+    // steps the mini map's size instead
     private static final long SELECT_HOLD_MS = 600;
     private final android.os.Handler keyHandler = new android.os.Handler(android.os.Looper.getMainLooper());
     private boolean selectDown, selectOpenedMenu;
@@ -2359,6 +3114,40 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         selectOpenedMenu = true;
         menuOrBack();
     };
+
+    // the wind by a controller (Wind dial, pref minimap_wind_swipe): − (Select) held and the right stick tilted chooses the
+    // way, shown on the mini map's wind dial (the stick's way on the screen, as a swipe from the dial; a banner arrow
+    // without the dial); letting go of − sets it (setWind). The hold then opens no menu and steps no map size
+    private boolean windPad;
+    private int windPadAngle = Integer.MIN_VALUE;
+    private static final String[] WIND_ARROWS = {"→", "↘", "↓", "↙", "←", "↖", "↑", "↗"};
+
+    /** pushInput: true while − chooses the wind (the right stick is then the wind's alone) */
+    private boolean windByPad(float rx, float ry) {
+        // (− held here, or on a GamePad device's controller: padKey)
+        boolean here = selectDown && !selectOpenedMenu && mapper.bitFor(KeyEvent.KEYCODE_BUTTON_SELECT) == Native.MINUS
+                && prefs.getBoolean("minimap_wind", true);  // (the GamePad device shows the wind on its own dial)
+        if ((!here && !padSelectDown) || !prefs.getBoolean("minimap_wind_swipe", true)) return false;
+        if (!windPad) {
+            if (Math.hypot(rx, ry) < 0.6f || !gameRunning()) return false;
+            windPad = true;
+            keyHandler.removeCallbacks(selectHeld);
+            keyHandler.removeCallbacks(padSelectHeld);
+        }
+        if (Math.hypot(rx, ry) >= 0.6f) {
+            int w = controls.miniMap.windAngle(rx, -ry);  // (stick +y is up; the screen's down)
+            if (w != windPadAngle) {
+                windPadAngle = w;
+                controls.miniMap.setWindPreview(w);
+                if (!controls.miniMap.windDialShown()) {  // no dial to see it on: the way as an arrow on the screen
+                    double sx = rx, sy = -ry;
+                    int k = (int) Math.round(Math.atan2(sy, sx) / (Math.PI / 4));
+                    controls.showBanner("≋ " + WIND_ARROWS[(k + 8) % 8]);
+                }
+            }
+        }
+        return true;
+    }
 
     /** the menu's shortcuts (back key, Select held, Home / Guide): the options menu; in the + menu a step back */
     private void menuOrBack() {
@@ -2372,6 +3161,8 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
             if (e.getRepeatCount() > 0) return;
             selectDown = true;
             selectOpenedMenu = false;
+            windPad = false;
+            windPadAngle = Integer.MIN_VALUE;
             keyHandler.postDelayed(selectHeld, SELECT_HOLD_MS);
         } else if (e.getAction() == KeyEvent.ACTION_UP) {
             // the press must have been ours: holding Select also closes the menu, and that release
@@ -2381,6 +3172,20 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
             keyHandler.removeCallbacks(selectHeld);
             if (!pressedHere || selectOpenedMenu) return;
             int bits = mapper.bitFor(KeyEvent.KEYCODE_BUTTON_SELECT);  // the − unless assigned otherwise
+            if (windPad) {  // − held with the right stick: the wind chosen
+                windPad = false;
+                int w = windPadAngle;
+                windPadAngle = Integer.MIN_VALUE;
+                if (controls != null) controls.miniMap.setWindPreview(Integer.MIN_VALUE);
+                if (w != Integer.MIN_VALUE) setWind(w);
+                return;
+            }
+            // the − (never sent to the game): the mini map's next size while it shows, as a tap on it
+            if (bits == Native.MINUS) {
+                if (controls != null && controls.miniMap.onScreen())
+                    prefs.edit().putInt("minimap_size", controls.miniMap.nextSize()).apply();
+                return;
+            }
             mapper.pulse(bits, true);
             pushInput();
             keyHandler.postDelayed(() -> {
@@ -2464,6 +3269,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
 
     @Override
     protected void onDestroy() {
+        if (padHost != null) padHost.stop();
         if (drcDisplay != null) drcDisplay.release();
         if (instance == this) instance = null;
         super.onDestroy();
@@ -2608,6 +3414,12 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         new OptionsMenu(this).show();
     }
 
+    @Override
+    public void onProgressTap() {
+        OptionsMenu.openProgress = true;
+        onMenu();
+    }
+
     // ---- actions of the in-game menu (OptionsMenu)
     static final float[] CONTROL_SIZES = {0.75f, 0.9f, 1f, 1.15f, 1.3f};
     // swipe speed factors 0.25 to 4 in steps of 0.25, shown relative to the default 2: -175 to +200
@@ -2647,6 +3459,38 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         updateBufferSize();
     }
 
+    // a TV box with little memory (Tegra X1, 3 GB) at 4K: the game's swapchain and the options' window
+    // buffers at 3840x2160 cost ~250 MB more than at 1080p, and opening the options (+145 MB at once) got
+    // the game killed (user 2026-11-02). While the app is in front the display runs a 1080p mode (same
+    // refresh rate if there is one); the TV enlarges it, and Android goes back to its own mode on leaving.
+    // Only this activity: as the screen of another device (PadActivity) the display keeps its own mode.
+    private void displayMode1080() {
+        android.view.Display d = getWindowManager().getDefaultDisplay();
+        android.view.Display.Mode cur = d.getMode(), best = null;
+        if (Math.min(cur.getPhysicalWidth(), cur.getPhysicalHeight()) <= 1080) return;
+        for (android.view.Display.Mode m : d.getSupportedModes()) {
+            if (Math.min(m.getPhysicalWidth(), m.getPhysicalHeight()) > 1080) continue;
+            // the same shape as the display's own mode (a 4K TV also lists 2560x1080 ultrawide)
+            float shape = (float) m.getPhysicalWidth() / m.getPhysicalHeight(), curShape = (float) cur.getPhysicalWidth() / cur.getPhysicalHeight();
+            if (Math.abs(shape - curShape) > 0.02f * curShape) continue;
+            if (best == null) {
+                best = m;
+                continue;
+            }
+            boolean sameHz = Math.abs(m.getRefreshRate() - cur.getRefreshRate()) < 0.5f;
+            boolean bestSameHz = Math.abs(best.getRefreshRate() - cur.getRefreshRate()) < 0.5f;
+            long px = (long) m.getPhysicalWidth() * m.getPhysicalHeight(), bestPx = (long) best.getPhysicalWidth() * best.getPhysicalHeight();
+            if ((sameHz && !bestSameHz) || (sameHz == bestSameHz && (px > bestPx || (px == bestPx && m.getRefreshRate() > best.getRefreshRate()))))
+                best = m;
+        }
+        if (best == null) return;
+        android.view.WindowManager.LayoutParams lp = getWindow().getAttributes();
+        lp.preferredDisplayModeId = best.getModeId();
+        getWindow().setAttributes(lp);
+        Log.i(TAG, "little memory: display mode " + best.getPhysicalWidth() + "x" + best.getPhysicalHeight() + " " + best.getRefreshRate()
+                + " Hz instead of " + cur.getPhysicalWidth() + "x" + cur.getPhysicalHeight());
+    }
+
     /** the surface buffer's size for the Display resolution setting (see bufScale) */
     void updateBufferSize() {
         if (surface == null || surfaceW <= 0 || surfaceH <= 0) return;
@@ -2661,12 +3505,15 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
                 k = Float.parseFloat(test);
             } catch (NumberFormatException ignored) {
             }
-        } else if (prefs.getInt("display_res", DISPLAY_RES_AUTO) == DISPLAY_RES_AUTO) {
+        } else if (prefs.getInt("display_res", DISPLAY_RES_AUTO) == DISPLAY_RES_AUTO && Native.getOption("upscale") != 2) {
             // 1.5x the 3D view's lines (it fills the height; wider screens add width only), at least the
-            // game's own 720 lines: small screens keep their resolution (writing them is cheap)
+            // game's own 720 lines: small screens keep their resolution (writing them is cheap). Not with
+            // Upscaling "Pixel perfect": the system would enlarge the buffer filtered, blurring its blocks
             k = Math.max(720f * renderScale * 1.5f, 720f) / surfaceH;
             k = (float) Math.ceil(k * 8) / 8;          // eighths: a few sizes, not one per setting
         }
+        // little memory: the game's picture at most 1080 lines (the screen enlarges it)
+        if (test == null && GraphicsPresets.ramMb(this) < VERY_LOW_MEMORY_MB) k = Math.min(k, 1080f / Math.min(surfaceW, surfaceH));
         k = Math.max(0.25f, Math.min(1f, k));
         if (k == bufRequested) return;
         bufRequested = k;
@@ -2724,7 +3571,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
             @Override
             public void run() {
                 // the state, then its picture (written on its own, a moment later; at most 2 s more)
-                File bin = stateFile(baseDir(), 8, "bin"), png = stateFile(baseDir(), 8, "png");
+                File bin = stateFile(playDir(), 8, "bin"), png = stateFile(playDir(), 8, "png");
                 long now = android.os.SystemClock.uptimeMillis();
                 if (Native.stateWritesPending() != 0 && now < until) { h.postDelayed(this, 200); return; }
                 if (pictureBy == 0) pictureBy = now + 2000;
@@ -2734,7 +3581,10 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         }, 200);
     }
 
+    private Runnable onExit;  // (becomePad: the GamePad screen opens as the game ends)
+
     private void exitNow() {
+        if (onExit != null) onExit.run();
         finishAndRemoveTask();
         System.exit(0);
     }
@@ -2786,21 +3636,47 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     // optional changes to how the game plays (runtime/src/mods), all off by default
     // cheats (mods/cheats.cpp): the one-shot ones' bits (mods.h Cheat) and the switches kept as settings
     static final int CHEAT_ITEMS = 1, CHEAT_SWORD = 2, CHEAT_STATS = 4, CHEAT_SONGS = 8, CHEAT_TRIFORCE = 16, CHEAT_DUNGEON = 32,
-                     CHEAT_KEY = 64, CHEAT_BAGS = 128;
+                     CHEAT_KEY = 64, CHEAT_BAGS = 128, CHEAT_FIGURINES = 256;
     static final String[] CHEATS_INFINITE = {"cheat_inf_health", "cheat_inf_magic", "cheat_inf_ammo", "cheat_moon_jump", "cheat_moon_nofall", "cheat_moon_anims",
-                                             "cheat_inf_rupees", "cheat_inf_bags", "cheat_inf_breath", "cheat_one_hit"};
+                                             "cheat_inf_rupees", "cheat_inf_bags", "cheat_inf_breath", "cheat_one_hit",
+                                             "cheat_fast_push"};
 
-    void cheat(int bit, int done) {
+    /** a one-shot cheat (label: its menu line, named on the achievements page while they are paused) */
+    void cheat(int label, int bit, int done) {
+        Achievements.pauseRun(getString(label));
         Native.setOption("cheat", bit);
         android.widget.Toast.makeText(this, getString(done) + " " + getString(R.string.cheat_keep), android.widget.Toast.LENGTH_LONG).show();
     }
+    // the gallery's figurines only for a member (event 0x3401 in the save's events at +0x624, as cheats.cpp checks):
+    // a complete gallery sends Carlov away, and membership could never be had afterwards
+    void cheatFigurines() {
+        byte[] save = Native.progressData();
+        if (save != null && save.length > 0x624 + 0x34 && (save[0x624 + 0x34] & 1) == 0) {
+            android.widget.Toast.makeText(this, R.string.cheat_figurines_member, android.widget.Toast.LENGTH_LONG).show();
+            return;
+        }
+        cheat(R.string.cheat_figurines, CHEAT_FIGURINES, R.string.cheat_figurines_done);
+    }
 
     static final String[] MODS = {"mod_direct_camera", "mod_first_person", "mod_climb", "mod_quick_doors", "mod_fast_scenes",
-                                  "mod_ff_cutscenes", "mod_ff_dialogues", "mod_song_replay", "mod_picto_pages"};
+                                  "mod_ff_cutscenes", "mod_ff_dialogues", "mod_song_replay", "mod_picto_pages", "mod_leaf_lift",
+                                  "mod_walk_doors", "mod_instant_text"};
+    // Game > Hit freezes: the game's short stops on hits, by kind (mods::HitStop bits: hits, strong hits, defeats, bosses,
+    // signposts), the kinds switched off ("hit_stop_off"; an earlier build's single switch "mod_no_hit_stop": all of them)
+    static final int HIT_STOP_KINDS = 5;
+    int hitStopOff() {
+        return prefs.getInt("hit_stop_off", prefs.getBoolean("mod_no_hit_stop", false) ? (1 << HIT_STOP_KINDS) - 1 : 0);
+    }
+    void setHitStopOff(int mask) {
+        prefs.edit().putInt("hit_stop_off", mask).remove("mod_no_hit_stop").apply();
+        Native.setOption("mod_hit_stop_off", mask);
+    }
+
     static final int[] CAMERA_SPEEDS = {50, 100, 150, 200};
     static final int[] RUN_SPEEDS = {100, 125, 150, 200, 250, 300, 400};  // 100: off
     static final int[] SWING_DELAYS = {500, 750, 1000, 1250, 1500, 1750, 2000, 2250, 2500, 2750, 3000};  // camera swing wait, ms
     static final int[] MOON_RISE_SPEEDS = {50, 75, 100, 150, 200, 300};  // moon jump rise, percent
+    static final int[] LEAF_LIFT_HEIGHTS = {25, 50, 75, 100, 150, 200, 300, 400};  // a leaf wave's lift, percent
     static final int[] MOON_FLY_SPEEDS = new int[20];  // moon jump flight, percent: 50..1000 in steps of 50
     static { for (int i = 0; i < MOON_FLY_SPEEDS.length; i++) MOON_FLY_SPEEDS[i] = 50 * (i + 1); }
 
@@ -2845,7 +3721,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         i.addCategory(Intent.CATEGORY_OPENABLE);
         i.setType("*/*");
         i.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true);
-        startActivityForResult(i, PICK_DISC_FILES);
+        startPicker(i, PICK_DISC_FILES);
     }
 
     // the files the user picked (instead of a folder)
@@ -3004,6 +3880,11 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
 
     /** A job of WorkService.Work finished (called on the main thread, possibly in a later activity). */
     void workFinished(int kind, String err, boolean cancelled) {
+        if (padCodeArrived && kind == WorkService.Work.COMPILE) {  // stopped for the code a phone made: it is ready now
+            padCodeArrived = false;
+            checkAndStart();
+            return;
+        }
         if (kind == WorkService.Work.EXTRACT) {
             if (err == null) checkAndStart();  // checks the extracted executable against this build
             else showSetup(getString(R.string.extract_failed, err));
@@ -3047,6 +3928,29 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         boolean ok = results.length > 0 && results[0] == android.content.pm.PackageManager.PERMISSION_GRANTED;
         prefs.edit().putInt("sing_songs", ok ? prefs.getInt("sing_songs_wanted", SongListener.ON) : SongListener.OFF).apply();
         if (!ok) new GameDialog(this).title(R.string.opt_sing_songs).message(R.string.sing_songs_no_mic).button(android.R.string.ok, null).show();
+    }
+
+    /** a swipe from the mini map's wind dial: the wind that way at once, no event (Native.setWind; game angle y); a
+     *  short buzz when it can't now (an event, the pause menu); any stage, the Wind's Requiem known or not */
+    void setWind(int angle) {
+        int[] song = gameRunning() ? Native.songState() : null;
+        boolean ok = song != null && song[3] == 0;
+        android.util.Log.i("wwhd", "wind swipe: " + angle + (ok ? "" : " (not now)"));
+        if (ok) {
+            Native.setWind(angle);
+            if (controls != null) controls.performHapticFeedback(android.view.HapticFeedbackConstants.CONFIRM);
+        } else if (controls != null) {
+            controls.performHapticFeedback(android.view.HapticFeedbackConstants.REJECT);
+        }
+    }
+
+    /** the wind dial on a GamePad device (PadHost): {on, way (as MiniMap's st[70]), the dial's turn}; on while the game runs
+     *  with a wind (any stage) and Mini map > Wind arrow > Change the wind (dial) is on */
+    float[] windForPad() {
+        if (!gameRunning() || controls == null || !prefs.getBoolean("minimap_wind_swipe", true)) return new float[] {0, 0, 0};
+        float[] s = Native.miniMapState();
+        boolean on = s != null && s.length > 71 && s[0] != 0 && (s[70] != 0 || s[71] != 0);
+        return new float[] {on ? 1 : 0, on ? s[70] : 0, on ? controls.miniMap.windTurn() : 0};
     }
 
     void showSongBanner(String text) { if (controls != null) controls.showBanner(text); }
@@ -3172,7 +4076,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     // ------------------------------------------------------------------ game code
     // Builds that contain no game code recompile it on the device (once per app version and game
     // files); the runtime loads it from here at every start.
-    private File codeDir() { return new File(getNoBackupFilesDir(), "codecache"); }
+    File codeDir() { return new File(getNoBackupFilesDir(), "codecache"); }
 
     private void runCompile() {
         String game = gameDir(), dir = codeDir().getAbsolutePath();
@@ -3196,7 +4100,104 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         GameDialog d = new GameDialog(this).title(R.string.menu_about).content(t);
         java.util.List<File> logs = CrashLogs.list(this, prefs);
         d.button(R.string.crash_share_all, () -> CrashLogs.share(this, prefs, logs), !logs.isEmpty());
+        d.button(R.string.game_log_share, () -> CrashLogs.askGameLog(this, prefs, Native.gameRelease(gameDir())));
         d.button(R.string.opt_ok, null).show();
+    }
+
+    // the game as it is or one of the randomized games (Randomizer.games), before the game code check: each has its own
+    // code, files, save and states. The one played last has the focus (a controller's A takes it). false: none made
+    private boolean askGame() {
+        java.util.List<Integer> games = Randomizer.games(this);
+        if (games.isEmpty()) return false;
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        int pad = (int) (24 * getResources().getDisplayMetrics().density);
+        box.setPadding(pad, pad, pad, pad);
+        TextView t = cardText();
+        t.setText(R.string.rando_pick_title);
+        box.addView(t);
+        int last = Randomizer.chosen(this);
+        View focus = null;
+        for (int i = -1; i < games.size(); i++) {
+            final int n = i < 0 ? 0 : games.get(i);
+            TextView b = cardButton(n == 0 ? getString(R.string.rando_pick_plain) : Randomizer.name(this, n), v -> {
+                Randomizer.choose(this, n);
+                checkAndStart();
+            });
+            box.addView(b, cardButtonLp());
+            if (n == last || focus == null) focus = b;
+        }
+        setContentView(seaScreen(box));
+        focus.requestFocus();
+        return true;
+    }
+
+    // Game > Randomizer asked for a new randomized game: made here, before the game code check (Randomizer.generate)
+    private void runRandomizer() {
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        int pad = (int) (24 * getResources().getDisplayMetrics().density);
+        box.setPadding(pad, pad, pad, pad);
+        TextView t = cardText();
+        t.setText(R.string.rando_running);
+        box.addView(t);
+        android.widget.ProgressBar bar = new android.widget.ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
+        bar.setMax(100);
+        box.addView(bar);
+        TextView detail = cardText();
+        box.addView(detail);
+        setContentView(seaScreen(box));
+        final SeaView mySea = sea;
+        mySea.setFrameInterval(66);
+        final boolean[] done = {false};
+        final android.os.Handler h = new android.os.Handler(android.os.Looper.getMainLooper());
+        h.post(new Runnable() {
+            @Override
+            public void run() {
+                if (done[0]) return;
+                String[] p = Randomizer.progress(MainActivity.this);
+                if (p != null) {
+                    int pc = 0;
+                    try {
+                        pc = Integer.parseInt(p[0]);
+                    } catch (NumberFormatException ignored) {
+                    }
+                    bar.setProgress(pc);
+                    mySea.setProgress(pc / 100f);
+                    detail.setText(p[1]);
+                }
+                h.postDelayed(this, 250);
+            }
+        });
+        new Thread(() -> {
+            String err;
+            try {
+                err = Randomizer.generate(this);
+            } catch (RuntimeException e) {
+                err = String.valueOf(e.getMessage());
+            }
+            final String result = err;
+            h.post(() -> {
+                done[0] = true;
+                prefs.edit().putBoolean(Randomizer.PREF_PENDING, false).commit();  // (made: Randomizer.generate chose it)
+                if (result == null) {
+                    // the randomized game runs in a new process (the randomizer ran once in this one; Randomizer.playing)
+                    restartApp();
+                    return;
+                }
+                LinearLayout b = new LinearLayout(this);
+                b.setOrientation(LinearLayout.VERTICAL);
+                b.setPadding(pad, pad, pad, pad);
+                TextView m = cardText();
+                m.setText(getString(R.string.rando_failed, result));
+                b.addView(m);
+                b.addView(cardButton(getText(R.string.rando_play_plain), v -> {
+                    Randomizer.choose(this, 0);
+                    restartApp();
+                }), cardButtonLp());
+                setContentView(seaScreen(b));
+            });
+        }, "randomizer").start();
     }
 
     private void showCompileStopped(String message) {
@@ -3273,8 +4274,17 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     }
 
     void setInterpFps(int fps) {
-        prefs.edit().putInt("interp_fps", fps).apply();
+        boolean generated = prefs.getBoolean("fps_generated", false);
+        prefs.edit().putInt("interp_fps", fps).putBoolean("fps_generated", false).apply();
+        if (generated) Native.setOption("fps_generated", 0);  // (LSFG comes back if it is on)
         Native.setOption("interp_fps", fps);
+    }
+
+    /** Graphics > Frame rate > 60 fps (generated): the game at 30, every other frame made on the GPU */
+    void setFpsGenerated() {
+        prefs.edit().putInt("interp_fps", 0).putBoolean("fps_generated", true).apply();
+        Native.setOption("interp_fps", 0);
+        Native.setOption("fps_generated", 1);
     }
 
     private void applyFrameGenSettings() {
@@ -3352,7 +4362,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         Intent i = new Intent(Intent.ACTION_OPEN_DOCUMENT);
         i.addCategory(Intent.CATEGORY_OPENABLE);
         i.setType("*/*");
-        startActivityForResult(i, PICK_DLL);
+        startPicker(i, PICK_DLL);
     }
 
     // ------------------------------------------------------------------ import / export
@@ -3379,7 +4389,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
                     i.addCategory(Intent.CATEGORY_OPENABLE);
                     i.setType("application/zip");
                     i.putExtra(Intent.EXTRA_TITLE, Backup.exportName());
-                    startActivityForResult(i, PICK_EXPORT);
+                    startPicker(i, PICK_EXPORT);
                 }).show();
     }
 
@@ -3414,11 +4424,11 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         i.addCategory(Intent.CATEGORY_OPENABLE);
         i.setType("*/*");
         i.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true);
-        startActivityForResult(i, PICK_PACKS);
+        startPicker(i, PICK_PACKS);
     }
 
     private void importPacks(List<android.net.Uri> uris) {
-        withProgress(R.string.packs_importing, () -> {
+        withProgressLines(getString(R.string.packs_importing), progress -> {
             StringBuilder ok = new StringBuilder(), bad = new StringBuilder();
             for (android.net.Uri u : uris) {
                 String name = u.getLastPathSegment();
@@ -3426,11 +4436,22 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
                     if (c != null && c.moveToFirst() && c.getString(0) != null) name = c.getString(0);
                 }
                 try {
-                    for (String f : ModPacks.importArchive(baseDir(), gameDir(), getContentResolver(), u, name)) ok.append("\n• ").append(f);
+                    progress.at(name);
+                    List<String> got = ModPacks.importArchive(this, baseDir(), gameDir(), getContentResolver(), u, name, progress);
+                    // (many player models: their count, not a long list)
+                    int models = 0;
+                    for (String f : got) if (ModPacks.isPlayerModel(f)) models++;
+                    if (models > 3) ok.append("\n• ").append(getString(R.string.packs_gc_imported_n, models));
+                    for (String f : got) if (models <= 3 || !ModPacks.isPlayerModel(f)) ok.append("\n• ").append(f);
+                    List<String> failed = ModPacks.lastFailures;
+                    ModPacks.lastFailures = null;
+                    if (failed != null) for (String f : failed) bad.append("\n• ").append(f);
                 } catch (IOException | RuntimeException e) {
                     bad.append("\n• ").append(name).append(": ").append(e.getMessage());
                 }
             }
+            // (a save file's model imported again: the runtime reads it again)
+            PlayerModels.handOver(this);
             ModPacks.writeEnabled(baseDir(), prefs);
             String msg = "";
             if (ok.length() > 0) msg += getString(R.string.packs_imported) + ok;
@@ -3452,7 +4473,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
                     i.addCategory(Intent.CATEGORY_OPENABLE);
                     i.setType("*/*");
                     i.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true);
-                    startActivityForResult(i, PICK_IMPORT_FILES);
+                    startPicker(i, PICK_IMPORT_FILES);
                 }).show();
     }
 
@@ -3511,6 +4532,43 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     }
 
     /** runs `work` off the UI thread behind a progress dialog; `done` gets null or an error */
+    /** work on a thread of its own with a dialog showing `message`; work's progress lines replace it while it runs */
+    void withProgressLines(String message, java.util.function.Function<ModPacks.Progress, String> work, java.util.function.Consumer<String> done) {
+        GameDialog progress = new GameDialog(this).message(message).cancelable(false);
+        progress.show();
+        // (lines come quickly: the newest one is shown)
+        final String[] latest = {null};
+        final boolean[] posted = {false};
+        ModPacks.Progress p = text -> {
+            synchronized (latest) {
+                latest[0] = text;
+                if (posted[0]) return;
+                posted[0] = true;
+            }
+            runOnUiThread(() -> {
+                String t;
+                synchronized (latest) {
+                    t = latest[0];
+                    posted[0] = false;
+                }
+                progress.setMessage(message + "\n\n" + t);
+            });
+        };
+        new Thread(() -> {
+            String r;
+            try {
+                r = work.apply(p);
+            } catch (Exception e) {
+                r = "!" + e.getMessage();
+            }
+            final String res = r;
+            runOnUiThread(() -> {
+                progress.dismiss();
+                done.accept(res);
+            });
+        }, "progress").start();
+    }
+
     private void withProgress(int message, java.util.concurrent.Callable<String> work, java.util.function.Consumer<String> done) {
         GameDialog progress = new GameDialog(this).message(message).cancelable(false);
         progress.show();
@@ -3780,6 +4838,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
                 });
         dlg.setOnDismissListener(d -> {
             if (!answered[0]) Native.textInputDone(false, "");
+            if (padHost != null) padHost.textClosed();
             hideSystemBars();
         });
         edit.setOnEditorActionListener((v, action, e) -> {  // the keyboard's ✓: OK
@@ -3790,5 +4849,10 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
                 | WindowManager.LayoutParams.SOFT_INPUT_ADJUST_NOTHING);
         dlg.show();
         edit.requestFocus();
+        if (padHost != null)  // a GamePad device: its own field and keyboard (PadActivity.askText)
+            padHost.askText(initial, maxLen, getString(R.string.text_message, maxLen), (ok, text) -> {
+                if (ok) edit.setText(text);
+                dlg.press(ok ? 1 : 0);
+            });
     }
 }

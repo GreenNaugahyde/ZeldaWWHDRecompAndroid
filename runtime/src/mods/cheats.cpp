@@ -17,7 +17,7 @@
 // over again (moon_jump_step). WWHD_MOON_JUMP_SPEED / _LIFT / _FLY override rise, lift-off and flight
 // speed.
 //
-// Test switch: WWHD_CHEAT=items,sword,stats,songs,triforce,dungeon,key applies those once a save
+// Test switch: WWHD_CHEAT=items,sword,stats,songs,triforce,dungeon,key,bags,figurines applies those once a save
 // file is loaded; WWHD_CHEAT_INFINITE=health,magic,ammo,breath,moonjump switches those on.
 // WWHD_CHEAT_SAVE_ADDR=hex overrides the address (another game version).
 #include <algorithm>
@@ -58,6 +58,9 @@ constexpr uint8_t kBirdBait = 0x82, kHyoiPear = 0x83;
 constexpr uint8_t kSpoils[8] = {0x45, 0x46, 0x47, 0x48, 0x49, 0x4A, 0x4B, 0x1F};
 // dSv_info_c::mMemory: the current stage's dSv_memBit_c (copied back to its save table on leaving)
 constexpr uint32_t kStageKeys = 0x778 + 0x20, kStageDungeonItems = 0x778 + 0x21;  // bits: map, compass, boss key
+// dSv_save_c::mEvent: the event flags (dSv_event_c, u8[0x100]; a flag or register is a u16, its high byte the
+// index and its low byte the mask)
+constexpr uint32_t kEvent = 0x624;
 
 const release::Data kSaveInfo{0x101F84DC}, kPlay{0x1046F0B0};
 // the swim meter (dComIfG_play_c::mAirMeter, GameCube play + 0x48C4; its max follows): set to 900 when
@@ -149,6 +152,30 @@ void max_stats(uint32_t s) {
     st8(s + kMagic, 32);
 }
 
+// Complete the Nintendo Gallery (from the original project, PR #327 by Pulpparty): every figurine Carlov makes,
+// as daNpcMt_c::setFigure does for one. The figurines are bits in 17 event registers (l_figure_comp: register
+// figure / 8, bit figure % 8); only the 134 that exist are set (the last register holds 6). The gallery's
+// figures (daObjFigure_c) and Carlov's count (daNpcMt_c::isComp: 133 or more) read the same bits. A complete
+// collection makes Carlov leave the next time his workshop loads (event 0x3D08, as in the game), so the
+// membership he gives with the first figurine (event 0x3401: he took a picto to make one) could never be had
+// afterwards: without it nothing is set (the app checks it first and says so).
+const release::Data kFigureRegs{0x101C2478};  // daNpcMt_c's l_figure_comp: u16[17]
+constexpr int kFigures = 0x86;
+
+void all_figurines(uint32_t s) {
+    if (!(ld8(s + kEvent + 0x34) & 0x01)) {
+        LOG("[cheats] figurines: not a member of the Nintendo Gallery yet (give Carlov a color picto): nothing set");
+        return;
+    }
+    for (int i = 0; i < (kFigures + 7) / 8; i++) {
+        const uint16_t reg = ld16(kFigureRegs + 2 * i);
+        const int count = kFigures - 8 * i < 8 ? kFigures - 8 * i : 8;
+        const uint8_t bits = (uint8_t)(((1u << count) - 1) & (reg & 0xFF));
+        st8(s + kEvent + (reg >> 8), ld8(s + kEvent + (reg >> 8)) | bits);
+    }
+    st8(s + kEvent + 0x3A, ld8(s + kEvent + 0x3A) | 0x01);  // setFigure's event 0x3A01: a figurine was made
+}
+
 // Fill the bags: both bags (if missing), every kind of spoils x99, the bait bag's empty slots with
 // All-Purpose Bait (first half) and Hyoi Pears; counts as the game gives them (dSv_player_bag_item_c::
 // setBaitItem: 3)
@@ -228,10 +255,11 @@ int parse_env(const char* var, std::initializer_list<std::pair<const char*, int>
 
 std::atomic<int> g_pending{parse_env("WWHD_CHEAT", {{"items", kCheatItems}, {"sword", kCheatSword}, {"stats", kCheatStats},
                                                     {"songs", kCheatSongs}, {"triforce", kCheatTriforce},
-                                                    {"dungeon", kCheatDungeon}, {"key", kCheatKey}, {"bags", kCheatBags}})};
+                                                    {"dungeon", kCheatDungeon}, {"key", kCheatKey}, {"bags", kCheatBags},
+                                                    {"figurines", kCheatFigurines}})};
 std::atomic<int> g_infinite{parse_env("WWHD_CHEAT_INFINITE",
                                       {{"health", kInfHealth}, {"magic", kInfMagic}, {"ammo", kInfAmmo}, {"moonjump", kMoonJump}, {"nofall", kMoonNoFall},
-                                       {"allanims", kMoonAllAnims}, {"rupees", kInfRupees}, {"bags", kInfBags}, {"breath", kInfBreath}, {"onehit", kOneHit}})};
+                                       {"allanims", kMoonAllAnims}, {"rupees", kInfRupees}, {"bags", kInfBags}, {"breath", kInfBreath}, {"onehit", kOneHit}, {"push", kFastPush}})};
 }  // namespace
 
 uint32_t loaded_save() {
@@ -256,6 +284,7 @@ void set_infinite(int which, bool on) {
         : which == kInfBags   ? "infinite bait and spoils"
         : which == kInfBreath ? "infinite swimming"
         : which == kOneHit    ? "one hit kills (enemies)"
+        : which == kFastPush  ? "faster block pushing"
                              : "random lift-off animations",
         on ? "on" : "off");
 }
@@ -432,8 +461,38 @@ bool moon_jump_move(uint32_t link, float& x, float& z) {
     return true;
 }
 
+// Faster block pushing: the pushable blocks and crates (daObjMovebox::Act_c, d_a_obj_movebox.cpp) take
+// their timing from the table M_attr, one 0x9C-byte entry per kind of box (13 in WWHD): s16 frames of
+// pushing / pulling before the box starts (+0x0 / +0x6 while Link keeps on moving it, +0x2 / +0x8 from a
+// standstill; check_to_walk) and frames per cell (+0x4 push, +0xA pull; mode_wait sets the move's count
+// and its cosine ease from them). All are 4 and 20 frames in the game; the switch makes them 1 and 8.
+// Link follows the box by itself (setPushPullKeepData adds its move to his position), his push animation
+// keeps its pace. Written every frame (the table is in .data, a save state brings back what it had); an
+// entry with other values is left alone.
+const release::Data kBoxAttr{0x101CB424};
+constexpr int kBoxKinds = 13;
+constexpr uint32_t kBoxAttrSize = 0x9C;
+void fast_push() {
+    static const int frames = std::clamp((int)env_float("WWHD_FAST_PUSH_FRAMES", 8.0f), 2, 20);
+    const bool on = g_infinite.load(std::memory_order_relaxed) & kFastPush;
+    const uint16_t game[2] = {4, 20}, fast[2] = {1, (uint16_t)frames};
+    const uint16_t* from = on ? game : fast;
+    const uint16_t* to = on ? fast : game;
+    for (int k = 0; k < kBoxKinds; k++) {
+        const uint32_t a = kBoxAttr + k * kBoxAttrSize;
+        bool ours = true;
+        for (int f = 0; f < 6; f++) {
+            const uint16_t v = ld16(a + 2 * f), want = to[f == 2 || f == 5], was = from[f == 2 || f == 5];
+            if (v != want && v != was) ours = false;
+        }
+        if (!ours) continue;
+        for (int f = 0; f < 6; f++) st16(a + 2 * f, to[f == 2 || f == 5]);
+    }
+}
+
 void cheats_service() {
-    int inf = g_infinite.load(std::memory_order_relaxed) & ~(kMoonJump | kMoonNoFall | kMoonAllAnims);
+    fast_push();
+    int inf = g_infinite.load(std::memory_order_relaxed) & ~(kMoonJump | kMoonNoFall | kMoonAllAnims | kFastPush);
     if (!g_pending.load(std::memory_order_relaxed) && !inf) return;
     uint32_t s = save_addr();
     if (!save_loaded(s)) return;  // stays pending until a file is loaded
@@ -468,6 +527,7 @@ void cheats_service() {
     if (w & kCheatDungeon) st8(s + kStageDungeonItems, ld8(s + kStageDungeonItems) | 7);
     if (w & kCheatKey && ld8(s + kStageKeys) < 99) st8(s + kStageKeys, ld8(s + kStageKeys) + 1);
     if (w & kCheatBags) fill_bags(s);
+    if (w & kCheatFigurines) all_figurines(s);
     LOG("[cheats] applied %d in %s: life %u/%u, rupees %u, magic %u, items %02X..%02X, collect %02X %02X, songs %02X, triforce %02X, keys %u, dungeon items %02X",
         w, stage().c_str(), ld16(s + kLife), ld16(s + kMaxLife), ld16(s + kRupee), ld8(s + kMagic), ld8(s + kItems), ld8(s + kItems + 20),
         ld8(s + kCollect), ld8(s + kCollect + 1), ld8(s + kTact), ld8(s + kTriforce), ld8(s + kStageKeys), ld8(s + kStageDungeonItems));
@@ -483,5 +543,8 @@ extern "C" void f_025D475C_orig(Cpu* c);
 extern "C" void hook_025D475C(Cpu* c) {
     const uint32_t a = c->r[3];
     if (mods::infinite(mods::kOneHit) && ld8(a + 0x2DA) == 2 && (int8_t)ld8(a + 0x3A1) > 1) st8(a + 0x3A1, 1);
+    mods::touch_actor_seen(a);     // the actor A acts on (touch_state.cpp)
+    mods::hit_stop_step(a, true);  // hit freezes switched off (turbo.cpp)
     f_025D475C_orig(c);
+    mods::hit_stop_step(a, false);
 }

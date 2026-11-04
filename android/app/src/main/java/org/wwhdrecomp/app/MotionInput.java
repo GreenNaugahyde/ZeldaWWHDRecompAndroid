@@ -31,7 +31,16 @@ final class MotionInput implements SensorEventListener {
     private boolean haveAcc;
     private long lastGyroNs;
 
-    MotionInput(Activity a) { activity = a; }
+    /** where the samples go: the runtime, or a TV (PadActivity: this device as its GamePad) */
+    interface Sink { void sample(float dt, float gx, float gy, float gz, float ax, float ay, float az); }
+    private final Sink sink;
+
+    MotionInput(Activity a) { this(a, Native::motionSample); }
+
+    MotionInput(Activity a, Sink sink) {
+        activity = a;
+        this.sink = sink;
+    }
 
     /** Starts reading: the controller's sensors if it has them, else the device's. */
     void start(InputDevice usedController) {
@@ -90,7 +99,7 @@ final class MotionInput implements SensorEventListener {
         lastGyroNs = e.timestamp;
         if (dt <= 0) return;
         float[] g = toSdl(e.values), a = toSdl(acc);
-        Native.motionSample(dt, g[0], g[1], g[2], a[0], a[1], a[2]);
+        sink.sample(dt, g[0], g[1], g[2], a[0], a[1], a[2]);
     }
 
     // source axes -> SDL controller axes

@@ -1,0 +1,66 @@
+// The screen-only app for a TV: it can't play the game itself; it waits for a phone or tablet running the full app
+// (Game > Other devices > Others can join this device) and shows its game and plays its sound (PadActivity in the
+// screen role). The same Java code and resources as the app, none of its native code: no game, no recompiler, no
+// game files, a small APK. BuildConfig.RECEIVER tells the shared code.
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'org.wwhdrecomp.app'  // (the shared code's R and BuildConfig)
+    buildFeatures {
+        buildConfig true
+    }
+    lint {
+        disable 'MissingTranslation'
+    }
+    compileSdk 36
+
+    defaultConfig {
+        applicationId 'org.wwhdrecomp.screen'
+        minSdk 30
+        targetSdk 36
+        versionCode((project.findProperty('wwhdVersionCode') ?: '19') as int)
+        versionName project.findProperty('wwhdVersionName') ?: '0.9.9'
+        buildConfigField 'boolean', 'PUBLIC_RELEASE', 'true'
+        buildConfigField 'boolean', 'RECEIVER', 'true'
+        buildConfigField 'boolean', 'REMOTE_PLAY', 'true'
+    }
+
+    sourceSets {
+        main {
+            java.srcDirs = ['../app/src/main/java']
+            res.srcDirs = ['../app/src/main/res', 'src/main/res']
+            manifest.srcFile 'src/main/AndroidManifest.xml'
+        }
+    }
+
+    def keystoreProps = rootProject.file('keystore.properties')
+    signingConfigs {
+        if (keystoreProps.exists()) {
+            release {
+                def p = new Properties()
+                keystoreProps.withInputStream { p.load(it) }
+                storeFile file(p.getProperty('storeFile'))
+                storePassword p.getProperty('storePassword')
+                keyAlias p.getProperty('keyAlias')
+                keyPassword p.getProperty('keyPassword')
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            // only what PadActivity reaches stays (the game's own classes are left out)
+            minifyEnabled true
+            shrinkResources true
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+            signingConfig keystoreProps.exists() ? signingConfigs.release : signingConfigs.debug
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+}

@@ -28,6 +28,17 @@ void init(const std::string& gameDir);
 
 void apply_memory();  // boot, after the executable is in guest memory: the patched bytes
 
+// Randomizer (TWWHD Randomizer's output folder, runtime/src/android/rando_jni.cpp): code/cking.rpx is
+// compiled and run instead of the game's (CodePatch::rpx), its content/ replaces game files. "" off.
+// Set before init; init picks it up.
+void set_randomizer(const std::string& outDir);
+// Link's colours (Mods > Link's colours, mods/link_colors.cpp): the folder with the save files' file<N>.bin, "" off
+// (a randomized game, a player model). Any time: each call counts as a change (the files are read again).
+void set_link_colors(const std::string& dir);
+std::string link_colors_used();
+uint32_t link_colors_gen();
+std::string executable(const std::string& gameDir);  // after init: the executable to load (the randomizer's or the game's)
+
 // content replacement (hle/fs.cpp): `rel` is the path below /vol/content ('/'-separated, any case)
 std::string content_file(const std::string& rel);  // the pack's file for it, or ""
 std::string content_dir(const std::string& rel);   // a pack's folder for it, or "" (folders only packs have)

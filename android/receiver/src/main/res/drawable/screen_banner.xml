@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- the TV launcher's banner: the app's seascape with the screen app's TV on it -->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:drawable="@drawable/tv_banner" />
+    <item android:drawable="@drawable/screen_icon" android:width="120dp" android:height="120dp"
+        android:gravity="end|center_vertical" android:right="16dp" />
+</layer-list>

@@ -257,9 +257,14 @@ struct LatteDecompilerOutputUniformOffsets
 
 struct LatteDecompilerOptions
 {
+	uint32 areaSampledTextures{0}; // WWHD: pixel-shader units the host reads area-sampled (vk/area_sample.h); declares their uf_texNScale
 	bool usesGeometryShader{ false };
 	// floating point math
 	bool strictMul{}; // if true, 0*anything=0 rule is emulated
+	// WWHD: pixel colour outputs never carry NaN (written as 0) or infinity (+-65000): a few NaN
+	// pixels, spread over the whole screen by the bloom and blur passes, black out the 3D picture for
+	// some frames (the thunderstorm's flash light at sea; WindWakerHD-Android-Plus 5135aa9)
+	bool finiteColorOutputs{ false };
 	// Vulkan-specific
 	bool useTFViaSSBO{ false };
 	struct

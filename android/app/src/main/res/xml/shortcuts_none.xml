@@ -1,0 +1,3 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- builds without remote play (BuildConfig.REMOTE_PLAY false): no icon shortcuts -->
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android" />

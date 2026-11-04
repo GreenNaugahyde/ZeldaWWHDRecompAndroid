@@ -572,6 +572,44 @@ void choice_step() {
     }
 }
 
+// ==== a system question's buttons (mode 13: SequenceWindow_00, the save question after a game over and the like; the
+// Wii U took them by touch on the GamePad, the TV shows the same buttons): a tap on one moves the cursor there (a stick
+// push, unless it is the larger one: the cursor is there already) and takes it (A)
+constexpr float kSeqHalfW = 160, kSeqHalfH = 55;  // layout units around a button's centre
+
+bool sequence_shown() {
+    int32_t b[12];
+    hud_sequence_buttons(b);
+    return b[0] || b[4] || b[8];
+}
+
+void sequence_step() {
+    int32_t b[12];
+    hud_sequence_buttons(b);
+    for (const Touch& t : take_touches()) {
+        if (t.action != 2 || std::isnan(t.x) || pushing()) continue;
+        int to = -1;
+        for (int i = 0; i < 3; i++)
+            if (b[4 * i] && std::fabs(t.x - b[4 * i + 1]) < kSeqHalfW && std::fabs(t.y - b[4 * i + 2]) < kSeqHalfH) to = i;
+        if (to < 0) continue;
+        int other = to == 0 ? 1 : 0;
+        bool there = to == 2 || !b[4 * other] || b[4 * to + 3] > b[4 * other + 3] + 5;
+        LOG("[mg] question button %d (sizes %d %d %d)%s", to, b[3], b[7], b[11], there ? "" : ", cursor moved");
+        if (!there) {
+            push(0, to == 0 ? -1.0f : 1.0f, 0, 2);
+            push(0, 0, 0, 2);
+        }
+        push(input::kA, 0, 0, 2);
+        push(0, 0, 0, 2);
+    }
+    if (g_watch) {
+        std::lock_guard<std::mutex> lk(g_mark_mu);
+        g_marks.clear();
+        for (int i = 0; i < 3; i++)
+            if (b[4 * i]) g_marks.insert(g_marks.end(), {(float)b[4 * i + 1], (float)b[4 * i + 2]});
+    }
+}
+
 // ==== the message's number entry (the auction's bid): the finger moves like the stick, one push per
 // 60 layout units (up / down: the digit, left / right: which digit); a tap takes the number (A)
 constexpr float kNumberStep = 60;
@@ -946,6 +984,7 @@ void minigame_step() {
     if (mode == 9) figure_step();
     if (mode == 10) conduct_step();
     if (mode == 12) shop_held_step();
+    if (mode == 13) sequence_step();
     if (mode != 9 && mode != 10) {
         std::lock_guard<std::mutex> lk(g_hold_mu);
         g_hold = {};
@@ -1023,6 +1062,7 @@ bool wind_compass() {
 
 int minigame_mode() {
     if (choice_shown()) return 6;
+    if (sequence_shown()) return 13;
     if (wind_compass()) return 11;
     if (hud_number_entry()) return 7;
     if (shop_open()) return 8;

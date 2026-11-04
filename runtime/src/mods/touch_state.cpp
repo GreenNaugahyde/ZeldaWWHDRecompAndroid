@@ -158,7 +158,55 @@ uint32_t save_address() {
     if (maxLife < 12 || maxLife > 80 || maxLife % 4 || life > maxLife) return 0;
     return s;
 }
+// What Link holds or A would lift / pick up, for the buttons' pictures (touch state 38, 39; GameIcons.java): an
+// enemy's weapon in his hand (daPy_lk_c::mActorKeepEquip, GameCube 0x317C -> HD 0x6590, {process id, actor}; while
+// mEquipItem is daPyItem_BOKO 0x101), the thing he carries (mActorKeepGrab, 0x318C -> 0x65A0) and the actor of A's
+// attention entry (dAttList_c::mActorID +0xC; found by its process id in the actors' execute). The kind from the
+// actor's process name (base_process_class::mProcName +0x8, HD's numbers: GameCube's - 6 here, - 2 for the bomb)
+// and parameters (+0xB0, as the GameCube's; daBoko_c reads its type from there, 020C1D50)
+constexpr uint32_t kLinkKeepEquip = 0x6590, kLinkKeepGrab = 0x65A0;
+constexpr int16_t kProcBomb = 0x126, kProcTsubo = 0x1C5, kProcStone = 0x1C6, kProcStone2 = 0x1C7, kProcBarrel = 0x1C8,
+                  kProcBoko = 0x1CF;
+std::atomic<uint32_t> g_want_id{0}, g_want_actor{0};
+
+bool actor_ptr(uint32_t a) { return a >= 0x10000000 && a < 0x50000000; }
+
+// 1 stick, 2 a lit stick (a torch: daBoko_c::mFlameTimer GameCube 0x2C4 -> HD 0x43C, set to 900 at 020C19B8),
+// 3 machete, 4 Stalfos' mace, 5 Darknut's sword, 6 Moblin's spear, 7 Phantom Ganon's sword (daBoko_c types 0..5);
+// 16.. things: daTsubo types (the pot's parameters >> 24 & 0xF) 0 small pot 16, 1 big pot 17, 2 Kmtub_00 18,
+// 3 small barrel 19, 4 stool 20, 5 skull 21, 6 bucket 22, 8 box 23, 14 Ptubo 24; a rock (daStone) 25, a pebble
+// (daStone2) 26, a barrel (daObjBarrel) 19, a bomb 27 or a bomb flower's (daBomb state 5 / 6) 28; 0 other
+int thing_kind(uint32_t a) {
+    if (!actor_ptr(a)) return 0;
+    int16_t pn = (int16_t)ld16(a + 8);
+    uint32_t prm = ld32(a + 0xB0);
+    switch (pn) {
+        case kProcBoko:
+            if (prm == 0) return ld16(a + 0x43C) != 0 ? 2 : 1;
+            return prm <= 5 ? (int)prm + 2 : 1;
+        case kProcTsubo: {
+            static const int8_t kTsubo[16] = {16, 17, 18, 19, 20, 21, 22, 0, 23, 0, 0, 0, 0, 0, 24, 0};
+            return kTsubo[prm >> 24 & 0xF];
+        }
+        case kProcStone: return 25;
+        case kProcStone2: return 26;
+        case kProcBarrel: return 19;
+        case kProcBomb: return (prm & 0xFF) == 5 || (prm & 0xFF) == 6 ? 28 : 27;
+        default: return 0;
+    }
+}
+
+// the actor kept at Link + off ({process id, actor}), if it is still that one
+uint32_t kept_actor(uint32_t link, uint32_t off) {
+    uint32_t id = ld32(link + off), a = ld32(link + off + 4);
+    return actor_ptr(a) && ld32(a + 4) == id ? a : 0;
+}
 }  // namespace
+
+void touch_actor_seen(uint32_t a) {
+    uint32_t want = g_want_id.load(std::memory_order_relaxed);
+    if (want && ld32(a + 4) == want) g_want_actor.store(a, std::memory_order_relaxed);
+}
 
 uint32_t player_save() { return save_address(); }
 
@@ -219,6 +267,16 @@ void touch_state(int32_t out[kTouchStateLen]) {
     out[36] = link ? (int32_t)ld32(link + 0x6A70) : 0;  // daPy_lk_c::mModeFlg (0x400000 on a ladder, 0x10000 climbing, 0x20 hanging)
     for (int i = 0; i < 21; i++)  // the Swift Sail (HD, 0x77) in place of the sail (0x78)
         if (ld8(s + kInventory + i) == 0x77) out[37] = 1;
+    if (link) {
+        out[38] = out[29] == 0x101 ? thing_kind(kept_actor(link, kLinkKeepEquip)) : thing_kind(kept_actor(link, kLinkKeepGrab));
+        uint32_t id = actor_ptr(e) ? ld32(e + 0xC) : 0;
+        if (id != g_want_id.load(std::memory_order_relaxed)) {
+            g_want_actor.store(0, std::memory_order_relaxed);
+            g_want_id.store(id, std::memory_order_relaxed);
+        }
+        uint32_t a = g_want_actor.load(std::memory_order_relaxed);
+        out[39] = id && actor_ptr(a) && ld32(a + 4) == id ? thing_kind(a) : 0;
+    }
 }
 
 bool inventory(uint8_t out[21]) {
@@ -518,13 +576,17 @@ void touch_state_step() {
     }
     // the buttons' actions and what Link holds / does (daPy_lk_c::mCurProc, GameCube 0x31D8 + 0x3450 as mEquipItem:
     // not it in HD, reads 0 throughout; kept to find the right one)
-    static int32_t last_act[6] = {-2, -2, -2, -2, -2, -2};
+    static int32_t last_act[8] = {-2, -2, -2, -2, -2, -2, -2, -2};
     uint32_t lk = link_actor(), ea = lk ? ld32(lk + kLinkAttnEntryA) : 0;
-    int32_t act[6] = {action(a_status()), action(b_status()), action(r_status()), lk ? ld16(lk + 0x69B0) : -1,
-                      lk ? (int32_t)ld32(lk + 0x6628) : -1, ea >= 0x10000000 && ea < 0x50000000 ? (int32_t)ld32(ea + 8) : -1};
+    uint32_t held = lk ? (ld16(lk + 0x69B0) == 0x101 ? kept_actor(lk, kLinkKeepEquip) : kept_actor(lk, kLinkKeepGrab)) : 0;
+    uint32_t want = g_want_actor.load(std::memory_order_relaxed);
+    int32_t act[8] = {action(a_status()), action(b_status()), action(r_status()), lk ? ld16(lk + 0x69B0) : -1,
+                      lk ? (int32_t)ld32(lk + 0x6628) : -1, ea >= 0x10000000 && ea < 0x50000000 ? (int32_t)ld32(ea + 8) : -1,
+                      held ? (int32_t)(ld16(held + 8) << 16 | thing_kind(held)) : 0,
+                      want ? (int32_t)(ld16(want + 8) << 16 | thing_kind(want)) : 0};
     if (memcmp(act, last_act, sizeof act)) {
-        LOG("[touch] A %02X  B %02X  R %02X  hand %04X  proc %d  attention %d", act[0], act[1], act[2], act[3] & 0xFFFF, act[4],
-            act[5]);
+        LOG("[touch] A %02X  B %02X  R %02X  hand %04X  proc %d  attention %d  held %08X (prm %08X)  target %08X (prm %08X)", act[0],
+            act[1], act[2], act[3] & 0xFFFF, act[4], act[5], act[6], held ? ld32(held + 0xB0) : 0, act[7], want ? ld32(want + 0xB0) : 0);
         memcpy(last_act, act, sizeof act);
     }
     static uint8_t last[kActWindowLen];

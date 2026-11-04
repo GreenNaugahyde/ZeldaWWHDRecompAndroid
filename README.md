@@ -45,6 +45,9 @@ The original project (macOS, the 60 fps modes, decompilation tools) is described
   120 Hz or more. It needs a fast phone (60 fps on a Snapdragon 7+ Gen 3); where a frame doesn't
   fit in time it is left out, so the game always keeps its speed. Works together with frame
   generation ×2.
+- **60 fps (generated)** (from WindWakerHD-Android-Plus): the game stays at 30 fps and every other
+  frame is made on the GPU from the last one, with the HUD kept still; for phones whose CPU can't
+  interpolate (60 fps on a Snapdragon 855).
 - **An in-game options menu** that looks like the game's own GamePad menus (its paper, tabs, buttons
   and fonts, taken from your game files), as a page of the game's + menu, with tabs for saves, the
   game, graphics, mods and controls, usable by touch and with a controller (see below); it fits phone
@@ -79,7 +82,8 @@ The original project (macOS, the 60 fps modes, decompilation tools) is described
 - **The Wii U's sun and haze**: the sun's corona and lens flare (hidden behind walls and hills as on
   the console), the haze in the distance and the bloom around bright light.
 - **Display options**: rendering resolution from 0.5× to 3×, dynamic resolution (lowered by itself
-  while the GPU can't keep up, down to a limit you choose), sharp or bilinear upscaling, a display
+  while the GPU can't keep up or memory runs low, down to a limit you choose), sharp, bilinear or
+  pixel-perfect upscaling, a display
   resolution that draws the picture only as large as it needs to be on high-resolution screens,
   aspect ratio (bars, stretched, or filling the screen), screen layouts for the TV and GamePad
   pictures (GamePad inset, side by side, TV with the GamePad on +, GamePad with TV inset). All of
@@ -107,6 +111,30 @@ The original project (macOS, the 60 fps modes, decompilation tools) is described
   wait for a song, and (experimental) singing, humming or whistling a song into the microphone.
 - **Controller setup**: face buttons by position or by letters, ready-made layouts for Jump anywhere,
   L1 and d-pad down as item buttons, controller details.
+- **Mini map** in a corner of the TV picture, in the GamePad map's style: the sea, the dungeons' rooms
+  and floor plans elsewhere, square or round in the sailing compass, with island pictures redrawn, in
+  HD, as the terrain really is, or the game's own, and a wind arrow you can swipe to set the wind.
+- **Full map**: the whole sea chart (or the dungeon, cave or house Link is in) full screen and sharp,
+  and the + menu's sea chart and dungeon maps drawn anew in the same quality.
+- **Randomizer**: [TWWHD Randomizer](https://github.com/SuperDude88/TWWHD-Randomizer) 1.2.0 by
+  SuperDude88 built in (USA, Europe and Japan), with several randomized games side by side, a choice at
+  each start which one to play, and the spoiler log as pages and on the progress map.
+- **Link's colours**: colour sets, each colour of his clothes, hair and eyes (with a colour wheel),
+  for randomized games (also the casual clothes from the start) and for the game as it is, per save
+  file and live.
+- **GameCube player models**: custom models made for the GameCube randomizer (for example the
+  [Custom Wind Waker Player Models](https://github.com/Sage-of-Mirrors/Custom-Wind-Waker-Player-Models)
+  collection) imported as a zip and converted on the device for HD: Link's body, hair, hands and the
+  items the pack changes, their textures upscaled to HD's sizes, on HD's skeleton and animations. A
+  model (or Link) for each save file, switched live, in the game as it is and in randomized games.
+- **Save file names** up to 16 characters, renamed while playing (the game's name entry allows 8).
+- **Game progress and achievements**: a percent and a checklist of what the save file has collected
+  and what is missing, a map of where each thing is found (also as marks on the mini map and the game's
+  own maps), and 105 achievements with a pop-up of Link holding each one up.
+- **Quicker play** (each a switch): instant text and no pauses in texts, walk-through doors (dungeon and
+  house doors without their scene), hit freezes off by kind, the wind set at once from the mini map.
+- **Android TV**: the app in the TV launcher, set up with the remote, played with a controller; a TV
+  by casting or an HDMI cable shows the game picture while the device shows the GamePad.
 - **Graphics presets** and a 2-minute test that finds the best settings for the device.
 - **Picto Box album and postboxes**: an album with any number of pages of 12 pictos, the subject of
   each picto named (with the game's gold medal when it is good enough for a figurine), and pictos
@@ -151,6 +179,106 @@ The original project (macOS, the 60 fps modes, decompilation tools) is described
 - **No internet access**: the app doesn't request it, and its manifest explicitly excludes it.
 
 ## Version history
+
+**0.9.9**
+
+- Game › **Randomizer**: [TWWHD Randomizer](https://github.com/SuperDude88/TWWHD-Randomizer) 1.2.0
+  by SuperDude88 in the app, for the USA, European and Japanese releases: presets or its settings and a
+  permalink (seeds match the PC version 1.2.0), several randomized games side by side with their own
+  saves, a question at each start which one to play (or the game as it is), and the spoiler log as
+  pages and on the game progress map. Its texts also in German, Italian and Japanese. Randomizer ›
+  **Link's colours**: the randomizer's colour sets, each colour by hue, saturation and brightness or a
+  code, random colours, his casual clothes from the start, and a picture of him; a game made already
+  gets them again with its own seed (its save and save states stay).
+- Mods › **Link's colours**: the same colours for the game as it is, for each save file, changed while
+  playing (no restart), with a colour wheel; a save file playing as a GameCube player model shows which
+  model it is instead.
+- Mods › Mod packs › **GameCube player model**: a custom model pack made for the GameCube randomizer
+  (a zip with its Link.arc, also a whole collection at once) is converted on the device: what the pack
+  changed (the body, hair, hands, swords, shield, items) goes onto HD's skeleton with HD's materials and
+  animations, its textures upscaled to HD's sizes and formats. Pick one or Link himself for each save
+  file; it changes while playing, also in randomized games. About 5 MB a model.
+- Mods › **Save file names**: rename a save file while playing, up to 16 characters (the game's name
+  entry allows 8); the file select shows the first 8, the texts the whole name.
+- **Full map** (hold the mini map, or Controls › Screen (HUD) › Full map): the whole sea chart full
+  screen and sharp at any zoom; indoors the dungeon, cave or house Link is in, a floor at a time. The
+  + menu's sea chart and dungeon maps can be drawn anew in the same quality, with Medli and Makar where
+  they wait. Map decorations in the GamePad menus' style.
+- Mini map: **Map pictures** Redrawn (with island names), Terrain (the islands as they really are,
+  houses and caves by their ground), HD or Original; a wind arrow (a swipe from it sets the wind at
+  once, on any stage, without the song; − held and the right stick with a controller), opacity and
+  fainter while moving, the treasure chart beside it, Link's face or only his arrow, zoom while moving.
+  A tap steps its size.
+- Game › **Instant text** (and No pauses in texts): message boxes show their whole text at once.
+- Game › **Walk-through doors**: dungeon and house doors open as Link walks up (or With A) and he walks
+  through without their scene; leaving a house is quicker.
+- Game › **Hit freezes**: the moment the world stops when a hit lands, switched off by kind (hits,
+  strong hits, defeats, bosses, signs).
+- Mods › Deku Leaf: wave to rise: the height of one wave is a choice, and the button held waves on.
+- Graphics › Upscaling › **Pixel perfect**: each rendered pixel a crisp block of the same size.
+- **Android TV**: the app in the TV launcher, set up with the remote (files from the app's folder where
+  a TV has no file chooser), played with a controller. A TV by casting or an HDMI cable: Graphics ›
+  Screens › GamePad screen › Game picture there; the device then shows the GamePad with a controller
+  view of its own (an eyes-free layout by default, the TV picture dimmed behind it, the conducting bar
+  and the wind compass on it).
+- Touch: icons for Grab (push and pull), what Link holds and lifts, the rope's Let Go and R Cruise on
+  the boat; on the boat the item ring has only what Link can use there; letters, stone tablets and signs
+  go on with a tap; the system questions (after a game over) by tap; the classic layout hides no button.
+- Dialogs with a controller: one button is selected from the start, the right stick scrolls the text.
+- Devices with little memory (TV boxes with 3 GB): dynamic resolution steps down when memory runs low,
+  and they start at 1× at most.
+- Mini map (Controls › Screen (HUD) › Mini map, on): a map in a corner of the TV picture in the
+  GamePad map's style, with the game's own artwork: on the Great Sea the charted islands and the King
+  of Red Lions, in the dungeons the GamePad's room pictures of Link's floor with chests, doors and
+  stairs, elsewhere a floor plan. Square (parchment) or Round (in the sailing compass), filled or see-
+  through, north up or turning with Link, three sizes (a tap on it for the next one), any corner or a
+  place of its own in the layout editor.
+- Game › Game progress: a percent (optionally on screen) and a checklist of what the save file has
+  collected and what is still missing, in ten parts: dungeons, hearts, items, equipment, upgrades,
+  songs, pearls and Triforce, treasure charts, the sea chart and the Nintendo Gallery. Its **Map** shows
+  where each thing is found on the sea chart and, if you like, what is still missing; the same marks
+  can go on the mini map and on the game's own sea chart and dungeon maps.
+- Game › Achievements: 105 goals (story, Hero Mode, items, songs, side quests, collections, the gallery), read
+  from the save data and earned for good, for all save games and for each one. When one is earned,
+  a pop-up shows Link holding it up as he does a treasure, with the game's item fanfare (each part
+  can be switched off, the jingle's volume set). Cheats and story presets pause them, and the page
+  names what pauses them; **Earn with cheats** lets them count anyway.
+- Graphics › Frame rate › **60 fps (generated)**: the game stays at its 30 fps and every other frame is
+  made on the GPU from the last one, with the HUD kept still (from Nycolazs's
+  [WindWakerHD-Android-Plus](https://github.com/Nycolazs/WindWakerHD-Android-Plus)). It holds 60 fps
+  where frame interpolation can't (a Snapdragon 855 does), but needs GPU time to spare: too much for a
+  Mali-G52.
+- Frame interpolation (60 / 120 fps) much improved with the original project's work: the game's logic
+  at 60 fps now follows the 30 fps one exactly, and sword trails, the hookshot chain, sails, ropes,
+  eyes, clouds, the sun and moon, fades and many effects move smoothly; minigame timers no longer run
+  twice as fast, the Pirate's Charm rings again, Game Over's Continue works, the Boating Course stays at
+  60, the start-up screen plays at its speed.
+- Graphics › Picture quality › Smooth blur at high resolution (on): above 1.5× the light and bloom
+  blur no longer leave a fine grid around things on the ground; torchlight and bloom look as at 720p.
+- Mods › Deku Leaf: wave to rise (off): while gliding, each wave of the leaf lifts Link a little; the
+  magic is the limit.
+- Mods › Cheats: Faster block pushing, and Complete the Nintendo Gallery (from the original project,
+  by Pulpparty).
+- Jump anywhere: a standing jump goes straight up instead of forward (the cause found by the original
+  project).
+- Controls › Touch › ZL / ZR stay on after a tap (Flexible, on): off, ZL and ZR work only while held.
+- About › Share game log: the game's log of the current run (optionally with the save files) for a
+  bug report, without anything personal.
+- Picto Box on phone screens (20:9 and other non-16:9 shapes): the picto and its subjects are the
+  16:9 part of the picture, as on a Wii U (from the original project).
+- The Quest Log shows each save's real date, and converted GameCube saves get the Deluxe Picto Box
+  where HD would have given it (from the original project).
+- Less memory: saving a state no longer needs about 250 MB extra, textures not seen for a while are
+  freed, and a state isn't saved when Android is about to close the game for lack of memory (it says
+  so) (issue #51).
+- Fixed: a rare game halt at the title screen (from WindWakerHD-Android-Plus, after the original
+  project); leaving Beedle's Shop Ship could halt the game; a black 3D picture in a night storm at sea.
+- A shader the GPU driver crashes on is left out at the next start instead of crashing again (issue
+  #53); BC textures are decoded in a form fragile GPU compilers accept, on Huawei GPUs on the CPU.
+- Fewer render passes on tiled GPUs (Mali-G52: about 5 fewer a frame); fast forward reaches its full
+  speed with frame generation; Turnip on Adreno 6xx runs without UBWC (a restart at the first frame
+  was reported on an Adreno 650) (from WindWakerHD-Android-Plus).
+- The microphone is optional: devices without one can install the app.
 
 **0.9.8**
 
@@ -494,15 +622,18 @@ swap too.)
   the Flexible touch controls: the talk goes on by itself up to a question, optionally fast forward),
   album pages, picto subjects, mailing pictos at postboxes (and same day delivery), Link's clothes,
   GamePad sounds (the sounds the Wii U plays on the GamePad speaker alone: its menus, switching items,
-  saving; also used by the options menu), and the **Songs** page (replay conducted songs, singing
+  saving; also used by the options menu), game progress (with its map) and achievements, and the
+  **Songs** page (replay conducted songs, singing
   into the microphone, play buttons).
 - **Graphics**: a **preset** (Lowest to High) and **Find the best settings** (a 2-minute test of the
-  device), rendering resolution, frame rate (30 fps, or 60/120 fps by frame interpolation) and frame
+  device), rendering resolution, frame rate (30 fps, 60/120 fps by frame interpolation, or 60 fps
+  generated on the GPU) and frame
   generation, then pages:
   - *Resolution & upscaling*: dynamic resolution (off, or down to 0.75×, 0.6×, 0.5× or 0.4× while
     the GPU can't keep up), upscaling (sharp or bilinear), display resolution (Auto: drawn at the size
     the picture needs and enlarged by the display hardware; Full: always at the screen's resolution);
-  - *Picture quality*: ambient occlusion, full-size occlusion depth, 16× anisotropic filtering;
+  - *Picture quality*: ambient occlusion, full-size occlusion depth, smooth blur at high resolution,
+    16× anisotropic filtering;
   - *Screens*: widescreen, field of view, aspect ratio, the GamePad screen and its picture (with a
     second display), screen layout;
   - *Performance overlay*;
@@ -512,10 +643,11 @@ swap too.)
     after a restart), and deleting the shader cache (restarts the game as on its first start).
 - **Mods**: all off by default. Jump anywhere (its button, double jump, no automatic ledge jumps) and
   the moon jump (its button, rise and flight speed, no fall damage, random lift-off poses), climb any
-  wall, faster running, swimming, climbing and sidling (each 1.25× up to 4×, always or with L3).
+  wall, faster running, swimming, climbing and sidling (each 1.25× up to 4×, always or with L3), the
+  Deku Leaf rising with each wave.
   **Cheats** (from the original project) change the save file you play: items, hearts, magic,
   rupees, filled bags, infinite health, magic, ammunition, rupees, bait and spoils, and swimming, one
-  hit kills, and story cheats (save to a spare file first; they can change story events). **Mod packs**: import,
+  hit kills, faster block pushing, the complete Nintendo Gallery, and story cheats (save to a spare file first; they can change story events). **Mod packs**: import,
   turn on and off, choose a pack's presets; changes apply after a restart, which the menu offers when
   you leave it.
 - **Controls**: on-screen controls on or off (off: only the menu button, for playing with a
@@ -523,7 +655,7 @@ swap too.)
   and the pages Touch, Item ring, Camera, Minigames & hints, Screen (HUD) and Controller, all
   explained in the [controls guide](docs/new-controls.md).
 
-About (with the licenses) and Quit are at the foot of the page.
+About (with the licenses, Share crash logs and Share game log) and Quit are at the foot of the page.
 
 ## Frame generation (Lossless Scaling)
 
@@ -648,3 +780,16 @@ fixes, most of the render thread speedups, the record thread, Turnip tile render
 handler.
 
 [Abssenta](https://github.com/Abssenta) contributed pull request #42: the inverted camera up/down.
+
+[Nycolazs](https://github.com/Nycolazs)'s
+[WindWakerHD-Android-Plus](https://github.com/Nycolazs/WindWakerHD-Android-Plus) gave 60 fps
+(generated), the bounded GPU memory, the compiler crash guard, fewer render passes, the cheaper
+smooth blur and several fixes (0.9.9). Pulpparty wrote the original project's Nintendo Gallery cheat.
+
+The randomizer is [TWWHD Randomizer](https://github.com/SuperDude88/TWWHD-Randomizer) 1.2.0 by
+SuperDude88 and its contributors (MIT, `runtime/third_party/twwhd_rando`). Link's colours use its colour masks and
+presets. The GameCube player model import reads models in the format of Sage-of-Mirrors'
+[Custom Wind Waker Player Models](https://github.com/Sage-of-Mirrors/Custom-Wind-Waker-Player-Models)
+collection and its many model authors; no model comes with the app. Ideas for the mini map's wind
+arrow, opacity and treasure chart came from Chironeyes'
+[Minimap HD](https://github.com/Chironeyes/The.Wind.Waker.HD-Minimap.HD) pack.

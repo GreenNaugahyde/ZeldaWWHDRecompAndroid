@@ -108,5 +108,24 @@ inline Next next_pass(int phase, int n, int64_t elapsed, int64_t pass, int64_t b
     return Next::kDrop;
 }
 
+// A blended record pass (40 fps upstream; never here: record_blended() is false) records the exact state of its step while it draws the step
+// blended: a record kept per object (a map from key to record) is replaced by the new one, stamped
+// for the next pass, and this pass's blends go on using the one it replaced (kept in `before`,
+// which the caller clears at every pass start: an object drawn twice in the pass blends both draws
+// from the same "before"). Returns the record to blend from (nullptr: none).
+template <class Map, class StampOf>
+const typename Map::mapped_type* replace_record(Map& map, Map& before, const typename Map::key_type& key,
+                                                typename Map::mapped_type rec, uint64_t stamp, StampOf stampOf) {
+    auto it = map.find(key);
+    if (it != map.end()) {
+        if (stampOf(it->second) != stamp) before[key] = std::move(it->second);  // (its first record in this pass)
+        it->second = std::move(rec);
+    } else {
+        map.emplace(key, std::move(rec));
+    }
+    auto b = before.find(key);
+    return b != before.end() ? &b->second : nullptr;
+}
+
 }  // namespace pacing
 }  // namespace interp

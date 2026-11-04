@@ -3252,7 +3252,11 @@ void _emitExportCode(LatteDecompilerShaderContext* shaderContext, LatteDecompile
 				}
 				// pixel color output
 				src->addFmt("passPixelColor{} = ", pixelColorOutputIndex);
+				if (shaderContext->options->finiteColorOutputs)
+					src->add("wwhd_finite(");
 				_emitExportGPRReadCode(shaderContext, cfInstruction, LATTE_DECOMPILER_DTYPE_FLOAT, i);
+				if (shaderContext->options->finiteColorOutputs)
+					src->add(")");
 				src->add(";" _CRLF);
 
 				if( cfInstruction->exportArrayBase+i >= 8 )
@@ -3747,6 +3751,9 @@ void LatteDecompiler_emitGLSLHelperFunctions(LatteDecompilerShaderContext* shade
 		"	return floatBitsToInt(0.0);\r\n"
 		"return floatBitsToInt(clamp(intBitsToFloat(v), 0.0, 1.0));\r\n"
 	"}\r\n");
+	// WWHD: NaN -> 0 and infinity -> +-65000 in the pixel colour outputs (finiteColorOutputs)
+	if (shaderContext->options->finiteColorOutputs && shaderContext->shaderType == LatteConst::ShaderType::Pixel)
+		fCStr_shaderSource->add("vec4 wwhd_finite(vec4 v){ v = mix(v, sign(v) * 65000.0, isinf(v)); return mix(v, vec4(0.0), isnan(v)); }" _CRLF);
 	// mul non-ieee way (0*NaN/INF => 0.0)
 	if (shaderContext->options->strictMul)
 	{
@@ -3953,9 +3960,9 @@ void LatteDecompiler_emitGLSLShader(LatteDecompilerShaderContext* shaderContext,
 	}
 	for(sint32 i=0; i<LATTE_NUM_MAX_TEX_UNITS; i++)
 	{
-		if(!shaderContext->output->textureUnitMask[i])
-			continue;
-		if( shader->textureUnitDim[i] != Latte::E_DIM::DIM_CUBEMAP )
+		// WWHD: also for a unit whose index a SET_CUBEMAP_INDEX sets while the bound texture is no cube map
+		const bool sampledCube = shaderContext->output->textureUnitMask[i] && shader->textureUnitDim[i] == Latte::E_DIM::DIM_CUBEMAP;
+		if (!sampledCube && !shaderContext->analyzer.texUnitSetsCubeMapIndex.test(i))
 			continue;
 		src->addFmt("float cubeMapArrayIndex{} = 0.0;" _CRLF, i);
 	}

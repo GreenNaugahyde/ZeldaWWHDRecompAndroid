@@ -196,6 +196,7 @@ struct Shape {
     const Texture* tex = nullptr;   // _a0
     const Texture* tex2 = nullptr;  // _a1 (the eyes' pupil)
     bool overlay = false;           // eyes and brows: drawn over the hair, as the game does
+    bool flat = false;              // face and mouth: lit evenly (their normals band the toon ramp into streaks)
     bool fromDark = false;          // the ladder: from the material's dark colour to the texture by the vertex colour
     V3 dark;
 };
@@ -212,6 +213,7 @@ struct Part {
     int joint2 = -1;  // a carried thing: held midway between joint and this one (his hands), upright
     int hand = -1;    // his sword and shield: the hand that holds it drawn (Request.sword)
     bool drawnOnly = false;  // the blade: only in his hand (the scabbard hides it)
+    bool upright = false;    // on its joint's place only, not turned with it (the torch's flame burns upward)
     std::string tag;  // a thing that goes with him (Request.with)
     std::string variant;  // ... drawn only with this Request.withVariant (hasVariant)
     bool hasVariant = false;
@@ -405,6 +407,7 @@ bool load_model(const Res& r, const char* name, Model& m, Part& p) {
             if (s.material.find("dam") != std::string::npos) continue;
             s.overlay = true;
         }
+        s.flat = s.material == "face" || s.material == "mouth";
         p.shapes.push_back(std::move(s));
     }
     return true;
@@ -622,7 +625,7 @@ void draw(Raster& ras, const Camera& cam, const Model& m, const Shape& s, const 
                 V3 n = norm(pv[i0].n * w0 + pv[i1].n * w1 + pv[i2].n * w2);
                 if (back) n = n * -1;
                 float l = dot(n, light) * 0.5f + 0.5f, shade = 1;
-                if (m.ramp && !s.overlay) {
+                if (m.ramp && !s.overlay && !s.flat) {
                     float rc[4];
                     m.ramp->sample(l, 0.5f, rc);
                     shade = 0.62f + 0.38f * rc[0];
@@ -715,40 +718,146 @@ int render(const std::string& gameDir, const std::string& outDir, const std::vec
         p.drawnOnly = g.drawnOnly;
         m.parts.push_back(std::move(p));
     }
+    // the Wind Waker (Request.with "baton"): takt, right on his left hand's joint (daPy_lk_c: lHandA_jnt_mtx)
+    {
+        Part p;
+        if (lhand >= 0 && load_model(link, "takt", m, p)) {
+            p.tag = "baton";
+            p.joint = lhand;
+            m.parts.push_back(std::move(p));
+        } else {
+            LOG("[link_icons] takt not loaded");
+        }
+    }
     // the things that go with him (Request.with): the small pot he carries midway between his hands, as
     // daPy_lk_c places the grabbed actor; a chest and a door (their files also hold the animations they move in
     // with his: boxopenshortbox / boxopenshortlink, dooropenadoor / dooropenalink); a Bokoblin's stick; a block
     // (root: a name for the model's root bone, the one its animation moves: the house door door_c hangs on the
     // knob doors' DoorDummy)
-    struct Thing { const char* tag; const char* arc; const char* file; const char* model; const char* root; };
-    static const Thing kThings[] = {{"pot", "Always.szs", "Always.bfres", "obm_kotubo1", nullptr},
-                                    {"chest", "Dalways.szs", "Dalways.bfres", "boxa", nullptr},
-                                    {"door", "Knob.szs", "Knob.bfres", "door_c", "DoorDummy"},
-                                    {"stick", "Boko.szs", "Boko.bfres", "boko", nullptr},
-                                    {"postbox", "Toripost.szs", "Toripost.bfres", "vpost", nullptr},
-                                    {"ladder", "Mhsg.szs", "Mhsg.bfres", "mhsg4h", nullptr},
-                                    {"ledge", "Osiblk.szs", "Osiblk.bfres", "obm_osihikiblk1", nullptr},
-                                    {"ship", "Ship.szs", "Ship.bfres", "fn_body", nullptr}};
-    // (the postbox is in the first pack, the ladder and the stone block (a ledge) in szs_permanent0, the others in the 3D pack)
-    Bytes firstPack, objPack;
-    game_archive::read_file(gameDir + "/content/Common/Pack/first_szs_permanent.pack", firstPack);
-    game_archive::read_file(gameDir + "/content/Common/Pack/szs_permanent0.pack", objPack);
-    std::map<std::string, Res> thingRes;
-    for (const Thing& t : kThings) {
-        Part p;
-        Res& r = thingRes[t.tag];
-        const Bytes& from = std::string(t.tag) == "postbox" ? firstPack : std::string(t.tag) == "ladder" || std::string(t.tag) == "ledge" || std::string(t.tag) == "ship" ? objPack : pack;
-        if (!load_res(from, t.arc, t.file, r) || !load_model(r, t.model, m, p)) {
-            LOG("[link_icons] %s (%s) not loaded", t.model, t.arc);
-            continue;
+    // (variant: a Request.withVariant of the tag; weapons and carried things by kind, GameIcons.java. pack: where its
+    // archive is: 0 the 3D pack, 1 the first pack, 2..4 szs_permanent0..2, 5 a file of content/Common/Object, 6 Link's
+    // own file (the bomb); each pack is read once, in turn, and let go)
+    struct Thing { const char* tag; const char* variant; int pack; const char* arc; const char* file; const char* model; const char* root; };
+    static const Thing kThings[] = {
+        {"pot", nullptr, 0, "Always.szs", "Always.bfres", "obm_kotubo1", nullptr},
+        {"chest", nullptr, 0, "Dalways.szs", "Dalways.bfres", "boxa", nullptr},
+        {"door", nullptr, 0, "Knob.szs", "Knob.bfres", "door_c", "DoorDummy"},
+        {"stick", nullptr, 0, "Boko.szs", "Boko.bfres", "boko", nullptr},
+        {"weapon", nullptr, 0, "Boko.szs", "Boko.bfres", "boko", nullptr},
+        {"postbox", nullptr, 1, "Toripost.szs", "Toripost.bfres", "vpost", nullptr},
+        {"ladder", nullptr, 2, "Mhsg.szs", "Mhsg.bfres", "mhsg4h", nullptr},
+        {"ledge", nullptr, 2, "Osiblk.szs", "Osiblk.bfres", "obm_osihikiblk1", nullptr},
+        {"ship", nullptr, 2, "Ship.szs", "Ship.bfres", "fn_body", nullptr},
+        // the enemies' weapons (daBoko_c::m_arc_name): in his hand and lying (Pick up); the torch: the stick, lit
+        {"weapon", "torch", 0, "Boko.szs", "Boko.bfres", "boko", nullptr},
+        {"weapon", "nata", 0, "Nata.szs", "Nata.bfres", "bk_nata", nullptr},
+        {"weapon", "club", 4, "Club.szs", "Club.bfres", "st_buki", nullptr},
+        {"weapon", "tkwn", 5, "Tkwn.szs", "Tkwn.bfres", "tn_ken1", nullptr},
+        {"weapon", "spear", 0, "Spear.szs", "Spear.bfres", "mo_yari", nullptr},
+        {"weapon", "pgsw", 4, "Pgsw.szs", "Pgsw.bfres", "bpg_ken1", nullptr},
+        {"stick", "nata", 0, "Nata.szs", "Nata.bfres", "bk_nata", nullptr},
+        {"stick", "club", 4, "Club.szs", "Club.bfres", "st_buki", nullptr},
+        {"stick", "tkwn", 5, "Tkwn.szs", "Tkwn.bfres", "tn_ken1", nullptr},
+        {"stick", "spear", 0, "Spear.szs", "Spear.bfres", "mo_yari", nullptr},
+        {"stick", "pgsw", 4, "Pgsw.szs", "Pgsw.bfres", "bpg_ken1", nullptr},
+        // the things he carries (daTsubo's M_arcname by type, daStone, daStone2, daObjBarrel, daBomb)
+        {"pot", "big", 0, "Always.szs", "Always.bfres", "obm_ootubo1", nullptr},
+        {"pot", "kmtub", 4, "Kmtub_00.szs", "Kmtub_00.bfres", "kmtub_00", nullptr},
+        {"pot", "barrel", 2, "Ktaru_01.szs", "Ktaru_01.bfres", "ktaru_01", nullptr},
+        {"pot", "stool", 4, "Okmono.szs", "Okmono.bfres", "ostool", nullptr},
+        {"pot", "skull", 2, "Odokuro.szs", "Odokuro.bfres", "odokuro", nullptr},
+        {"pot", "bucket", 2, "Okioke.szs", "Okioke.bfres", "okioke", nullptr},
+        {"pot", "kutani", 2, "Ptubo.szs", "Ptubo.bfres", "ptubo", nullptr},
+        {"pot", "rock", 0, "Always.szs", "Always.bfres", "obm_koisi1", nullptr},
+        {"pot", "pebble", 0, "Always.szs", "Always.bfres", "mpi_koishi", nullptr},
+        {"pot", "bomb", 6, "Link.szs", "Link.bfres", "bomb", nullptr}};  // (a bomb flower's too: VbakH's vbakm lies on its side at rest)
+    static const char* const kPacks[] = {nullptr, "first_szs_permanent.pack", "szs_permanent0.pack", "szs_permanent1.pack", "szs_permanent2.pack"};
+    std::map<std::string, Res> arcRes;           // by archive
+    std::map<std::string, Res*> thingRes;        // by tag (its first, plain model's archive)
+    std::vector<std::pair<int, Part>> loaded(sizeof kThings / sizeof kThings[0]);  // (index in kThings, part) in table order
+    std::vector<bool> ok(loaded.size(), false);
+    for (int pk = 0; pk <= 6; pk++) {
+        Bytes other;
+        if (pk >= 1 && pk <= 4) {
+            bool need = false;
+            for (const Thing& t : kThings) need |= t.pack == pk;
+            if (need) game_archive::read_file(gameDir + "/content/Common/Pack/" + kPacks[pk], other);
         }
+        for (size_t ti = 0; ti < loaded.size(); ti++) {
+            const Thing& t = kThings[ti];
+            if (t.pack != pk) continue;
+            Res* r = &link;
+            if (pk != 6) {
+                auto it = arcRes.find(t.arc);
+                if (it == arcRes.end()) {
+                    Res nr;
+                    bool got = false;
+                    if (pk == 5) {
+                        Bytes packed, sarc;
+                        got = game_archive::read_file(gameDir + "/content/Common/Object/" + t.arc, packed) && game_archive::yaz0(packed, sarc) &&
+                              game_archive::sarc_file(sarc, t.file, nr.d) && nr.d.size() > 0x60 && !memcmp(nr.d.data(), "FRES", 4);
+                    } else {
+                        got = load_res(pk == 0 ? pack : other, t.arc, t.file, nr);
+                    }
+                    if (!got) {
+                        LOG("[link_icons] %s not loaded", t.arc);
+                        continue;
+                    }
+                    it = arcRes.emplace(t.arc, std::move(nr)).first;
+                }
+                r = &it->second;
+            }
+            if (!t.variant && !thingRes.count(t.tag)) thingRes[t.tag] = r;
+            Part p;
+            if (!load_model(*r, t.model, m, p)) {
+                LOG("[link_icons] %s (%s) not loaded", t.model, t.arc);
+                continue;
+            }
+            loaded[ti] = {(int)ti, std::move(p)};
+            ok[ti] = true;
+        }
+    }
+    for (size_t ti = 0; ti < loaded.size(); ti++) {
+        if (!ok[ti]) continue;
+        const Thing& t = kThings[ti];
+        Part& p = loaded[ti].second;
         p.tag = t.tag;
+        // (the plain models of the tags with variants take part as the variant "")
+        if (t.variant || p.tag == "pot" || p.tag == "weapon" || p.tag == "stick") {
+            p.variant = t.variant ? t.variant : "";
+            p.hasVariant = true;
+        }
         if (p.tag == "ladder")  // (the material's konst1, a dark brown, by the vertex colours to the yellow wood texture)
             for (Shape& sh : p.shapes) {
                 sh.fromDark = true;
                 sh.dark = {0.359f, 0.101f, 0};
             }
         if (t.root && !p.bones.empty()) p.bones[0].name = t.root;
+        if (p.tag == "weapon") {  // in his left hand, as daPy_lk_c::setItemModel holds an enemy's weapon (boko): longer
+            if (lhand < 0) continue;  // ones further along (the mace and the Darknut's sword 20, Phantom Ganon's 30, the spear 70)
+            p.joint = lhand;
+            constexpr float kS16 = (float)M_PI / 0x8000;
+            float z = p.variant == "club" || p.variant == "tkwn" ? 20.f : p.variant == "pgsw" ? 30.f : p.variant == "spear" ? 70.f : 0.f;
+            p.offset = mul(srt({1, 1, 1}, {0x3E38 * kS16, -0x5D4 * kS16, 0x66F8 * kS16}, {40, 47, 2.1f}), srt({1, 1, 1}, {0, 0, 0}, {0, 0, z}));
+        }
+        if (p.tag == "stick" && !p.variant.empty()) {  // the other weapons lying (along his front, as they rest): on the
+            V3 lo{1e9f, 1e9f, 1e9f}, hi{-1e9f, -1e9f, -1e9f};  // ground, sideways on their middle, the near end at his feet
+            for (const Shape& sh : p.shapes)
+                for (const Vertex& v : sh.verts) {
+                    V3 q = sh.bone < (int)p.rest.size() ? p.rest[sh.bone].point(v.p) : v.p;
+                    lo = {std::min(lo.x, q.x), std::min(lo.y, q.y), std::min(lo.z, q.z)};
+                    hi = {std::max(hi.x, q.x), std::max(hi.y, q.y), std::max(hi.z, q.z)};
+                }
+            M34 lay = srt({1, 1, 1}, {0, 0, 0}, {-(lo.x + hi.x) / 2, -lo.y, -lo.z - 55});  // (Request withAt z 80: from 25)
+            for (M34& r : p.rest) r = mul(lay, r);
+        }
+        if (p.tag == "pot" && !p.variant.empty()) {  // the others carried: their foot on his hands (a skull's, a rock's
+            float low = 1e9f;                           // origin is at their middle)
+            for (const Shape& sh : p.shapes)
+                for (const Vertex& v : sh.verts) low = std::min(low, (sh.bone < (int)p.rest.size() ? p.rest[sh.bone].point(v.p) : v.p).y);
+            M34 up = srt({1, 1, 1}, {0, 0, 0}, {0, -low, 0});
+            for (M34& r : p.rest) r = mul(up, r);
+        }
         if (p.tag == "pot") {
             if (lhand < 0 || rhand < 0) continue;
             p.joint = lhand;
@@ -762,7 +871,7 @@ int render(const std::string& gameDir, const std::string& outDir, const std::vec
     // Swift Sail (new_ho2) as variants "" / "swift"
     for (size_t si = 0; si < m.parts.size(); si++) {
         if (m.parts[si].tag != "ship") continue;
-        Res& r = thingRes["ship"];
+        Res& r = *thingRes["ship"];
         auto bone = [&](const char* n) {
             for (size_t b = 0; b < m.parts[si].bones.size(); b++)
                 if (m.parts[si].bones[b].name == n) return (int)b;
@@ -858,9 +967,111 @@ int render(const std::string& gameDir, const std::string& outDir, const std::vec
             LOG("[link_icons] the vine wall (M_Dai_Room15) not loaded");
         }
     }
+    // the torch's flame (Request.with "weapon", withVariant "torch"): a lit Bokoblin's stick (daBoko_c::mFlameTimer; the
+    // game's fire is particles): two crossed upright quads of a drawn flame, a yellow core in orange, lit evenly, at
+    // the stick's far end (its model's point furthest from its grip) and burning upward however the stick turns
+    for (size_t wi = 0; wi < m.parts.size(); wi++) {
+        const Part& w = m.parts[wi];  // (used before m.parts grows)
+        if (w.tag != "weapon" || w.variant != "torch") continue;
+        // (the grip: his hand's place in the stick's space, the offset's inverse at 0; the model's origin is at its head)
+        const M34& o = w.offset;
+        V3 grip = {-(o.m[0] * o.m[3] + o.m[4] * o.m[7] + o.m[8] * o.m[11]), -(o.m[1] * o.m[3] + o.m[5] * o.m[7] + o.m[9] * o.m[11]),
+                   -(o.m[2] * o.m[3] + o.m[6] * o.m[7] + o.m[10] * o.m[11])};
+        V3 tip;
+        float far2 = 0;
+        for (const Shape& sh : w.shapes)
+            for (const Vertex& v : sh.verts) {
+                V3 q = sh.bone < (int)w.rest.size() ? w.rest[sh.bone].point(v.p) : v.p;
+                if (dot(q - grip, q - grip) > far2) far2 = dot(q - grip, q - grip), tip = q;
+            }
+        Texture t;
+        t.w = t.h = 64;
+        t.clampU = t.clampV = true;
+        t.rgba.assign(64 * 64 * 4, 0);
+        for (int y = 0; y < 64; y++)
+            for (int x = 0; x < 64; x++) {
+                float u = (x + 0.5f) / 64 * 2 - 1, h = 1 - (y + 0.5f) / 64;  // (h: 0 the foot, 1 the top)
+                auto inside = [&](float s, float lift) {  // a drop: round below, pointed above
+                    float hh = (h - lift) / s;
+                    if (hh < 0 || hh > 1) return false;
+                    float r = hh < 0.3f ? std::sqrt(1 - (0.3f - hh) * (0.3f - hh) / 0.09f) : (1 - hh) / 0.7f;
+                    r *= 0.85f;
+                    return std::fabs(u) < r * s + 0.04f * std::sin(hh * 9) * (1 - hh);
+                };
+                uint8_t* o = &t.rgba[(y * 64 + x) * 4];
+                if (inside(0.55f, 0.02f)) o[0] = 255, o[1] = 236, o[2] = 120, o[3] = 255;
+                else if (inside(1.f, 0.f)) o[0] = 255, o[1] = 122, o[2] = 24, o[3] = 255;
+            }
+        Part p;
+        p.tag = "weapon";
+        p.variant = "torch";
+        p.hasVariant = true;
+        p.joint = w.joint;
+        p.offset = mul(w.offset, srt({1, 1, 1}, {0, 0, 0}, tip));
+        p.upright = true;
+        p.bones.resize(1);
+        p.rest.resize(1);
+        p.invBind.resize(1);
+        Shape sh;
+        sh.flat = true;
+        const float fw = 14, fh = 44, below = 10;
+        for (int q = 0; q < 2; q++) {
+            uint32_t b = (uint32_t)sh.verts.size();
+            for (int k = 0; k < 4; k++) {
+                Vertex v;
+                float side = k == 0 || k == 3 ? -fw : fw, up = k < 2 ? -below : fh - below;
+                v.p = q ? V3{0, up, side} : V3{side, up, 0};
+                v.n = q ? V3{1, 0, 0} : V3{0, 0, 1};
+                v.u = k == 0 || k == 3 ? 0.f : 1.f;
+                v.v = k < 2 ? 1.f : 0.f;
+                sh.verts.push_back(v);
+            }
+            sh.tris.insert(sh.tris.end(), {b, b + 1, b + 2, b, b + 2, b + 3});
+        }
+        sh.tex = &(m.textures["#flame"] = std::move(t));
+        p.shapes.push_back(std::move(sh));
+        m.parts.push_back(std::move(p));
+        break;
+    }
+    // the Grappling Hook's rope (Request.rope): a thin square tube of Always' "rope" texture (as the game's line
+    // material, d_a_himo2) between two bones: 0 its top (where the hook caught), 1 its foot (his hands), placed per
+    // picture; its texture repeats every 24 units along it
+    {
+        Texture t;
+        auto al = thingRes.find("pot");  // (Always.bfres)
+        if (al != thingRes.end() && load_texture(*al->second, "rope", t)) {
+            Part p;
+            p.tag = "rope";
+            p.bones.resize(2);
+            p.rest.resize(2);
+            p.invBind.resize(2);
+            p.matrixBone = {0, 1};
+            Shape sh;
+            sh.skin = 1;
+            const float r = 2.2f;
+            const float ring[5][2] = {{-r, -r}, {r, -r}, {r, r}, {-r, r}, {-r, -r}};
+            for (int end = 0; end < 2; end++)
+                for (int k = 0; k < 5; k++) {
+                    Vertex v;
+                    v.p = {ring[k][0], 0, ring[k][1]};
+                    v.n = norm(V3{ring[k][0], 0, ring[k][1]});
+                    v.u = k / 4.f;
+                    v.v = end ? 20.f : 0.f;  // (about a 480-unit rope: repeats ~ every 24)
+                    v.idx[0] = end;
+                    sh.verts.push_back(v);
+                }
+            for (int k = 0; k < 4; k++) {
+                uint32_t a = k, b = k + 1, c = 5 + k + 1, d = 5 + k;
+                sh.tris.insert(sh.tris.end(), {a, b, c, a, c, d});
+            }
+            sh.tex = &(m.textures["rope"] = std::move(t));
+            p.shapes.push_back(std::move(sh));
+            m.parts.push_back(std::move(p));
+        } else {
+            LOG("[link_icons] the rope (Always: rope) not loaded");
+        }
+    }
     pack.clear();
-    firstPack.clear();
-    objPack.clear();
     int written = 0;
     for (const Request& rq : requests) {
         Anim a;
@@ -877,12 +1088,25 @@ int render(const std::string& gameDir, const std::string& outDir, const std::vec
         for (size_t pi = 0; pi < m.parts.size(); pi++) {
             const Part& p = m.parts[pi];
             Anim pa;
-            if (!p.poseAnim.empty() && p.tag == rq.with && load_anim(thingRes[p.tag], p.poseAnim, pa))
+            if (!p.poseAnim.empty() && p.tag == rq.with && thingRes.count(p.tag) && load_anim(*thingRes[p.tag], p.poseAnim, pa))
                 partPoses[pi] = pose(p, pa, p.poseFrame, false);
         }
         Anim withAnim;  // the thing's own animation (frames 0: none)
-        if (!rq.withAnim.empty() && !load_anim(thingRes[rq.with], rq.withAnim, withAnim))
+        if (!rq.withAnim.empty() && (!thingRes.count(rq.with) || !load_anim(*thingRes[rq.with], rq.withAnim, withAnim)))
             LOG("[link_icons] animation %s not found", rq.withAnim.c_str());
+        std::vector<std::pair<Shape*, const Texture*>> mouths;  // (Request.mouth: his mouth's own texture, put back after)
+        if (rq.mouth > 0) {
+            std::string tn = "mouthS3TC." + std::to_string(rq.mouth);
+            auto it = m.textures.find(tn);
+            Texture t;
+            if (it == m.textures.end() && load_texture(link, tn, t)) {
+                t.clampU = t.clampV = true;
+                it = m.textures.emplace(tn, std::move(t)).first;
+            }
+            if (it != m.textures.end())
+                for (Shape& s : m.parts[0].shapes)
+                    if (s.material == "mouth") mouths.push_back({&s, s.tex}), s.tex = &it->second;
+        }
         float last = rq.last >= 0 ? rq.last : rq.noLink && withAnim.frames > 0 ? std::max(0.f, withAnim.frames - 1.f) : std::max(0.f, a.frames - 1);
         // the camera: around Link (y up), looking at him
         float yaw = rq.yaw * (float)M_PI / 180, pitch = rq.pitch * (float)M_PI / 180;
@@ -898,6 +1122,7 @@ int render(const std::string& gameDir, const std::string& outDir, const std::vec
         };
         std::vector<Frame> frames;
         float extent = 0;
+        V3 ropeTop, ropeGrip, ropeFoot;  // (Request.rope: the hook's place, his hand's and the rope's foot)
         for (int i = 0; i < rq.frames + (int)rq.extra.size(); i++) {
             float fr = i >= rq.frames ? rq.extra[i - rq.frames] : rq.frames > 1 ? rq.first + (last - rq.first) * i / (rq.frames - 1) : rq.first;
             std::vector<M34> body;
@@ -915,6 +1140,38 @@ int render(const std::string& gameDir, const std::string& outDir, const std::vec
                 body = pose(m.parts[0], other ? extraAnims[rq.extraAnim[x]] : a, fr, rq.inPlace);
             }
             int pics = rq.frames + (int)rq.extra.size();
+            if (rq.rope > 0 && lhand >= 0 && rhand >= 0) {  // on the rope: his upper hand on it, swinging about its top
+                auto at = [&](int b) { return V3{body[b].m[3], body[b].m[7], body[b].m[11]}; };
+                int up = at(lhand).y >= at(rhand).y ? lhand : rhand, low = up == lhand ? rhand : lhand;
+                float deg = i < (int)rq.swing.size() ? rq.swing[i] : 0;
+                auto turn = [&](V3 c, float d) {  // about the x axis (his sideways) through c, + ahead (z up)
+                    float a = -d * (float)M_PI / 180;
+                    M34 r = mul(srt({1, 1, 1}, {0, 0, 0}, c), mul(srt({1, 1, 1}, {a, 0, 0}, {0, 0, 0}), srt({1, 1, 1}, {0, 0, 0}, V3{} - c)));
+                    for (M34& b : body) b = mul(r, b);
+                };
+                auto shift = [&](V3 d) {
+                    for (M34& b : body) b.m[3] += d.x, b.m[7] += d.y, b.m[11] += d.z;
+                };
+                if (i == 0) ropeTop = at(up) + V3{0, rq.rope, 0};
+                auto centre = [&]() {  // (his joints' mean: where he is, whatever his pose)
+                    V3 c;
+                    for (int b = 0; b < (int)body.size(); b++) c = c + at(b);
+                    return c * (1.f / std::max<size_t>(1, body.size()));
+                };
+                if (i < rq.letGo) {
+                    shift(ropeTop - V3{0, rq.rope, 0} - at(up));
+                    turn(ropeTop, deg);
+                    ropeGrip = centre();
+                    ropeFoot = at(low);
+                    ropeFoot = ropeFoot + norm(ropeFoot - ropeTop) * 12;  // (a bit of it below his hand)
+                } else {
+                    shift(ropeGrip - centre());
+                    turn(ropeGrip, deg);
+                    float a = (i < (int)rq.ropeSwing.size() ? rq.ropeSwing[i] : 0) * (float)M_PI / 180;
+                    float len = std::sqrt(dot(ropeFoot - ropeTop, ropeFoot - ropeTop));
+                    ropeFoot = ropeTop + V3{0, -len * std::cos(a), len * std::sin(a)};
+                }
+            }
             if (i > rq.moveFrom && pics - 1 > rq.moveFrom) {  // moving along a path (and a hop)
                 float t = (float)(i - rq.moveFrom) / (pics - 1 - rq.moveFrom);
                 for (M34& b : body) {
@@ -923,6 +1180,9 @@ int render(const std::string& gameDir, const std::string& outDir, const std::vec
                     b.m[11] += rq.move[2] * t;
                 }
             }
+            float slide = i < (int)rq.slide.size() ? rq.slide[i] : 0;
+            if (slide != 0)
+                for (M34& b : body) b.m[11] += slide;
             Frame f;
             std::vector<std::vector<M34>> worlds(m.parts.size());  // (the parts on other parts use theirs)
             for (size_t pi = 0; pi < m.parts.size(); pi++) {
@@ -935,7 +1195,9 @@ int render(const std::string& gameDir, const std::string& outDir, const std::vec
                 }
                 std::vector<M34>& world = worlds[pi];
                 world = body;
-                if (p.onPart >= 0 && p.onJoint < 0) {
+                if (p.tag == "rope") {  // from the hook down to his hands (or swinging alone)
+                    world = {srt({1, 1, 1}, {0, 0, 0}, ropeTop), srt({1, 1, 1}, {0, 0, 0}, ropeFoot)};
+                } else if (p.onPart >= 0 && p.onJoint < 0) {
                     world = worlds[p.onPart];
                 } else if (p.onPart >= 0) {
                     M34 base = p.onJoint < (int)worlds[p.onPart].size() ? worlds[p.onPart][p.onJoint] : M34();
@@ -944,7 +1206,7 @@ int render(const std::string& gameDir, const std::string& outDir, const std::vec
                     world.resize(own.size());
                     for (size_t b = 0; b < own.size(); b++) world[b] = mul(base, own[b]);
                 } else if (!p.tag.empty() && p.joint < 0) {  // standing in front of him, in its own animation (or at rest)
-                    M34 at = srt({1, 1, 1}, {0, rq.withYaw * (float)M_PI / 180, 0}, {rq.withAt[0], rq.withAt[1], rq.withAt[2]});
+                    M34 at = srt({1, 1, 1}, {0, rq.withYaw * (float)M_PI / 180, 0}, {rq.withAt[0], rq.withAt[1], rq.withAt[2] + slide});
                     if (rq.withRock != 0) {  // rocking on the waves: once round over the pictures
                         float t = rq.frames > 0 ? (float)i / rq.frames : 0;
                         float a = rq.withRock * (float)M_PI / 180 * std::sin(2 * (float)M_PI * t);
@@ -954,6 +1216,7 @@ int render(const std::string& gameDir, const std::string& outDir, const std::vec
                     for (M34& w : world) w = mul(at, w);
                 } else if (p.joint >= 0) {
                     M34 base = drawn ? body[p.hand] : mul(body[p.joint], p.offset);
+                    if (p.upright) base = srt({1, 1, 1}, {0, 0, 0}, {base.m[3], base.m[7], base.m[11]});
                     if (p.joint2 >= 0) {
                         base = p.offset;
                         for (int k = 3; k < 12; k += 4) base.m[k] += (body[p.joint].m[k] + body[p.joint2].m[k]) / 2;
@@ -1006,6 +1269,7 @@ int render(const std::string& gameDir, const std::string& outDir, const std::vec
                 written++;
             }
         }
+        for (auto& [s, t] : mouths) s->tex = t;
     }
     LOG("[link_icons] %d pictures", written);
     return written;
@@ -1071,17 +1335,21 @@ int render_buttons(const std::string& gameDir, const std::string& outDir) {
     // lift backwards as he sets it down whole
     static const struct { const char* name; const char* anim; float first, last; } kCarry[] = {
         {"link_lift", "grabup", 0, 7}, {"link_throw", "grabthrow", 0, 2.5f}, {"link_drop", "grabup", 7, 0}};
-    for (const auto& c : kCarry) {
-        Request r;
-        r.name = c.name;
-        r.anim = c.anim;
-        r.first = c.first;
-        r.last = c.last;
-        r.frames = 8;
-        r.yaw = -60;
-        r.with = "pot";
-        rq.push_back(r);
-    }
+    // ... and each other thing he can carry (touch state 39 / 38, GameIcons.java): <name>_<variant>
+    static const char* const kCarried[] = {"", "big", "kmtub", "barrel", "stool", "skull", "bucket", "kutani", "rock", "pebble", "bomb"};
+    for (const char* v : kCarried)
+        for (const auto& c : kCarry) {
+            Request r;
+            r.name = std::string(c.name) + (*v ? std::string("_") + v : "");
+            r.anim = c.anim;
+            r.first = c.first;
+            r.last = c.last;
+            r.frames = 8;
+            r.yaw = -60;
+            r.with = "pot";
+            r.withVariant = v;
+            rq.push_back(r);
+        }
     // the other actions, played by the button the same way:
     // A Open at a door: pushing the house door open (until he walks through), from his side, behind him
     Request door;
@@ -1108,13 +1376,27 @@ int render_buttons(const std::string& gameDir, const std::string& outDir) {
     chest.withAt[2] = 55;
     chest.withYaw = 180;
     rq.push_back(chest);
-    // ZR Grab at a block: pushing (one step of the cycle, every 2nd frame; the block is drawn by GameIcons)
+    // ZR Grab at a push block (and while holding it: procPushPullWait / PushMove / PullMove keep R on Grab): the
+    // dungeons' stone block (Osiblk) before him, from behind his right shoulder; taking hold (waitpushpull), pushing
+    // it a step ahead (walkpush, he and the block sliding on) and pulling it back (walkpull) to where it was, so the
+    // last picture (held at the loop's pause) is the first; framed on him, the block reaching past the right edge
     Request push;
     push.name = "link_push";
-    push.anim = "walkpush";
-    push.last = 22;
-    push.frames = 12;
-    push.yaw = -90;
+    push.anim = "waitpushpull";
+    push.last = 20;
+    push.frames = 3;
+    for (const char* an : {"walkpush", "walkpull"})
+        for (int i = 0; i < 9; i++) push.extra.push_back(22.f * i / 8), push.extraAnim.push_back(an);
+    push.slide.assign(3, 0.f);
+    for (int i = 0; i < 9; i++) push.slide.push_back(40.f * (i + 1) / 9);
+    for (int i = 0; i < 9; i++) push.slide.push_back(40.f * (8 - i) / 9);
+    push.yaw = -115;
+    push.pitch = 15;
+    push.with = "ledge";
+    push.withAt[2] = 100;
+    push.fitLink = true;
+    push.fitMore = 0.5f;
+    push.fixedFrame = true;
     rq.push_back(push);
     // A Pick up at a Bokoblin's stick: crouching down to it
     Request pick;
@@ -1127,6 +1409,56 @@ int render_buttons(const std::string& gameDir, const std::string& outDir) {
     pick.with = "stick";
     pick.withAt[2] = 80;
     rq.push_back(pick);
+    // A Swing with an enemy's weapon in his hand (HD: A 0x2F, the Grappling Hook's "Swing", while daPy_lk_c::mEquipItem is
+    // daPyItem_BOKO 0x101): a Bokoblin's stick in his left hand, raised behind him, brought down and back up (cutboko);
+    // one framing, fitted to him (the stick reaches past the edges)
+    // Each enemy weapon (touch state 38 / 39: GameIcons.java), <name>_<variant>: the stick ("", lit: "torch"), the
+    // machete, the Stalfos' mace, the Darknut's sword, the Moblin's spear, Phantom Ganon's sword
+    static const char* const kWeapons[] = {"", "torch", "nata", "club", "tkwn", "spear", "pgsw"};
+    for (const char* v : kWeapons) {
+        std::string sfx = *v ? std::string("_") + v : "";
+        Request weapon;
+        weapon.name = "link_weapon" + sfx;
+        weapon.anim = "cutboko";
+        weapon.frames = 10;
+        weapon.yaw = -75;
+        weapon.with = "weapon";
+        weapon.withVariant = v;
+        weapon.fixedFrame = true;
+        weapon.fitLink = true;
+        weapon.fitMore = strcmp(v, "torch") ? 0.6f : 0.9f;  // (more room: the flame at its head)
+        rq.push_back(weapon);
+        // B Throw (0x0E) with it in his hand (procWeaponThrow: the cut ANM_CUTA, letting go of it at its end): the cut's
+        // swing from behind into the throw, still holding it (the button adds an arrow, up and away, as for a pot)
+        Request th = weapon;
+        th.name = "link_wthrow" + sfx;
+        th.anim = "cuta";
+        th.frames = 8;
+        rq.push_back(th);
+        if (!strcmp(v, "torch")) continue;  // (lying, it has gone out)
+        // A Pick up at it (lying, before him) and R Drop with it in his hand: crouching down to it / putting it down
+        Request pick;
+        pick.name = "link_pickup" + sfx;
+        pick.anim = "grabp";
+        pick.last = 5;
+        pick.frames = 8;
+        pick.yaw = -70;
+        pick.pitch = 25;
+        pick.with = "stick";
+        pick.withVariant = v;
+        pick.withAt[2] = 80;
+        if (*v) {  // (framed on him: the long ones reach past the edge)
+            pick.fitLink = true;
+            pick.fitMore = 1.1f;
+            pick.fixedFrame = true;
+            rq.push_back(pick);
+        }
+        Request put = pick;
+        put.name = "link_wdrop" + sfx;
+        put.first = 5;
+        put.last = 0;
+        rq.push_back(put);
+    }
     // A at a postbox (postbox.cpp): the postbox itself swallowing a letter, from the front, a little to the side
     Request box;
     box.name = "link_postbox";
@@ -1192,6 +1524,37 @@ int render_buttons(const std::string& gameDir, const std::string& outDir) {
     hang.fitLink = true;
     hang.fixedFrame = true;
     rq.push_back(hang);
+    // A Let Go on the Grappling Hook's rope (0x16, daPy_lk_c::changeRopeEndProc): swinging ahead on it (ropeswingf,
+    // about its top; a short rope, so that he fills the picture: it runs out at the top), letting go near the front
+    // of the swing, flying on and dropping in the fall's pose (jmpeds, turning back upright) while the rope swings
+    // back alone; from his side, facing right as the others
+    Request rope;
+    rope.name = "link_rope";
+    rope.anim = "ropeswingf";
+    rope.first = rope.last = 0;
+    rope.frames = 8;
+    rope.with = "rope";
+    rope.rope = 60;
+    const float amp = 25;
+    for (int i = 0; i < 8; i++) rope.swing.push_back(-amp * std::cos((float)M_PI * (i + 1) / 9));
+    const float off = rope.swing[7];
+    for (int i = 0; i < 8; i++) {
+        rope.extra.push_back(std::min(1.f, i / 4.f));
+        rope.extraAnim.push_back("jmpeds");
+        rope.swing.push_back(off * (1 - (i + 1) / 8.f));
+    }
+    rope.letGo = 8;
+    rope.ropeSwing.assign(8, 0.f);
+    for (int i = 0; i < 8; i++) rope.ropeSwing.push_back(off * std::cos((float)M_PI * (i + 1) / 7));
+    rope.moveFrom = 7;
+    rope.move[1] = -50;
+    rope.move[2] = 30;
+    rope.hop = 15;
+    rope.yaw = -90;
+    rope.pitch = 5;
+    rope.fitLink = true;
+    rope.fixedFrame = true;
+    rq.push_back(rope);
     // the boat (the King of Red Lions, only him), facing right: R / A Set sail, the mast rising with the sail
     // (fn_mast_on2), Put away while sailing, it going down (fn_mast_off2); with the normal sail and the Swift Sail (the
     // _swift_ ones); and the Swift Sail's Fast / Normal: sailing, the bow rocking up and down (once round, 8 pictures)
@@ -1233,6 +1596,13 @@ int render_buttons(const std::string& gameDir, const std::string& outDir) {
     drifting.first = drifting.last = 0;
     drifting.withRock = 5;
     rq.push_back(drifting);
+    // R Cruise (held: the boat creeps ahead, the sail down): the same, rocking little, more pictures (GameIcons slides it
+    // ahead over them and draws its wake)
+    Request cruise = drifting;
+    cruise.name = "link_cruise";
+    cruise.frames = 16;
+    cruise.withRock = 3;
+    rq.push_back(cruise);
     // A Get in: hanging from the boat's side and climbing in (vjmpcl, procShipReady; he holds the side at l_ship_redge
     // (-57, 35, -35), the boat's middle ahead of him), seen from behind him, the boat (mast down) facing right, framed
     // on him with some of it around
@@ -1298,7 +1668,30 @@ int render_buttons(const std::string& gameDir, const std::string& outDir) {
     look.frames = 12;
     look.yaw = -45;
     rq.push_back(look);
+    // d-pad up's Wind Waker: the Wind's Requiem's opening (taktkaze: the baton up, then down), facing right as the
+    // others, one framing (the baton reaches up)
+    Request conduct;
+    conduct.name = "link_conduct";
+    conduct.anim = "taktkaze";
+    conduct.last = 40;
+    conduct.frames = 12;
+    conduct.yaw = -60;
+    conduct.with = "baton";
+    conduct.fixedFrame = true;
+    rq.push_back(conduct);
     for (Request& r : rq) r.size = 160;
+    // an achievement earned: his item get (itemget: the hop round to face the camera, then the arm up; the game turns
+    // him from behind to the camera with it), from behind, smiling, larger (AchievementPopup puts the icon over his hand)
+    Request get;
+    get.name = "link_get";
+    get.anim = "itemget";
+    get.last = 35;
+    get.frames = 18;
+    get.yaw = 165;
+    get.fixedFrame = true;
+    get.mouth = 7;
+    get.size = 192;
+    rq.push_back(get);
     return render(gameDir, outDir, rq);
 }
 }  // namespace link_icons

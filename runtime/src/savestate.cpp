@@ -65,6 +65,9 @@
 
 #include "packs.h"
 #include "runtime.h"
+
+namespace mods { uint32_t player_model_area(uint32_t* size); }  // mods/player_models.cpp
+#include "hle/os_time.h"
 #include "gx2/gx2_cmd.h"
 #include "input.h"
 #include "mem_writes.h"
@@ -135,6 +138,7 @@ enum : uint32_t {
     kSecAllocs = 'RALC',
     kSecDispatch = 'DSPT',
     kSecMemory = 'MEM ',
+    kSecOsTime = 'OSTB',  // the calendar clock's bias (hle/os_time.h); absent in older states
 };
 
 struct Region { uint32_t base, size; };
@@ -149,6 +153,9 @@ std::vector<Region> regions() {
     // mod packs' code caves hold their variables (packs.h)
     uint32_t cave = (packs::cave_end() + kChunk - 1) & ~(kChunk - 1);
     if (cave > packs::kCodeCave) r.push_back({packs::kCodeCave, cave - packs::kCodeCave});
+    // a player model's appended data (mods/player_models.cpp)
+    uint32_t pmSize = 0, pm = mods::player_model_area(&pmSize);
+    if (pmSize) r.push_back({pm, (pmSize + kChunk - 1) & ~(kChunk - 1)});
     return r;
 }
 
@@ -171,11 +178,23 @@ struct Snapshot {
     Header h{};
     std::vector<uint8_t> payload;
     std::vector<uint8_t> blob;
+    // version 2 read: the file mapped instead of read into blob (its pages are the file's: the system
+    // can drop and read them again under memory pressure, unlike ~250 MB of our own memory)
+    uint8_t* map = nullptr;
+    size_t map_size = 0;
     std::map<uint32_t, std::pair<size_t, size_t>> sections;  // tag -> (offset, size)
     std::unordered_map<uint32_t, ChunkRef> chunks;            // chunk address -> data (absent = zero)
     std::vector<Region> regs;
     int slot = 0;
     bool converted = false;  // read from a version 1 file (request_load writes it back as version 2)
+
+    Snapshot() = default;
+    Snapshot(const Snapshot&) = delete;
+    Snapshot& operator=(const Snapshot&) = delete;
+    ~Snapshot() {
+        if (map) munmap(map, map_size);
+    }
+    size_t chunk_bytes() const { return map ? map_size : blob.size(); }
 
     Reader section(uint32_t tag) const {
         auto it = sections.find(tag);
@@ -479,11 +498,78 @@ void restore_memory(const Snapshot& s) {
             uint8_t* p = mem::ptr(a);
             if (s.chunks.count(a)) continue;
             if (!ever_touched(p, kChunk)) continue;  // zero already
+#ifdef __APPLE__
             const uint64_t* q = (const uint64_t*)p;
             for (size_t i = 0; i < kChunk / 8; i++)
                 if (q[i]) { memset(p, 0, kChunk); break; }
+#else
+            madvise(p, kChunk, MADV_DONTNEED);  // zero, and its memory given back
+#endif
         }
     }
+}
+
+// ---------------------------------------------------------------- slot file output
+// version 2: header, u64 size + zstd sections, u32 count + regions, then per chunk u32 address,
+// u32 compressed size (0: 64 KiB as they are) and its bytes. The chunks may come in any order (the
+// reader goes by address), so a background capture writes them as they're compressed instead of
+// holding the whole compressed memory (~250 MB) until the end; the header's chunk count is put in last.
+struct SlotOut {
+    FILE* f = nullptr;
+    std::mutex mu;
+    bool ok = false;
+    uint32_t chunks = 0;
+    uint64_t bytes = 0;  // chunk records written
+    // records of n chunks (by a compressing thread)
+    void put(const std::vector<uint8_t>& b, uint32_t n) {
+        std::lock_guard<std::mutex> lk(mu);
+        if (ok) ok = fwrite(b.data(), 1, b.size(), f) == b.size();
+        chunks += n;
+        bytes += b.size();
+    }
+};
+
+uint64_t rss_bytes() {
+    long pages = 0;
+    if (FILE* f = fopen("/proc/self/statm", "r")) {
+        if (fscanf(f, "%*ld %ld", &pages) != 1) pages = 0;
+        fclose(f);
+    }
+    return (uint64_t)pages * getpagesize();
+}
+
+// opens the slot's temporary file and writes all but the chunks (h: their size filled in)
+bool begin_slot(SlotOut& o, int slot, Header& h, const std::vector<uint8_t>& sections, const std::vector<Region>& regs) {
+    h.raw_size = sections.size();
+    h.blocks = 0;
+    std::vector<uint8_t> sc(ZSTD_compressBound(sections.size()));
+    size_t sn = ZSTD_compress(sc.data(), sc.size(), sections.data(), sections.size(), kZstdLevel);
+    if (ZSTD_isError(sn)) return false;
+    std::string tmp = slot_path(slot, "tmp");
+    o.f = fopen(tmp.c_str(), "wb");
+    if (!o.f) {  // the folder was deleted while the game ran: made again
+        make_dirs(state_dir());
+        o.f = fopen(tmp.c_str(), "wb");
+    }
+    if (!o.f) return false;
+    uint64_t sn64 = sn;
+    uint32_t nr = (uint32_t)regs.size();
+    o.ok = fwrite(&h, sizeof h, 1, o.f) == 1 && fwrite(&sn64, 8, 1, o.f) == 1 && fwrite(sc.data(), 1, sn, o.f) == sn &&
+           fwrite(&nr, 4, 1, o.f) == 1 && fwrite(regs.data(), sizeof(Region), nr, o.f) == nr;
+    return o.ok;
+}
+
+// the chunk count into the header, and the file in the slot's place (keep false: thrown away)
+bool end_slot(SlotOut& o, int slot, Header h, bool keep) {
+    if (!o.f) return false;
+    h.blocks = o.chunks;
+    bool ok = keep && o.ok && fseek(o.f, 0, SEEK_SET) == 0 && fwrite(&h, sizeof h, 1, o.f) == 1;
+    ok = fclose(o.f) == 0 && ok;
+    o.f = nullptr;
+    std::string tmp = slot_path(slot, "tmp");
+    if (ok) ok = rename(tmp.c_str(), slot_path(slot).c_str()) == 0;
+    else unlink(tmp.c_str());
+    return ok;
 }
 
 // ---------------------------------------------------------------- background capture
@@ -513,6 +599,8 @@ struct Job {
     std::atomic<uint32_t> faults{0}, copied{0};
     uint32_t precopied = 0;
     std::atomic<uint64_t> fault_ns{0}, max_fault_ns{0};
+    std::atomic<uint32_t> held{0}, max_held{0};  // copies made by writes, not yet compressed (memory they take)
+    std::atomic<uint32_t> zeroed{0};            // touched chunks found all zero: their memory given back
 
     long index(uint32_t ea) const {
         for (size_t r = 0; r < regs.size(); r++)
@@ -590,6 +678,8 @@ void take(Job* j, size_t i) {
             if (mprotect(p, kChunk, PROT_READ | PROT_WRITE) != 0) give_up(j);
             j->st[i].store(kCopied, std::memory_order_release);
             j->copied.fetch_add(1, std::memory_order_relaxed);
+            uint32_t h = j->held.fetch_add(1, std::memory_order_relaxed) + 1, mh = j->max_held.load(std::memory_order_relaxed);
+            while (h > mh && !j->max_held.compare_exchange_weak(mh, h, std::memory_order_relaxed)) {}
             break;
         }
         if (v != kBusy) break;  // copied or done: writable already
@@ -702,18 +792,18 @@ std::shared_ptr<Job> start() {
     return j;
 }
 
-// background: the chunks compressed (in address order, on `threads` threads); null if it failed
-std::shared_ptr<Captured> finish(const std::shared_ptr<Job>& j, unsigned threads) {
-    auto c = std::make_shared<Captured>();
-    c->regs = j->regs;
-    std::vector<Captured::Piece> pieces(j->n);
-    std::vector<uint8_t> present(j->n), written(j->n);  // written: copied, and changed since
-    c->out.resize(threads);
+// background: the chunks compressed (in address order, on `threads` threads) and written to `out` as
+// they come; false if the capture failed
+bool finish(const std::shared_ptr<Job>& j, unsigned threads, SlotOut& out) {
+    constexpr size_t kFlush = 1 << 20;  // records gathered by a thread before they're written
+    std::vector<uint8_t> written(j->n);  // written: copied, and changed since
     std::atomic<size_t> next{0};
     auto work = [&](unsigned t) {
+        (void)t;
         ZSTD_CCtx* cx = ZSTD_createCCtx();
-        std::vector<uint8_t> tmp(ZSTD_compressBound(kChunk)), local(kChunk);
-        std::vector<uint8_t>& o = c->out[t];
+        std::vector<uint8_t> tmp(ZSTD_compressBound(kChunk)), local(kChunk), o;
+        o.reserve(kFlush + kChunk + 8);
+        uint32_t no = 0;
         for (size_t i; (i = next.fetch_add(1, std::memory_order_relaxed)) < j->n;) {
             uint8_t* p = mem::ptr(j->addr(i));
             const uint8_t* src = nullptr;  // null: untouched (zero)
@@ -721,8 +811,18 @@ std::shared_ptr<Captured> finish(const std::shared_ptr<Job>& j, unsigned threads
             uint8_t v = kPending;
             if (j->st[i].compare_exchange_strong(v, kBusy, std::memory_order_acq_rel)) {
                 if (ever_touched(p, kChunk)) {  // (else zero)
-                    memcpy(local.data(), p, kChunk);
-                    src = local.data();
+                    const uint64_t* q = (const uint64_t*)p;
+                    bool zero = true;
+                    for (size_t k = 0; k < kChunk / 8 && zero; k++) zero = q[k] == 0;
+                    if (zero) {
+                        // all zero but in memory: given back (reads as zero all the same; nothing writes
+                        // it now, a write waits in the fault handler while it's busy)
+                        madvise(p, kChunk, MADV_DONTNEED);
+                        j->zeroed.fetch_add(1, std::memory_order_relaxed);
+                    } else {
+                        memcpy(local.data(), p, kChunk);
+                        src = local.data();
+                    }
                 }
                 if (mprotect(p, kChunk, PROT_READ | PROT_WRITE) != 0) give_up(j.get());
                 j->st[i].store(kDone, std::memory_order_release);
@@ -737,25 +837,28 @@ std::shared_ptr<Captured> finish(const std::shared_ptr<Job>& j, unsigned threads
                 for (size_t k = 0; k < kChunk / 8 && zero; k++) zero = q[k] == 0;
                 if (!zero) {
                     size_t n = cx ? ZSTD_compressCCtx(cx, tmp.data(), tmp.size(), src, kChunk, kZstdLevel) : 0;
-                    Captured::Piece& pc = pieces[i];
-                    pc.thread = t;
-                    pc.offset = (uint32_t)o.size();
-                    if (!cx || ZSTD_isError(n) || n >= kChunk) {
-                        o.insert(o.end(), src, src + kChunk);
-                        pc.comp = 0;
-                    } else {
-                        o.insert(o.end(), tmp.data(), tmp.data() + n);
-                        pc.comp = (uint32_t)n;
+                    const bool stored = !cx || ZSTD_isError(n) || n >= kChunk;
+                    uint32_t rec[2] = {j->addr(i), stored ? 0u : (uint32_t)n};
+                    o.insert(o.end(), (const uint8_t*)rec, (const uint8_t*)rec + 8);
+                    if (stored) o.insert(o.end(), src, src + kChunk);
+                    else o.insert(o.end(), tmp.data(), tmp.data() + n);
+                    if (++no, o.size() >= kFlush) {
+                        out.put(o, no);
+                        o.clear();
+                        no = 0;
                     }
-                    present[i] = 1;
                 }
             }
             if (fromCopy) {
                 // still hot? (the live chunk may change while compared: only a hint for the next capture)
                 written[i] = memcmp(src, p, kChunk) != 0;
-                if (!j->pre_index[i]) madvise(j->copies + i * kChunk, kChunk, MADV_DONTNEED);  // its memory back
+                if (!j->pre_index[i]) {
+                    madvise(j->copies + i * kChunk, kChunk, MADV_DONTNEED);  // its memory back
+                    j->held.fetch_sub(1, std::memory_order_relaxed);
+                }
             }
         }
+        if (no) out.put(o, no);
         ZSTD_freeCCtx(cx);
     };
     std::vector<std::thread> pool;
@@ -774,48 +877,28 @@ std::shared_ptr<Captured> finish(const std::shared_ptr<Job>& j, unsigned threads
     g_hot.clear();
     for (size_t i = 0; i < j->n; i++)
         if (written[i]) g_hot.push_back(j->addr(i));
-    if (j->failed) return nullptr;
-    for (size_t i = 0; i < j->n; i++)
-        if (present[i]) {
-            c->addrs.push_back(j->addr(i));
-            c->pieces.push_back(pieces[i]);
-        }
-    return c;
+    return !j->failed;
 }
 }  // namespace cow
 #endif
 
 // ---------------------------------------------------------------- slot files
-// version 2: header, u64 size + zstd sections, u32 count + regions, then per chunk u32 address,
-// u32 compressed size (0: 64 KiB as they are) and its bytes
-bool write_slot(int slot, const Header& h0, const std::vector<uint8_t>& sections, const Captured& c) {
-    Header h = h0;
-    h.blocks = (uint32_t)c.addrs.size();
-    h.raw_size = sections.size();
-    std::vector<uint8_t> sc(ZSTD_compressBound(sections.size()));
-    size_t sn = ZSTD_compress(sc.data(), sc.size(), sections.data(), sections.size(), kZstdLevel);
-    if (ZSTD_isError(sn)) return false;
-    std::string tmp = slot_path(slot, "tmp");
-    FILE* f = fopen(tmp.c_str(), "wb");
-    if (!f) {  // the folder was deleted while the game ran: made again
-        make_dirs(state_dir());
-        f = fopen(tmp.c_str(), "wb");
-    }
-    if (!f) return false;
-    uint64_t sn64 = sn;
-    uint32_t nr = (uint32_t)c.regs.size();
-    bool ok = fwrite(&h, sizeof h, 1, f) == 1 && fwrite(&sn64, 8, 1, f) == 1 && fwrite(sc.data(), 1, sn, f) == sn &&
-              fwrite(&nr, 4, 1, f) == 1 && fwrite(c.regs.data(), sizeof(Region), nr, f) == nr;
+// a capture made while the game was stopped (macOS, WWHD_STATE_COW=0, protection failed)
+bool write_slot(int slot, Header h, const std::vector<uint8_t>& sections, const Captured& c) {
+    SlotOut o;
+    bool ok = begin_slot(o, slot, h, sections, c.regs);
+    std::vector<uint8_t> rec;
     for (size_t i = 0; i < c.addrs.size() && ok; i++) {
         const Captured::Piece& pc = c.pieces[i];
-        uint32_t rec[2] = {c.addrs[i], pc.comp};
         size_t n = pc.comp ? pc.comp : kChunk;
-        ok = fwrite(rec, 8, 1, f) == 1 && fwrite(c.out[pc.thread].data() + pc.offset, 1, n, f) == n;
+        uint32_t r[2] = {c.addrs[i], pc.comp};
+        const uint8_t* p = c.out[pc.thread].data() + pc.offset;
+        rec.assign((const uint8_t*)r, (const uint8_t*)r + 8);
+        rec.insert(rec.end(), p, p + n);
+        o.put(rec, 1);
+        ok = o.ok;
     }
-    ok = fclose(f) == 0 && ok;
-    if (ok) ok = rename(tmp.c_str(), slot_path(slot).c_str()) == 0;
-    else unlink(tmp.c_str());
-    return ok;
+    return end_slot(o, slot, h, ok);
 }
 
 bool read_header(FILE* f, Header& h, std::string& why) {
@@ -850,9 +933,19 @@ bool read_slot_v2(FILE* f, Snapshot& s, std::string& why) {
     if (at < 0 || fseek(f, 0, SEEK_END) != 0) return false;
     long end = ftell(f);
     if (end < at || fseek(f, at, SEEK_SET) != 0) return false;
-    s.blob.resize((size_t)(end - at));
-    if (fread(s.blob.data(), 1, s.blob.size(), f) != s.blob.size()) return false;
-    Reader r(s.blob.data(), s.blob.size());
+    const uint8_t* data = nullptr;
+    size_t size = (size_t)(end - at);
+    void* m = size ? mmap(nullptr, (size_t)end, PROT_READ, MAP_PRIVATE, fileno(f), 0) : MAP_FAILED;
+    if (m != MAP_FAILED) {
+        s.map = (uint8_t*)m;
+        s.map_size = (size_t)end;
+        data = s.map + at;
+    } else {  // (a file system without mmap)
+        s.blob.resize(size);
+        if (fread(s.blob.data(), 1, s.blob.size(), f) != s.blob.size()) return false;
+        data = s.blob.data();
+    }
+    Reader r(data, size);
     std::vector<std::pair<uint32_t, ChunkRef>> list;
     list.reserve(s.h.blocks);
     for (uint32_t i = 0; i < s.h.blocks && r.ok; i++) {
@@ -1137,6 +1230,7 @@ void finish_save(int slot, bool quiet, Header h, std::shared_ptr<Writer> payload
     struct Done { ~Done() { g_writes--; } } done;  // on every way out
     auto t1 = std::chrono::steady_clock::now();
     std::string what;
+    bool ok;
 #ifndef __APPLE__
     if (job) {
         setpriority(PRIO_PROCESS, 0, 10);  // this thread only (Linux): the game's threads go first
@@ -1145,26 +1239,32 @@ void finish_save(int slot, bool quiet, Header h, std::shared_ptr<Writer> payload
             const char* e = getenv("WWHD_STATE_THREADS");
             return std::max(1u, std::min(8u, e ? (unsigned)atoi(e) : 2u));
         }();
-        memory = cow::finish(j, nt);
-        char buf[256];
-        snprintf(buf, sizeof buf, "; %u copied at the stop, %u faults, %u chunks copied (%.1f MB), %.1f ms in faults, longest %.2f ms; %zu hot next time",
-                 j->precopied, j->faults.load(), j->copied.load(), j->copied.load() * (double)kChunk / 1048576.0, j->fault_ns.load() / 1e6,
-                 j->max_fault_ns.load() / 1e6, cow::g_hot.size());
+        const uint64_t rss0 = rss_bytes();
+        std::lock_guard<std::mutex> io(g_io);
+        SlotOut out;
+        begin_slot(out, slot, h, payload->b, j->regs);  // (if it fails, the capture still runs: it unprotects)
+        bool captured = cow::finish(j, nt, out);
+        char buf[320];
+        snprintf(buf, sizeof buf, "; %u copied at the stop, %u faults, %u chunks copied (%.1f MB, at most %.1f MB at once), %.1f ms in faults, longest %.2f ms; %u zero chunks given back; RSS %.0f -> %.0f MB; %zu hot next time",
+                 j->precopied, j->faults.load(), j->copied.load(), j->copied.load() * (double)kChunk / 1048576.0,
+                 j->max_held.load() * (double)kChunk / 1048576.0, j->fault_ns.load() / 1e6, j->max_fault_ns.load() / 1e6,
+                 j->zeroed.load(), rss0 / 1048576.0, rss_bytes() / 1048576.0, cow::g_hot.size());
         what = buf;
         cow::g_running = false;
-        if (!memory) {
+        if (!captured) {
+            end_slot(out, slot, h, false);
             LOG("[savestate] %s: capture failed (protection change failed)%s", slot_label(slot).c_str(), what.c_str());
             if (!quiet) message("%s: not saved (out of memory mappings)", slot_label(slot, true).c_str());
             return;
         }
         LOG("[savestate] %s: captured %.1f MB of memory as %.1f MB in the background in %.0f ms%s", slot_label(slot).c_str(),
-            memory->addrs.size() * (double)kChunk / 1048576.0, memory->bytes() / 1048576.0,
+            out.chunks * (double)kChunk / 1048576.0, out.bytes / 1048576.0,
             std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t1).count(), what.c_str());
-    }
+        ok = end_slot(out, slot, h, true);
+    } else
 #else
     (void)job;
 #endif
-    bool ok;
     {
         std::lock_guard<std::mutex> io(g_io);
         ok = write_slot(slot, h, payload->b, *memory);
@@ -1180,10 +1280,27 @@ void finish_save(int slot, bool quiet, Header h, std::shared_ptr<Writer> payload
     g_message_time = std::chrono::steady_clock::now();
 }
 
+// Memory above Android's low-memory line (availMem - threshold, from MainActivity every 2 s; -1 unknown). A save
+// adds the fault copies of the background capture (7-22 MB at once on a Snapdragon 855, more on slow phones) and the
+// stream buffers (~25 MB peak, 0332e59c): with less than 96 MB left (min_headroom_mb) the system may kill the game
+// mid-save (#51), so the save is refused with a message instead (WWHD_STATE_MIN_HEADROOM_MB overrides).
+std::atomic<int> g_headroom_mb{-1};
+int min_headroom_mb() {
+    static const int v = getenv("WWHD_STATE_MIN_HEADROOM_MB") ? atoi(getenv("WWHD_STATE_MIN_HEADROOM_MB")) : 96;
+    return v;
+}
+
 // true when done (saved or failed for good); false to retry on the next frame. An auto save (quiet)
 // gives the game threads less time to reach their waits and doesn't retry: it comes again later.
 bool do_save(int slot, bool quiet) {
     std::string busy, why;
+    const int headroom = g_headroom_mb.load();
+    if (headroom >= 0 && headroom < min_headroom_mb()) {
+        LOG("[savestate] %s: not saved: %d MB above the low-memory line (needs %d)", slot_label(slot).c_str(), headroom,
+            min_headroom_mb());
+        if (!quiet) message("%s: not saved (too little free memory, close other apps)", slot_label(slot, true).c_str());
+        return true;
+    }
     auto t0 = std::chrono::steady_clock::now();
     auto ms_since = [](std::chrono::steady_clock::time_point t) {
         return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t).count();
@@ -1235,6 +1352,9 @@ bool do_save(int slot, bool quiet) {
     w = Writer();
     save_dispatch(w);
     put_section(*payload, kSecDispatch, w);
+    w = Writer();
+    w.u64((uint64_t)os_time::bias());
+    put_section(*payload, kSecOsTime, w);
     double tSections = ms_since(t);
     t = std::chrono::steady_clock::now();
     // memory: write-protected and captured in the background, or (macOS, WWHD_STATE_COW=0, or if
@@ -1323,6 +1443,12 @@ bool do_load(const std::shared_ptr<Snapshot>& s) {
     ax_ss_load(r);
     r = s->section(kSecGx2);
     gx2_ss_load(r);
+    {  // the calendar clock continues from the state's (os_time::restored_bias)
+        Reader t = s->section(kSecOsTime);
+        const bool has = s->sections.count(kSecOsTime) != 0;
+        const int64_t state_bias = has ? (int64_t)t.u64() : 0;
+        os_time::set_bias(os_time::restored_bias(os_time::bias(), has && t.ok, state_bias));
+    }
     interp::ss_reset();
     r = s->section(kSecThreads);
     threads_ss_load(r);  // last: wakes the parked threads (they continue after the thaw)
@@ -1468,7 +1594,7 @@ void request_load(int slot) {
             LOG("[savestate] slot %d: converted to version %u %s", slot, kVersion, ok ? "and written" : "but NOT written");
         }
         LOG("[savestate] slot %d: read %.1f MB (%zu memory chunks, version %u) in %.0f ms", slot,
-            (s->payload.size() + s->blob.size()) / 1048576.0, s->chunks.size(), s->h.version,
+            (s->payload.size() + s->chunk_bytes()) / 1048576.0, s->chunks.size(), s->h.version,
             std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count());
         std::lock_guard<std::mutex> lk(g_mu);
         g_load_ready = s;
@@ -1483,6 +1609,7 @@ void set_start_hold(bool on) {
 }
 int start_hold_state() { return g_hold.load(); }
 int writes_pending() { return g_writes.load(); }
+void set_memory_headroom(int mb) { g_headroom_mb = mb; }
 
 void set_auto_interval(int minutes) {
     g_auto_minutes = std::max(0, minutes);

@@ -34,6 +34,9 @@ final class CrashLogs {
     // also the names before 0.6 (crash-YYYYmmdd-HHMMSS.log)
     static boolean isLogName(String n) { return n.matches("(tlozwwhd_[0-9A-Za-z.-]+_|crash-)\\d{8}-\\d{6}\\.log"); }
 
+    // About > Share game log's zip (only the newest is kept)
+    static boolean isGameLogName(String n) { return n.matches("tlozwwhd_game_[0-9A-Za-z.-]+_\\d{8}-\\d{6}\\.zip"); }
+
     static String appVersion(Context c) {
         try {
             return c.getPackageManager().getPackageInfo(c.getPackageName(), 0).versionName;
@@ -233,7 +236,7 @@ final class CrashLogs {
             try (java.io.BufferedReader rd = new java.io.BufferedReader(new java.io.InputStreamReader(p.getInputStream(),
                     java.nio.charset.StandardCharsets.UTF_8))) {
                 for (String l; (l = rd.readLine()) != null; ) {
-                    lines.add("    " + l.replaceAll("(/[^\\s/:,;)\"']+)+/([^\\s/:,;)\"']+)", ".../$2"));
+                    lines.add("    " + scrub(l));
                     if (lines.size() > max) lines.removeFirst();
                 }
             }
@@ -241,6 +244,44 @@ final class CrashLogs {
             lines.add("    logcat failed: " + ex.getMessage());
         }
         return String.join("\n", lines) + "\n";
+    }
+
+    // the save folder's files into the zip under `at`; cking.sav without the player's names (GcSave.withoutNames)
+    private static void addSaves(java.util.zip.ZipOutputStream out, File dir, String at) throws java.io.IOException {
+        File[] fs = dir.listFiles();
+        if (fs == null) return;
+        Arrays.sort(fs);
+        for (File f : fs) {
+            if (f.isDirectory()) {
+                addSaves(out, f, at + f.getName() + "/");
+                continue;
+            }
+            byte[] b = java.nio.file.Files.readAllBytes(f.toPath());
+            if (f.getName().equals("cking.sav")) {
+                b = GcSave.withoutNames(b);
+                if (b == null) continue;  // not a save the game wrote: it may hold anything
+            }
+            out.putNextEntry(new java.util.zip.ZipEntry(at + f.getName()));
+            out.write(b);
+            out.closeEntry();
+        }
+    }
+
+    private static final java.util.regex.Pattern[] PERSONAL = {
+            java.util.regex.Pattern.compile("content://[^\\s\"')]+"),
+            java.util.regex.Pattern.compile("[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(\\.[A-Za-z0-9-]+)*\\.[A-Za-z]{2,}"),
+            java.util.regex.Pattern.compile("(?<![0-9A-Fa-f:])[0-9A-Fa-f]{2}(:[0-9A-Fa-f]{2}){5}(?![0-9A-Fa-f:])"),
+            java.util.regex.Pattern.compile("(?<![\\d.])((25[0-5]|2[0-4]\\d|1?\\d?\\d)\\.){3}(25[0-5]|2[0-4]\\d|1?\\d?\\d)(?![\\d.])")};
+    private static final String[] PERSONAL_AS = {"content://...", "<email>", "<mac>", "<ip>"};
+
+    /**
+     * A log line without anything personal: paths cut to their last part (folder names may name
+     * the user), content URIs (a picked folder's name), email, MAC (Bluetooth controllers) and IP
+     * addresses replaced.
+     */
+    static String scrub(String l) {
+        for (int i = 0; i < PERSONAL.length; i++) l = PERSONAL[i].matcher(l).replaceAll(PERSONAL_AS[i]);
+        return l.replaceAll("(/[^\\s/:,;)\"']+)+/([^\\s/:,;)\"']+)", ".../$2");
     }
 
     private static String text(java.io.InputStream in, int max) throws java.io.IOException {
@@ -289,13 +330,96 @@ final class CrashLogs {
         a.startActivity(Intent.createChooser(send, a.getString(R.string.crash_share), picked.getIntentSender()));
     }
 
+    /**
+     * About > Share game log: a dialog says what is shared (and that nothing personal is), with a
+     * switch to add the save files; Share collects it (shareGameLog).
+     */
+    static void askGameLog(Activity a, SharedPreferences prefs, String release) {
+        boolean[] saves = {false};
+        new GameDialog(a).title(R.string.game_log_share).message(R.string.game_log_text)
+                .toggle(a.getString(R.string.game_log_saves), false, on -> saves[0] = on)
+                .button(R.string.opt_cancel, null)
+                .button(R.string.game_log_share_button, () -> shareGameLog(a, prefs, release, saves[0]))
+                .show();
+    }
+
+    /**
+     * Everything of this run still in Android's log buffers (logcat --pid: only the game's
+     * process, its native and Java lines and the GPU driver's), each line through scrub (nothing
+     * personal), zipped into the crash logs' folder and offered in Android's share menu. On top,
+     * what reproducing a problem needs, as in a crash log: when, the game files' release
+     * (`release`: "USA", "EUR", "JPN" or ""), the GPU and the driver in use, how long the game ran
+     * and where it is, the app, device and settings, the game release and code, the environment and
+     * the options set while running. With `saves`, also the save folder as the game last wrote it
+     * (save/: cking.sav with the names made "Link", the pictos, the album pages). Collected off the
+     * UI thread.
+     */
+    static void shareGameLog(Activity a, SharedPreferences prefs, String release, boolean saves) {
+        updateInfo(a, prefs);
+        String head = "GAME LOG " + new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss Z", java.util.Locale.US).format(new java.util.Date())
+                + "\n  game files: " + (release.isEmpty() ? "none or unknown" : release) + "\n" + Native.reportInfo()
+                + "  save files: " + (saves ? "included (names made \"Link\")" : "not included") + "\n";
+        new Thread(() -> {
+            File zip = writeGameLog(a, head, saves);
+            a.runOnUiThread(() -> {
+                if (a.isFinishing() || a.isDestroyed()) return;
+                if (zip == null) {
+                    android.widget.Toast.makeText(a, R.string.game_log_failed, android.widget.Toast.LENGTH_LONG).show();
+                    return;
+                }
+                Uri u = CrashLogProvider.uri(zip);
+                Intent send = new Intent(Intent.ACTION_SEND).setType("application/zip").putExtra(Intent.EXTRA_STREAM, u);
+                send.setClipData(ClipData.newRawUri(zip.getName(), u));
+                send.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                send.putExtra(Intent.EXTRA_SUBJECT, a.getString(R.string.game_log_subject));
+                send.putExtra(Intent.EXTRA_TEXT, about(a));
+                a.startActivity(Intent.createChooser(send, a.getString(R.string.game_log_share)));
+            });
+        }, "game-log").start();
+    }
+
+    private static File writeGameLog(Context c, String head, boolean saves) {
+        File d = dir(c);
+        //noinspection ResultOfMethodCallIgnored
+        d.mkdirs();
+        File[] old = d.listFiles((x, n) -> isGameLogName(n));
+        if (old != null)
+            for (File f : old) //noinspection ResultOfMethodCallIgnored
+                f.delete();
+        String when = new java.text.SimpleDateFormat("yyyyMMdd-HHmmss", java.util.Locale.US).format(new java.util.Date());
+        String name = "tlozwwhd_game_" + appVersion(c) + "_" + when;
+        File zip = new File(d, name + ".zip");
+        try (java.util.zip.ZipOutputStream out = new java.util.zip.ZipOutputStream(new java.io.FileOutputStream(zip))) {
+            out.putNextEntry(new java.util.zip.ZipEntry(name + ".log"));
+            java.io.Writer w = new java.io.OutputStreamWriter(out, java.nio.charset.StandardCharsets.UTF_8);
+            for (String l : head.split("\n")) w.write(scrub(l) + "\n");
+            w.write("  [log]\n");
+            Process p = new ProcessBuilder("logcat", "-d", "-v", "threadtime", "--pid=" + android.os.Process.myPid())
+                    .redirectErrorStream(true).start();
+            try (java.io.BufferedReader rd = new java.io.BufferedReader(new java.io.InputStreamReader(p.getInputStream(),
+                    java.nio.charset.StandardCharsets.UTF_8))) {
+                for (String l; (l = rd.readLine()) != null; )
+                    w.write(scrub(l) + "\n");
+            }
+            w.flush();
+            out.closeEntry();
+            if (saves) addSaves(out, new File(d.getParentFile(), "save"), "save/");
+            return zip;
+        } catch (java.io.IOException e) {
+            android.util.Log.w("wwhd", "game log: " + e);
+            //noinspection ResultOfMethodCallIgnored
+            zip.delete();
+            return null;
+        }
+    }
+
     // settings that say nothing about a problem
     private static final java.util.Set<String> SKIP = new java.util.HashSet<>(Arrays.asList("perf_x", "perf_y", "crash_seen", "crash_seen_ms", "crash_shared", "exit_seen_ms", "asked_notifications"));
 
     /**
      * The crash log's "app" section (runtime/src/crash_info.h): app version, Android, device, screen,
      * memory, controllers by USB IDs, and the settings. No personal data: no names, accounts or
-     * paths (a setting holding a path or URI is left out).
+     * paths (a setting holding a path or URI, or a per-controller id, is left out).
      */
     static void updateInfo(Activity a, SharedPreferences prefs) { Native.setCrashInfo("app", appInfo(a, prefs)); }
 
@@ -324,8 +448,9 @@ final class CrashLogs {
         java.util.TreeMap<String, ?> all = new java.util.TreeMap<>(prefs.getAll());
         StringBuilder set = new StringBuilder("settings:");
         for (java.util.Map.Entry<String, ?> e : all.entrySet()) {
-            String v = String.valueOf(e.getValue());
-            if (SKIP.contains(e.getKey()) || v.contains("/") || v.contains(":")) continue;
+            String v = String.valueOf(e.getValue()).replace("\n", "; ");  // (a mod pack's chosen presets: lines)
+            // also no per-controller keys (pad_map@<the device's id hash>)
+            if (SKIP.contains(e.getKey()) || e.getKey().contains("@") || v.contains("/") || v.contains(":")) continue;
             set.append(' ').append(e.getKey()).append('=').append(v);
         }
         s.append(set);

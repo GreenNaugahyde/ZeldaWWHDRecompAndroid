@@ -6,6 +6,7 @@
 namespace interp {
 // the camera drawn last (camera_process_class; eye at +0xDC, center at +0xE8), 0 before the first
 uint32_t last_camera();
+bool frame_is_hold();        // this frame's per-frame function runs a hold pass (no logic): for tasks that calc before it
 void record_executed_step(); // game thread; includes built-in turbo passes
 uint64_t executed_steps();    // actual actor logic passes, including true60 half steps
 int mode();                 // 0 off (30 fps), 1 frame interpolation (at fps()), 2 true 60

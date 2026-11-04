@@ -40,6 +40,7 @@ enum Op : uint32_t {
     OP_SETUP_CONTEXT,   // GX2ContextState*: allocate shadow state and make it current
     OP_FENCE,           // fence id: the game thread waits until the render thread got here
     OP_WARM,            // the game holds without frames (gx2::warm_while_held): warm the shader cache
+    OP_FRAMEGEN_CAMERA, // 60 fps (generated): the frame's camera (eye, center, up, fovy, near, far as floats)
     OP_COUNT
 };
 

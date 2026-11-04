@@ -9,11 +9,16 @@ final class GameText {
     private GameText() {}
 
     private static final String DIR = "game_text", LAYOUT = "CommandGuide_00", MESSAGES = "message", FIGURINES = "message4";
-    private static final int VERSION = 3;
+    // the dungeons' names (the GamePad's dungeon map: T_DungeonName_00_01..06) and the islands' (Miiverse's place tags:
+    // Topic_Tag_placeNN, NN = the island's sea room - 1), for the game progress (GameProgress)
+    private static final String DUNGEONS = "DungeonMap_00", PLACES = "MenuMiiverseContent_00";
+    private static final int VERSION = 4;
     // the Nintendo Gallery's figurine texts (message4: "Orca\nBirthplace: ..."): 14301 + gallery number (picto subject - 0x49)
     private static final int FIGURINE = 14301, FIGURINE_COUNT = 134;
     // the messages kept of the game's message file: "You conducted the *Wind's Requiem*!" (01453 + melody number)
     private static final int CONDUCTED = 1453;
+    // an item's "You got ..." message: 00101 + item id (00133 the Telescope, 0x20)
+    private static final int ITEM_GET = 101;
     // the game's text (T_ACT_Command_NN) for each action code; 0: none. The HUD's own table, read from the running
     // game (Native.actionTexts; the releases may differ); until then the USA one (10491350, filled at start by 0264AB20)
     private static int[] command;
@@ -35,11 +40,13 @@ final class GameText {
         String lang = a.gameLanguage();
         if (lang.equals(textsLang)) return;
         java.io.File dir = new java.io.File(new java.io.File(c.getFilesDir(), DIR), lang), f = new java.io.File(dir, LAYOUT + ".txt"),
-                m = new java.io.File(dir, MESSAGES + ".txt"), fig = new java.io.File(dir, FIGURINES + ".txt");
+                m = new java.io.File(dir, MESSAGES + ".txt"), fig = new java.io.File(dir, FIGURINES + ".txt"),
+                dun = new java.io.File(dir, DUNGEONS + ".txt"), places = new java.io.File(dir, PLACES + ".txt");
         if (new java.io.File(dir, "version" + VERSION).exists()) {
             texts = oneLine(load(f));
             if (texts != null) texts.putAll(loadMessages(m));
             if (texts != null) texts.putAll(loadFigurines(fig));
+            if (texts != null) texts.putAll(loadPlaces(dun, places));
             textsLang = lang;
             return;
         }
@@ -50,6 +57,9 @@ final class GameText {
             if ((dir.mkdirs() || dir.isDirectory()) && Native.extractUiTexts(gameDir, f.getAbsolutePath(), LAYOUT)
                     && Native.extractUiTexts(gameDir, m.getAbsolutePath(), MESSAGES)
                     && Native.extractUiTexts(gameDir, fig.getAbsolutePath(), FIGURINES)) {
+                // (the place names are extras: a game without them still gets the rest)
+                Native.extractUiTexts(gameDir, dun.getAbsolutePath(), DUNGEONS);
+                Native.extractUiTexts(gameDir, places.getAbsolutePath(), PLACES);
                 try {
                     new java.io.File(dir, "version" + VERSION).createNewFile();
                 } catch (java.io.IOException ignored) {
@@ -59,6 +69,7 @@ final class GameText {
                 texts = oneLine(load(f));
                 if (texts != null) texts.putAll(loadMessages(m));
                 if (texts != null) texts.putAll(loadFigurines(fig));
+                if (texts != null) texts.putAll(loadPlaces(dun, places));
                 textsLang = lang;
                 building = false;
             }
@@ -87,7 +98,8 @@ final class GameText {
         return m;
     }
 
-    // the few messages used (the file has thousands): the songs' "conducted" lines, keyed "msg:<label>"
+    // the few messages used (the file has thousands): the songs' "conducted" lines, keyed "msg:<label>"; the items' names,
+    // keyed "item:<id>": the coloured part of their "You got the *Telescope*!" message (ITEM_GET + item id)
     private static java.util.Map<String, String> loadMessages(java.io.File f) {
         java.util.Map<String, String> m = new java.util.HashMap<>(), all = load(f);
         if (all == null) return m;
@@ -95,7 +107,58 @@ final class GameText {
             String k = String.format(java.util.Locale.ROOT, "%05d", CONDUCTED + i), v = all.get(k);
             if (v != null) m.put("msg:" + k, v.replace("\\n", " "));
         }
+        for (int id = 0; id < 0x100; id++) {
+            String v = all.get(String.format(java.util.Locale.ROOT, "%05d", ITEM_GET + id));
+            String name = v == null ? null : coloured(v.replace("\\n", " "));
+            if (name != null) m.put("item:" + id, name);
+        }
         return m;
+    }
+
+    // the first coloured part of a message (between its first two colour changes, '*'), or null
+    private static String coloured(String msg) {
+        int a = msg.indexOf('*'), b = a < 0 ? -1 : msg.indexOf('*', a + 1);
+        if (b < 0) return null;
+        String s = msg.substring(a + 1, b).replaceAll("\\s+", " ").trim();
+        return s.isEmpty() ? null : s;
+    }
+
+    // the dungeons' names keyed "dungeon:<1..6>", the islands' "island:<sea room>"
+    private static java.util.Map<String, String> loadPlaces(java.io.File dungeons, java.io.File places) {
+        java.util.Map<String, String> m = new java.util.HashMap<>(), d = load(dungeons), p = load(places);
+        for (int n = 1; n <= 6 && d != null; n++) {
+            String v = d.get(String.format(java.util.Locale.ROOT, "T_DungeonName_00_%02d", n));
+            if (v != null && !v.isEmpty()) m.put("dungeon:" + n, v.replace("\\n", " ").trim());
+        }
+        for (int room = 1; room <= 49 && p != null; room++) {
+            String v = p.get(String.format(java.util.Locale.ROOT, "Topic_Tag_place%02d", room - 1));
+            if (v != null && !v.isEmpty()) m.put("island:" + room, v.replace("\\n", " ").trim());
+        }
+        return m;
+    }
+
+    /** an item's name in the game's language (its "You got ..." message), first letter capital; null if the game has none */
+    static String itemName(int id) { return capital(lookup("item:" + id)); }
+
+    /** a dungeon's name (1 Forsaken Fortress .. 6 Wind Temple) in the game's language, or null */
+    static String dungeonName(int n) { return lookup("dungeon:" + n); }
+
+    /** an island's name by its sea room (1..49) in the game's language, or null */
+    static String islandName(int room) { return lookup("island:" + room); }
+
+    /** a figurine's name by its gallery number (0..133) in the game's language, or null */
+    static String figurineByNumber(int n) { return lookup("fig:" + n); }
+
+    private static String lookup(String key) {
+        java.util.Map<String, String> t;
+        synchronized (GameText.class) { t = texts; }
+        return t == null ? null : t.get(key);
+    }
+
+    private static String capital(String s) {
+        if (s == null || s.isEmpty()) return s;
+        int one = s.offsetByCodePoints(0, 1);
+        return s.substring(0, one).toUpperCase(java.util.Locale.ROOT) + s.substring(one);
     }
 
     // the figurines' names (the first line of each text), keyed "fig:<gallery number>"

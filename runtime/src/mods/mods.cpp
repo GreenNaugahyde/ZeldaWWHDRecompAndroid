@@ -8,6 +8,7 @@
 //   WWHD_MOD_FAST_SCENES=1     fast scene changes
 //   WWHD_MOD_FF_CUTSCENES=1    fast forward of cutscenes while ZR is held (WWHD_MOD_FF_RATE=4: display clock rate)
 //   WWHD_MOD_FF_DIALOGUES=1    the same for dialogues
+//   WWHD_MOD_HIT_STOP_OFF=31   hit freezes switched off (mods::HitStop bits)
 //   WWHD_MOD_RUN_SPEED=1.5     faster running (distance per step while Link runs)
 //   WWHD_MOD_SWIM_SPEED=1.5    faster swimming (the same while he swims)
 //   WWHD_MOD_CLIMB_SPEED=1.5   faster climbing (ladders, ivy, moving along a ledge: animation speed)
@@ -248,7 +249,9 @@ void trace(const char* fmt, ...) {
     if (!g_trace) return;
     static std::mutex mu;
     std::lock_guard<std::mutex> lk(mu);
-    fprintf(g_trace, "%llu ", (unsigned long long)step());
+    static const auto t0 = std::chrono::steady_clock::now();
+    fprintf(g_trace, "%llu %lldms ", (unsigned long long)step(),
+            (long long)std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0).count());
     va_list ap;
     va_start(ap, fmt);
     vfprintf(g_trace, fmt, ap);

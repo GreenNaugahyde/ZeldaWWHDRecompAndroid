@@ -17,10 +17,18 @@ public final class RestartActivity extends Activity {
     static final String EXTRA_PID = "pid";
     static final String EXTRA_CLEAR_SHADERS = "clear_shaders";
     static final String EXTRA_DELETE = "delete";  // a file in the shader cache to delete (a removed GPU driver's)
+    static final String EXTRA_RESTARTED = "restarted";  // to MainActivity: a restart of the app's own (the game played stays)
 
     @Override
     protected void onCreate(Bundle state) {
         super.onCreate(state);
+        // a TV: not see-through. With nothing behind it once the game's process has ended, Android starts the TV's
+        // launcher there, and it came to the front after the game had started again (a 3 GB TV box: the benchmark
+        // stopped, "the app left the screen"). Opaque, nothing is needed behind it.
+        if (MainActivity.isTv(this)) {
+            setTranslucent(false);
+            getWindow().getDecorView().setBackgroundColor(0xFF000000);
+        }
         int pid = getIntent().getIntExtra(EXTRA_PID, -1);
         boolean clearShaders = getIntent().getBooleanExtra(EXTRA_CLEAR_SHADERS, false);
         String delete = getIntent().getStringExtra(EXTRA_DELETE);
@@ -44,6 +52,7 @@ public final class RestartActivity extends Activity {
             runOnUiThread(() -> {
                 Intent i = new Intent(this, MainActivity.class);
                 i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK);
+                i.putExtra(EXTRA_RESTARTED, true);
                 startActivity(i);
                 finish();
                 Process.killProcess(Process.myPid());

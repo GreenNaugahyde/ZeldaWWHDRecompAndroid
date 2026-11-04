@@ -21,6 +21,7 @@
 
 #include "gx2/gx2.h"
 #include "lsfg.h"
+#include "reproj.h"
 #include "platform.h"
 #include "interp.h"
 #include "runtime.h"
@@ -84,6 +85,26 @@ Chunk* new_chunk(VkDeviceSize size) {
 std::vector<VkDescriptorPool> g_pool_free, g_pool_used;
 VkDescriptorPool g_pool_cur = VK_NULL_HANDLE;
 }  // namespace
+
+// Free upload chunks beyond a few are given back (every 300 frames): an area's load uploads hundreds
+// of MB of textures in a few frames, and the chunks it took stayed allocated for the session
+// (WindWakerHD-Android-Plus e8d20b8). Larger-than-standard ones go first.
+static void trim_upload_chunks() {
+    constexpr size_t kKeep = 4;
+    if (R.frame % 300) return;
+    std::sort(g_chunk_free.begin(), g_chunk_free.end(), [](const Chunk* a, const Chunk* b) { return a->size < b->size; });
+    size_t freed = 0;
+    VkDeviceSize bytes = 0;
+    while (!g_chunk_free.empty() && (g_chunk_free.size() > kKeep || g_chunk_free.back()->size > kChunkSize)) {
+        Chunk* c = g_chunk_free.back();
+        g_chunk_free.pop_back();
+        bytes += c->size;
+        vmaDestroyBuffer(R.vma, c->buf, c->alloc);
+        delete c;
+        freed++;
+    }
+    if (freed) LOG("[vk] gave back %zu upload chunks (%llu MB)", freed, (unsigned long long)(bytes >> 20));
+}
 
 Upload upload_alloc(VkDeviceSize size, VkDeviceSize align) {
     align = std::max<VkDeviceSize>(align, 4);
@@ -668,7 +689,8 @@ static void transition(Image& img, Use use, VkPipelineStageFlags readStages) {
 
 // ---------------------------------------------------------------- images
 bool create_image(Image& img, VkImageType type, VkImageViewType viewType, VkFormat format, uint32_t w, uint32_t h, uint32_t depth,
-                  uint32_t layers, uint32_t mips, VkImageUsageFlags usage, bool cube, bool isDepth, bool stencil) {
+                  uint32_t layers, uint32_t mips, VkImageUsageFlags usage, bool cube, bool isDepth, bool stencil,
+                  bool dedicated) {
     VkImageCreateInfo ci{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
     ci.imageType = type;
     ci.format = format;
@@ -683,6 +705,7 @@ bool create_image(Image& img, VkImageType type, VkImageViewType viewType, VkForm
     if (cube) ci.flags |= VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT;
     VmaAllocationCreateInfo ai{};
     ai.usage = VMA_MEMORY_USAGE_AUTO;
+    if (dedicated) ai.flags |= VMA_ALLOCATION_CREATE_DEDICATED_MEMORY_BIT;
     if (vmaCreateImage(R.vma, &ci, &ai, &img.image, &img.alloc, nullptr) != VK_SUCCESS) {
         img.image = VK_NULL_HANDLE;
         return false;
@@ -1039,6 +1062,9 @@ static void create_device() {
     vi.physicalDevice = R.pd;
     vi.device = R.device;
     vi.instance = R.instance;
+    // 64 MB blocks instead of 256 MB: with textures freed (evict_unused_textures) most blocks stayed
+    // partly used, and a block goes back to the system only when empty
+    vi.preferredLargeHeapBlockSize = 64ull << 20;
     VK_CHECK(vmaCreateAllocator(&vi, &R.vma));
 
     VkCommandPoolCreateInfo pi{VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};
@@ -1090,6 +1116,11 @@ struct Swapchain {
     VkRenderPass pass = VK_NULL_HANDLE;
     VkPipeline pipeline = VK_NULL_HANDLE;
     bool stale = false;  // out of date: recreate before the next present
+    // the extra windows: an image acquired with a fence, drawn into only once the fence says it is free (a video
+    // encoder may still read it: the GPU waiting on it held up the game's own frames, Tegra X1 21 instead of 29 fps)
+    VkFence acquireFence = VK_NULL_HANDLE;
+    bool acquirePending = false;
+    uint32_t acquiredIdx = 0;
 };
 Swapchain g_sc;
 Swapchain g_sc_drc;  // the GamePad picture on a second display (dual-screen devices), if the app gives one
@@ -1180,6 +1211,15 @@ VkPipeline create_present_pipeline(VkRenderPass pass) {
 
 // g_window_mutex and the queue idle
 void destroy_swapchain(Swapchain& sc, bool keepSurface) {
+    if (sc.acquirePending) {  // (an image acquired, not drawn yet: its fence settles first)
+        if (vkWaitForFences(R.device, 1, &sc.acquireFence, VK_TRUE, 200 * 1000000ull) == VK_SUCCESS) {
+            vkResetFences(R.device, 1, &sc.acquireFence);
+        } else {
+            vkDestroyFence(R.device, sc.acquireFence, nullptr);
+            sc.acquireFence = VK_NULL_HANDLE;
+        }
+        sc.acquirePending = false;
+    }
     for (auto fb : sc.fbs) vkDestroyFramebuffer(R.device, fb, nullptr);
     for (auto v : sc.views) vkDestroyImageView(R.device, v, nullptr);
     for (auto s : sc.renderDone) vkDestroySemaphore(R.device, s, nullptr);
@@ -1205,14 +1245,19 @@ static bool no_60hz_request() {
 // (a 144 Hz panel can't space 60 or 120 fps evenly; 120 Hz can); without it at least 60 Hz, more for
 // interpolation at 120 fps. Checked every frame (the frame rate setting changes during play); Android
 // is asked only when it changes, or for a new window (force).
+// frame generation: the LSFG network (lsfg.cpp, the user's Lossless.dll) or the built-in reprojection
+// (reproj.cpp, "60 fps (generated)"); both present through present_frame_fg and its present thread
+static bool gen_on() { return fg::loaded() || rp::enabled(); }
+static int gen_multiplier() { return rp::enabled() ? 2 : fg::config().multiplier; }
 static float g_rate_requested = -1.0f;
 static void request_display_rate(ANativeWindow* window, bool force) {
     if (!window) return;
     const int shown = 30 * interp::frames_per_step();
     float rate;
     int8_t compat = ANATIVEWINDOW_FRAME_RATE_COMPATIBILITY_DEFAULT;
-    if (fg::loaded()) {
-        rate = (float)(shown * fg::config().multiplier);
+    if (gen_on()) {
+        // the built-in reprojection doubles the game's own 30 fps; LSFG multiplies what is drawn
+        rate = (float)((rp::enabled() ? 30 : shown) * gen_multiplier());
         compat = ANATIVEWINDOW_FRAME_RATE_COMPATIBILITY_FIXED_SOURCE;
     } else {
         // without it the game flips at most 60 times a second (more with interpolation): let a 90/120 Hz
@@ -1228,7 +1273,7 @@ static void request_display_rate(ANativeWindow* window, bool force) {
     if (!force && rate == g_rate_requested) return;
     g_rate_requested = rate;
     ANativeWindow_setFrameRate(window, rate, compat);
-    LOG("[vk] display rate requested: %.0f Hz%s", rate, fg::loaded() ? " (frame generation)" : "");
+    LOG("[vk] display rate requested: %.0f Hz%s", rate, gen_on() ? " (frame generation)" : "");
 }
 
 // presents there); else the GamePad's own display
@@ -1274,7 +1319,7 @@ bool ensure_swapchain(Swapchain& sc, bool main = true) {
     // With frame generation the present thread paces the frames and each one must be shown: FIFO.
     VkPresentModeKHR mode = VK_PRESENT_MODE_FIFO_KHR;
     for (auto m : modes)
-        if (m == VK_PRESENT_MODE_MAILBOX_KHR && !(main && fg::loaded()) && !g_vsync.load()) mode = m;
+        if (m == VK_PRESENT_MODE_MAILBOX_KHR && !(main && gen_on()) && !g_vsync.load()) mode = m;
 
     VkSwapchainCreateInfoKHR ci{VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR};
     ci.surface = sc.surface;
@@ -1388,10 +1433,18 @@ void report_tv_shape(const ScreenRect& r, VkExtent2D ext) {
     if (h > 0) aspect::set_window_aspect(w / h);
 }
 
-// Upscaling of the pictures to the screen (app setting): 0 = bilinear (classic), 1 = sharp.
-// WWHD_UPSCALE=0/1 sets the starting value.
+// Upscaling of the pictures to the screen (app setting): 0 = bilinear (classic), 1 = sharp,
+// 2 = pixel perfect. WWHD_UPSCALE=0/1/2 sets the starting value.
 std::atomic<int> g_upscale{[] { const char* e = getenv("WWHD_UPSCALE"); return e ? atoi(e) : 1; }()};
-float upscale_sharpness() { return g_upscale.load(std::memory_order_relaxed) ? 0.5f : 0.0f; }
+float upscale_sharpness() { return g_upscale.load(std::memory_order_relaxed) == 1 ? 0.5f : 0.0f; }
+
+// the console's GamePad view while the game is on another screen, in its controller view (app option "TV picture
+// in the controller view"): the TV picture, whole, in the GamePad picture's place (the app dims it over that). Only
+// while the TV picture itself is not drawn here and the GamePad picture would be
+std::atomic<bool> g_backdrop_tv{false};
+static bool backdrop_tv(const ScreenRect& tv, bool drcVisible) {
+    return g_backdrop_tv.load(std::memory_order_relaxed) && tv.w < 0 && drcVisible && R.tv.img.image;
+}
 
 void draw_screen(VkCommandBuffer cmd, Screen& scr, const ScreenRect& r, VkExtent2D ext, int mode = 0) {
     if (!scr.img.image) return;
@@ -1408,7 +1461,8 @@ void draw_screen(VkCommandBuffer cmd, Screen& scr, const ScreenRect& r, VkExtent
     }
     pc[4] = scr.srgb ? 1.0f : 0.0f;
     pc[5] = upscale_sharpness();
-    pc[6] = pc[7] = 0;
+    pc[6] = g_upscale.load(std::memory_order_relaxed) == 2 ? 1.0f : 0.0f;
+    pc[7] = 0;
     VkDescriptorSet set = alloc_descriptor_set(g_present_dsl);
     if (!scr.view) scr.view = make_view(scr.img, VK_IMAGE_VIEW_TYPE_2D, 0, 1, {}, VK_IMAGE_ASPECT_COLOR_BIT);
     VkDescriptorImageInfo ii{R.linearClamp, scr.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
@@ -1451,7 +1505,12 @@ bool present_frame() {
     VkResult r;
     {
         std::lock_guard<std::mutex> sl(R.swapchainMutex);
-        r = vkAcquireNextImageKHR(R.device, g_sc.sc, 100 * 1000000ull, acquire, VK_NULL_HANDLE, &idx);
+        // Fast Forward (mods/turbo.cpp): no wait for a window image. A FIFO swapchain (frame generation's,
+        // or VSync on) shows at most one picture per refresh, and waiting for it held the game's 3x / 4x
+        // to the display's rate (the original project's #268, via WindWakerHD-Android-Plus 392f50d): a
+        // step without a free image is simply not shown
+        r = vkAcquireNextImageKHR(R.device, g_sc.sc, g_fast_forward.load(std::memory_order_relaxed) ? 0 : 100 * 1000000ull, acquire,
+                                  VK_NULL_HANDLE, &idx);
     }
     if (r == VK_ERROR_OUT_OF_DATE_KHR || r == VK_TIMEOUT || r == VK_NOT_READY || r < 0) {
         if (r != VK_TIMEOUT && r != VK_NOT_READY) g_sc.stale = true;
@@ -1483,7 +1542,8 @@ bool present_frame() {
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g_sc.pipeline);
     report_tv_shape(g_tv_rect, g_sc.extent);
     if (g_tv_rect.w >= 0) draw_screen(cmd, R.tv, g_tv_rect, g_sc.extent, g_tv_aspect.load(std::memory_order_relaxed));
-    if (g_drc_visible) draw_screen(cmd, R.drc, g_drc_rect, g_sc.extent);
+    if (backdrop_tv(g_tv_rect, g_drc_visible)) draw_screen(cmd, R.tv, g_drc_rect, g_sc.extent);
+    else if (g_drc_visible) draw_screen(cmd, R.drc, g_drc_rect, g_sc.extent);
     vkCmdEndRenderPass(cmd);
     on_complete([acquire] { g_acquire_free.push_back(acquire); });
     uint64_t submitId = submit(acquire, g_sc.renderDone[idx]);
@@ -1511,69 +1571,129 @@ bool present_frame() {
 // window. It must never hold up the game: a short acquire timeout, mailbox where offered, and a
 // frame that can't be shown is skipped.
 std::vector<VkSemaphore> g_drc_acquire_free;
-void present_drc_window() {
-    std::lock_guard<std::mutex> wl(g_window_mutex);
-    if (g_drc_present_outdated.exchange(false, std::memory_order_acquire)) g_sc_drc.stale = true;
-    if (!g_sc_drc.window || !R.drc.img.image || !ensure_swapchain(g_sc_drc, false)) return;
-    VkSemaphore acquire;
-    if (!g_drc_acquire_free.empty()) {
-        acquire = g_drc_acquire_free.back();
-        g_drc_acquire_free.pop_back();
-    } else {
-        VkSemaphoreCreateInfo si{VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO};
-        VK_CHECK(vkCreateSemaphore(R.device, &si, nullptr, &acquire));
+// at most this many pictures a second to the GamePad's window (0: every frame). A phone as the GamePad
+// (PadHost): its video encoder gets no more than it sends
+std::atomic<int> g_drc_window_fps{0};
+std::atomic<int> g_tvout_window_fps{0};  // the same for the TV picture's window (a device as the screen)
+// the GamePad's window shows the TV picture instead (fit, with bars): a phone as the GamePad in its controller view
+// with the TV picture behind the buttons (PadActivity asks, PadHost sets it)
+std::atomic<bool> g_drc_window_tv{false};
+std::chrono::steady_clock::time_point g_drc_last_present;
+// a second extra window: the TV picture for another device as the screen while the GamePad's window has the
+// GamePad picture for a third (PadHost: three devices)
+Swapchain g_sc_tvout;
+std::atomic<bool> g_tvout_present_outdated{false};
+std::vector<VkSemaphore> g_tvout_acquire_free;
+std::chrono::steady_clock::time_point g_tvout_last_present;
+
+// the extra windows' cost on this thread (logged every 300 frames): time waiting for a free image, time handing the
+// picture over, pictures skipped for want of a free image (a video encoder still holding them)
+std::atomic<uint64_t> g_extra_acquire_ns{0}, g_extra_present_ns{0}, g_extra_skipped{0}, g_extra_shown{0};
+
+void present_extra_window(Swapchain& sc, std::atomic<bool>& outdated, std::vector<VkSemaphore>& freeSems,
+                          std::chrono::steady_clock::time_point& last, bool tvPicture) {
+    if (int fps = (tvPicture ? g_tvout_window_fps : g_drc_window_fps).load(std::memory_order_relaxed); fps > 0 && sc.window) {
+        auto now = std::chrono::steady_clock::now();
+        // a quarter of a frame early still counts, and the rhythm is kept (the next one is due a frame after this
+        // one was due): the game's own frames come a few ms early or late, and a 2 ms allowance skipped every
+        // fourth one at the game's 30 fps (23 pictures a second); a faster game still gets every other one
+        auto period = std::chrono::microseconds(1000000 / fps);
+        if (now - last < period * 3 / 4) return;
+        last = now - last > period * 2 ? now : last + period;
+    }
+    if (outdated.exchange(false, std::memory_order_acquire)) sc.stale = true;
+    bool tvInDrc = !tvPicture && g_drc_window_tv.load(std::memory_order_relaxed);
+    Screen& shown = tvPicture || tvInDrc ? R.tv : R.drc;
+    if (!sc.window || !shown.img.image || !ensure_swapchain(sc, false)) return;
+    (void)freeSems;
+    if (!sc.acquireFence) {
+        VkFenceCreateInfo fi{VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
+        VK_CHECK(vkCreateFence(R.device, &fi, nullptr, &sc.acquireFence));
     }
     uint32_t idx = 0;
     VkResult r;
-    {
-        std::lock_guard<std::mutex> sl(R.swapchainMutex);
-        r = vkAcquireNextImageKHR(R.device, g_sc_drc.sc, 10 * 1000000ull, acquire, VK_NULL_HANDLE, &idx);
+    auto t0 = std::chrono::steady_clock::now();
+    if (!sc.acquirePending) {
+        // no waiting: without a free image this picture is skipped
+        {
+            std::lock_guard<std::mutex> sl(R.swapchainMutex);
+            r = vkAcquireNextImageKHR(R.device, sc.sc, 0, VK_NULL_HANDLE, sc.acquireFence, &idx);
+        }
+        if (r == VK_TIMEOUT || r == VK_NOT_READY) {
+            g_extra_skipped.fetch_add(1, std::memory_order_relaxed);
+            return;
+        }
+        if (r == VK_ERROR_OUT_OF_DATE_KHR || r < 0) {
+            sc.stale = true;
+            return;
+        }
+        if (r == VK_SUBOPTIMAL_KHR && ((uint32_t)ANativeWindow_getWidth(sc.window) != sc.extent.width ||
+                                       (uint32_t)ANativeWindow_getHeight(sc.window) != sc.extent.height))
+            sc.stale = true;
+        sc.acquirePending = true;
+        sc.acquiredIdx = idx;
     }
-    if (r == VK_ERROR_OUT_OF_DATE_KHR || r == VK_TIMEOUT || r == VK_NOT_READY || r < 0) {
-        if (r != VK_TIMEOUT && r != VK_NOT_READY) g_sc_drc.stale = true;
-        g_drc_acquire_free.push_back(acquire);
+    // the image is ours once its fence is signalled (the encoder let go of it); until then later frames look again
+    r = vkGetFenceStatus(R.device, sc.acquireFence);
+    auto t1 = std::chrono::steady_clock::now();
+    g_extra_acquire_ns.fetch_add((uint64_t)std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count(), std::memory_order_relaxed);
+    if (r != VK_SUCCESS) {
+        g_extra_skipped.fetch_add(1, std::memory_order_relaxed);
         return;
     }
-    if (r == VK_SUBOPTIMAL_KHR && ((uint32_t)ANativeWindow_getWidth(g_sc_drc.window) != g_sc_drc.extent.width ||
-                                   (uint32_t)ANativeWindow_getHeight(g_sc_drc.window) != g_sc_drc.extent.height))
-        g_sc_drc.stale = true;
-    prepare(R.drc.img, Use::SAMPLED);
+    vkResetFences(R.device, 1, &sc.acquireFence);
+    sc.acquirePending = false;
+    idx = sc.acquiredIdx;
+    g_extra_shown.fetch_add(1, std::memory_order_relaxed);
+    prepare(shown.img, Use::SAMPLED);
     end_pass();
     VkCommandBuffer cmd = command_buffer();
     VkClearValue clear{};
     clear.color = {{0, 0, 0, 1}};
     VkRenderPassBeginInfo bi{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
-    bi.renderPass = g_sc_drc.pass;
-    bi.framebuffer = g_sc_drc.fbs[idx];
-    bi.renderArea = {{0, 0}, g_sc_drc.extent};
+    bi.renderPass = sc.pass;
+    bi.framebuffer = sc.fbs[idx];
+    bi.renderArea = {{0, 0}, sc.extent};
     bi.clearValueCount = 1;
     bi.pClearValues = &clear;
     vkCmdBeginRenderPass(cmd, &bi, VK_SUBPASS_CONTENTS_INLINE);
-    VkViewport vp{0, 0, (float)g_sc_drc.extent.width, (float)g_sc_drc.extent.height, 0, 1};
-    VkRect2D scissor{{0, 0}, g_sc_drc.extent};
+    VkViewport vp{0, 0, (float)sc.extent.width, (float)sc.extent.height, 0, 1};
+    VkRect2D scissor{{0, 0}, sc.extent};
     vkCmdSetViewport(cmd, 0, 1, &vp);
     vkCmdSetScissor(cmd, 0, 1, &scissor);
-    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g_sc_drc.pipeline);
-    draw_screen(cmd, R.drc, ScreenRect{}, g_sc_drc.extent);  // the whole display, 16:9 with bars
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, sc.pipeline);
+    if (tvPicture) {  // the game renders the TV picture in this window's shape ("screen" aspect mode)
+        report_tv_shape(ScreenRect{}, sc.extent);
+        draw_screen(cmd, R.tv, ScreenRect{}, sc.extent, g_tv_aspect.load(std::memory_order_relaxed));
+    } else {
+        draw_screen(cmd, shown, ScreenRect{}, sc.extent);  // the whole display, with bars (the TV picture: tvInDrc)
+    }
     vkCmdEndRenderPass(cmd);
-    on_complete([acquire] { g_drc_acquire_free.push_back(acquire); });
-    uint64_t submitId = submit(acquire, g_sc_drc.renderDone[idx]);
-    if (rec::enabled()) enqueue_record_present(g_sc_drc.renderDone[idx], g_sc_drc.sc, idx, &g_drc_present_outdated, false);
+    uint64_t submitId = submit(VK_NULL_HANDLE, sc.renderDone[idx]);
+    if (rec::enabled()) enqueue_record_present(sc.renderDone[idx], sc.sc, idx, &outdated, false);
     else {
         wait_record_submitted(submitId);
         VkPresentInfoKHR pi{VK_STRUCTURE_TYPE_PRESENT_INFO_KHR};
         pi.waitSemaphoreCount = 1;
-        pi.pWaitSemaphores = &g_sc_drc.renderDone[idx];
+        pi.pWaitSemaphores = &sc.renderDone[idx];
         pi.swapchainCount = 1;
-        pi.pSwapchains = &g_sc_drc.sc;
+        pi.pSwapchains = &sc.sc;
         pi.pImageIndices = &idx;
         {
             std::lock_guard<std::mutex> sl(R.swapchainMutex);
             std::lock_guard<std::mutex> lk(R.queueMutex);
             r = vkQueuePresentKHR(R.queue, &pi);
         }
-        if (r == VK_ERROR_OUT_OF_DATE_KHR) g_sc_drc.stale = true;
+        if (r == VK_ERROR_OUT_OF_DATE_KHR) sc.stale = true;
     }
+    g_extra_present_ns.fetch_add((uint64_t)std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - t1).count(),
+                                 std::memory_order_relaxed);
+}
+
+void present_drc_window() {
+    std::lock_guard<std::mutex> wl(g_window_mutex);
+    present_extra_window(g_sc_drc, g_drc_present_outdated, g_drc_acquire_free, g_drc_last_present, false);
+    present_extra_window(g_sc_tvout, g_tvout_present_outdated, g_tvout_acquire_free, g_tvout_last_present, true);
 }
 
 // ---------------------------------------------------------------- frame generation
@@ -1646,7 +1766,8 @@ bool fg_present(const Image* img) {
     VkResult r;
     {
         std::lock_guard<std::mutex> sl(R.swapchainMutex);
-        r = vkAcquireNextImageKHR(R.device, g_sc.sc, 100 * 1000000ull, ps.acquire, VK_NULL_HANDLE, &idx);
+        r = vkAcquireNextImageKHR(R.device, g_sc.sc, g_fast_forward.load(std::memory_order_relaxed) ? 0 : 100 * 1000000ull,
+                                  ps.acquire, VK_NULL_HANDLE, &idx);  // (Fast Forward: as present_frame)
     }
     if (r == VK_ERROR_OUT_OF_DATE_KHR || r == VK_TIMEOUT || r == VK_NOT_READY || r < 0) {
         if (r != VK_TIMEOUT && r != VK_NOT_READY) g_sc.stale = true;
@@ -1657,7 +1778,7 @@ bool fg_present(const Image* img) {
         g_sc.stale = true;
     g_fg_next = (g_fg_next + 1) % 3;
     vkResetFences(R.device, 1, &ps.fence);
-    VkImageView view = fg::view_of(img);
+    VkImageView view = rp::enabled() ? rp::view_of(img) : fg::view_of(img);
     if (!view) view = g_comp.view;
     VkDescriptorSet& set = g_fg_sets[view];
     if (!set) {
@@ -1847,8 +1968,10 @@ bool create_composite(uint32_t w, uint32_t h) {
 // ---- frame generation settings changed in the app: applied at the next frame boundary
 struct FgRequest {
     bool on = false;
+    bool builtin = false;  // the built-in reprojection (reproj.cpp) instead of LSFG
     fg::Config cfg;
 };
+FgRequest g_fg_lsfg;  // the LSFG settings asked for last: back when the built-in one goes off
 std::mutex g_fg_req_mutex;
 bool g_fg_req_pending = false;
 FgRequest g_fg_req;
@@ -1861,7 +1984,7 @@ void apply_frame_generation() {
         r = g_fg_req;
         g_fg_req_pending = false;
     }
-    if (fg::loaded()) {
+    if (gen_on()) {
         // the present thread finishes what it has; then nothing uses the network's images
         wait_idle();
         fg_wait_present(true);
@@ -1876,9 +1999,14 @@ void apply_frame_generation() {
             if (g_fg_dpool) vkResetDescriptorPool(R.device, g_fg_dpool, 0);
         }
         destroy_composite();
-        fg::unload();
+        if (rp::enabled()) {
+            rp::set_enabled(false);
+            rp::destroy();
+        }
+        if (fg::loaded()) fg::unload();
     }
-    if (r.on) fg::load(r.cfg);  // logs why if the DLL can't be used
+    if (r.on && r.builtin) rp::set_enabled(true);
+    else if (r.on) fg::load(r.cfg);  // logs why if the DLL can't be used
     // present mode (FIFO with frame generation) and the display rate hint differ: new swapchain
     std::lock_guard<std::mutex> wl(g_window_mutex);
     request_display_rate(g_sc.window, true);
@@ -1914,7 +2042,8 @@ bool present_frame_fg() {
         vkResetDescriptorPool(R.device, g_fg_dpool, 0);
         destroy_composite();
         if (!create_composite(w, h)) return false;
-        fg::resize(w, h, g_comp.view);
+        if (rp::enabled()) rp::resize(w, h);
+        else fg::resize(w, h, g_comp.view);
     }
     // the game's frame interval decides if generated frames fit the display's refresh rate
     static const double hz = getenv("WWHD_DISPLAY_HZ") ? atof(getenv("WWHD_DISPLAY_HZ")) : 60.0;
@@ -1927,7 +2056,7 @@ bool present_frame_fg() {
     }
     last = now;
     // fast forward (mods/turbo.cpp): game frames only, the game's own frame rate is the point
-    bool generate = fg::config().multiplier / interval <= hz * 1.1 && !g_fast_forward.load(std::memory_order_relaxed);
+    bool generate = gen_multiplier() / interval <= hz * 1.1 && !g_fast_forward.load(std::memory_order_relaxed);
 
     if (R.tv.img.image) prepare(R.tv.img, Use::SAMPLED);
     if (R.drc.img.image) prepare(R.drc.img, Use::SAMPLED);
@@ -1957,10 +2086,17 @@ bool present_frame_fg() {
     }
     report_tv_shape(tvRect, {w, h});
     if (tvRect.w >= 0) draw_screen(cmd, R.tv, tvRect, {w, h}, g_tv_aspect.load(std::memory_order_relaxed));
-    if (drcVisible) draw_screen(cmd, R.drc, drcRect, {w, h});
+    if (backdrop_tv(tvRect, drcVisible)) draw_screen(cmd, R.tv, drcRect, {w, h});
+    else if (drcVisible) draw_screen(cmd, R.drc, drcRect, {w, h});
     vkCmdEndRenderPass(cmd);
     FgJob job;
-    job.images = fg::record(cmd, generate);
+    if (rp::enabled()) {
+        float rect[4];
+        fit(tvRect, (float)R.tv.img.width / std::max(1u, R.tv.img.height), rect, {w, h}, g_tv_aspect.load(std::memory_order_relaxed));
+        job.images = rp::record(cmd, g_comp.img, g_comp.view, rect, generate && R.tv.img.image && tvRect.w >= 0);
+    } else {
+        job.images = fg::record(cmd, generate);
+    }
     uint64_t submitId = submit();
     wait_record_submitted(submitId);  // the present thread also submits to R.queue
     job.arrival = Clock::now();
@@ -1975,11 +2111,15 @@ bool present_frame_fg() {
 }  // namespace
 
 bool vsync() { return g_vsync.load(std::memory_order_relaxed); }
+void set_drc_window_fps(int fps) { g_drc_window_fps.store(fps, std::memory_order_relaxed); }
+void set_tvout_window_fps(int fps) { g_tvout_window_fps.store(fps, std::memory_order_relaxed); }
+void set_drc_window_tv(bool on) { g_drc_window_tv.store(on, std::memory_order_relaxed); }
 void set_vsync(bool v) {
     if (g_vsync.exchange(v) == v) return;
     LOG("[vk] VSync %s", v ? "on" : "automatic");
     g_present_outdated = true;  // the swapchains are made again with the new mode
     g_drc_present_outdated = true;
+    g_tvout_present_outdated = true;
 }
 
 void set_fast_forward(bool on) { g_fast_forward.store(on, std::memory_order_relaxed); }
@@ -2001,37 +2141,67 @@ void set_window(ANativeWindow* w) {
     if (w) ANativeWindow_acquire(w);
 }
 
-void set_drc_window(ANativeWindow* w) {
+void set_extra_window(Swapchain& sc, ANativeWindow* w, const char* what) {
     std::lock_guard<std::mutex> wl(g_window_mutex);
-    if (w == g_sc_drc.window) {
-        g_sc_drc.stale = true;  // same window, new size
+    if (w == sc.window) {
+        sc.stale = true;  // same window, new size
         return;
     }
-    if (g_sc_drc.sc || g_sc_drc.surface) {
+    if (sc.sc || sc.surface) {
         if (rec::enabled()) wait_record_idle(false);
         std::lock_guard<std::mutex> lk(R.queueMutex);
         vkQueueWaitIdle(R.queue);
-        destroy_swapchain(g_sc_drc, false);
+        destroy_swapchain(sc, false);
     }
-    if (g_sc_drc.window) ANativeWindow_release(g_sc_drc.window);
-    g_sc_drc.window = w;
+    if (sc.window) ANativeWindow_release(sc.window);
+    sc.window = w;
     if (w) ANativeWindow_acquire(w);
-    LOG("[vk] GamePad display %s", w ? "attached" : "detached");
+    LOG("[vk] %s %s", what, w ? "attached" : "detached");
+    // the main window's swapchain made again after it: on a Tegra X1 (Nvidia) one made before an extra window's
+    // held the game at 20 fps (vsync off, a GamePad device joining while playing) until it was made again (the
+    // VSync switch, a restart: 28-30 fps); not understood, but this is what helped
+    if (w) g_present_outdated = true;
 }
+
+void set_drc_window(ANativeWindow* w) { set_extra_window(g_sc_drc, w, "GamePad display"); }
+
+// the TV picture for another device as the screen, besides the GamePad window (three devices)
+void set_tv_out_window(ANativeWindow* w) { set_extra_window(g_sc_tvout, w, "TV picture output"); }
 
 void request_frame_generation(bool on, const char* dll, bool quality, float flowScale, int multiplier, bool uiDetection) {
     std::lock_guard<std::mutex> lk(g_fg_req_mutex);
-    g_fg_req.on = on && dll && *dll;
-    g_fg_req.cfg.dll = dll ? dll : "";
-    g_fg_req.cfg.performance = !quality;
-    g_fg_req.cfg.flowScale = flowScale;
-    g_fg_req.cfg.multiplier = multiplier;
-    g_fg_req.cfg.uiDetection = uiDetection;
+    g_fg_lsfg = FgRequest{};
+    g_fg_lsfg.on = on && dll && *dll;
+    g_fg_lsfg.cfg.dll = dll ? dll : "";
+    g_fg_lsfg.cfg.performance = !quality;
+    g_fg_lsfg.cfg.flowScale = flowScale;
+    g_fg_lsfg.cfg.multiplier = multiplier;
+    g_fg_lsfg.cfg.uiDetection = uiDetection;
+    if (g_fg_req.builtin && g_fg_req.on) return;  // "60 fps (generated)" is on: LSFG waits until it goes off
+    g_fg_req = g_fg_lsfg;
     g_fg_req_pending = true;
 }
 
+// 60 fps (generated): the built-in reprojection on or off (at the next frame boundary); it goes before
+// LSFG, whose settings come back when it is switched off
+void request_builtin_frame_generation(bool on) {
+    std::lock_guard<std::mutex> lk(g_fg_req_mutex);
+    if (on == (g_fg_req.builtin && g_fg_req.on)) return;
+    if (on) {
+        g_fg_req = FgRequest{};
+        g_fg_req.on = true;
+        g_fg_req.builtin = true;
+    } else {
+        g_fg_req = g_fg_lsfg;
+    }
+    g_fg_req_pending = true;
+}
+bool builtin_frame_generation() { return rp::enabled(); }
+
 void set_tv_aspect(int mode) { g_tv_aspect = std::clamp(mode, 0, 2); }
 int tv_aspect() { return g_tv_aspect.load(); }
+
+void set_backdrop_tv(bool on) { g_backdrop_tv = on; }
 
 void set_layout(ScreenRect tv, ScreenRect drc, bool drcVisible) {
     std::lock_guard<std::mutex> wl(g_window_mutex);
@@ -2052,8 +2222,12 @@ void init() {
         if (const char* e = getenv("WWHD_LSFG_FLOW_SCALE")) c.flowScale = (float)atof(e);
         if (const char* e = getenv("WWHD_LSFG_MULTIPLIER")) c.multiplier = atoi(e);
         if (const char* e = getenv("WWHD_LSFG_UI_DETECTION")) c.uiDetection = atoi(e) != 0;
-        fg::load(c);
+        g_fg_lsfg.on = true;
+        g_fg_lsfg.cfg = c;
+        if (!getenv("WWHD_FPS_GENERATED") || !atoi(getenv("WWHD_FPS_GENERATED"))) fg::load(c);
     }
+    // 60 fps (generated) chosen in the app: on from the first frame (apply_frame_generation)
+    if (getenv("WWHD_FPS_GENERATED") && atoi(getenv("WWHD_FPS_GENERATED"))) request_builtin_frame_generation(true);
 }
 
 void run_main_loop() {}  // Android: the activity owns the main thread
@@ -2155,6 +2329,15 @@ void clear_depth_stencil(const uint32_t* regs, uint32_t db, float depth, uint32_
     if (log_this_frame() && s)
         LOG("[clear] depth %08X %ux%ux%u fmt %X vk %d -> depth %.4f stencil %u flags %u slices %u+%u", s->addr, s->width, s->height,
             s->slices, s->format, (int)s->fmt.format, depth, stencil, flags, first, num);
+    // the main depth buffer cleared a second time in a frame after being drawn into (the title draws
+    // Outset, then the boat over a cleared depth): the in-between frame keeps the first pass's depth
+    if ((flags & 1) && s && s->addr == R.mainDepthAddr && rp::enabled()) {
+        static uint64_t lastFrame = ~0ull;
+        static uint32_t lastAddr = 0;
+        if (lastFrame == R.frame && lastAddr == s->addr && !s->img.pendingClear.on) rp::keep_depth(s);
+        lastFrame = R.frame;
+        lastAddr = s->addr;
+    }
     clear_surface(s, nullptr, flags & 1, depth, (flags & 2) != 0, stencil, first, num);
 }
 
@@ -2633,6 +2816,8 @@ void perf_stats(float out[kPerfStats]) {
 
 void swap() {
     cache_warm_step();
+    evict_unused_textures();
+    trim_upload_chunks();
     perf_frame();
     platform::perf_hint_frame(interp::frames_per_step());
     benchmark_frame();
@@ -2659,12 +2844,21 @@ void swap() {
         pendingCapture.clear();
     }
     if (const char* dir = capture_begin_frame()) pendingCapture = dir;
-    if (!(fg::loaded() ? present_frame_fg() : present_frame())) submit();
-    present_drc_window();
+    // the extra windows first (the GamePad's display, pictures for other devices: PadHost): their pictures then
+    // don't wait on the GPU for this window's scaling. Test builds: WWHD_EXTRA_FIRST=0 for the old order
+    static const bool extraFirst = [] { const char* e = getenv("WWHD_EXTRA_FIRST"); return !e || *e != '0'; }();
+    if (extraFirst) present_drc_window();
+    if (!(gen_on() ? present_frame_fg() : present_frame())) submit();
+    if (!extraFirst) present_drc_window();
     signal_frame_end();
     g_frames_submitted++;
     if (R.frame % 300 == 1) {
         LOG("[gfx] frame %llu, %llu draws so far", (unsigned long long)R.frame, (unsigned long long)R.drawCount);
+        if (uint64_t shown = g_extra_shown.exchange(0), skipped = g_extra_skipped.exchange(0); shown || skipped)
+            LOG("[gfx] extra windows, last 300 frames: %llu pictures, %llu skipped (no free image); waiting %.2f ms/frame, handing over %.2f ms/frame",
+                (unsigned long long)shown, (unsigned long long)skipped, g_extra_acquire_ns.exchange(0) / 300.0 / 1e6,
+                g_extra_present_ns.exchange(0) / 300.0 / 1e6);
+        else g_extra_acquire_ns = g_extra_present_ns = 0;
         if (rec::enabled()) {
             uint64_t ns = g_record_cpu_ns.exchange(0), bytes = g_record_stream_bytes.exchange(0),
                      streams = g_record_streams.exchange(0);
@@ -2765,7 +2959,7 @@ void invalidate(uint32_t flags, uint32_t addr, uint32_t size) {
 int upscale_mode() { return g_upscale.load(std::memory_order_relaxed); }
 void set_upscale_mode(int m) {
     g_upscale = m;
-    LOG("[gfx] upscaling %s", m ? "sharp" : "bilinear");
+    LOG("[gfx] upscaling %s", m == 2 ? "pixel perfect" : m ? "sharp" : "bilinear");
 }
 
 }  // namespace gfx

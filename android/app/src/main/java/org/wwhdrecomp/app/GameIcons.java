@@ -21,12 +21,46 @@ import java.util.Map;
  */
 final class GameIcons {
     private static final String DIR = "game_icons";
-    private static final int VERSION = 35;  // bump to rebuild after a change of the list
+    private static final int VERSION = 50;  // bump to rebuild after a change of the list
     private static final String ITEMS = "BtnItemIcon_00", COLLECT = "BtnCollectIcon_00";
     private static final Map<String, Bitmap> cache = new HashMap<>();
-    private static volatile boolean building;
+    private static volatile boolean building, failed;  // (failed: one try per start without a 2D pack)
 
     private GameIcons() {}
+
+    // ---- on a GamePad device without the game (PadScreen): the textures come from the console (PadLink.ICON_WANT),
+    // each asked for once; whenReady callbacks run when it is there
+    interface Remote { void want(String texture); }
+    private static Remote remote;
+    private static final Map<String, java.util.List<Runnable>> waiting = new HashMap<>();
+
+    /** the console asked for the textures (null: back to the own game files) */
+    static synchronized void setRemote(Remote r) {
+        remote = r;
+        waiting.clear();
+        if (r != null) cache.clear();
+    }
+
+    /** a texture from the console (null: it has none) */
+    static void arrived(String texture, Bitmap b) {
+        java.util.List<Runnable> run;
+        synchronized (GameIcons.class) {
+            cache.put(texture, b);
+            run = waiting.remove(texture);
+        }
+        if (run != null) for (Runnable r : run) if (r != null) r.run();
+    }
+
+    private static Bitmap fromRemote(String texture, Runnable whenReady) {
+        if (cache.containsKey(texture)) return cache.get(texture);
+        java.util.List<Runnable> w = waiting.get(texture);
+        if (w == null) {
+            waiting.put(texture, w = new java.util.ArrayList<>());
+            remote.want(texture);
+        }
+        if (whenReady != null && w.size() < 16 && !w.contains(whenReady)) w.add(whenReady);
+        return null;
+    }
 
     /** the texture of an item id on X / Y / R (inventory icons, mapped by looking at them), or null */
     static String itemTexture(int id) {
@@ -186,7 +220,41 @@ final class GameIcons {
             {"Cursor_01", "CrsorS_00^t"},                  // ... the choices' cursor, frame 1
             {"Cursor_01", "CrsorS_01^t"},                  // ... frame 2
             {"Moon_00", "CrescentMoon_00^t"},              // the moon jump (with Link's jump)
+            // the mini map (MiniMap): the GamePad map's paper, the King of Red Lions, Link's face and arrow; the islands
+            // (MAP_ISLANDS) are added in wanted()
+            {"BtnMapBalloon_00", "MapArea_00^t"}, {"BtnMapBalloon_00", "ClothPattern_01^r"},
+            {"BtnMapBalloon_00", "MapDotLine_00^t"}, {"BtnMapBalloon_00", "Ship_00^q"},
+            {"LinkPos_00", "MapLinkS_00^l"}, {"LinkPos_00", "MapDirectionArrow_00^t"},
+            // the game progress checklist (GameProgress, ProgressIcon): Pirate's Charm, Power Bracelets, the pearls (Din's,
+            // Farore's, Nayru's), a Piece of Heart / Heart Container, a Triforce Shard and the Triforce, a treasure chart,
+            // the fishman (the sea chart), a boss, the dungeon map / Big Key / compass, rupees (the wallet), Light Arrows
+            {COLLECT, "CollectIcon118_08^l"}, {COLLECT, "CollectIcon118_09^l"},
+            {"Collection_00", "Pearl_00^l"}, {"Collection_00", "Pearl_01^l"}, {"Collection_00", "Pearl_02^l"},
+            {"BtnMenuHeart_00", "HeartPiece_02^l"}, {"BtnMenuHeart_00", "HeartReceptacle_00^l"},
+            {"BtnTriforce_00", "TriforceShards_00^l"}, {"BtnTriforce_00", "Triforce_00^l"},
+            {"BtnMapIcon_01", "MapBtn_00^l"}, {"BtnFishMan_00", "FishMan_00^l"}, {"DungeonMapBoss_00", "MapBossIcon_00^q"},
+            {"BtnDungeonItemIcon_00", "MapItemIcon_01^l"}, {"BtnDungeonItemIcon_00", "MapItemIcon_02^l"},
+            {"Rupy_00", "Rupy_01^l"}, {"Rupy_00", "Rupy_02^l"}, {"Arrow_00", "LightArrow_00^l"},
+            // the drawn GamePad screen (PadScreen on a GamePad device): the item page's frames, panels and highlights
+            {"MenuItem_00", "NotchedWindowLT_00^t"}, {"MenuItem_00", "NotchedWindowRT_00^t"}, {"MenuItem_00", "NotchedWindowLB_00^t"},
+            {"MenuItem_00", "NotchedWindowRB_00^t"}, {"MenuItem_00", "NotchedWindowL_00^t"}, {"MenuItem_00", "NotchedWindowR_00^t"},
+            {"MenuItem_00", "NotchedWindowT_00^t"}, {"MenuItem_00", "NotchedWindowB_00^t"}, {"MenuItem_00", "PaperPattern_00^t"},
+            {"MenuItem_00", "ItemBackBase_00^t"}, {"MenuItem_00", "ItemBackBase_01^t"}, {"MenuItem_00", "ItemBackBase_02^t"},
+            {"MenuItem_00", "ItemBackBaseGlow_00^t"}, {"MenuItem_00", "ItemBagBaseGlow_00^t"}, {"MenuItem_00", "DecoWind_00^t"},
+            {"MenuItem_00", "TitleBaseLT_02^o"}, {"MenuItem_00", "TitleBaseRT_02^o"}, {"MenuItem_00", "TitleBaseShadow_00^t"},
+            {"IconSlideArea_00", "DropSlideL_00^t"}, {"IconSlideArea_00", "R^f"}, {"BtnItemIcon_00", "ItemNow_00^t"},
     };
+
+    /** a chart square's island picture on the GamePad map (room 1..49), its detailed one where the game has it ("_Full") */
+    static String mapIsland(int room, boolean full) {
+        return String.format(java.util.Locale.ROOT, "r%02x_%s^t", room, full ? "Full" : "b");
+    }
+    /** a treasure chart's picture: its sea room's for that salvage point set (TreMap_00) */
+    static String chartPicture(int room, int set) {
+        return String.format(java.util.Locale.ROOT, "r%02x_col_%d^t", room, set);
+    }
+    // the rooms with a detailed picture (BtnMapBalloon_00's r??_Full)
+    static final int[] MAP_FULL = {0x04, 0x0b, 0x0d, 0x14, 0x17, 0x28, 0x29, 0x2c, 0x2d};
 
     // Link in poses of his own animations, drawn from the game's model (Native.renderLinkIcons): jump, crouch,
     // standing (stand up), seen from behind (third person), sidling (a step), crouching down and standing up, the roll's LINK_ROLL_FRAMES pictures (LINK_ROLL + frame)
@@ -194,7 +262,7 @@ final class GameIcons {
     // chest, pushing (grab), picking up a Bokoblin's stick, the jump attack (sword in hand), letting go of a ladder, a wall of vines, a ledge; the boat raising / lowering its sail and sailing (the King of
     // Red Lions' own model, also with linkPoses off); linkPoses off: the pictograms (behind: MapLinkFace).
     // Animated ones (ANIMATED: prefix and pictures) are named with '*' for the picture in icon keys
-    // (ControlsView plays them, then keeps the last)
+    // (ControlsView plays them, then keeps the last); LINK_GET: his item get, for AchievementPopup
     static final String LINK_JUMP = "link_jump_0", LINK_CROUCH = "link_crouch_0", LINK_STAND = "link_stand_0", LINK_BACK = "link_back_0",
             LINK_SIDLE = "link_sidle_", LINK_ROLL = "link_roll_", LINK_LIFT = "link_lift_", LINK_THROW = "link_throw_",
             LINK_DROP = "link_drop_", LINK_DOOR = "link_door_", LINK_CHEST = "link_chest_", LINK_PUSH = "link_push_",
@@ -202,18 +270,54 @@ final class GameIcons {
             LINK_JATTACK = "link_jattack_", LINK_LADDER = "link_ladder_", LINK_IVY = "link_ivy_", LINK_HANG = "link_hang_",
             SAIL_UP = "link_sailup_", SAIL_UP_SWIFT = "link_sailup_swift_", SAIL_DOWN = "link_saildown_",
             SAIL_DOWN_SWIFT = "link_saildown_swift_", SAILING = "link_sailing_", DRIFTING = "link_drifting_",
+            CRUISE = "link_cruise_",
             LINK_GETIN = "link_getin_", LINK_GETOUT = "link_getout_", LINK_TALK = "link_talk_", LINK_WALKAWAY = "link_walkaway_",
-            LINK_CHECK = "link_check_";
+            LINK_CHECK = "link_check_", LINK_ROPE = "link_rope_", LINK_WEAPON = "link_weapon_", LINK_WTHROW = "link_wthrow_", LINK_WDROP = "link_wdrop_", LINK_GET = "link_get_", LINK_CONDUCT = "link_conduct_";
     static final int LINK_ROLL_FRAMES = 12, LINK_ROLL_REST = 12;
     private static final Object[][] ANIMATED = {{LINK_SIDLE, 16}, {LINK_LIFT, 8}, {LINK_THROW, 8}, {LINK_DROP, 8},
-            {LINK_DOOR, 12}, {LINK_CHEST, 10}, {LINK_PUSH, 12}, {LINK_PICKUP, 8}, {LINK_KNEEL, 8}, {LINK_RISE, 8}, {POSTBOX, 10},
+            {LINK_DOOR, 12}, {LINK_CHEST, 10}, {LINK_PUSH, 21}, {LINK_PICKUP, 8}, {LINK_KNEEL, 8}, {LINK_RISE, 8}, {POSTBOX, 10},
             {LINK_JATTACK, 12}, {LINK_LADDER, 10}, {LINK_IVY, 10}, {LINK_HANG, 10},
-            {SAIL_UP, 10}, {SAIL_UP_SWIFT, 10}, {SAIL_DOWN, 10}, {SAIL_DOWN_SWIFT, 10}, {SAILING, 8}, {DRIFTING, 8},
-            {LINK_GETIN, 10}, {LINK_GETOUT, 10}, {LINK_TALK, 12}, {LINK_WALKAWAY, 12}, {LINK_CHECK, 12}};
+            {SAIL_UP, 10}, {SAIL_UP_SWIFT, 10}, {SAIL_DOWN, 10}, {SAIL_DOWN_SWIFT, 10}, {SAILING, 8}, {DRIFTING, 8}, {CRUISE, 16},
+            {LINK_GETIN, 10}, {LINK_GETOUT, 10}, {LINK_TALK, 12}, {LINK_WALKAWAY, 12}, {LINK_CHECK, 12},
+            {LINK_GET, 18}, {LINK_CONDUCT, 12}, {LINK_ROPE, 16}, {LINK_WEAPON, 10}, {LINK_WTHROW, 8}, {LINK_WDROP, 8}};
+    /** the variants of some of them by what Link holds or lifts (link_icons.cpp: <name>_<variant>_<i>; the plain one is
+     *  above): the enemies' weapons (touch state 38 / 39: kinds 1..7) and the things he carries (16..28) */
+    static final String[] WEAPONS = {"torch", "nata", "club", "tkwn", "spear", "pgsw"},
+            CARRIED = {"big", "kmtub", "barrel", "stool", "skull", "bucket", "kutani", "rock", "pebble", "bomb"};
+    private static final Object[][] VARIANTS = variants();
+    private static Object[][] variants() {
+        java.util.List<Object[]> l = new java.util.ArrayList<>();
+        for (String v : WEAPONS) {
+            l.add(new Object[] {LINK_WEAPON + v + "_", 10});
+            l.add(new Object[] {LINK_WTHROW + v + "_", 8});
+            if (v.equals("torch")) continue;  // (lying, it has gone out)
+            l.add(new Object[] {LINK_PICKUP + v + "_", 8});
+            l.add(new Object[] {LINK_WDROP + v + "_", 8});
+        }
+        for (String v : CARRIED)
+            for (String b : new String[] {LINK_LIFT, LINK_THROW, LINK_DROP}) l.add(new Object[] {b + v + "_", 8});
+        return l.toArray(new Object[0][]);
+    }
+
+    /** the picture name (base "link_x_") of the variant for what Link holds or lifts (touch state kind; 0 / others:
+     *  the plain one) */
+    static String variant(String base, int kind) {
+        String v = null;
+        if (kind >= 2 && kind <= 7) v = WEAPONS[kind - 2];
+        else if (kind == 17) v = "big";
+        else if (kind >= 18 && kind <= 28) v = new String[] {"kmtub", "barrel", "stool", "skull", "bucket", null, "kutani", "rock", "pebble", "bomb", "bomb"}[kind - 18];
+        if (v == null) return base;
+        String name = base + v + "_";
+        for (Object[] a : VARIANTS)
+            if (a[0].equals(name)) return name;
+        return base;  // (no such picture: the torch lying)
+    }
 
     /** how many pictures the animation in an icon key ("...link_x_*...") has, 0 for a still icon */
     static int pictures(String key) {
         for (Object[] a : ANIMATED)
+            if (key.contains((String) a[0] + "*")) return (Integer) a[1];
+        for (Object[] a : VARIANTS)
             if (key.contains((String) a[0] + "*")) return (Integer) a[1];
         return 0;
     }
@@ -244,7 +348,7 @@ final class GameIcons {
         if (b == null) return false;
         for (Map.Entry<String, Bitmap> e : cache.entrySet())
             if (e.getValue() == b) return e.getKey().startsWith("link_") || e.getKey().startsWith("#sidle:") || e.getKey().startsWith("#carry:")
-                        || e.getKey().startsWith("#grab:") || e.getKey().startsWith("#sailing:") || e.getKey().startsWith("#stop:")
+                        || e.getKey().startsWith("#sailing:") || e.getKey().startsWith("#stop:") || e.getKey().startsWith("#cruise:")
                         || e.getKey().startsWith("#speak:") || e.getKey().startsWith("#exit:") || e.getKey().startsWith("#check:");
         return false;
     }
@@ -267,7 +371,8 @@ final class GameIcons {
             case 0x03: case 0x30: return "MapBtn_00^l";             // (sea) chart
             case 0x04: return linkPoses ? "#carry:" + LINK_LIFT + "*:180" : "#arrow:180";  // lift: Link lifting a pot, arrow up
             case 0x05: return "#arrow:180";                         // climb: up
-            case 0x06: case 0x16: case 0x09: return "#arrow:0";     // let go, drop: down
+            case 0x16: return linkPoses ? LINK_ROPE + "*" : "#arrow:0";  // let go of the Grappling Hook's rope: Link swinging, letting go
+            case 0x06: case 0x09: return "#arrow:0";                // let go, drop: down
             case 0x07: case 0x27: return "Back_00^t";               // return, cancel
             case 0x08: return "#putaway:" + sw;                     // put away: the sword, pointing down, and an arrow
             case 0x0E: return "#arrow:135";                         // throw: up and away
@@ -275,7 +380,7 @@ final class GameIcons {
             case 0x0C: return linkPoses ? LINK_ROLL : null;          // roll (ControlsView plays its frames)
             case 0x0F: return linkPoses ? LINK_KNEEL + "*" : null;   // crouch: Link going down
             case 0x10: return linkPoses ? "#sidle:*" : null;         // sidle: Link at a wall, arrows to both sides
-            case 0x11: return linkPoses ? "#grab:*" : null;          // grab: Link pushing a stone block
+            case 0x11: return linkPoses ? LINK_PUSH + "*" : null;    // grab: Link pushing a push block and pulling it back
             case 0x1B: return linkPoses ? LINK_PICKUP + "*" : null;  // pick up (a Bokoblin's stick): Link crouching to it
             case 0x17: return "MapCheck_00^t";                      // choose
             case 0x19: return "#arrow:90";                          // next
@@ -285,7 +390,7 @@ final class GameIcons {
             case 0x22: return "#arrows";                            // swap modes (arrow types)
             case 0x23: return "Icon128_22^l";                       // fly: the Deku Leaf
             case 0x25: return "AuctionIcon_00^l";                   // bid
-            case 0x2C: return "CollectIcon118_06^l";                // cruise: the sail (ControlsView: the boat setting sail)
+            case 0x2C: return "CollectIcon118_06^l";                // cruise: the sail (ControlsView: the boat creeping ahead)
             case 0x2F: return "Icon128_11^l";                       // swing: the grappling hook
             case 0x35: return sw;                                   // the sword
             case 0x36: return shield == 0x3C ? "CollectIcon118_05^l" : "CollectIcon118_04^l";  // defend
@@ -304,12 +409,31 @@ final class GameIcons {
         for (int i = 0; i <= 54; i++) l.add(new String[] {ITEMS, String.format(java.util.Locale.ROOT, "Icon128_%02d^l", i)});
         for (int i : new int[] {0, 1, 2, 3, 6, 16}) l.add(new String[] {COLLECT, String.format(java.util.Locale.ROOT, "CollectIcon118_%02d^l", i)});
         java.util.Collections.addAll(l, EXTRA);
+        for (int r = 1; r <= 49; r++) l.add(new String[] {"BtnMapBalloon_00", mapIsland(r, false)});
+        for (int r : MAP_FULL) l.add(new String[] {"BtnMapBalloon_00", mapIsland(r, true)});
+        for (MiniMapDungeons.Dungeon d : MiniMapDungeons.ALL)
+            for (MiniMapDungeons.Pic p : d.pics) l.add(new String[] {d.layout, p.texture});
+        // the mini map's marks: chest, door, stairs (DungeonMapTreasure_00 / Door_00 / Up_00)
+        java.util.Collections.addAll(l, new String[] {"DungeonMapTreasure_00", "MapTreasure_00^t"},
+                new String[] {"DungeonMapDoor_00", "MapDoor_00^t"}, new String[] {"DungeonMapUp_00", "MapFloorUpDown_00^t"});
+        // the round mini map's frame: the sailing compass's bezel and its face's gleam (CompassClock_00)
+        java.util.Collections.addAll(l, new String[] {"CompassClock_00", "CompassBase_00^t"}, new String[] {"CompassClock_00", "CompassSpec_01^t"});
+        // its wind arrow (MenuMap_00: the arrow's and its shadow's left half, a quarter of the dial) and the treasure
+        // charts beside it (TreMap_00: a chart's picture per sea room and salvage point set, the X; the title ribbon)
+        java.util.Collections.addAll(l, new String[] {"MenuMap_00", "WindArrowNow_00^t"}, new String[] {"MenuMap_00", "WindArrowNow_02^q"},
+                new String[] {"MenuMap_00", "MapWindBase_00^t"}, new String[] {"TreMap_00", "MapTreasureMark_00^t"},
+                new String[] {"MenuMap_00", "TitleBase_00^t"});
+        // the full map's Map decorations (FullMap, MiniMap.drawWaves): the chart's corner ornament and its wave mark
+        java.util.Collections.addAll(l, new String[] {"MenuMap_00", "MapDeco_00^t"}, new String[] {"MenuMap_00", "MapDecoLine_00^t"});
+        for (int r = 1; r <= 49; r++)
+            for (int set = 0; set < 4; set++) l.add(new String[] {"TreMap_00", chartPicture(r, set)});
         return l.toArray(new String[0][]);
     }
 
     /** the icon, or null (not built yet: building starts in the background and the view redraws later) */
     static synchronized Bitmap get(Context c, String texture, Runnable whenReady) {
         if (texture == null) return null;
+        if (remote != null) return fromRemote(texture, whenReady);
         if (cache.containsKey(texture)) return cache.get(texture);
         if (texture.startsWith("#")) {
             Bitmap b = compose(c, texture.substring(1), whenReady);
@@ -317,12 +441,12 @@ final class GameIcons {
             return b;
         }
         File dir = new File(c.getFilesDir(), DIR);
-        if (new File(dir, "version" + VERSION).exists()) {
+        if (new File(dir, stamp(MainActivity.instance != null ? MainActivity.instance.gameDir() : null)).exists()) {
             Bitmap b = BitmapFactory.decodeFile(new File(dir, file(texture)).getAbsolutePath());
             cache.put(texture, b);
             return b;
         }
-        if (!building && MainActivity.instance != null) {
+        if (!building && !failed && MainActivity.instance != null) {
             building = true;
             String gameDir = MainActivity.instance.gameDir();
             new Thread(() -> {
@@ -403,24 +527,6 @@ final class GameIcons {
                 place(cv, item, 0, 0.66f, 0.40f, 0.5f);
                 return out;
             }
-            case "grab": {  // Link pushing a block of stone (the stone message window's pattern), as the sidle wall (#grab:<picture>)
-                Bitmap link = get(c, LINK_PUSH + k[1], whenReady), stone = get(c, "MsgWindowScrollStone_00^q", whenReady);
-                if (link == null || stone == null) return null;
-                android.graphics.RectF block = new android.graphics.RectF(0.56f * SIZE, 0.3f * SIZE, 0.94f * SIZE, 0.9f * SIZE);
-                android.graphics.Paint edge = new android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG);
-                edge.setColor(0xFF0A0A14);
-                float e = SIZE * 0.025f, rr = SIZE * 0.04f;
-                cv.drawRoundRect(new android.graphics.RectF(block.left - e, block.top - e, block.right + e, block.bottom + e), rr + e, rr + e, edge);
-                android.graphics.Paint fill = new android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG | android.graphics.Paint.FILTER_BITMAP_FLAG);
-                android.graphics.Matrix sm = new android.graphics.Matrix();
-                sm.setScale((float) SIZE / stone.getWidth(), (float) SIZE / stone.getHeight());
-                android.graphics.BitmapShader sh = new android.graphics.BitmapShader(stone, android.graphics.Shader.TileMode.REPEAT, android.graphics.Shader.TileMode.REPEAT);
-                sh.setLocalMatrix(sm);
-                fill.setShader(sh);
-                cv.drawRoundRect(block, rr, rr, fill);
-                place(cv, link, 0, 0.33f, 0.56f, 0.8f);
-                return out;
-            }
             case "carry": {  // Link with the pot he carries and an arrow where it goes (#carry:<picture>:<arrow's angle>)
                 String[] p = k[1].split(":");
                 Bitmap link = get(c, p[0], whenReady), a = arrow(c, whenReady);
@@ -462,6 +568,26 @@ final class GameIcons {
                 cv.drawRoundRect(new android.graphics.RectF(r.left - e, r.top - e, r.right + e, r.bottom + e), rr + e, rr + e, bar);
                 bar.setColor(0xFFFFFFFF);
                 cv.drawRoundRect(r, rr, rr, bar);
+                return out;
+            }
+            case "cruise": {  // the boat, the sail down, creeping ahead over the pictures, its wake behind it: R Cruise (#cruise:<picture>)
+                Bitmap ship = get(c, k[1], whenReady);
+                if (ship == null) return null;
+                int i = Integer.parseInt(k[1].substring(k[1].lastIndexOf('_') + 1)), n = pictures(CRUISE + "*");
+                float t = i / (n - 1f), x = 0.44f + 0.2f * t;
+                android.graphics.Paint wake = new android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG);
+                wake.setStyle(android.graphics.Paint.Style.STROKE);
+                wake.setStrokeCap(android.graphics.Paint.Cap.ROUND);
+                // two speed lines from its stern back (left), growing as it goes; the outline first, then the white
+                for (int pass = 0; pass < 2; pass++) {
+                    wake.setColor(pass == 0 ? 0xFF0A0A14 : 0xFFFFFFFF);
+                    wake.setStrokeWidth(SIZE * (pass == 0 ? 0.07f : 0.032f));
+                    for (int w = 0; w < 2; w++) {
+                        float y = (0.5f + 0.1f * w) * SIZE, x1 = (x - 0.3f + 0.05f * w) * SIZE, len = (0.08f + 0.16f * t) * SIZE;
+                        cv.drawLine(Math.max(0.06f * SIZE, x1 - len), y, x1, y, wake);
+                    }
+                }
+                place(cv, ship, 0, x, 0.5f, 0.66f);
                 return out;
             }
             case "speak": {  // Link talking and the speech balloon at his face popping up, its dots coming one by one (#speak:<picture>)
@@ -817,12 +943,13 @@ final class GameIcons {
             layouts[i] = w[i][0];
             textures[i] = w[i][1];
         }
-        Native.extractUiTextures(gameDir, raw.getAbsolutePath(), layouts, textures);
+        int got = Native.extractUiTextures(gameDir, raw.getAbsolutePath(), layouts, textures);
         Native.renderLinkIcons(gameDir, raw.getAbsolutePath());
         java.util.List<String> all = new java.util.ArrayList<>(java.util.Arrays.asList(textures));
         java.util.Collections.addAll(all, LINK_JUMP, LINK_CROUCH, LINK_STAND, LINK_BACK);
-        for (Object[] a : ANIMATED)
-            for (int i = 0; i < (Integer) a[1]; i++) all.add((String) a[0] + i);
+        for (Object[][] t : new Object[][][] {ANIMATED, VARIANTS})
+            for (Object[] a : t)
+                for (int i = 0; i < (Integer) a[1]; i++) all.add((String) a[0] + i);
         for (int i = 0; i <= LINK_ROLL_REST; i++) all.add(LINK_ROLL + i);
         for (String t : all) {
             try {
@@ -836,10 +963,30 @@ final class GameIcons {
             }
         }
         Backup.deleteTree(raw);
+        if (got == 0) {  // (no 2D pack, e.g. the game folder being swapped: tried again at the next start)
+            failed = true;
+            return;
+        }
         try {
-            new File(dir, "version" + VERSION).createNewFile();
+            new File(dir, stamp(gameDir)).createNewFile();
         } catch (IOException ignored) {
         }
+    }
+
+    /** the marker of a finished build: the list's version and the game's 2D packs (another release rebuilds) */
+    private static String stamp;
+
+    private static String stamp(String gameDir) {
+        if (stamp != null) return stamp;
+        StringBuilder s = new StringBuilder("version" + VERSION);
+        String[] packs = gameDir == null ? null : new File(gameDir, "content/Common/Pack").list();
+        if (packs != null) {
+            java.util.Arrays.sort(packs);
+            for (String n : packs)
+                if (n.startsWith("permanent_2d_")) s.append('_').append(n.substring(13).replace(".pack", ""));
+        }
+        if (packs != null) stamp = s.toString();
+        return s.toString();
     }
 
     private static Bitmap loadRgba(File f) throws IOException {

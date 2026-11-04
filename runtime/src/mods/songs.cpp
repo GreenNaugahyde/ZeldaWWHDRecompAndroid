@@ -60,6 +60,11 @@ const release::Data kSoundInterface{0x101FFC78}, kSeF1{0x10003A68}, kSeF3{0x1000
 constexpr uint32_t kSeMetronome = 0x0887, kSeAuftakt3 = 0x2868, kSeAuftakt4 = 0x2880, kSeAuftakt6 = 0x2881;
 std::atomic<bool> g_replay{false};
 uint32_t g_replay_link = 0;  // Link while +0x691E is held at 1 by us
+// the wind set at once, no event (set_wind): what the compass's OK and the wind bird do, dKyw_tact_wind_set(x, y) (USA
+// 0257E490: g_env_light's tact wind angles + the save's, dSv_player_status_b_c) and dKyw_tact_wind_set_go (0257E52C: the
+// event's wind let go, mEvtWindSet 0xFF). The game's dKyw_wind_set turns mWindVec to it over some frames (cLib_addCalc 0.1)
+constexpr uint32_t kTactWindSet = 0x0257E490, kTactWindSetGo = 0x0257E52C;
+std::atomic<int32_t> g_set_wind{INT32_MIN};  // the angle (s16, the wind's y) to set at the next step
 constexpr uint32_t kCurProc = 0x65F0, kTactPlay = 155, kAnimDone = 0x6916, kEventSong = 0x691E, kFreePlay = 0x69C4;
 // what Link's tact wait (proc 154) waits for: the GameCube's mProcVar6.m3570 (USA procTactWait 0243A82C on): a melody
 // number when a story scene waits for that song (the judge's answer must be it, learned or not), -1 free play, other
@@ -128,6 +133,25 @@ void play_song(int melody) {
     g_song = melody;
     LOG("[songs] sung: melody %d", melody);
 }
+void set_wind(int angle) { g_set_wind = (int16_t)angle; }
+
+// at each step's start (song_dump_service): a wind asked by set_wind, only in play, no event (any stage; the Wind's
+// Requiem need not be known: the user's choice)
+void set_wind_step(Cpu* c) {
+    int32_t y = g_set_wind.exchange(INT32_MIN);
+    if (y == INT32_MIN) return;
+    uint32_t s = player_save();
+    if (!s || event_mode_now() != 0 || hud_menu_open()) {
+        LOG("[songs] wind %d not set (no save / event / menu)", y);
+        return;
+    }
+    LOG("[songs] wind set: y %d", y);
+    const Cpu saved = *c;
+    guest_call(c, release::Code{kTactWindSet}, {0, (uint32_t)(int32_t)y});
+    guest_call(c, release::Code{kTactWindSetGo});
+    *c = saved;
+}
+
 void set_song_replay(bool on) {
     g_replay = on;
     LOG("[mods] replay conducted songs (GameCube): %s", on ? "on" : "off");
@@ -163,6 +187,7 @@ void count_beat(int time, bool last) {
 
 void song_dump_service(Cpu* c) {
     song_replay_step();
+    set_wind_step(c);
     if (int k = g_count.exchange(0)) {  // a count-in beat (the game thread: its sound system)
         if (conducting()) {
             int time = k / 16;

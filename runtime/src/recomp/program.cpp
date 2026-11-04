@@ -56,7 +56,8 @@ const CodePatch* g_patch = nullptr;
 void set_code_patch(const CodePatch* p) { g_patch = p; }
 const CodePatch* code_patch() { return g_patch; }
 
-bool Program::load(const std::string& path, std::string& err) {
+bool Program::load(const std::string& given, std::string& err) {
+    const std::string& path = patch && !patch->rpx.empty() ? patch->rpx : given;
     FILE* f = fopen(path.c_str(), "rb");
     if (!f) return err = "cannot open " + path, false;
     fseek(f, 0, SEEK_END);
@@ -111,6 +112,7 @@ bool Program::parse(const std::vector<uint8_t>& d, std::string& err) {
         if (s.name == ".text") text = &s;
     if (!text) return err = "no .text section", false;
     textLo = text->addr;
+    noEabiLo = patch ? patch->noEabiLo : 0;
     textHi = text->addr + (uint32_t)text->data.size();
     std::vector<uint8_t> textBytes = text->data, cave;
     const CodePatch* pt = patch;  // (nullptr for the unpatched layout, compile.cpp)
@@ -220,6 +222,20 @@ bool Program::parse(const std::vector<uint8_t>& d, std::string& err) {
                 continue;
             }
             uint32_t tgt = y.value + addend;
+            // the randomizer's executable (CodePatch::rpx) changes code and data through relocations only (its
+            // progressive items' functions, a few constants): a console's loader applies them, so they are applied
+            // here as well (relocFixes; the code's words now, guest memory in packs::apply_memory). The game's own
+            // relocations agree with its bytes, those writes change nothing.
+            if (patch && !patch->rpx.empty() && (typ == R_PPC_ADDR32 || typ == R_PPC_ADDR16_LO || typ == R_PPC_ADDR16_HI || typ == R_PPC_ADDR16_HA)) {
+                uint32_t v = typ == R_PPC_ADDR32 ? tgt : typ == R_PPC_ADDR16_LO ? (tgt & 0xFFFF) : typ == R_PPC_ADDR16_HI ? tgt >> 16 : ((tgt + 0x8000) >> 16) & 0xFFFF;
+                relocFixes.push_back({off, typ == R_PPC_ADDR32 ? 4u : 2u, v});
+                uint32_t site = off & ~3u;
+                if (inText(site) && site >= textLo && (site - textLo) / 4 < words.size()) {
+                    uint32_t& w = words[(site - textLo) / 4];
+                    if (typ == R_PPC_ADDR32 && off == site) w = v;
+                    else if (typ != R_PPC_ADDR32 && (off & 3) == 2) w = (w & 0xFFFF0000u) | v;
+                }
+            }
             if (inText(tgt) && (typ == R_PPC_ADDR32 || typ == R_PPC_ADDR16_LO)) codeRefs[tgt].push_back({off, target.name == ".text"});
         }
     }

@@ -5,26 +5,45 @@
     <uses-feature android:name="android.hardware.vulkan.version" android:version="0x401000" android:required="true" />
     <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
     <uses-feature android:name="android.hardware.gamepad" android:required="false" />
+    <!-- Android TV: listed in the TV launcher too (banner below); played there with a controller -->
+    <uses-feature android:name="android.software.leanback" android:required="false" />
 
-    <!-- No network access: the app never goes online. Android grants internet only with the INTERNET
-         permission; these rules keep it (and the network state permission) out of the APK even if a
-         library ever requested it. -->
-    <uses-permission android:name="android.permission.INTERNET" tools:node="remove" />
+    <!-- The local network only: a phone or tablet as the GamePad of a TV running the app (PadHost, PadActivity:
+         found by DNS-SD, then one TCP connection between the two). The app never goes online otherwise. -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Wi-Fi in its low-latency mode while another device is connected (PadLink.WifiAwake) -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" tools:node="remove" />
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" tools:node="remove" />
 
     <!-- WorkService: extraction and compile continue in the background, with a progress notification -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <!-- the GamePad / screen process stays connected in the background (PadService); the second one is what Android
+         asks of a connected-device service -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
+    <uses-permission android:name="android.permission.CHANGE_NETWORK_STATE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <!-- rumble on this device while playing by touch -->
     <uses-permission android:name="android.permission.VIBRATE" />
     <!-- Mods > Sing the songs (asked when it is switched on): the sound is analysed, never recorded -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <!-- singing by microphone is optional: no implied hardware requirement (from the original project, a0e1a688) -->
+    <uses-feature android:name="android.hardware.microphone" android:required="false" />
+
+    <!-- MainActivity.hasPicker: whether a file chooser exists (Android 11+ shows other apps only when declared here) -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.OPEN_DOCUMENT" />
+            <category android:name="android.intent.category.OPENABLE" />
+            <data android:mimeType="*/*" />
+        </intent>
+    </queries>
 
     <application
         android:allowBackup="false"
         android:appCategory="game"
+        android:banner="@drawable/tv_banner"
         android:enableOnBackInvokedCallback="false"
         android:hasFragileUserData="true"
         android:icon="@mipmap/ic_launcher"
@@ -46,7 +65,10 @@
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
+                <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
             </intent-filter>
+            <!-- long press on the icon: GamePad / screen for another device -->
+            <meta-data android:name="android.app.shortcuts" android:resource="${appShortcuts}" />
         </activity>
         <service
             android:name=".WorkService"
@@ -58,6 +80,19 @@
             android:authorities="org.wwhdrecomp.app.crashlogs"
             android:exported="false"
             android:grantUriPermissions="true" />
+        <!-- this device as a TV's GamePad: a process of its own, without the game -->
+        <activity
+            android:name=".PadActivity"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboard|keyboardHidden|navigation|uiMode|density"
+            android:exported="false"
+            android:process=":pad"
+            android:screenOrientation="sensorLandscape"
+            android:taskAffinity="org.wwhdrecomp.app.pad" />
+        <service
+            android:name=".PadService"
+            android:exported="false"
+            android:foregroundServiceType="connectedDevice"
+            android:process=":pad" />
         <activity
             android:name=".RestartActivity"
             android:exported="false"
