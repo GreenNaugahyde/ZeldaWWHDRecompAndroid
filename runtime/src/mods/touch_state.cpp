@@ -155,7 +155,8 @@ uint32_t save_address() {
     if (base < 0x10000000 || base > 0x50000000) return 0;
     uint32_t s = base + kSaveOffset;
     uint16_t maxLife = ld16(s), life = ld16(s + 2);
-    if (maxLife < 12 || maxLife > 80 || maxLife % 4 || life > maxLife) return 0;
+    // (in quarters: a Piece of Heart adds 1, so 1..3 over whole containers is normal; d_meter.cpp dMeter_LifeMove)
+    if (maxLife < 12 || maxLife > 80 || life > maxLife) return 0;
     return s;
 }
 // What Link holds or A would lift / pick up, for the buttons' pictures (touch state 38, 39; GameIcons.java): an

@@ -39,8 +39,8 @@ android {
         minSdk 30          // Vulkan 1.1, AAudio, 39-bit+ address space handling
         targetSdk 36
         // -PwwhdVersionCode / -PwwhdVersionName for a release; raise the code with every APK you share
-        versionCode((project.findProperty('wwhdVersionCode') ?: '20') as int)
-        versionName project.findProperty('wwhdVersionName') ?: '0.9.9a'
+        versionCode((project.findProperty('wwhdVersionCode') ?: '21') as int)
+        versionName project.findProperty('wwhdVersionName') ?: '0.9.9b'
         ndk {
             abiFilters 'arm64-v8a'
         }

@@ -180,6 +180,11 @@ The original project (macOS, the 60 fps modes, decompilation tools) is described
 
 ## Version history
 
+**0.9.9b**
+
+- Fix: on a save with one to three Pieces of Heart toward the next heart, the item pictures on the
+  buttons, the mini map, the item ring and everything else that reads the save stayed off (#73).
+
 **0.9.9a**
 
 - Controller setup asks for the **printed letters** (press the button printed A, B, X, Y and say where

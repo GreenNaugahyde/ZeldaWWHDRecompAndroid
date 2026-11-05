@@ -1,4 +1,4 @@
-# Controls guide (0.9.9a)
+# Controls guide (0.9.9b)
 
 Version 0.9.6 brought new on-screen controls, a setup for game controllers, an item ring, touch
 controls for the minigames and new ways to conduct the Wind Waker's songs; 0.9.7 adds talks, answers
