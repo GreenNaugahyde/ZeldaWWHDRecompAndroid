@@ -94,6 +94,8 @@ void se_start(Cpu* c, uint32_t id, uint32_t param) {
 bool conducting() { return player_save() && (ld32(kPlay + kPlayerStatus1) & kConducting); }
 }  // namespace
 
+bool wind_waker_conducting() { return conducting(); }
+
 void song_state(int32_t out[kSongStateLen]) {
     uint32_t s = player_save();
     int32_t compass[2];

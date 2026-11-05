@@ -1739,8 +1739,10 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         controls.setStickFollows(prefs.getBoolean("stick_follows", true));
         controls.setAfterDefeat(nw ? prefs.getInt("zl_after_defeat", 0) : 0);
         controls.setZLatch(!flexible || prefs.getBoolean("z_latch", true));
+        controls.setViewPinch(prefs.getBoolean("view_pinch", true));
         controls.setItemTap(nw && prefs.getBoolean("item_tap", true));
         controls.setAimFocus(prefs.getBoolean("item_tap_focus", true));
+        controls.setAutoStow(prefs.getBoolean("auto_stow", nw && prefs.getBoolean("item_tap", true)));  // (default: on by tap, off held as in the game)
         controls.miniMap.setEnabled(prefs.getBoolean("minimap", true));
         controls.miniMap.setProgressMarks(prefs.getInt("minimap_marks", MiniMap.MARKS_OFF));
         // (the progress places are the game's own: in a randomized game they'd tell the wrong things)
@@ -1818,14 +1820,19 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         StringBuilder hide = new StringBuilder();
         for (int k = 0; k < 3; k++) {
             if (l[k] != null) continue;
-            l[k] = InputMapper.shortName(mapper.map[SLOT_WIIU[k]]);
+            l[k] = mapper.labelOf(mapper.map[SLOT_WIIU[k]]);
             if (l[k] != null) continue;
             l[k] = SLOT_LETTER[k];
             String c = SLOT_LETTER[k];  // HUD cluster; the drop slot's button, frame and highlight
             hide.append(",N_").append(c).append("_00,P_").append(c).append("_00,W_").append(c).append("DropSlide_00,W_")
                     .append(c).append("DropSlideFloat_00,W_").append(c).append("DropSlideSwich_00");
         }
-        String s = String.join(",", l);
+        applyHudPlaces(pad);
+        // the game's A and B: the letter printed on the controller button that presses them (else the game's own;
+        // the game's X Y R names keep them too)
+        String la = pad && mode != 2 ? mapper.printedLetter(mapper.map[0]) : null;
+        String lb = pad && mode != 2 ? mapper.printedLetter(mapper.map[1]) : null;
+        String s = String.join(",", l) + "," + (la != null ? la : "A") + "," + (lb != null ? lb : "B");
         if (!s.equals(slotLabels)) {
             slotLabels = s;
             Native.setSlotLabels(s);
@@ -1835,6 +1842,19 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
             slotHidden = hide.toString();
             applyHudHidden();
         }
+    }
+
+    // the game's A, B, X, Y on the TV in the controller's arrangement (InputMapper.hudPlaces: with the face buttons by
+    // letters on a controller with Xbox's letters, its A at the bottom, the game's A is drawn at the bottom); with no
+    // controller here as the Wii U has them
+    private String hudPlaces = "";
+
+    private void applyHudPlaces(boolean pad) {
+        int[] p = pad ? mapper.hudPlaces() : new int[] {0, 1, 2, 3};
+        String s = p[0] + "," + p[1] + "," + p[2] + "," + p[3];
+        if (s.equals(hudPlaces)) return;
+        hudPlaces = s;
+        Native.setHudPlaces(s);
     }
 
     private void setShortcutHidden(boolean on) {
@@ -3325,6 +3345,8 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     // (Mods > ... > Button of the test builds before, a Wii U button: forgotten, L1 again)
     private void loadButtonMap() {
         mapper.loadMap(padKey == null ? prefs.getString("pad_map", "") : prefs.getString("pad_map@" + padKey, prefs.getString("pad_map", "")));
+        mapper.loadPrinted(padKey == null ? "" : prefs.getString("pad_letters@" + padKey, ""));
+        mapper.loadPlaces(padKey == null ? "" : prefs.getString("pad_places@" + padKey, ""));
         if (prefs.contains("mod_jump_button") || prefs.contains("cheat_moon_button"))
             prefs.edit().remove("mod_jump_button").remove("cheat_moon_button").apply();
     }
@@ -3335,6 +3357,8 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         if (java.util.Objects.equals(key, padKey)) return;
         padKey = key;
         mapper.loadMap(key == null ? prefs.getString("pad_map", "") : prefs.getString("pad_map@" + key, prefs.getString("pad_map", "")));
+        mapper.loadPrinted(key == null ? "" : prefs.getString("pad_letters@" + key, ""));
+        mapper.loadPlaces(key == null ? "" : prefs.getString("pad_places@" + key, ""));
         if (key != null) prefs.edit().putString("pad_name@" + key, d.getName()).apply();
         pushInput();
         applySlotLabels(controllerConnected());
@@ -3351,6 +3375,17 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     void resetButtons() {
         mapper.loadMap("");
         savePadMap();
+    }
+
+    /** ControllerSetup's answer: the controller in use's printed letters (codes of A, B, X, Y; null: none / not known)
+     *  and where they sit (InputMapper.SOUTH...; null: not known) */
+    void setPrintedLetters(int[] p, int[] places) {
+        mapper.printed = p;
+        mapper.places = p != null ? places : null;
+        if (padKey != null)
+            prefs.edit().putString("pad_letters@" + padKey, InputMapper.printedString(p))
+                    .putString("pad_places@" + padKey, InputMapper.printedString(mapper.places)).apply();
+        applySlotLabels(controllerConnected());
     }
 
     /** ControllerSetup's choice: the face buttons by letters or position, a preset with Jump anywhere's button; a
@@ -3392,7 +3427,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     /** the game waits (each frame, while ControllerSetup shows) */
     void holdGame() { if (started) pauseForMenu(true); }
 
-    /** inverted camera up/down: 0 off, 1 first person and aiming, 2 always */
+    /** inverted camera up/down: 0 off, 1 first person and aiming, 2 always, 3 third-person camera only */
     void setInvertCameraY(int mode) {
         prefs.edit().putInt("invert_camera_y_mode", mode).apply();
         Native.setOption("invert_camera_y", mode);
@@ -4028,6 +4063,14 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
             viewZoom = percent;
             Native.setOption("view_zoom", percent);
         }
+    }
+
+    /** Controls > Touch > Pinch to zoom switched off (issue #71): what pinches set goes back to the defaults
+     *  (the game's view, the conducting view's own) */
+    void resetViewZoom() {
+        prefs.edit().putInt("view_zoom", 100).remove("view_zoom_song").apply();
+        viewZoom = -1;
+        Native.setOption("view_zoom", viewZoomNow());
     }
 
     @Override

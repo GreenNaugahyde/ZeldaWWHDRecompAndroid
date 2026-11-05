@@ -2,6 +2,7 @@
 // the runtime boots on a thread of its own and the game runs on its guest threads as on macOS.
 #include <android/native_window_jni.h>
 #include <jni.h>
+#include <dirent.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
@@ -11,6 +12,7 @@
 #include <cstring>
 #include <string>
 #include <thread>
+#include <vector>
 
 #include "../audio_out.h"
 #include "../disc/wud.h"
@@ -61,6 +63,69 @@ void request_capture();
 void run_selftest();  // selftest.cpp
 
 namespace {
+// issue #70: earlier builds made the save folders 0755 (drwxr-s--- under Android's umask), so a sync tool running as
+// another app with the storage group (Syncthing in Termux) could read the saves but not write them. Each start opens
+// this app's own folders and files in save/ and states/ to the group. A folder is not chmod-ed: the app is not in
+// the storage group, so the kernel would drop the setgid bit (new files would then miss the group); it is made anew
+// instead (mkdir takes the parent's group and setgid bit, umask 0007 gives rwx to the group), its entries moved in.
+std::vector<std::string> dir_entries(const std::string& d) {
+    std::vector<std::string> out;
+    if (DIR* dir = opendir(d.c_str())) {
+        while (dirent* e = readdir(dir))
+            if (strcmp(e->d_name, ".") && strcmp(e->d_name, "..")) out.push_back(e->d_name);
+        closedir(dir);
+    }
+    return out;
+}
+
+void open_to_group(const std::string& path, bool parent_sgid, int depth) {
+    struct stat st;
+    std::string fresh = path + ".group";
+    if (lstat(fresh.c_str(), &st) == 0 && S_ISDIR(st.st_mode)) {  // an earlier start stopped half-way: finish it
+        if (lstat(path.c_str(), &st) == 0)
+            for (const std::string& e : dir_entries(path)) rename((path + "/" + e).c_str(), (fresh + "/" + e).c_str());
+        rmdir(path.c_str());
+        rename(fresh.c_str(), path.c_str());
+    }
+    if (lstat(path.c_str(), &st) != 0) return;
+    if (st.st_uid != getuid()) {  // another app's (a sync tool's or adb's): can the game use it?
+        LOG("[boot] %s belongs to uid %u (mode %o): this app can%s read it, can%s write it", path.c_str(),
+            (unsigned)st.st_uid, (unsigned)(st.st_mode & 07777), access(path.c_str(), R_OK) == 0 ? "" : "not",
+            access(path.c_str(), W_OK) == 0 ? "" : "not");
+        if (!S_ISDIR(st.st_mode)) return;
+    }
+    if (S_ISREG(st.st_mode)) {
+        // read for others too: a sync tool's copy (same mode, its uid) must stay readable for this app
+        if ((st.st_mode & 0664) != 0664) chmod(path.c_str(), (st.st_mode & 07777) | 0664);
+        return;
+    }
+    if (!S_ISDIR(st.st_mode) || depth > 8) return;
+    bool ok = st.st_uid != getuid() ||  // another app's folder: only looked into
+              ((st.st_mode & S_IRWXG) == S_IRWXG && (!parent_sgid || (st.st_mode & S_ISGID)));
+    if (!ok && mkdir(fresh.c_str(), 0777) == 0) {
+        bool moved = true;
+        for (const std::string& e : dir_entries(path))
+            moved = rename((path + "/" + e).c_str(), (fresh + "/" + e).c_str()) == 0 && moved;
+        if (moved && rmdir(path.c_str()) == 0 && rename(fresh.c_str(), path.c_str()) == 0) {
+            LOG("[boot] %s made anew, open to the storage group (#70)", path.c_str());
+            lstat(path.c_str(), &st);
+        } else {
+            LOG("[boot] %s: could not make it anew for the storage group", path.c_str());
+        }
+    }
+    for (const std::string& e : dir_entries(path))
+        if (e.size() < 6 || e.compare(e.size() - 6, 6, ".group")) open_to_group(path + "/" + e, st.st_mode & S_ISGID, depth + 1);
+}
+
+void open_save_folders_to_group() {
+    const std::string& s = config::save_dir;
+    std::string parent = s.substr(0, s.find_last_of('/'));
+    struct stat st;
+    bool sgid = stat(parent.c_str(), &st) == 0 && (st.st_mode & S_ISGID);
+    open_to_group(s, sgid, 0);
+    open_to_group(parent + "/states", sgid, 0);
+}
+
 JavaVM* g_vm = nullptr;
 jclass g_native_class = nullptr;
 jmethodID g_request_text = nullptr;
@@ -358,6 +423,7 @@ JNI_FN(jintArray, miniMapTerrain)(JNIEnv* env, jclass, jstring gameDir, jint roo
 }
 JNI_FN(void, setHudHidden)(JNIEnv* env, jclass, jstring names) { hud_set_hidden(jstr(env, names)); }
 JNI_FN(void, setSlotLabels)(JNIEnv* env, jclass, jstring labels) { hud_set_slot_labels(jstr(env, labels)); }
+JNI_FN(void, setHudPlaces)(JNIEnv* env, jclass, jstring places) { hud_set_places(jstr(env, places)); }
 JNI_FN(void, setHudFade)(JNIEnv*, jclass, jint which, jboolean on) {
     if (which >= 0 && which < kFadeCount) hud_set_fade_auto(which, on);
 }
@@ -695,7 +761,8 @@ JNI_FN(void, start)(JNIEnv* env, jclass, jstring gameDir, jstring saveDir, jstri
     // measure a first start while the usual one stays as it is (the game code's cache stays)
     if (const char* e = getenv("WWHD_SHADER_CACHE_DIR"); e && *e) config::cache_dir = e;
     std::string work = jstr(env, workDir);
-    mkdir(config::save_dir.c_str(), 0755);
+    mkdir(config::save_dir.c_str(), 0777);  // umask decides: 0770, like the folders the Java side makes
+    open_save_folders_to_group();
     mkdir(config::cache_dir.c_str(), 0755);
     // debug output (captures, dumps, trace files) goes to relative paths
     if (!work.empty()) {

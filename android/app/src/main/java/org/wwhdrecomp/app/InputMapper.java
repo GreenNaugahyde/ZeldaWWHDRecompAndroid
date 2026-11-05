@@ -30,6 +30,123 @@ final class InputMapper {
             KeyEvent.KEYCODE_DPAD_DOWN, KeyEvent.KEYCODE_DPAD_LEFT, KeyEvent.KEYCODE_DPAD_RIGHT,
             KeyEvent.KEYCODE_BUTTON_L1, KeyEvent.KEYCODE_BUTTON_L1};
     final int[] map = DEFAULT_MAP.clone();
+    // the controller's printed letters (ControllerSetup asks for them, pad_letters@<descriptor>): the key codes of the
+    // buttons printed A, B, X, Y; null: not known (the names then by position, as on the Wii U). Some controllers
+    // print Xbox's letters (A at the bottom), some Nintendo's (A on the right), some let the buttons be swapped
+    // (issue #67): only the player knows
+    int[] printed;
+    static final String[] PRINTED_LETTERS = {"A", "B", "X", "Y"};
+    static final int[] FACE_CODES = {KeyEvent.KEYCODE_BUTTON_A, KeyEvent.KEYCODE_BUTTON_B, KeyEvent.KEYCODE_BUTTON_X,
+            KeyEvent.KEYCODE_BUTTON_Y};
+    // by position (the Wii U's places): the codes for the Wii U's A (right), B (bottom), X (top), Y (left)
+    static final int[] POSITION_CODES = {KeyEvent.KEYCODE_BUTTON_B, KeyEvent.KEYCODE_BUTTON_A, KeyEvent.KEYCODE_BUTTON_Y,
+            KeyEvent.KEYCODE_BUTTON_X};
+
+    /** the stored printed letters ("" or anything unreadable: not known) */
+    void loadPrinted(String s) {
+        printed = parsePrinted(s);
+    }
+
+    static int[] parsePrinted(String s) {
+        String[] f = s == null || s.isEmpty() ? new String[0] : s.split(",");
+        if (f.length != 4) return null;
+        int[] p = new int[4];
+        try {
+            for (int i = 0; i < 4; i++) p[i] = Integer.parseInt(f[i].trim());
+        } catch (NumberFormatException e) {
+            return null;
+        }
+        return p;
+    }
+
+    static String printedString(int[] p) {
+        if (p == null) return "";
+        return p[0] + "," + p[1] + "," + p[2] + "," + p[3];
+    }
+
+    /** the letter printed on controller button `code` (null: not known, or not a lettered face button) */
+    String printedLetter(int code) {
+        if (printed != null)
+            for (int i = 0; i < 4; i++)
+                if (printed[i] == code) return PRINTED_LETTERS[i];
+        return null;
+    }
+
+    // where the printed letters sit (ControllerSetup asks after each letter, pad_places@<descriptor>): the place of the
+    // buttons printed A, B, X, Y; null: not known (Android's own: its A south, B east, X west, Y north)
+    int[] places;
+    static final int SOUTH = 0, EAST = 1, NORTH = 2, WEST = 3;
+    // the Wii U's place of its A, B, X, Y
+    static final int[] WIIU_PLACES = {EAST, SOUTH, NORTH, WEST};
+    // Android's: KEYCODE_BUTTON_A, B, X, Y (FACE_CODES)
+    static final int[] ANDROID_PLACES = {SOUTH, EAST, WEST, NORTH};
+
+    void loadPlaces(String s) {
+        places = parsePrinted(s);
+        if (places == null) return;
+        boolean[] seen = new boolean[4];
+        for (int p : places) {
+            if (p < 0 || p > 3 || seen[p]) { places = null; return; }
+            seen[p] = true;
+        }
+    }
+
+    /** the place of face button `code` (SOUTH..WEST), -1: not a face button */
+    int placeOf(int code) {
+        if (printed != null && places != null)
+            for (int i = 0; i < 4; i++)
+                if (printed[i] == code) return places[i];
+        for (int i = 0; i < 4; i++)
+            if (FACE_CODES[i] == code) return ANDROID_PLACES[i];
+        return -1;
+    }
+
+    /** the face button at a place */
+    int codeAt(int place) {
+        for (int c : FACE_CODES)
+            if (placeOf(c) == place) return c;
+        return 0;
+    }
+
+    /** by position: the codes of the buttons at the Wii U's places of its A, B, X, Y */
+    int[] positionCodes() {
+        int[] p = new int[4];
+        for (int i = 0; i < 4; i++) p[i] = codeAt(WIIU_PLACES[i]);
+        return p;
+    }
+
+    /** the printed letters are where the Wii U has them (by letters and by position are one) */
+    static boolean printedAsWiiU(int[] p, int[] places) {
+        if (p == null) return false;
+        return places != null ? java.util.Arrays.equals(places, WIIU_PLACES) : java.util.Arrays.equals(p, POSITION_CODES);
+    }
+
+    /** the game's button picture (its HUD's A, B, X, Y in their Wii U places): for each of the Wii U's A, B, X, Y,
+     *  the Wii U place its picture is drawn at, so that it sits where the controller button pressing it is. One
+     *  on no face button keeps its place if free, else takes one left free */
+    int[] hudPlaces() {
+        int[] out = {-1, -1, -1, -1};
+        boolean[] taken = new boolean[4];
+        for (int i = 0; i < 4; i++) {
+            int place = placeOf(map[i]);
+            if (place < 0 || taken[place]) continue;
+            out[i] = place;
+            taken[place] = true;
+        }
+        for (int i = 0; i < 4; i++) {
+            if (out[i] >= 0) continue;
+            int place = WIIU_PLACES[i];
+            if (taken[place]) for (place = 0; taken[place]; place++) ;
+            out[i] = place;
+            taken[place] = true;
+        }
+        // as the Wii U's buttons: the picture of Wii U button i goes to the spot of the Wii U button at that place
+        int[] spot = new int[4];
+        for (int i = 0; i < 4; i++)
+            for (int j = 0; j < 4; j++)
+                if (WIIU_PLACES[j] == out[i]) spot[i] = j;
+        return spot;
+    }
     private final java.util.Set<Integer> pressed = new java.util.HashSet<>();  // controller buttons held
     private int pulse;  // Wii U buttons held for a moment by the activity (a short press of Select)
 
@@ -189,12 +306,8 @@ final class InputMapper {
 
     void preset(boolean letters, int preset, int jump) {
         System.arraycopy(DEFAULT_MAP, 0, map, 0, map.length);
-        if (letters) {
-            map[0] = KeyEvent.KEYCODE_BUTTON_A;
-            map[1] = KeyEvent.KEYCODE_BUTTON_B;
-            map[2] = KeyEvent.KEYCODE_BUTTON_X;
-            map[3] = KeyEvent.KEYCODE_BUTTON_Y;
-        }
+        // (by position: where the setup was told the buttons sit, else Android's places)
+        System.arraycopy(letters ? (printed != null ? printed : FACE_CODES) : positionCodes(), 0, map, 0, 4);
         if (preset != PRESET_ORIGINAL && jump != 0 && jump != KeyEvent.KEYCODE_BUTTON_L1) {
             java.util.List<Integer> moving = clashes(jump);
             if (preset == PRESET_MOVE_TO_L && itemsOnly(moving)) {  // an item button: L1 becomes that item button
@@ -245,7 +358,10 @@ final class InputMapper {
     }
 
     /** the face buttons go by their letters (A presses the Wii U's A), not by position */
-    boolean byLetters() { return map[0] == KeyEvent.KEYCODE_BUTTON_A && map[1] == KeyEvent.KEYCODE_BUTTON_B; }
+    boolean byLetters() {
+        int[] l = printed != null ? printed : FACE_CODES;
+        return map[0] == l[0] && map[1] == l[1];
+    }
 
     /** the app's menus and dialogs: the controller button that selects (the Wii U's A: the right face button, or
      *  the A button with the Wii U's A on it, by letters; issue #61), and the one that goes back */
@@ -329,6 +445,13 @@ final class InputMapper {
         if (hy < -0.5f) l.add(KeyEvent.KEYCODE_DPAD_UP);
         if (hy > 0.5f) l.add(KeyEvent.KEYCODE_DPAD_DOWN);
         return l;
+    }
+
+    /** a short name for the game's button letters (its font: ASCII): a face button's printed letter if known, else
+     *  by position as on the Wii U; null: none */
+    String labelOf(int code) {
+        String l = printedLetter(code);
+        return l != null ? l : shortName(code);
     }
 
     /** a short name for the game's button letters (its font: ASCII), the face buttons by position as on the Wii U;

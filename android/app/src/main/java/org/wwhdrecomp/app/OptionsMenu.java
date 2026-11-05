@@ -3197,6 +3197,12 @@ final class OptionsMenu extends Dialog {
             showPlus();
             if (on && inInventory) closeToGame();  // (no options page in the inventory any more: back to the items)
         });
+        // two fingers on the picture change the field of view (ControlsView.viewPinchStart, issue #71)
+        toggle(R.string.opt_view_pinch, R.string.opt_view_pinch_hint, a.prefs.getBoolean("view_pinch", true), on -> {
+            a.prefs.edit().putBoolean("view_pinch", on).apply();
+            a.applyControlsAppearance();
+            if (!on) a.resetViewZoom();
+        });
         if (!MainActivity.NEW_TOUCH_CONTROLS) return;
         toggle(R.string.opt_stick_follows, R.string.opt_stick_follows_hint, a.prefs.getBoolean("stick_follows", true), on -> {
             a.prefs.edit().putBoolean("stick_follows", on).apply();
@@ -3261,10 +3267,17 @@ final class OptionsMenu extends Dialog {
             choice(R.string.opt_item_tap, R.string.opt_item_tap_hint, itemUse, a.prefs.getBoolean("item_tap", true) ? 0 : 1, i -> {
                 a.prefs.edit().putBoolean("item_tap", i == 0).apply();
                 a.applyControlsAppearance();
+                fill();  // (Put away by itself: its default follows, until set)
             });
             indentNext = true;
             toggle(R.string.opt_item_tap_focus, R.string.opt_item_tap_focus_hint, a.prefs.getBoolean("item_tap_focus", true), on -> {
                 a.prefs.edit().putBoolean("item_tap_focus", on).apply();
+                a.applyControlsAppearance();
+            });
+            // the sword and the Deku Leaf go away by themselves after a while (ControlsView.handStow, issue #66)
+            indentNext = true;
+            toggle(R.string.opt_auto_stow, R.string.opt_auto_stow_hint, a.prefs.getBoolean("auto_stow", a.prefs.getBoolean("item_tap", true)), on -> {
+                a.prefs.edit().putBoolean("auto_stow", on).apply();
                 a.applyControlsAppearance();
             });
         }

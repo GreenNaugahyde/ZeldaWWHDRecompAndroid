@@ -1,4 +1,4 @@
-# Controls guide (0.9.9)
+# Controls guide (0.9.9a)
 
 Version 0.9.6 brought new on-screen controls, a setup for game controllers, an item ring, touch
 controls for the minigames and new ways to conduct the Wind Waker's songs; 0.9.7 adds talks, answers
@@ -195,6 +195,13 @@ Also with Tap:
 
 **Hold** works exactly as in the game.
 
+**Put away by itself** (under Item buttons, for Tap and Hold; needs the context buttons): on, the
+sword and any other item in Link's hand (Skull Hammer, boomerang, ...) go away 5 seconds after their
+last use once he stands still, the Deku Leaf after 3; with Tap the telescope and the Picto Box also go
+away when their view closes. Off, everything stays in his hand and A shows Put away, as in the game;
+with Tap, B while aiming only lowers the item. Its default follows Item buttons (on with Tap, off with
+Hold) until you set it.
+
 With a controller in use, nothing goes away by itself: the sword and the leaf stay in Link's hand
 until A puts them away, as on the Wii U. A touch on the screen brings the automatic put-away back.
 
@@ -289,7 +296,9 @@ Each style keeps its own layout.
 
 Controls › **Camera**:
 
-- **Invert camera up/down**: Off, only in first person and aiming, or always.
+- **Invert camera up/down**: Off, only in first person and aiming, always, or only the normal
+  (third-person) camera. The game itself already looks down on "up" in first person and aiming, so
+  *Normal camera only* gives "up looks down" in every view. Conducting the Wind Waker is never flipped.
 - **Direct right-stick camera** (from the original project): no easing, the camera follows the stick
   at once; **Direct camera speed** 0.5× to 2×. On the boat it now turns as fast as on foot.
 - **First person on the mouse wheel**: a mouse wheel switches to first person (R3 is the game's own
@@ -307,7 +316,9 @@ Controls › **Camera**:
   on the boat** (1× to 4×) as the boat's camera turns slowly.
 
 **Field of view** (Graphics › Screens): zoom the view out (Original up to 2×) to see more around
-Link. A two-finger pinch on the picture changes it too.
+Link. A two-finger pinch on the picture changes it too, unless Controls › Touch › **Pinch to zoom** is
+off: then two fingers never change the view (nor interrupt the stick or a camera swipe), and switching
+it off puts the view back to Original.
 
 ## Minigames, shops and menus by touch
 
@@ -425,6 +436,11 @@ Don't ask). Run it any time from Controls › Controller › **Set up controller
      right one the action button (A); your controller's letters then differ from the game's.
    - *By letters*: your controller's A is the game's A (action), B the sword, X and Y the item
      buttons A2 and A1.
+   - **Printed letters**: press the button printed A, then B, X and Y (or No letters), and say where
+     each sits (bottom, right, top, left). The item buttons on the TV and the + menu's item slots then
+     show your controller's letters, the game's A, B, X and Y on the TV are drawn in your controller's
+     arrangement, and with X left of Y the + menu's X and Y slots swap places. Controllers set up
+     before can run the setup again to add their letters.
 3. **Layout**:
    - *Original*: every button as on the Wii U; Jump anywhere and the moon jump (when on) on L1 / LB,
      which the game doesn't use while playing.
@@ -565,11 +581,12 @@ Defaults in brackets.
 - On-screen controls (on) · Touch controls (Classic) · Edit on-screen layout · Motion controls (on) · Rumble (on)
 - **Touch**: On-screen controls size (100 %) · Menu button in the game (off) · Left stick follows the
   thumb (on) · *Flexible only*: Show sticks (on), Context buttons (off), Item buttons (Tap), Only
-  aiming buttons while aiming (on), ZL / ZR stay on after a tap (on) · Link
+  aiming buttons while aiming (on), Put away by itself (on with Tap), ZL / ZR stay on after a tap (on) ·
+  Pinch to zoom (on) · Link
   in the button icons (on) · ZL when the target is defeated
   (Let go)
 - **Item ring**: Item ring (on) · While the ring is open (Slow motion) · Item button names (Auto)
-- **Camera**: Invert camera up/down (off) · Direct right-stick camera (off), Direct camera speed (1×)
+- **Camera**: Invert camera up/down (off; or First person and aiming, Always, Normal camera only) · Direct right-stick camera (off), Direct camera speed (1×)
   · First person on the mouse wheel (off) · Walking direction (original), Stick re-syncs after (1°),
   Camera swings behind Link (off), Swing starts after (1 s) · *Flexible*: Camera (right half) (Stick),
   Swipe speed, Swipe speed on the boat (1×)

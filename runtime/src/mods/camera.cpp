@@ -189,11 +189,15 @@ bool camera_turned_by_player() { return recent(g_manual_step, 8); }
 // first person and while aiming the stick's y tilts the view (rate control), elsewhere it moves the
 // third-person camera, whose mode switch (dCamera_c::nextMode) treats "pushed up" apart from the
 // other directions; mode 1 leaves that camera (and anything else using the stick) as it is.
+// The game itself already looks down on "up" in first person and aiming (issue #68): mode 3 flips
+// only the third-person camera, so "up looks down" holds everywhere. Conducting the Wind Waker (and
+// the wind compass after the Wind's Requiem) never flips: there up is up.
 std::atomic<int> g_invert_y{0};
 int invert_y() { return g_invert_y.load(std::memory_order_relaxed); }
+static bool invert_third_person() { int m = invert_y(); return m == 2 || m == 3; }
 void set_invert_y(int mode) {
-    g_invert_y = std::clamp(mode, 0, 2);
-    static const char* const kName[3] = {"off", "first person and aiming", "always"};
+    g_invert_y = std::clamp(mode, 0, 3);
+    static const char* const kName[4] = {"off", "first person and aiming", "always", "third-person camera only"};
     LOG("[mods] inverted camera up/down: %s", kName[g_invert_y.load()]);
 }
 
@@ -225,7 +229,9 @@ void filter_pad(input::PadState& s) {
     uint64_t now = step();
     // inverted up/down for the stick (the mouse / swipe camera below flips its own movement)
     const bool look = in_first_person() || aiming_item(link_proc());
-    const bool flip = invert_y() == 2 || (invert_y() == 1 && look);
+    const int inv = invert_y();
+    const bool flip = !wind_waker_conducting() &&
+                      (look ? inv == 1 || inv == 2 : invert_third_person());
     if (flip) s.ry = -s.ry;
     std::lock_guard<std::mutex> lk(g_mu);
     // stale movement (the camera never took it, e.g. during an event) is dropped
@@ -351,7 +357,7 @@ extern "C" void site_0251053C(Cpu* c) {
     double per = ldf32(c->r[1] + 0x14);
     if (!(std::fabs(per) > 0.01)) return;
     // mouse down (dy > 0) looks down: V grows, so f28 < 0
-    if (invert_y() == 2) dy = -dy;  // inverted: mouse down looks up
+    if (invert_third_person()) dy = -dy;  // inverted: mouse down looks up
     c->f[28].ps0 = -dy * swipe_degrees() / per;
 }
 // V smoothing (cSAngle * f1, f1 = [sp+0x18]) and U smoothing (f1 = [sp+0x1C])

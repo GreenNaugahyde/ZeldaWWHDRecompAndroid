@@ -176,8 +176,10 @@ final class Native {
     /** the TV picture in the GamePad picture's place (the GamePad view's controller view, game on another screen) */
     static native void setBackdropTv(boolean on);
 
-    /** the item buttons' letters on the HUD and the GamePad's drop slots: "X,Y,R" order ("" each: the game's) */
+    /** the buttons' letters on the HUD and the GamePad's drop slots: "X,Y,R,A,B" order (each: the letter to show) */
     static native void setSlotLabels(String labels);
+    /** the game's A, B, X, Y button pictures: for each, the Wii U button whose place it is drawn at ("0,1,2,3": as laid out) */
+    static native void setHudPlaces(String places);
     static native void setPad(int buttons, float lx, float ly, float rx, float ry);
     /** Touch on the GamePad screen, 0..1 from the top left. */
     static native void setTouch(boolean down, float x, float y);

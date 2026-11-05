@@ -163,8 +163,21 @@
     <string name="cs_offer_yes">Set up</string>
     <string name="cs_intro">%1$s\n\nThe game knows only the Wii U GamePad. Each of its buttons is pressed by one button of your controller. Which one can be changed freely, and each controller keeps its own.\n\nWhile playing, the game uses every button but L and d-pad down. So Jump anywhere and the moon jump either share L (L1 / LB), or take a button from the game: what that button did then moves to L or, for an item button, is taken off.</string>
     <string name="cs_next">Next</string>
+    <string name="cs_letters_title">Letters on your controller (%1$d/4)</string>
+    <string name="cs_letters_first">Which letters are printed on the four buttons on the right? Brands put them in different places, and on some controllers they can be swapped.\n\nPress the button printed %1$s.\n\nThe game\'s item buttons and the GamePad\'s item slots then show your controller\'s letters, and the game\'s buttons on the TV sit as on your controller.</string>
+    <string name="cs_letters_next">Press the button printed %1$s.</string>
+    <string name="cs_letters_none">No letters</string>
+    <string name="cs_letters_keep">Keep</string>
+    <string name="cs_letters_not_face">That isn\'t one of the four buttons on the right.</string>
+    <string name="cs_letters_taken">That button is already %1$s.</string>
+    <string name="cs_place_text">Where is the button printed %1$s?\n\nThe game\'s buttons on the TV are then drawn as they sit on your controller.</string>
+    <string name="cs_place_south">South (bottom)</string>
+    <string name="cs_place_east">East (right)</string>
+    <string name="cs_place_north">North (top)</string>
+    <string name="cs_place_west">West (left)</string>
+    <string name="cs_place_marks">Nintendo %1$s · Xbox %2$s · PlayStation %3$s</string>
     <string name="cs_face_title">Face buttons</string>
-    <string name="cs_face_text">How should the four buttons on the right work?\n\nBy position: as on the Wii U GamePad. The bottom one is the sword (the Wii U\'s B), the right one the action button (A). The letters on your controller then differ from the game\'s.\n\nBy letters: your controller\'s A is the game\'s A (action), B the sword, X and Y the item buttons A2 and A1.</string>
+    <string name="cs_face_text">How should the four buttons on the right work?\n\nBy position: as on the Wii U GamePad. The bottom one is the sword (the Wii U\'s B), the right one the action button (A). The game\'s item buttons show your controller\'s letters either way.\n\nBy letters: your controller\'s A is the game\'s A (action), B the sword, X and Y the item buttons A2 and A1.</string>
     <string name="cs_face_letters">By letters</string>
     <string name="cs_face_position">By position</string>
     <string name="cs_preset_title">Layout</string>
@@ -260,7 +273,7 @@
     <string name="opt_interp">Frame rate</string>
     <string name="opt_interp_hint">Frame interpolation: in-between frames from the game\'s 30 fps. Needs a fast CPU; where a frame doesn\'t fit in time it is left out and the game keeps its speed. 60 fps (generated): every other frame is made on the GPU from the last one, light on the CPU</string>
     <string name="opt_invert_camera_y">Invert camera up/down</string>
-    <string name="opt_invert_camera_y_hint">Push the right stick (or swipe) up to look down. First person and aiming leaves the normal camera and menus as they are</string>
+    <string name="opt_invert_camera_y_hint">Flips up and down on the right stick (and swipe). In first person and aiming the game itself already looks down when you push up: for up = look down everywhere, choose Normal camera only. Conducting the Wind Waker is never flipped</string>
     <string name="opt_item_ring">Item ring</string>
     <string name="opt_item_ring_hint">Hold X, Y or R (touch or controller) to pick the item for it; a tap uses the item as before</string>
     <string name="opt_item_ring_pace">While the ring is open</string>
@@ -800,6 +813,8 @@
     <string name="opt_view_zoom">Field of view</string>
     <string name="opt_view_zoom_original">Original</string>
     <string name="opt_view_zoom_hint">Zoom out to see more around Link. Pinching with two fingers on the picture changes it too</string>
+    <string name="opt_view_pinch">Pinch to zoom</string>
+    <string name="opt_view_pinch_hint">Two fingers on the picture change the field of view. Off: the view goes back to Original and only Graphics &gt; Screens &gt; Field of view changes it</string>
     <string name="opt_resolution">Rendering resolution</string>
     <string name="opt_rumble">Rumble</string>
     <string name="opt_rumble_hint">On the controller, or this device if the controller has no rumble or while playing by touch</string>
@@ -1077,6 +1092,7 @@
         <item>Off</item>
         <item>First person and aiming</item>
         <item>Always</item>
+        <item>Normal camera only</item>
     </string-array>
     <string-array name="item_ring_paces">
         <item>Keep running</item>
@@ -1370,6 +1386,8 @@ If the picker doesn\'t show your files, put them directly into Download and open
     <string name="opt_item_tap_hold">Hold (as in the game)</string>
     <string name="opt_item_tap_focus">Only aiming buttons while aiming</string>
     <string name="opt_item_tap_focus_hint">With Item buttons: Tap, while an item is aimed only its Shoot button, B (put away), ZL and ZR (arrow types) show; the other item buttons, A, +, first person, the d-pad and the jump buttons hide, so no stray tap lets go of a drawn arrow</string>
+    <string name="opt_auto_stow">Put away by itself</string>
+    <string name="opt_auto_stow_hint">With Context buttons, once Link stands still the sword and any other item in his hand (Skull Hammer, boomerang...) go away 5 s after the last swing and the Deku Leaf after 3 s; with Item buttons: Tap also the telescope and the Picto Box when their view closes, and an aimed item on B; A\'s Put away hides. Off: they stay in Link\'s hand (B while aiming only goes back) and A puts them away, as in the game. At first on with Item buttons: Tap, off with Hold</string>
     <string name="touch_shoot">Shoot</string>
     <string name="touch_throw">Throw</string>
     <!-- Mods: songs sung into the microphone (SongListener) -->

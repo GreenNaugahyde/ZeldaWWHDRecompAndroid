@@ -1475,6 +1475,8 @@ final class ControlsView extends View {
     private long tapDownAt, aimSince, shootAt, reaimAt;
     private boolean aimSeen, reaim;  // Link aimed since the latch; ZL let go for first person: press again
     private long putAwaySince = -1, lastAPulse;
+    private boolean putAwayReturnOnly;
+    private int stowLogItem = -2;  // B while aiming with Put away by itself off: Return only (issue #66)
     private boolean stowBusy;
     private long stowSince = -1;     // the Deku Leaf (on the ground, not waving) or the sword (no swing, no target) in Link's
                                      // hand since: LEAF_STOW_MS / SWORD_STOW_MS later it goes
@@ -1488,6 +1490,22 @@ final class ControlsView extends View {
     void setItemTap(boolean on) {
         if (!on) dropAim();
         itemTap = on;
+        invalidate();
+    }
+
+    /** Controls > Touch > Put away by itself (issue #66): off, the sword and the Deku Leaf stay in Link's hand and
+     *  A's Put away shows, as on the Wii U */
+    private boolean autoStow = true;
+    void setAutoStow(boolean on) {
+        if (on == autoStow) return;
+        autoStow = on;
+        removeCallbacks(handStow);
+        stowSince = -1;
+        if (on && stowsItself()) {  // already in hand: its time starts now (pollState only looks again on a change)
+            stowSince = SystemClock.uptimeMillis();
+            stowBusy = false;
+            if (aAction() == 0x08) postDelayed(handStow, stowMs());
+        }
         invalidate();
     }
 
@@ -1558,6 +1576,7 @@ final class ControlsView extends View {
         reaim = false;
         if (controls.get(0).latch && controls.get(0).pressed && aiming()) releaseZl();  // third person: letting go of ZL ends the aim
         putAwaySince = SystemClock.uptimeMillis();
+        putAwayReturnOnly = !autoStow && aiming();  // Put away by itself off: B while aiming only goes back (Return), the item stays in hand
         lastAPulse = 0;
         startAimTick();
     }
@@ -1577,6 +1596,10 @@ final class ControlsView extends View {
         if (now - putAwaySince > PUT_AWAY_MS) {  // not offered: the game's B
             putAwaySince = -1;
             pulse(Native.B);
+            return true;
+        }
+        if (putAwayReturnOnly && state[1] == 0x08) {  // back from the aim; the item stays (A: Put away)
+            putAwaySince = -1;
             return true;
         }
         // A: Return while aiming (the latched item stays held: letting go would shoot), then Put away
@@ -1605,9 +1628,26 @@ final class ControlsView extends View {
     /** gliding with the Deku Leaf (Link's hand then reads 0x102, not the leaf) */
     private boolean leafFlying() { return context && (state[13] & ST1_LEAF_FLY) != 0; }
 
-    /** the Deku Leaf or the sword in Link's hand: by tap it goes away by itself (handStow), A's Put away is hidden;
-     *  not while a controller is in use (its A puts it away) */
-    private boolean stowsItself() { return !padPlay && state.length > 29 && (state[29] == DEKU_LEAF || state[29] == SWORD); }
+    /** the Deku Leaf, the sword or any item in Link's hand (the Skull Hammer, the boomerang back...; not while aimed or
+     *  being put away) with context buttons and Put away by itself (issue #66): it goes away by itself (handStow), A's
+     *  Put away is hidden; not while a controller is in use (its A puts it away) */
+    private boolean stowsItself() {
+        if (!autoStow || !contextActive() || padPlay || state.length <= 29) return false;
+        if (state[29] == DEKU_LEAF || state[29] == SWORD) return true;
+        return itemInHand() && aimBtn == null && !aiming() && putAwaySince < 0;
+    }
+
+    /** how long the hand's item stays after the last use: the leaf LEAF_STOW_MS, the rest SWORD_STOW_MS */
+    private long stowMs() { return state[29] == DEKU_LEAF ? LEAF_STOW_MS : SWORD_STOW_MS; }
+
+    /** an item button holding this item pressed (a swing, a throw) */
+    private boolean itemPressed(int item) {
+        for (Control c : controls) {
+            int slot = slotOf(c);
+            if (c.kind == KIND_BUTTON && c.pressed && slot >= 0 && state.length > 3 + slot && state[3 + slot] == item) return true;
+        }
+        return false;
+    }
 
     /** a controller in use (true) or playing by touch again (false): the hand's item goes away by itself only by touch;
      *  back to touch its time starts anew (pollState only looks again when the game's state changes) */
@@ -1618,10 +1658,10 @@ final class ControlsView extends View {
                 + tapMode() + ", item " + (state.length > 29 ? state[29] : -1) + ")");
         removeCallbacks(handStow);
         stowSince = -1;
-        if (!on && tapMode() && stowsItself()) {
+        if (!on && stowsItself()) {
             stowSince = SystemClock.uptimeMillis();
             stowBusy = false;
-            if (aAction() == 0x08) postDelayed(handStow, state[29] == SWORD ? SWORD_STOW_MS : LEAF_STOW_MS);
+            if (aAction() == 0x08) postDelayed(handStow, stowMs());
         }
         invalidate();
     }
@@ -1630,14 +1670,17 @@ final class ControlsView extends View {
     private final Runnable handStow = new Runnable() {
         @Override
         public void run() {
-            if (stowSince < 0 || !tapMode() || !stowsItself() || aAction() != 0x08) {
-                android.util.Log.i("wwhd", "controls: no put away (since " + stowSince + ", tap mode " + tapMode() + ", controller " + padPlay
+            if (stowSince < 0 || !stowsItself() || aAction() != 0x08) {
+                android.util.Log.i("wwhd", "controls: no put away (since " + stowSince + ", context " + contextActive() + ", controller " + padPlay
                         + ", A " + Integer.toHexString(aAction()) + ")");
                 return;
             }
-            long left = stowSince + (state[29] == SWORD ? SWORD_STOW_MS : LEAF_STOW_MS) - SystemClock.uptimeMillis();
+            long left = stowSince + stowMs() - SystemClock.uptimeMillis();
             if (left > 0) postDelayed(this, left);  // a swing since (B) started the time again
-            else pulse(Native.A);
+            else {
+                android.util.Log.i("wwhd", "controls: put away by itself (item " + Integer.toHexString(state[29]) + ")");
+                pulse(Native.A);
+            }
         }
     };
 
@@ -1696,7 +1739,7 @@ final class ControlsView extends View {
                 // the Picto Box's or the telescope's view closed (B, R): the game leaves the item in Link's hand
                 // (A: Put away); by tap it goes away at once, as B's Put away
                 boolean view = pictoMode() || telescope();
-                if (viewWas && !view && tapMode() && itemInHand() && aimBtn == null && putAwaySince < 0) startPutAway();
+                if (viewWas && !view && tapMode() && autoStow && itemInHand() && aimBtn == null && putAwaySince < 0) startPutAway();
                 viewWas = view;
                 // the first glide with the Deku Leaf by tap: how its button closes / waves it (once, GameHint)
                 if (leafFlying() && tapMode() && controlsVisible && !editing) offerHint(HINT_LEAF_GLIDE);
@@ -1704,15 +1747,20 @@ final class ControlsView extends View {
                 // SWORD_STOW_MS (walking counts; B, ZL and a target start again): put away as soon as Link stands
                 // still (the game offers A's Put away only then)
                 removeCallbacks(handStow);
-                if (!tapMode() || !stowsItself()) stowSince = -1;
+                if (state.length > 29 && state[29] != stowLogItem) {  // (issue #66: which items go away by themselves)
+                    stowLogItem = state[29];
+                    android.util.Log.i("wwhd", "controls: in hand " + Integer.toHexString(stowLogItem) + ", A " + Integer.toHexString(aAction())
+                            + ", put away by itself " + stowsItself() + " (in hand " + itemInHand() + ", aim " + (aimBtn != null) + "/" + aiming() + ")");
+                }
+                if (!stowsItself()) stowSince = -1;
                 else {
                     long now = SystemClock.uptimeMillis();
-                    boolean sword = state[29] == SWORD;
-                    boolean busy = sword ? controls.get(0).pressed || state[31] != 0 || bPressed()
+                    boolean leaf = state[29] == DEKU_LEAF;
+                    boolean busy = !leaf ? controls.get(0).pressed || state[31] != 0 || (state[29] == SWORD ? bPressed() : itemPressed(state[29]))
                             : (state[13] & (ST1_LEAF_FLY | ST1_LEAF_FAN)) != 0;
                     if (stowSince < 0 || busy || stowBusy) stowSince = now;  // also as the flight / wave / swing ends
                     stowBusy = busy;
-                    if (aAction() == 0x08) postDelayed(handStow, Math.max(0, stowSince + (sword ? SWORD_STOW_MS : LEAF_STOW_MS) - now));
+                    if (aAction() == 0x08) postDelayed(handStow, Math.max(0, stowSince + stowMs() - now));
                 }
                 if (pictoMode() && zrLatched) {  // a ZR latched for crouching would switch the Picto Box modes back and forth
                     zrLatched = false;
@@ -1910,11 +1958,20 @@ final class ControlsView extends View {
     private int viewPinchA = -1, viewPinchB = -1, freeFinger = -1;
     private long freeFingerT;
     private float viewPinchDist0, viewZoom0, viewZoomNow = Float.NaN;
+    // Graphics > Screen > Pinch to zoom (issue #71): off, two fingers never change the view
+    private boolean viewPinch = true;
+    void setViewPinch(boolean on) {
+        viewPinch = on;
+        if (!on) {
+            viewPinchEnd();
+            freeFinger = -1;
+        }
+    }
 
     /** a finger landed on no control: the second of two pinches the view (true: it is taken) */
     private boolean viewPinchStart(int id, float x, float y) {
         boolean minigameOwn = minigame != 0 && !singing();
-        if (front != 0 || drcMode || minigameOwn || pinchMode() || albumSwipe() || tvRect.isEmpty() || !tvRect.contains(x, y)
+        if (!viewPinch || front != 0 || drcMode || minigameOwn || pinchMode() || albumSwipe() || tvRect.isEmpty() || !tvRect.contains(x, y)
                 || viewPinchA >= 0) return false;
         long now = SystemClock.uptimeMillis();
         float[] f = freeFinger >= 0 && freeFinger != id ? fingerAt.get(freeFinger) : null;
@@ -2138,8 +2195,8 @@ final class ControlsView extends View {
         if (!contextActive() || c.kind != KIND_BUTTON || c.pressed) return true;
         // item buttons by tap: B puts the item in Link's hand away, so A's Return / Put away go
         if (tapMode() && itemInHand() && c.bit == Native.B) return true;
-        if (tapMode() && itemInHand() && c.bit == Native.A && (aAction() == 0x07 || aAction() == 0x08)) return false;
-        if (tapMode() && stowsItself() && c.bit == Native.A && aAction() == 0x08) return false;  // goes away by itself
+        if (tapMode() && itemInHand() && c.bit == Native.A && (aAction() == 0x07 || autoStow && aAction() == 0x08)) return false;  // (Put away by itself off: A's Put away stays)
+        if (stowsItself() && c.bit == Native.A && aAction() == 0x08) return false;  // goes away by itself
         if (tapMode() && c.bit == Native.A && leafFlying()) return false;  // the leaf's button closes it
         if (c.bit == Native.A) return aAction() != 0 || state[8] != 0;  // in events A always continues; 0x44 (album) does nothing
         if (c.bit == Native.B && (swimming() || climbing())) return false;  // no sword in water, on a ladder (the game still shows it there)

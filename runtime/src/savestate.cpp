@@ -266,7 +266,7 @@ void message(const char* fmt, ...) {
 
 void make_dirs(const std::string& d) {
     for (size_t i = 1; i <= d.size(); i++)
-        if (i == d.size() || d[i] == '/') mkdir(d.substr(0, i).c_str(), 0755);
+        if (i == d.size() || d[i] == '/') mkdir(d.substr(0, i).c_str(), 0777);  // umask decides (group-writable, #70)
 }
 
 std::string state_dir() {

@@ -663,14 +663,29 @@ static void calc_pane(Cpu* c, uint32_t pane, uint32_t parent, float kx, float ky
             return;
         }
     }
+    // the game's A, B, X, Y in the controller's arrangement (hud.h hud_set_places): moved for the call, and recomputed
+    // again in the next frame (when they go back, as laid out)
+    float pdx = 0, pdy = 0;
+    const bool placed = hud_place_shift(pane, parent, pdx, pdy);
     if (!t_anchor) {
         if (parent == t_root) set_offset(pane, 0, 0);
+        if (!placed) {
+            f_028766CC_orig(c);
+            return;
+        }
+        float tx = (float)ldf32(pane + kPaneTrans), ty = (float)ldf32(pane + kPaneTrans + 4);
+        st8(pane + kPaneFlags, ld8(pane + kPaneFlags) | kPaneMtxDirty);
+        stf32(pane + kPaneTrans, tx + pdx);
+        stf32(pane + kPaneTrans + 4, ty + pdy);
         f_028766CC_orig(c);
+        stf32(pane + kPaneTrans, tx);
+        stf32(pane + kPaneTrans + 4, ty);
+        st8(pane + kPaneFlags, ld8(pane + kPaneFlags) | kPaneMtxDirty);
         return;
     }
     float tx = (float)ldf32(pane + kPaneTrans), ty = (float)ldf32(pane + kPaneTrans + 4);
     float sx = (float)ldf32(pane + kPaneScale), sy = (float)ldf32(pane + kPaneScale + 4);
-    float nx = tx, ny = ty, nsx = sx, nsy = sy;
+    float nx = tx + pdx, ny = ty + pdy, nsx = sx, nsy = sy;
     if (parent == t_root) {
         float half = 640.0f * (kx - 1.0f), halfY = 360.0f * (ky - 1.0f);
         // parts the game moves to an actor's projected position: enemy health, the floating A action
@@ -721,6 +736,7 @@ static void calc_pane(Cpu* c, uint32_t pane, uint32_t parent, float kx, float ky
     f_028766CC_orig(c);
     if (moved) { stf32(pane + kPaneTrans, tx); stf32(pane + kPaneTrans + 4, ty); }
     if (scaled) { stf32(pane + kPaneScale, sx); stf32(pane + kPaneScale + 4, sy); }
+    if (placed) st8(pane + kPaneFlags, ld8(pane + kPaneFlags) | kPaneMtxDirty);
 }
 
 // ---- GamePad picture of another shape than 16:9: a second display (the AYN Thor's lower screen is

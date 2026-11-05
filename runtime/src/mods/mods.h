@@ -141,8 +141,10 @@ int event_mode_now();  // turbo.cpp: 0 no event, 1 dialogue, 2 / 3 cutscene
 float link_move_factor(uint32_t link);
 
 // inverted camera up/down (camera.cpp): 0 off, 1 only while the game looks around with the right
-// stick (first person, aiming an item), 2 always (also the third-person camera's height)
+// stick (first person, aiming an item), 2 always (also the third-person camera's height), 3 only the
+// third-person camera; never while conducting
 int invert_y();
+bool wind_waker_conducting();  // songs.cpp: Link holds the Wind Waker (also under the wind compass)
 void set_invert_y(int mode);
 bool camera_turned_by_player();  // camera.cpp: the right-stick / swipe / mouse camera ran in the last steps
 // walking direction (steer.cpp): 0 the game's, 1 kept while the player turns the camera, 2 kept while

@@ -7,6 +7,7 @@
 // listings include what the packs add.
 #include <dirent.h>
 #include <sys/stat.h>
+#include <unistd.h>
 
 #include <cstdio>
 #include <cstring>
@@ -133,9 +134,35 @@ std::string host_path_exact(const std::string& guest) {
     return config::game_dir + p;
 }
 
+// 0777 under the umask (Android: 0770 + the folder's setgid group), like the app's Java side: another app holding
+// the storage group (a sync tool, issue #70) can write into the save folders
 void make_parent_dirs(const std::string& path) {
     for (size_t i = 1; i < path.size(); i++)
-        if (path[i] == '/') mkdir(path.substr(0, i).c_str(), 0755);
+        if (path[i] == '/') mkdir(path.substr(0, i).c_str(), 0777);
+}
+
+// a file another app put there (a sync tool's copy of cking.sav, issue #70) may not be writable for this app; the
+// folder is ours, so the file is swapped for an own copy of it before the game writes into it
+void own_file_for_writing(const std::string& hp) {
+    if (access(hp.c_str(), F_OK) != 0 || access(hp.c_str(), W_OK) == 0) return;
+    std::string bytes;
+    FILE* in = fopen(hp.c_str(), "rb");
+    if (!in) {  // not even readable: never swap it for an empty file
+        LOG("[fs] %s is another app's file this app can neither read nor write", hp.c_str());
+        return;
+    }
+    char buf[65536];
+    for (size_t n; (n = fread(buf, 1, sizeof buf, in)) > 0;) bytes.append(buf, n);
+    bool read_ok = !ferror(in);
+    fclose(in);
+    if (!read_ok) return;
+    std::string tmp = hp + ".own";
+    FILE* out = fopen(tmp.c_str(), "wb");
+    if (!out) return;
+    bool ok = fwrite(bytes.data(), 1, bytes.size(), out) == bytes.size();
+    ok = fclose(out) == 0 && ok && rename(tmp.c_str(), hp.c_str()) == 0;
+    if (!ok) unlink(tmp.c_str());
+    LOG("[fs] %s was not writable (another app's file): %s", hp.c_str(), ok ? "replaced by an own copy" : "could not replace it");
 }
 
 void fill_stat(uint32_t out, const struct stat& st) {
@@ -149,12 +176,21 @@ void fill_stat(uint32_t out, const struct stat& st) {
 
 int32_t open_file(const std::string& gpath, const std::string& mode, uint32_t out_handle) {
     std::string hp = host_path(gpath);
-    if (mode.find_first_of("wa") != std::string::npos) make_parent_dirs(hp);
+    if (mode.find_first_of("wa+") != std::string::npos) {
+        make_parent_dirs(hp);
+        own_file_for_writing(hp);
+    }
     std::string m = mode;
     if (m.find('b') == std::string::npos) m += "b";
     FILE* f = fopen(hp.c_str(), m.c_str());
     TRACE("[fs] open %s (%s) -> %s", gpath.c_str(), mode.c_str(), f ? "ok" : "not found");
     if (!f) return FS_NOT_FOUND;
+    // a written file (the saves): group read/write plus read for others, so a sync tool's copy of it stays readable
+    // for this app (issue #70; no other app can enter files/ anyway)
+    struct stat st;
+    if (mode.find_first_of("wa+") != std::string::npos && fstat(fileno(f), &st) == 0 && st.st_uid == getuid() &&
+        (st.st_mode & 0664) != 0664)
+        fchmod(fileno(f), (st.st_mode & 07777) | 0664);
     std::lock_guard<std::mutex> lk(g_fs_mutex);
     uint32_t h = g_next_handle++;
     g_files[h] = {f, gpath, m};

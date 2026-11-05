@@ -196,16 +196,18 @@ namespace {
 constexpr uint32_t kPaneParent = 0x0C, kBoxSize = 0x3C, kFontSize = 0xB8, kTextBuf = 0xA4, kTextBufLen = 0xCC, kTextLen = 0xCE, kTextFlags = 0xF4;
 constexpr uint8_t kTextDirty = 0x20;
 std::mutex g_label_mu;
-std::u16string g_label[3] = {u"X", u"Y", u"R"};
+std::u16string g_label[5] = {u"X", u"Y", u"R", u"A", u"B"};
 std::atomic<bool> g_labels_set{false};
 
 void slot_label(uint32_t pane, const char* n) {
-    if (!g_labels_set.load(std::memory_order_relaxed) || n[4] != '0' || n[5] != '0' || n[6]) return;
-    int i = n[2] == 'X' ? 0 : n[2] == 'Y' ? 1 : n[2] == 'R' ? 2 : -1;
+    // (T_A_01: the A on P_ASpecial_00, the special action's larger button)
+    if (!g_labels_set.load(std::memory_order_relaxed) || n[4] != '0' || (n[5] != '0' && !(n[2] == 'A' && n[5] == '1')) || n[6]) return;
+    int i = n[2] == 'X' ? 0 : n[2] == 'Y' ? 1 : n[2] == 'R' ? 2 : n[2] == 'A' ? 3 : n[2] == 'B' ? 4 : -1;
     if (i < 0) return;
     uint32_t parent = ld32(pane + kPaneParent);
     const char* pn = parent ? (const char*)mem::ptr(parent + kPaneName) : "";
-    if (pn[0] != 'P' || pn[1] != '_' || pn[2] != n[2] || pn[3] != '_') return;  // (only on the button's picture)
+    if (pn[0] != 'P' || pn[1] != '_' || pn[2] != n[2] || (pn[3] != '_' && strncmp(pn + 3, "Special_00", 11)))
+        return;  // (only on the button's picture)
     std::u16string want;
     {
         std::lock_guard<std::mutex> lk(g_label_mu);
@@ -232,13 +234,91 @@ void hud_set_slot_labels(const std::string& csv) {
     std::vector<std::string> v;
     parse(csv, v);
     std::lock_guard<std::mutex> lk(g_label_mu);
-    static const char16_t* const kGame[3] = {u"X", u"Y", u"R"};
-    for (int i = 0; i < 3; i++) {
+    static const char16_t* const kGame[5] = {u"X", u"Y", u"R", u"A", u"B"};
+    for (int i = 0; i < 5; i++) {
         g_label[i] = kGame[i];
         if (i < (int)v.size() && !v[i].empty() && v[i].size() < 7) g_label[i] = std::u16string(v[i].begin(), v[i].end());
     }
     g_labels_set = true;  // (from now on: also back to the game's letters)
-    LOG("[hud] item button letters %s", csv.empty() ? "X,Y,R" : csv.c_str());
+    LOG("[hud] button letters %s", csv.empty() ? "X,Y,R,A,B" : csv.c_str());
+}
+
+namespace {
+// the button cluster in the controller's arrangement (hud_set_places). CommandGuide_00's N_All_00 (a root child) holds
+// A's P_SetSeatASpecial_00 + W_SetSeatA_00 at 40,-35, P_B_00 at -9,-86, N_X_00 (10,-1) with P_X_00 at -19,14, N_Y_00
+// (10,-1) with P_Y_00 at -67,-35: a diamond, A right, B bottom, X top, Y left (N_All_00's units). R and ZR stay.
+constexpr float kSpot[4][2] = {{40, -35}, {-9, -86}, {-9, 13}, {-57, -36}};
+std::atomic<int> g_places{0x3210};  // 4 bits per Wii U button: the button whose place it takes
+
+int cluster_button(const char* n) {
+    if (!strncmp(n, "N_X_00", 24)) return 2;
+    if (!strncmp(n, "N_Y_00", 24)) return 3;
+    if (!strncmp(n, "P_B_00", 24)) return 1;
+    if (!strncmp(n, "P_SetSeatASpecial_00", 24) || !strncmp(n, "W_SetSeatA_00", 24)) return 0;
+    return -1;
+}
+}  // namespace
+
+void hud_set_places(const std::string& csv) {
+    std::vector<std::string> v;
+    parse(csv, v);
+    int packed = 0x3210;
+    if (v.size() == 4) {
+        int seen = 0, p = 0;
+        for (int i = 0; i < 4; i++) {
+            int t = v[i].size() == 1 ? v[i][0] - '0' : -1;
+            if (t < 0 || t > 3 || (seen & (1 << t))) { p = -1; break; }
+            seen |= 1 << t;
+            p |= t << (4 * i);
+        }
+        if (p >= 0) packed = p;
+    }
+    g_places = packed;
+    LOG("[hud] button places %s", packed == 0x3210 ? "as laid out" : csv.c_str());
+}
+
+// the + menu's item slots (IconSlideArea_00: Y at -336, X at -51, R at 234, each a drop slot + its button picture):
+// X's and Y's swapped when the controller's X-button sits left of its Y-button (Xbox: X west, Y north)
+static constexpr float kSlotGap = 285;
+static int slide_slot(const char* n, uint32_t parent) {
+    char c = 0;
+    if (n[0] == 'W' && n[1] == '_' && !strncmp(n + 3, "DropSlide", 9)) c = n[2];  // W_?DropSlide_00 / Float / Swich
+    else if ((n[0] == 'B' || n[0] == 'P') && n[1] == '_' && !strncmp(n + 3, "_00", 4)) c = n[2];  // B_?_00, P_?_00
+    if (c != 'X' && c != 'Y') return -1;
+    // the slots' layout: its own (the GamePad in play) or a part of the + menu's item page (MenuItem_00's
+    // L_IconSlideArea_00): the pane holding N_DropSlide_00, the pane's parent or (in N_DropSlide_00) its grandparent
+    const bool inSlide = !strncmp((const char*)mem::ptr(parent + kPaneName), "N_DropSlide_00", 24);
+    if (n[0] == 'P' && inSlide) return -1;
+    uint32_t top = inSlide ? ld32(parent + 0x0C) : parent;
+    if (!top || !find_pane(top, "N_DropSlide_00", 1)) return -1;
+    return c == 'X' ? 2 : 3;
+}
+
+bool hud_place_shift(uint32_t pane, uint32_t parent, float& dx, float& dy) {
+    int packed = g_places.load(std::memory_order_relaxed);
+    if (packed == 0x3210) return false;
+    const char* n = (const char*)mem::ptr(pane + kPaneName);
+    if ((n[0] == 'W' || n[0] == 'B' || n[0] == 'P') && n[1] == '_') {
+        int tx = (packed >> 8) & 0xF, ty = (packed >> 12) & 0xF;
+        if (kSpot[tx][0] < kSpot[ty][0]) {
+            int s = slide_slot(n, parent);
+            if (s >= 0) {
+                dx = s == 2 ? -kSlotGap : kSlotGap;
+                dy = 0;
+                return true;
+            }
+        }
+    }
+    if (n[1] != '_' || (n[0] != 'N' && n[0] != 'P' && n[0] != 'W')) return false;
+    int b = cluster_button(n);
+    if (b < 0 || strncmp((const char*)mem::ptr(parent + kPaneName), "N_All_00", 24)) return false;
+    uint32_t root = ld32(parent + 0x0C);  // (N_All_00 a root child: CommandGuide_00)
+    if (!root || ld32(root + 0x0C)) return false;
+    int t = (packed >> (4 * b)) & 0xF;
+    if (t == b) return false;
+    dx = kSpot[t][0] - kSpot[b][0];
+    dy = kSpot[t][1] - kSpot[b][1];
+    return true;
 }
 
 namespace {

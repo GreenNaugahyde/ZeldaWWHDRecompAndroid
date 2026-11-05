@@ -162,8 +162,21 @@
     <string name="cs_offer_yes">Configurer</string>
     <string name="cs_intro">%1$s\n\nLe jeu ne connaît que le Wii U GamePad. Chacun de ses boutons est actionné par un bouton de votre manette. Lequel se change librement, et chaque manette garde le sien.\n\nEn jeu, tous les boutons sauf L et le bas de la croix servent. Sauter partout et le saut lunaire partagent donc L (L1 / LB), ou prennent un bouton au jeu : ce qu\'il faisait passe alors sur L ou, pour un bouton d\'objet, est retiré.</string>
     <string name="cs_next">Suivant</string>
+    <string name="cs_letters_title">Lettres de votre manette (%1$d/4)</string>
+    <string name="cs_letters_first">Quelles lettres sont imprimées sur les quatre boutons de droite ? Chaque marque les place différemment, et sur certaines manettes on peut les échanger.\n\nAppuyez sur le bouton marqué %1$s.\n\nLes boutons d\'objet du jeu et les emplacements d\'objet du GamePad affichent alors les lettres de votre manette, et les boutons du jeu sur la télé sont placés comme sur votre manette.</string>
+    <string name="cs_letters_next">Appuyez sur le bouton marqué %1$s.</string>
+    <string name="cs_letters_none">Pas de lettres</string>
+    <string name="cs_letters_keep">Garder</string>
+    <string name="cs_letters_not_face">Ce n\'est pas l\'un des quatre boutons de droite.</string>
+    <string name="cs_letters_taken">Ce bouton est déjà %1$s.</string>
+    <string name="cs_place_text">Où se trouve le bouton marqué %1$s ?\n\nLes boutons du jeu sur la télé sont alors disposés comme sur votre manette.</string>
+    <string name="cs_place_south">Sud (en bas)</string>
+    <string name="cs_place_east">Est (à droite)</string>
+    <string name="cs_place_north">Nord (en haut)</string>
+    <string name="cs_place_west">Ouest (à gauche)</string>
+    <string name="cs_place_marks">Nintendo %1$s · Xbox %2$s · PlayStation %3$s</string>
     <string name="cs_face_title">Boutons de façade</string>
-    <string name="cs_face_text">Comment les quatre boutons de droite doivent-ils fonctionner ?\n\nPar position : comme sur le Wii U GamePad. Celui du bas est l\'épée (le B de la Wii U), celui de droite le bouton d\'action (A). Les lettres de votre manette diffèrent alors de celles du jeu.\n\nPar lettres : le A de votre manette est le A du jeu (action), B l\'épée, X et Y les boutons d\'objet A2 et A1.</string>
+    <string name="cs_face_text">Comment les quatre boutons de droite doivent-ils fonctionner ?\n\nPar position : comme sur le Wii U GamePad. Celui du bas est l\'épée (le B de la Wii U), celui de droite le bouton d\'action (A). Les boutons d\'objet du jeu affichent dans les deux cas les lettres de votre manette.\n\nPar lettres : le A de votre manette est le A du jeu (action), B l\'épée, X et Y les boutons d\'objet A2 et A1.</string>
     <string name="cs_face_letters">Par lettres</string>
     <string name="cs_face_position">Par position</string>
     <string name="cs_preset_title">Disposition</string>
@@ -259,7 +272,7 @@
     <string name="opt_interp">Fréquence d\'images</string>
     <string name="opt_interp_hint">Interpolation d\'images : des images intermédiaires à partir des 30 fps du jeu. Demande un processeur rapide ; une image qui n\'arrive pas à temps est omise et le jeu garde sa vitesse. 60 fps (générées) : une image sur deux est créée par le GPU à partir de la précédente, léger pour le processeur</string>
     <string name="opt_invert_camera_y">Inverser la caméra haut/bas</string>
-    <string name="opt_invert_camera_y_hint">Poussez le stick droit (ou glissez) vers le haut pour regarder vers le bas. Vue subjective et visée laisse la caméra normale et les menus tels quels</string>
+    <string name="opt_invert_camera_y_hint">Inverse le haut et le bas du stick droit (et du glissement). En vue subjective et en visée, le jeu regarde déjà vers le bas quand vous poussez vers le haut : pour haut = bas partout, choisissez Caméra normale seule. Diriger avec la Baguette du vent n\'est jamais inversé</string>
     <string name="opt_item_ring">Anneau d\'objets</string>
     <string name="opt_item_ring_hint">Maintenez X, Y ou R (tactile ou manette) pour choisir l\'objet de ce bouton ; un appui court utilise l\'objet comme avant</string>
     <string name="opt_item_ring_pace">Pendant que l\'anneau est ouvert</string>
@@ -799,6 +812,8 @@
     <string name="opt_view_zoom">Champ de vision</string>
     <string name="opt_view_zoom_original">Original</string>
     <string name="opt_view_zoom_hint">Dézoomer pour voir davantage autour de Link. Se règle aussi en pinçant l\'image avec deux doigts</string>
+    <string name="opt_view_pinch">Zoom à deux doigts</string>
+    <string name="opt_view_pinch_hint">Deux doigts sur l\'image changent le champ de vision. Désactivé : la vue revient à Original et seul Graphismes &gt; Écrans &gt; Champ de vision la change</string>
     <string name="opt_resolution">Résolution de rendu</string>
     <string name="opt_rumble">Vibrations</string>
     <string name="opt_rumble_hint">Sur la manette, ou sur cet appareil si la manette ne vibre pas ou en jouant au toucher</string>
@@ -1076,6 +1091,7 @@
         <item>Désactivé</item>
         <item>Vue subjective et visée</item>
         <item>Toujours</item>
+        <item>Caméra normale seule</item>
     </string-array>
     <string-array name="item_ring_paces">
         <item>Le jeu continue</item>
@@ -1361,6 +1377,8 @@
     <string name="opt_item_tap_hold">Maintenir (comme dans le jeu)</string>
     <string name="opt_item_tap_focus">Visée : seulement ses boutons</string>
     <string name="opt_item_tap_focus_hint">Avec Boutons d\'objet : Toucher, pendant la visée seuls le bouton Tirer, B (ranger), ZL et ZR (type de flèche) restent ; les autres boutons d\'objet, A, +, la vue subjective, la croix et les boutons de saut disparaissent, pour qu\'aucune touche par erreur ne lâche une flèche tendue</string>
+    <string name="opt_auto_stow">Ranger tout seul</string>
+    <string name="opt_auto_stow_hint">Avec Boutons contextuels, dès que Link s\'arrête, l\'épée et tout autre objet en main (Masse Squelette, boomerang...) se rangent 5 s après le dernier coup et la feuille Mojo après 3 s ; avec Boutons d\'objet : Toucher aussi la longue-vue et la Boîte à Images quand leur vue se ferme, et un objet visé sur B ; le Ranger de A est masqué. Désactivé : ils restent dans la main de Link (B pendant la visée revient seulement) et A les range, comme dans le jeu. Au départ activé avec Boutons d\'objet : Toucher, désactivé avec Maintenir</string>
     <string name="touch_shoot">Tirer</string>
     <string name="touch_throw">Lancer</string>
     <!-- Mods: songs sung into the microphone (SongListener) -->

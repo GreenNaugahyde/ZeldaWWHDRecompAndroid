@@ -162,8 +162,21 @@
     <string name="cs_offer_yes">Configurar</string>
     <string name="cs_intro">%1$s\n\nEl juego solo conoce el Wii U GamePad. Cada uno de sus botones lo pulsa un botón de tu mando. Cuál se puede cambiar libremente, y cada mando guarda el suyo.\n\nAl jugar, el juego usa todos los botones menos L y la cruceta abajo. Así que Saltar en cualquier sitio y el salto lunar comparten L (L1 / LB), o le quitan un botón al juego: lo que hacía pasa entonces a L o, si es un botón de objeto, se quita.</string>
     <string name="cs_next">Siguiente</string>
+    <string name="cs_letters_title">Letras de tu mando (%1$d/4)</string>
+    <string name="cs_letters_first">¿Qué letras llevan impresas los cuatro botones de la derecha? Cada marca las pone en otro sitio, y en algunos mandos se pueden intercambiar.\n\nPulsa el botón con la %1$s.\n\nLos botones de objeto del juego y las ranuras de objeto del GamePad mostrarán entonces las letras de tu mando, y los botones del juego en la tele estarán colocados como en tu mando.</string>
+    <string name="cs_letters_next">Pulsa el botón con la %1$s.</string>
+    <string name="cs_letters_none">Sin letras</string>
+    <string name="cs_letters_keep">Mantener</string>
+    <string name="cs_letters_not_face">Ese no es uno de los cuatro botones de la derecha.</string>
+    <string name="cs_letters_taken">Ese botón ya es la %1$s.</string>
+    <string name="cs_place_text">¿Dónde está el botón con la %1$s?\n\nLos botones del juego en la tele se dibujan entonces como están en tu mando.</string>
+    <string name="cs_place_south">Sur (abajo)</string>
+    <string name="cs_place_east">Este (derecha)</string>
+    <string name="cs_place_north">Norte (arriba)</string>
+    <string name="cs_place_west">Oeste (izquierda)</string>
+    <string name="cs_place_marks">Nintendo %1$s · Xbox %2$s · PlayStation %3$s</string>
     <string name="cs_face_title">Botones frontales</string>
-    <string name="cs_face_text">¿Cómo deben funcionar los cuatro botones de la derecha?\n\nPor posición: como en el Wii U GamePad. El de abajo es la espada (la B de la Wii U), el de la derecha el botón de acción (A). Las letras de tu mando difieren entonces de las del juego.\n\nPor letras: la A de tu mando es la A del juego (acción), B la espada, X e Y los botones de objeto A2 y A1.</string>
+    <string name="cs_face_text">¿Cómo deben funcionar los cuatro botones de la derecha?\n\nPor posición: como en el Wii U GamePad. El de abajo es la espada (la B de la Wii U), el de la derecha el botón de acción (A). Los botones de objeto del juego muestran en ambos casos las letras de tu mando.\n\nPor letras: la A de tu mando es la A del juego (acción), B la espada, X e Y los botones de objeto A2 y A1.</string>
     <string name="cs_face_letters">Por letras</string>
     <string name="cs_face_position">Por posición</string>
     <string name="cs_preset_title">Distribución</string>
@@ -259,7 +272,7 @@
     <string name="opt_interp">Tasa de fotogramas</string>
     <string name="opt_interp_hint">Interpolación de fotogramas: fotogramas intermedios a partir de los 30 fps del juego. Necesita una CPU rápida; un fotograma que no llega a tiempo se omite y el juego mantiene su velocidad. 60 fps (generados): uno de cada dos fotogramas lo crea la GPU a partir del anterior, ligero para la CPU</string>
     <string name="opt_invert_camera_y">Invertir cámara arriba/abajo</string>
-    <string name="opt_invert_camera_y_hint">Empuja el stick derecho (o desliza) hacia arriba para mirar hacia abajo. Primera persona y apuntar deja como están la cámara normal y los menús</string>
+    <string name="opt_invert_camera_y_hint">Invierte arriba y abajo del stick derecho (y del deslizamiento). En primera persona y al apuntar el propio juego ya mira hacia abajo al empujar hacia arriba: para arriba = abajo en todo, elige Solo cámara normal. Dirigir con la Batuta de los vientos nunca se invierte</string>
     <string name="opt_item_ring">Rueda de objetos</string>
     <string name="opt_item_ring_hint">Mantén X, Y o R (táctil o mando) para elegir el objeto de ese botón; un toque usa el objeto como antes</string>
     <string name="opt_item_ring_pace">Mientras la rueda está abierta</string>
@@ -799,6 +812,8 @@
     <string name="opt_view_zoom">Campo de visión</string>
     <string name="opt_view_zoom_original">Original</string>
     <string name="opt_view_zoom_hint">Aleja la vista para ver más alrededor de Link. También se ajusta pellizcando la imagen con dos dedos</string>
+    <string name="opt_view_pinch">Zoom con dos dedos</string>
+    <string name="opt_view_pinch_hint">Dos dedos sobre la imagen cambian el campo de visión. Desactivado: la vista vuelve a Original y solo Gráficos &gt; Pantallas &gt; Campo de visión la cambia</string>
     <string name="opt_resolution">Resolución de renderizado</string>
     <string name="opt_rumble">Vibración</string>
     <string name="opt_rumble_hint">En el mando, o en este dispositivo si el mando no vibra o mientras juegas en táctil</string>
@@ -1076,6 +1091,7 @@
         <item>No</item>
         <item>Primera persona y apuntar</item>
         <item>Siempre</item>
+        <item>Solo cámara normal</item>
     </string-array>
     <string-array name="item_ring_paces">
         <item>El juego sigue</item>
@@ -1361,6 +1377,8 @@
     <string name="opt_item_tap_hold">Mantener (como en el juego)</string>
     <string name="opt_item_tap_focus">Al apuntar, solo sus botones</string>
     <string name="opt_item_tap_focus_hint">Con Botones de objeto: Tocar, al apuntar solo quedan el botón Disparar, B (guardar), ZL y ZR (tipo de flecha); los demás botones de objeto, A, +, la primera persona, la cruceta y los botones de salto se ocultan, para que ningún toque por error suelte una flecha tensada</string>
+    <string name="opt_auto_stow">Guardar solo</string>
+    <string name="opt_auto_stow_hint">Con Botones contextuales, en cuanto Link se queda quieto la espada y cualquier otro objeto en la mano (Martillo Calavera, bumerán...) se guardan 5 s después del último golpe y la hoja Deku tras 3 s; con Botones de objeto: Tocar también el catalejo y la Caja luminográfica al cerrarse su vista, y un objeto apuntado con B; el Guardar de A se oculta. No: siguen en la mano de Link (B al apuntar solo vuelve) y A los guarda, como en el juego. Al principio sí con Botones de objeto: Tocar, no con Mantener</string>
     <string name="touch_shoot">Disparar</string>
     <string name="touch_throw">Lanzar</string>
     <!-- Mods: songs sung into the microphone (SongListener) -->

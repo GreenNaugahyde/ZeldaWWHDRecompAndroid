@@ -180,6 +180,21 @@ The original project (macOS, the 60 fps modes, decompilation tools) is described
 
 ## Version history
 
+**0.9.9a**
+
+- Controller setup asks for the **printed letters** (press the button printed A, B, X, Y and say where
+  each sits): the item buttons on the TV and the + menu's item slots show your controller's letters,
+  the game's A, B, X and Y on the TV are drawn in its arrangement, and with X left of Y the + menu's X
+  and Y slots swap places (#67).
+- Controls › Camera › Invert camera up/down: new choice **Normal camera only**, which gives "up looks
+  down" in every view; conducting the Wind Waker is never flipped (#68).
+- Controls › Touch › **Put away by itself**: on, the sword and any item in Link's hand go away a few
+  seconds after their last use; off, they stay in his hand and A shows Put away, as in the game. For
+  Item buttons Tap and Hold (#66).
+- Controls › Touch › **Pinch to zoom**: off, two fingers on the picture never change the view (#71).
+- Save folders and save files can be shared with a sync tool such as Syncthing: folders are made
+  group-writable, and a save file another app put there no longer stops the game from saving (#70).
+
 **0.9.9**
 
 - Game › **Randomizer**: [TWWHD Randomizer](https://github.com/SuperDude88/TWWHD-Randomizer) 1.2.0

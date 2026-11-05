@@ -162,8 +162,21 @@
     <string name="cs_offer_yes">Configura</string>
     <string name="cs_intro">%1$s\n\nIl gioco conosce solo il Wii U GamePad. Ognuno dei suoi tasti è premuto da un tasto del tuo controller. Quale, si può cambiare liberamente, e ogni controller tiene il suo.\n\nIn gioco sono usati tutti i tasti tranne L e la croce giù. Salta ovunque e il salto lunare quindi condividono L (L1 / LB) o prendono un tasto al gioco: quello che faceva passa su L o, per un tasto oggetto, viene tolto.</string>
     <string name="cs_next">Avanti</string>
+    <string name="cs_letters_title">Lettere del tuo controller (%1$d/4)</string>
+    <string name="cs_letters_first">Quali lettere sono stampate sui quattro tasti a destra? Ogni marca le mette in posti diversi, e su alcuni controller si possono scambiare.\n\nPremi il tasto con la %1$s.\n\nI tasti oggetto del gioco e gli spazi oggetto del GamePad mostrano poi le lettere del tuo controller, e i tasti del gioco sulla TV sono disposti come sul tuo controller.</string>
+    <string name="cs_letters_next">Premi il tasto con la %1$s.</string>
+    <string name="cs_letters_none">Nessuna lettera</string>
+    <string name="cs_letters_keep">Mantieni</string>
+    <string name="cs_letters_not_face">Non è uno dei quattro tasti a destra.</string>
+    <string name="cs_letters_taken">Quel tasto è già la %1$s.</string>
+    <string name="cs_place_text">Dove si trova il tasto con la %1$s?\n\nI tasti del gioco sulla TV vengono poi disposti come sul tuo controller.</string>
+    <string name="cs_place_south">Sud (in basso)</string>
+    <string name="cs_place_east">Est (a destra)</string>
+    <string name="cs_place_north">Nord (in alto)</string>
+    <string name="cs_place_west">Ovest (a sinistra)</string>
+    <string name="cs_place_marks">Nintendo %1$s · Xbox %2$s · PlayStation %3$s</string>
     <string name="cs_face_title">Tasti frontali</string>
-    <string name="cs_face_text">Come devono funzionare i quattro tasti a destra?\n\nPer posizione: come sul Wii U GamePad. Quello in basso è la spada (la B della Wii U), quello a destra il tasto azione (A). Le lettere del tuo controller differiscono allora da quelle del gioco.\n\nPer lettere: la A del tuo controller è la A del gioco (azione), B la spada, X e Y i tasti oggetto A2 e A1.</string>
+    <string name="cs_face_text">Come devono funzionare i quattro tasti a destra?\n\nPer posizione: come sul Wii U GamePad. Quello in basso è la spada (la B della Wii U), quello a destra il tasto azione (A). I tasti oggetto del gioco mostrano in entrambi i casi le lettere del tuo controller.\n\nPer lettere: la A del tuo controller è la A del gioco (azione), B la spada, X e Y i tasti oggetto A2 e A1.</string>
     <string name="cs_face_letters">Per lettere</string>
     <string name="cs_face_position">Per posizione</string>
     <string name="cs_preset_title">Disposizione</string>
@@ -259,7 +272,7 @@
     <string name="opt_interp">Frequenza dei fotogrammi</string>
     <string name="opt_interp_hint">Interpolazione: fotogrammi intermedi dai 30 fps del gioco. Serve una CPU veloce; un fotogramma che non arriva in tempo viene saltato e il gioco mantiene la sua velocità. 60 fps (generati): un fotogramma su due viene creato dalla GPU a partire dal precedente, leggero per la CPU</string>
     <string name="opt_invert_camera_y">Inverti telecamera su/giù</string>
-    <string name="opt_invert_camera_y_hint">Spingi lo stick destro (o scorri) in su per guardare in giù. Prima persona e mira lascia com\'è la telecamera normale e i menu</string>
+    <string name="opt_invert_camera_y_hint">Inverte su e giù dello stick destro (e dello scorrimento). In prima persona e mirando il gioco stesso guarda già in giù quando spingi in su: per su = giù ovunque, scegli Solo telecamera normale. Dirigere con la Bacchetta del vento non viene mai invertito</string>
     <string name="opt_item_ring">Ruota degli oggetti</string>
     <string name="opt_item_ring_hint">Tieni premuto X, Y o R (touch o controller) per scegliere l\'oggetto per quel tasto; un tocco usa l\'oggetto come prima</string>
     <string name="opt_item_ring_pace">Mentre la ruota è aperta</string>
@@ -799,6 +812,8 @@
     <string name="opt_view_zoom">Campo visivo</string>
     <string name="opt_view_zoom_original">Originale</string>
     <string name="opt_view_zoom_hint">Allontana la visuale per vedere di più intorno a Link. Si regola anche pizzicando l\'immagine con due dita</string>
+    <string name="opt_view_pinch">Zoom con due dita</string>
+    <string name="opt_view_pinch_hint">Due dita sull\'immagine cambiano il campo visivo. Disattivato: la visuale torna a Originale e solo Grafica &gt; Schermi &gt; Campo visivo la cambia</string>
     <string name="opt_resolution">Risoluzione di rendering</string>
     <string name="opt_rumble">Vibrazione</string>
     <string name="opt_rumble_hint">Sul controller, o su questo dispositivo se il controller non vibra o mentre giochi con il touch</string>
@@ -1076,6 +1091,7 @@
         <item>No</item>
         <item>Prima persona e mira</item>
         <item>Sempre</item>
+        <item>Solo telecamera normale</item>
     </string-array>
     <string-array name="item_ring_paces">
         <item>Il gioco continua</item>
@@ -1361,6 +1377,8 @@
     <string name="opt_item_tap_hold">Tieni premuto (come nel gioco)</string>
     <string name="opt_item_tap_focus">Mirando solo i tasti di mira</string>
     <string name="opt_item_tap_focus_hint">Con Tasti oggetto: Tocca, mentre si mira restano solo il tasto Tira, B (metti via), ZL e ZR (tipo di freccia); gli altri tasti oggetto, A, +, la prima persona, la croce e i tasti salto spariscono, così nessun tocco per sbaglio scocca una freccia tesa</string>
+    <string name="opt_auto_stow">Metti via da solo</string>
+    <string name="opt_auto_stow_hint">Con Tasti contestuali, appena Link sta fermo la spada e ogni altro oggetto in mano (Martello Teschio, boomerang...) vengono riposti 5 s dopo l\'ultimo colpo e la foglia Deku dopo 3 s; con Tasti oggetto: Tocca anche il cannocchiale e la Pictobox quando la loro vista si chiude, e un oggetto in mira con B; il Metti via di A è nascosto. No: restano in mano a Link (B mirando torna solo indietro) e A li ripone, come nel gioco. All\'inizio sì con Tasti oggetto: Tocca, no con Tieni premuto</string>
     <string name="touch_shoot">Tira</string>
     <string name="touch_throw">Lancia</string>
     <!-- Mods: songs sung into the microphone (SongListener) -->

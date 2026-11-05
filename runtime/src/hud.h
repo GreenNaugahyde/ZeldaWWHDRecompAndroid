@@ -7,9 +7,14 @@
 
 // hide (or show again) the panes with these names: "name,name,..." (empty: none)
 void hud_set_hidden(const std::string& names);
-// the item buttons' letters on the HUD and the GamePad's drop slots: "X,Y,R" order, ASCII, up to 6 characters each
+// the buttons' letters on the HUD and the GamePad's drop slots: "X,Y,R,A,B" order, ASCII, up to 6 characters each
 // ("" or a missing one: the game's letter)
 void hud_set_slot_labels(const std::string& csv);
+// the game's A, B, X, Y button pictures (CommandGuide_00) drawn at other buttons' places: "a,b,x,y", for each the
+// Wii U button (0 A, 1 B, 2 X, 3 Y) whose place it takes ("0,1,2,3" or anything unreadable: as laid out)
+void hud_set_places(const std::string& csv);
+// Pane::CalculateMtx: the extra translation of a pane of that cluster (false: none)
+bool hud_place_shift(uint32_t pane, uint32_t parent, float& dx, float& dy);
 // Pane::Draw: skip this pane (and its children)
 bool hud_hidden(uint32_t pane);
 

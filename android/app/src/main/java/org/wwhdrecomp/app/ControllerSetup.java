@@ -16,8 +16,10 @@ import android.widget.TextView;
 /**
  * Setting a controller up, step by step (notes/controller-setup.md): what the remapping is (the game knows only the
  * Wii U GamePad; each of its buttons is pressed by one controller button, and while playing the game uses all of them
- * but L and d-pad down), the face buttons by position or by their letters (not asked for PlayStation and Nintendo controllers, whose
- * marks match the position), a preset (InputMapper.preset: Original, Jump anywhere on a face button with its item
+ * but L and d-pad down), the letters printed on the face buttons (the player presses the one printed A, B, X, Y: brands
+ * differ and some controllers let the buttons be swapped, issue #67; the game's buttons and the GamePad's item slots
+ * then show them, MainActivity.applySlotLabels), the face buttons by position or by their letters (not asked when the
+ * letters sit where the Wii U has them, or, with none printed, for PlayStation and Nintendo controllers), a preset (InputMapper.preset: Original, Jump anywhere on a face button with its item
  * button taken off, or with the button's Wii U button moved to L1), then a picture of the controller (the PlayStation
  * symbols on Sony's, else a generic one) where each pressed button lights up with what it does. Offered once when a
  * controller is first used (MainActivity.maybeOfferSetup), and from Controls. The game is paused meanwhile.
@@ -28,7 +30,7 @@ final class ControllerSetup {
     private final MainActivity a;
     private final InputDevice dev;
     private final Runnable done;  // after the last step or a cancel (may be null)
-    private final boolean sony, askLetters;
+    private final boolean sony, askLettersUnprinted;
     private boolean letters;
     private int preset;
     private boolean advancing;  // a step closes for the next one, not a cancel
@@ -38,7 +40,7 @@ final class ControllerSetup {
         this.dev = dev;
         this.done = done;
         sony = InputMapper.isSony(dev);
-        askLetters = !sony && !InputMapper.isNintendo(dev);
+        askLettersUnprinted = !sony && !InputMapper.isNintendo(dev);
         letters = a.inputMapper().byLetters();
     }
 
@@ -109,7 +111,85 @@ final class ControllerSetup {
     private void intro() {
         step(dialog().title(R.string.cs_title).message(s(R.string.cs_intro, dev.getName()))
                 .button(R.string.opt_cancel, null)
-                .button(R.string.cs_next, then(askLetters ? this::faceButtons : this::presets)));
+                .button(R.string.cs_next, then(() -> printedLetters(0, new int[4], new int[4], null))));
+    }
+
+    // ---- the printed letters: the player presses the button printed A, then B, X, Y (only the four face buttons)
+    private void printedLetters(int i, int[] got, int[] places, String problem) {
+        String letter = InputMapper.PRINTED_LETTERS[i];
+        String msg = (problem != null ? problem + "\n\n" : "") + s(i == 0 ? R.string.cs_letters_first : R.string.cs_letters_next, letter);
+        GameDialog d = dialog().title(s(R.string.cs_letters_title, i + 1)).message(msg)
+                .button(R.string.opt_cancel, null)
+                .button(R.string.cs_letters_none, then(() -> { a.setPrintedLetters(null, null); afterLetters(); }));
+        if (i == 0 && a.inputMapper().printed != null) d.button(R.string.cs_letters_keep, then(this::afterLetters));
+        step(d.captureButton(code -> {
+            advancing = true;  // (the capture closes it)
+            boolean face = false;
+            for (int f : InputMapper.FACE_CODES) face |= f == code;
+            int dup = -1;
+            for (int k = 0; k < i; k++)
+                if (got[k] == code) dup = k;
+            if (!face) {
+                printedLetters(i, got, places, s(R.string.cs_letters_not_face));
+            } else if (dup >= 0) {
+                printedLetters(i, got, places, s(R.string.cs_letters_taken, InputMapper.PRINTED_LETTERS[dup]));
+            } else {
+                got[i] = code;
+                place(i, got, places);
+            }
+        }));
+    }
+
+    // ---- where the button just pressed sits (the game's buttons on the TV are then drawn in your controller's
+    // arrangement, MainActivity.applyHudPlaces; by position goes by it): one of the places not given yet, the last by itself
+    private static final int[] PLACE_NAMES = {R.string.cs_place_south, R.string.cs_place_east, R.string.cs_place_north,
+            R.string.cs_place_west};
+    private static final String[][] PLACE_MARKS = {{"B", "A", "✕"}, {"A", "B", "○"}, {"X", "Y", "△"}, {"Y", "X", "□"}};
+
+    private void place(int i, int[] got, int[] places) {
+        boolean[] taken = new boolean[4];
+        for (int k = 0; k < i; k++) taken[places[k]] = true;
+        int free = -1, nFree = 0;
+        for (int q = 0; q < 4; q++)
+            if (!taken[q]) { free = q; nFree++; }
+        if (nFree == 1) {
+            placed(i, got, places, free);
+            return;
+        }
+        LinearLayout box = new LinearLayout(a);
+        box.setOrientation(LinearLayout.VERTICAL);
+        GameDialog d = dialog().title(s(R.string.cs_letters_title, i + 1))
+                .message(s(R.string.cs_place_text, InputMapper.PRINTED_LETTERS[i])).content(box)
+                .button(R.string.opt_cancel, null);
+        for (int q = 0; q < 4; q++) {
+            if (taken[q]) continue;
+            final int qq = q;
+            String[] m = PLACE_MARKS[q];
+            box.addView(choiceRow(s(PLACE_NAMES[q]), s(R.string.cs_place_marks, m[0], m[1], m[2]),
+                    v -> next(() -> placed(i, got, places, qq))));
+        }
+        step(d);
+    }
+
+    private void placed(int i, int[] got, int[] places, int place) {
+        places[i] = place;
+        if (i < 3) printedLetters(i + 1, got, places, null);
+        else {
+            a.setPrintedLetters(got, places);
+            afterLetters();
+        }
+    }
+
+    /** by letters or by position: asked when the two differ */
+    private void afterLetters() {
+        int[] p = a.inputMapper().printed;
+        letters = a.inputMapper().byLetters();
+        boolean ask = p != null ? !InputMapper.printedAsWiiU(p, a.inputMapper().places) : askLettersUnprinted;
+        if (ask) faceButtons();
+        else {
+            letters = false;
+            presets();
+        }
     }
 
     private void faceButtons() {
@@ -166,6 +246,8 @@ final class ControllerSetup {
     // the button for Jump anywhere (and the moon jump): pressed on the controller
     private void pickJump(String problem) {
         InputMapper base = new InputMapper();
+        base.printed = a.inputMapper().printed;
+        base.places = a.inputMapper().places;
         base.preset(letters, InputMapper.PRESET_ORIGINAL, 0);
         boolean ring = a.itemRingOn();
         String msg = preset == InputMapper.PRESET_TAKE_OFF
@@ -230,7 +312,7 @@ final class ControllerSetup {
         GameDialog d = dialog().title(R.string.cs_try_title)
                 .message(s(R.string.cs_try_text, markName(KeyEvent.KEYCODE_BUTTON_START), markName(KeyEvent.KEYCODE_BUTTON_SELECT)))
                 .content(box)
-                .button(R.string.cs_change, then(askLetters ? this::faceButtons : this::presets))
+                .button(R.string.cs_change, then(() -> printedLetters(0, new int[4], new int[4], null)))
                 .button(R.string.cs_done, null);
         // every button is being tried here, so the bar's buttons are pressed by holding one: Start Done, Select Change
         // (shown pressed while held; 0.8 s)
@@ -281,6 +363,8 @@ final class ControllerSetup {
 
     /** the controller's own mark for a button: the PlayStation symbols, else the letters as printed */
     private String markName(int code) {
+        String printed = a.inputMapper().printedLetter(code);
+        if (printed != null) return printed;
         if (sony) {
             switch (code) {
                 case KeyEvent.KEYCODE_BUTTON_A: return "✕";
@@ -385,10 +469,15 @@ final class ControllerSetup {
             dpad(c, KeyEvent.KEYCODE_DPAD_LEFT, 205, 250, -1, 0);
             dpad(c, KeyEvent.KEYCODE_DPAD_RIGHT, 295, 250, 1, 0);
             // face buttons
-            face(c, KeyEvent.KEYCODE_BUTTON_Y, 750, 180, 0, -1);
-            face(c, KeyEvent.KEYCODE_BUTTON_A, 750, 320, 0, 1);
-            face(c, KeyEvent.KEYCODE_BUTTON_X, 680, 250, -1, 0);
-            face(c, KeyEvent.KEYCODE_BUTTON_B, 820, 250, 1, 0);
+            // (where the setup was told they sit, else Android's places: A south, B east, X west, Y north)
+            for (int code : InputMapper.FACE_CODES) {
+                switch (a.inputMapper().placeOf(code)) {
+                    case InputMapper.NORTH: face(c, code, 750, 180, 0, -1); break;
+                    case InputMapper.SOUTH: face(c, code, 750, 320, 0, 1); break;
+                    case InputMapper.WEST: face(c, code, 680, 250, -1, 0); break;
+                    default: face(c, code, 820, 250, 1, 0); break;
+                }
+            }
             // Select / Start
             small(c, KeyEvent.KEYCODE_BUTTON_SELECT, 440, 200, sony ? "Create" : "Select");
             small(c, KeyEvent.KEYCODE_BUTTON_START, 560, 200, sony ? "Options" : "Start");
@@ -457,7 +546,9 @@ final class ControllerSetup {
             c.drawCircle(X(ux), Y(uy), 33 * k, p);
             outline();
             c.drawCircle(X(ux), Y(uy), 33 * k, p);
-            if (sony) symbol(c, code, X(ux), Y(uy));
+            String printed = a.inputMapper().printedLetter(code);
+            if (printed != null) text(c, printed, X(ux), Y(uy), 34, 0xFFFFFFFF, true);
+            else if (sony) symbol(c, code, X(ux), Y(uy));
             else text(c, faceLetter(code, InputMapper.isNintendo(dev)), X(ux), Y(uy), 34, 0xFFFFFFFF, true);
             tagAt(c, code, ux + dx * 85, uy + dy * 70);
         }

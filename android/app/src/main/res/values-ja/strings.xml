@@ -162,8 +162,21 @@
     <string name="cs_offer_yes">設定する</string>
     <string name="cs_intro">%1$s\n\nゲームが知っているのはWii U GamePadだけです。そのボタンひとつひとつを、コントローラーのボタンがひとつずつおします。どれでおすかは自由に変えられ、コントローラーごとに保存されます。\n\nプレイ中、ゲームはLと十字ボタン下以外のすべてのボタンを使います。そのため、どこでもジャンプと月ジャンプはL（L1 / LB）を使うか、ゲームのボタンをひとつ借ります。そのボタンの働きはLへ移るか、アイテムボタンならはずされます。</string>
     <string name="cs_next">次へ</string>
+    <string name="cs_letters_title">コントローラーの文字（%1$d/4）</string>
+    <string name="cs_letters_first">右側の4つのボタンにはどの文字が書いてありますか？メーカーによって位置がちがい、入れ替えられるコントローラーもあります。\n\n%1$sと書かれたボタンを押してください。\n\nゲームのアイテムボタンとGamePadのアイテム欄にコントローラーの文字が表示され、テレビのゲームのボタンもコントローラーと同じ並びになります。</string>
+    <string name="cs_letters_next">%1$sと書かれたボタンを押してください。</string>
+    <string name="cs_letters_none">文字なし</string>
+    <string name="cs_letters_keep">そのまま</string>
+    <string name="cs_letters_not_face">右側の4つのボタンではありません。</string>
+    <string name="cs_letters_taken">そのボタンはもう%1$sです。</string>
+    <string name="cs_place_text">%1$sと書かれたボタンはどこにありますか？\n\nテレビに出るゲームのボタンが、コントローラーと同じ並びになります。</string>
+    <string name="cs_place_south">南（下）</string>
+    <string name="cs_place_east">東（右）</string>
+    <string name="cs_place_north">北（上）</string>
+    <string name="cs_place_west">西（左）</string>
+    <string name="cs_place_marks">Nintendo %1$s · Xbox %2$s · PlayStation %3$s</string>
     <string name="cs_face_title">右側のボタン</string>
-    <string name="cs_face_text">右側の4つのボタンをどう使いますか？\n\n位置で：Wii U GamePadと同じ。下が剣（Wii UのB）、右がアクション（A）。コントローラーの文字はゲームの文字とちがいます。\n\n文字で：コントローラーのAがゲームのA（アクション）、Bが剣、XとYがアイテムボタンA2とA1。</string>
+    <string name="cs_face_text">右側の4つのボタンをどう使いますか？\n\n位置で：Wii U GamePadと同じ。下が剣（Wii UのB）、右がアクション（A）。どちらでも、ゲームのアイテムボタンにはコントローラーの文字が表示されます。\n\n文字で：コントローラーのAがゲームのA（アクション）、Bが剣、XとYがアイテムボタンA2とA1。</string>
     <string name="cs_face_letters">文字で</string>
     <string name="cs_face_position">位置で</string>
     <string name="cs_preset_title">配置</string>
@@ -259,7 +272,7 @@
     <string name="opt_interp">フレームレート</string>
     <string name="opt_interp_hint">フレーム補間：ゲームの30fpsから中間フレームを作ります。速いCPUが必要です。間に合わないフレームは省かれ、ゲームの速さは保たれます。60 fps（生成）：1フレームおきにGPUが直前のフレームから作ります。CPUの負担は小さいです</string>
     <string name="opt_invert_camera_y">カメラの上下を反転</string>
-    <string name="opt_invert_camera_y_hint">右スティック（またはスワイプ）を上で下を見ます。「一人称とねらい」では通常のカメラとメニューはそのままです</string>
+    <string name="opt_invert_camera_y_hint">右スティック（とスワイプ）の上下を逆にします。一人称とねらいでは、ゲーム自体がもともと上で下を見ます。どこでも上で下を見るには「通常のカメラだけ」を選びます。風のタクトの指揮は逆になりません</string>
     <string name="opt_item_ring">アイテムリング</string>
     <string name="opt_item_ring_hint">X、Y、Rを長押し（タッチかコントローラー）でそのボタンのアイテムを選べます。短く押すと今までどおりアイテムを使います</string>
     <string name="opt_item_ring_pace">リングを開いている間</string>
@@ -799,6 +812,8 @@
     <string name="opt_view_zoom">視野</string>
     <string name="opt_view_zoom_original">オリジナル</string>
     <string name="opt_view_zoom_hint">ズームアウトしてリンクの周りをもっと広く見せます。画面を2本の指でピンチしても変えられます</string>
+    <string name="opt_view_pinch">2本指でズーム</string>
+    <string name="opt_view_pinch_hint">画面を2本の指でピンチすると視野が変わります。オフ：視野はオリジナルに戻り、グラフィック &gt; 画面 &gt; 視野 でのみ変わります</string>
     <string name="opt_resolution">レンダリング解像度</string>
     <string name="opt_rumble">振動</string>
     <string name="opt_rumble_hint">コントローラーで。振動しないコントローラーやタッチでのプレイ中はこの端末で</string>
@@ -1076,6 +1091,7 @@
         <item>オフ</item>
         <item>一人称とねらい</item>
         <item>いつも</item>
+        <item>通常のカメラだけ</item>
     </string-array>
     <string-array name="item_ring_paces">
         <item>そのまま進む</item>
@@ -1361,6 +1377,8 @@
     <string name="opt_item_tap_hold">おしつづける（ゲームと同じ）</string>
     <string name="opt_item_tap_focus">かまえ中はかまえのボタンだけ</string>
     <string name="opt_item_tap_focus_hint">アイテムボタンがタップのとき、かまえている間はうつボタン、B（しまう）、ZL、ZR（矢の種類）だけを表示。ほかのアイテムボタン、A、＋、主観視点、十字ボタン、ジャンプボタンはかくれ、まちがってタップしても引いた矢がはなれない</string>
+    <string name="opt_auto_stow">自動でしまう</string>
+    <string name="opt_auto_stow_hint">コンテキストボタンのとき、リンクが止まると剣と手に持ったほかのアイテム（スカルハンマー、ブーメランなど）は最後に振ってから5秒、デクの葉は3秒で自動でしまいます。アイテムボタンがタップなら、望遠鏡と写し絵の箱も画面を閉じたとき、かまえたアイテムもBでしまいます。Aの「しまう」はかくれます。オフ：手に持ったままで（かまえ中のBはもどるだけ）、ゲームと同じくAでしまいます。最初はアイテムボタンがタップならオン、おしつづけるならオフ</string>
     <string name="touch_shoot">うつ</string>
     <string name="touch_throw">なげる</string>
     <!-- Mods: songs sung into the microphone (SongListener) -->

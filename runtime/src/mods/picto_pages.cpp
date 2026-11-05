@@ -106,7 +106,7 @@ std::string page_path(int file, int k) { return dir_of(file) + "/page" + std::to
 
 void make_dirs(const std::string& d) {
     for (size_t i = 1; i <= d.size(); i++)
-        if (i == d.size() || d[i] == '/') mkdir(d.substr(0, i).c_str(), 0755);
+        if (i == d.size() || d[i] == '/') mkdir(d.substr(0, i).c_str(), 0777);  // umask decides (group-writable, #70)
 }
 
 // big-endian fields of a page's bytes (the guest's own order)

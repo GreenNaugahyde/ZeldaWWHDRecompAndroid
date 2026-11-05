@@ -162,8 +162,21 @@
     <string name="cs_offer_yes">Einrichten</string>
     <string name="cs_intro">%1$s\n\nDas Spiel kennt nur das Wii U GamePad. Jede seiner Tasten wird von einer Taste deines Controllers gedrückt. Welche, lässt sich frei ändern, und jeder Controller behält seine eigene Belegung.\n\nIm Spiel sind alle Tasten außer L und Steuerkreuz unten belegt. Springen überall und der Mondsprung teilen sich daher L (L1 / LB) oder nehmen dem Spiel eine Taste: Was sie tat, wandert dann auf L oder wird, bei einer Item-Taste, abgelegt.</string>
     <string name="cs_next">Weiter</string>
+    <string name="cs_letters_title">Buchstaben auf deinem Controller (%1$d/4)</string>
+    <string name="cs_letters_first">Welche Buchstaben stehen auf den vier Tasten rechts? Jeder Hersteller setzt sie anders, und bei manchen Controllern lassen sie sich tauschen.\n\nDrücke die Taste mit %1$s.\n\nDie Item-Tasten im Spiel und die Item-Plätze des GamePads zeigen dann die Buchstaben deines Controllers, und die Tasten des Spiels auf dem Fernseher sitzen wie auf deinem Controller.</string>
+    <string name="cs_letters_next">Drücke die Taste mit %1$s.</string>
+    <string name="cs_letters_none">Keine Buchstaben</string>
+    <string name="cs_letters_keep">Beibehalten</string>
+    <string name="cs_letters_not_face">Das ist keine der vier Tasten rechts.</string>
+    <string name="cs_letters_taken">Diese Taste ist schon %1$s.</string>
+    <string name="cs_place_text">Wo sitzt die Taste mit %1$s?\n\nDie Tasten des Spiels auf dem Fernseher werden dann so angeordnet wie auf deinem Controller.</string>
+    <string name="cs_place_south">Süden (unten)</string>
+    <string name="cs_place_east">Osten (rechts)</string>
+    <string name="cs_place_north">Norden (oben)</string>
+    <string name="cs_place_west">Westen (links)</string>
+    <string name="cs_place_marks">Nintendo %1$s · Xbox %2$s · PlayStation %3$s</string>
     <string name="cs_face_title">Aktionstasten</string>
-    <string name="cs_face_text">Wie sollen die vier Tasten rechts belegt sein?\n\nNach Lage: wie auf dem Wii U GamePad. Die untere ist das Schwert (B der Wii U), die rechte die Aktionstaste (A). Die Buchstaben auf deinem Controller weichen dann von denen im Spiel ab.\n\nNach Buchstaben: A deines Controllers ist das A des Spiels (Aktion), B das Schwert, X und Y die Item-Tasten A2 und A1.</string>
+    <string name="cs_face_text">Wie sollen die vier Tasten rechts belegt sein?\n\nNach Lage: wie auf dem Wii U GamePad. Die untere ist das Schwert (B der Wii U), die rechte die Aktionstaste (A). Die Item-Tasten im Spiel zeigen in beiden Fällen die Buchstaben deines Controllers.\n\nNach Buchstaben: A deines Controllers ist das A des Spiels (Aktion), B das Schwert, X und Y die Item-Tasten A2 und A1.</string>
     <string name="cs_face_letters">Nach Buchstaben</string>
     <string name="cs_face_position">Nach Lage</string>
     <string name="cs_preset_title">Belegung</string>
@@ -259,7 +272,7 @@
     <string name="opt_interp">Bildrate</string>
     <string name="opt_interp_hint">Bildinterpolation: Zwischenbilder aus den 30 fps des Spiels. Braucht eine schnelle CPU; passt ein Bild nicht in die Zeit, entfällt es, und das Spiel behält sein Tempo. 60 fps (generiert): jedes zweite Bild entsteht auf der GPU aus dem letzten, schont die CPU</string>
     <string name="opt_invert_camera_y">Kamera oben/unten umkehren</string>
-    <string name="opt_invert_camera_y_hint">Rechten Stick (oder Wischen) nach oben, um nach unten zu sehen. Ego-Perspektive und Zielen lässt die normale Kamera und Menüs, wie sie sind</string>
+    <string name="opt_invert_camera_y_hint">Tauscht oben und unten am rechten Stick (und beim Wischen). In der Ego-Perspektive und beim Zielen sieht das Spiel selbst schon bei oben nach unten: für überall oben = nach unten „Nur normale Kamera“ wählen. Das Dirigieren mit dem Taktstock wird nie getauscht</string>
     <string name="opt_item_ring">Item-Ring</string>
     <string name="opt_item_ring_hint">X, Y oder R halten (Touch oder Controller), um das Item dafür zu wählen; Antippen benutzt das Item wie bisher</string>
     <string name="opt_item_ring_pace">Während der Ring offen ist</string>
@@ -799,6 +812,8 @@
     <string name="opt_view_zoom">Sichtfeld</string>
     <string name="opt_view_zoom_original">Original</string>
     <string name="opt_view_zoom_hint">Herauszoomen, um mehr um Link herum zu sehen. Auch mit zwei Fingern auf dem Bild einstellbar</string>
+    <string name="opt_view_pinch">Mit zwei Fingern zoomen</string>
+    <string name="opt_view_pinch_hint">Zwei Finger auf dem Bild ändern das Sichtfeld. Aus: das Sichtfeld geht zurück auf Original, nur Grafik &gt; Bildschirme &gt; Sichtfeld ändert es</string>
     <string name="opt_resolution">Renderauflösung</string>
     <string name="opt_rumble">Vibration</string>
     <string name="opt_rumble_hint">Am Controller, oder an diesem Gerät, wenn der Controller nicht vibriert oder per Touch gespielt wird</string>
@@ -1076,6 +1091,7 @@
         <item>Aus</item>
         <item>Ego-Perspektive und Zielen</item>
         <item>Immer</item>
+        <item>Nur normale Kamera</item>
     </string-array>
     <string-array name="item_ring_paces">
         <item>Weiterlaufen</item>
@@ -1361,6 +1377,8 @@
     <string name="opt_item_tap_hold">Halten (wie im Spiel)</string>
     <string name="opt_item_tap_focus">Beim Zielen nur Ziel-Tasten</string>
     <string name="opt_item_tap_focus_hint">Mit Item-Tasten: Tippen zeigen beim Zielen nur die Schießen-Taste, B (wegstecken), ZL und ZR (Pfeilart); die anderen Item-Tasten, A, +, Ego-Sicht, Steuerkreuz und Sprung-Tasten verschwinden, damit kein Fehltippen einen gespannten Pfeil löst</string>
+    <string name="opt_auto_stow">Von selbst wegstecken</string>
+    <string name="opt_auto_stow_hint">Mit Kontext-Tasten steckt Link, sobald er stillsteht, Schwert und jedes andere Item in der Hand (Totenkopfhammer, Bumerang ...) 5 s nach dem letzten Hieb und das Deku-Blatt nach 3 s weg; mit Item-Tasten: Tippen auch Fernrohr und Bildbox, wenn ihre Ansicht schließt, und ein anvisiertes Item auf B; A (Wegstecken) wird ausgeblendet. Aus: sie bleiben in Links Hand (B beim Zielen geht nur zurück) und A steckt sie weg, wie im Spiel. Anfangs an mit Item-Tasten: Tippen, aus mit Halten</string>
     <string name="touch_shoot">Schießen</string>
     <string name="touch_throw">Werfen</string>
     <!-- Mods: songs sung into the microphone (SongListener) -->
