@@ -15,6 +15,7 @@
 #include <set>
 #include <mutex>
 #include <sstream>
+#include <thread>
 #include <tuple>
 #include <unordered_map>
 
@@ -28,6 +29,10 @@ namespace {
 
 std::mutex g_mu;
 std::string g_gameDir, g_cfg, g_randoDir, g_randoUsed, g_colorsDir;
+std::string g_packsDir, g_enabledText;  // the packs' folder and the enabled.txt this run started with (file_service)
+std::atomic<int> g_fileSwitch{0};
+std::atomic<bool> g_fileSwitchSeen{false};  // the app has it (it asks the player: the game waits for the answer)
+std::atomic<int> g_fileSwitchAnswer{0};     // 1: back to the file select (the player's Cancel)
 std::atomic<uint32_t> g_colorsGen{0};
 bool g_done = false;
 recomp::CodePatch g_patch;
@@ -222,7 +227,7 @@ size_t index_shaders(const std::string& dir, const gpack::Rules& rules, const st
         if (strncmp(type, "ps", 2) && strncmp(type, "vs", 2) && strncmp(type, "gs", 2)) continue;
         if (strstr(type, "_msl")) continue;  // Metal sources
         ShaderKey k{base, aux, type[0]};
-        if (g_customShaders.count(k)) continue;  // the first pack in the list wins
+        // (a later pack in the list wins, as for content/ files and code patches: the app's loading order)
         g_customShaders[k] = fill_variables(read_file(dir + "/" + e.name), vars, rules.intVars);
         n++;
     }
@@ -296,6 +301,8 @@ void init(const std::string& gameDir) {
     if (g_done && g_gameDir == gameDir && g_cfg == cfg + "\n" + g_randoDir) return;
     g_done = true;
     g_gameDir = gameDir;
+    g_packsDir = dir;
+    g_enabledText = cfg;
     g_cfg = cfg + "\n" + g_randoDir;
     g_patch = {};
     g_status.clear();
@@ -490,7 +497,20 @@ const std::vector<Status>& status() { return g_status; }
 
 std::string content_file(const std::string& rel) {
     if (g_contentFiles.empty()) return "";
-    auto it = g_contentFiles.find(lower(rel));
+    std::string key = lower(rel);
+    auto it = g_contentFiles.find(key);
+    // A language pack (Common/Pack/permanent_2d_<Us|Eu><Language>.pack, the game's text) made for the
+    // other region counts for that language: most dialogue and translation mods ship only UsEnglish
+    // (issue #49), the European game reads EuEnglish. The exact name wins.
+    static const std::string kLang = "common/pack/permanent_2d_";
+    if (it == g_contentFiles.end() && key.compare(0, kLang.size(), kLang) == 0 && key.size() > kLang.size() + 2) {
+        std::string region = key.substr(kLang.size(), 2);
+        if (region == "us" || region == "eu") {
+            std::string other = key;
+            other.replace(kLang.size(), 2, region == "us" ? "eu" : "us");
+            it = g_contentFiles.find(other);
+        }
+    }
     if (it == g_contentFiles.end()) return "";
     static std::mutex mu;
     static std::set<std::string> logged;
@@ -675,4 +695,62 @@ std::string describe(const std::string& packDir, const std::string& selectionTex
     return out;
 }
 
+}  // namespace packs
+
+// Mod packs per save file (the app's Mods > Mod packs > Per save file): enabled_<N>.txt holds save file N's list,
+// enabled.txt the one this run started with. When the file select's controller goes into Start (its file numbered, not
+// loaded yet: warp.cpp name_state) and that file's list is another, the game waits here for the app's answer: a
+// restart with that file's packs, back to the files (file_switch_back), or on (file_switch_continue).
+#include "mods/mods.h"
+#include "savestate.h"
+namespace packs {
+
+void file_service(Cpu* c) {
+    static int prev = 0;
+    const int state = mods::name_state(c);
+    const bool started = state == 2 && prev != 2;
+    prev = state;
+    if (!started) return;
+    int file = mods::name_file() - 1;
+    if (file < 0 || file > 2) return;
+    std::string dir, running;
+    {
+        std::lock_guard<std::mutex> lk(g_mu);
+        dir = g_packsDir;
+        running = g_enabledText;
+    }
+    if (dir.empty()) return;
+    struct stat st;
+    const std::string path = dir + "/enabled_" + std::to_string(file + 1) + ".txt";
+    if (stat(path.c_str(), &st) != 0) return;  // (packs aren't per save file)
+    if (read_file(path) == running) {
+        LOG("[packs] save file %d: its mod packs are the ones running", file + 1);
+        return;
+    }
+    LOG("[packs] save file %d has other mod packs: waiting for the app", file + 1);
+    g_fileSwitchSeen = false;
+    g_fileSwitchAnswer = 0;
+    g_fileSwitch = file + 1;
+    // (until the app answers: a restart, or file_switch_continue; an app that never took it: 15 s)
+    auto until = std::chrono::steady_clock::now() + std::chrono::seconds(15);
+    while (g_fileSwitch.load() && (g_fileSwitchSeen.load() || std::chrono::steady_clock::now() < until))
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    if (g_fileSwitch.exchange(0)) LOG("[packs] no answer from the app: save file %d goes on with the packs running", file + 1);
+    else if (g_fileSwitchAnswer.exchange(0) == 1) {
+        LOG("[packs] save file %d not started: back to the files", file + 1);
+        mods::name_back_to_files(c);
+        prev = 1;
+    } else LOG("[packs] save file %d goes on with the packs running", file + 1);
+}
+
+int file_switch_wanted() {
+    int f = g_fileSwitch.load();
+    if (f) g_fileSwitchSeen = true;
+    return f;
+}
+void file_switch_continue() { g_fileSwitch = 0; }
+void file_switch_back() {
+    g_fileSwitchAnswer = 1;
+    g_fileSwitch = 0;
+}
 }  // namespace packs

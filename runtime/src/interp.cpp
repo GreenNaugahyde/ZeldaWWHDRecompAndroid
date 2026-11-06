@@ -43,6 +43,7 @@
 #include "interp_pacing.h"
 #include "interp_sploosh.h"
 #include "guest_addr.h"
+#include "packs.h"
 #include <ctime>
 #include "runtime.h"
 #include "savestate.h"
@@ -1643,7 +1644,7 @@ static void after_pass(int phase) {
 }
 }  // namespace interp
 
-namespace mods { void cheats_service(); void warp_service(); void pace_service(); void song_dump_service(Cpu* c); void picto_pages_service(Cpu* c); void clothes_service(Cpu* c); void link_colors_service(); void player_models_service(); void save_names_service(); void postbox_service(Cpu* c); }  // mods/cheats.cpp, mods/warp.cpp, mods/songs.cpp, mods/picto_pages.cpp, mods/clothes.cpp, mods/link_colors.cpp
+namespace mods { void cheats_service(); void warp_service(); void boot_service(Cpu* c); void pace_service(); void song_dump_service(Cpu* c); void picto_pages_service(Cpu* c); void clothes_service(Cpu* c); void link_colors_service(); void player_models_service(); void save_names_service(); void postbox_service(Cpu* c); }  // mods/cheats.cpp, mods/warp.cpp, mods/songs.cpp, mods/picto_pages.cpp, mods/clothes.cpp, mods/link_colors.cpp
 
 // debug: WWHD_INTERP_PASS_STATS=1 adds to the 300-step log the main thread's CPU time per pass
 // (thread CPU time, so waits for the vsync and the GPU are left out): logic passes, blended hold
@@ -1725,6 +1726,8 @@ extern "C" void hook_0203593C(Cpu* c) {
     mods::cheats_service();
     mods::pace_service();  // the item ring: slow motion or paused
     mods::warp_service();
+    mods::boot_service(c);  // (straight into a save file from the file select)
+    packs::file_service(c);  // (a save file with other mod packs: waits for the app's restart)
     mods::picto_pages_service(c);
     mods::clothes_service(c);
     mods::player_models_service();  // (first: Link's colours go over HD Link only)

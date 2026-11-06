@@ -216,7 +216,7 @@ final class Native {
     /** a mod pack's description for the menu (runtime/src/packs.h, packs::describe) */
     static native String packDescribe(String packDir, String selection, String gameDir);
 
-    /** Unpacks a mod archive (zip, RAR; open file descriptor) into destDir: null when done, else why not. */
+    /** Unpacks a mod archive (zip, RAR, 7z; open file descriptor) into destDir: null when done, else why not. */
     static native String extractModArchive(int fd, String destDir);
     /** A GameCube player model (Link.arc of a custom model pack) converted into the game's Link.szs at outPath
      *  (runtime/src/gcmodel): its report when done, "!" and why not otherwise. Seconds; not on the main thread;
@@ -264,8 +264,19 @@ final class Native {
     /** The stage loaded: FRONT_TITLE (title screen), FRONT_FILES (file select), FRONT_OPENING (on from the
      *  file select: a new game's opening, or loading), FRONT_BOOT (no stage yet) or 0. */
     static native int frontScreen();
+    /** mod packs per save file: the save file 1..3 just chosen whose packs differ from the running ones (the game waits for a restart), 0 none */
+    static native int packFileSwitch();
+    /** ... the player's answer: that file with the packs running (no restart) */
+    static native void packFileContinue();
+    /** ... or back to the file select (the file not started) */
+    static native void packFileBack();
+
+    /** the save files holding a game as the file select shows them (bits 0..2); -1 outside its file list */
+    static native int saveSlotsUsed();
     /** the GamePad screen's touch targets drawn now: "name parent x y w h;" (16:9 screen, 0..1, y down) */
     static native String drcTargets();
+    /** the touch boxes of a menu on both screens (title, file select): as drcTargets, parent "p<pp|v1|a255" */
+    static native String menuTargets();
     // the game's own GamePad screens as drawing orders (runtime drc_mirror.h): recording on / off, the screen as last
     // drawn if it changed (null: not), a texture of it (int width, height little-endian, then RGBA; null: none)
     static native void drcMirror(boolean on);

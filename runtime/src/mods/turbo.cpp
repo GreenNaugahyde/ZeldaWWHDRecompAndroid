@@ -366,7 +366,8 @@ extern "C" void hook_021C0078(Cpu* c) {
 
 // fopScnM_ChangeReq: scene change trigger (traces only)
 extern "C" void hook_025DC86C(Cpu* c) {
-    uint32_t r3 = c->r[3];
+    mods::boot_scene_request(c, c->lr);
+    uint32_t r4 = c->r[4];
     f_025DC86C_orig(c);
-    if (c->r[3]) trace("scene change request (proc %u)", r3 & 0xFFFF);
+    if (c->r[3]) trace("scene change request (proc %u)", r4 & 0xFFFF);
 }

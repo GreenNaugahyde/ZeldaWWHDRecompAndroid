@@ -865,6 +865,9 @@ JNI_FN(void, setOption)(JNIEnv* env, jclass, jstring name, jint value) {
     else if (n == "tvout_window_fps") gfx::set_tvout_window_fps(value);
     else if (n == "drc_window_tv") gfx::set_drc_window_tv(value != 0);
     else if (n == "trim_memory") gfx::trim_memory();
+    else if (n == "boot_skip") mods::set_boot_skip(value);
+    else if (n == "boot_file") mods::set_boot_file(value);
+    else if (n == "audio_mute") audio::set_muted(value != 0);  // (the game runs on, silent: as the benchmark)
     else if (n == "memory_headroom") {
         ss::set_memory_headroom(value);
         gfx::set_memory_headroom(value);
@@ -929,6 +932,7 @@ JNI_FN(void, setOption)(JNIEnv* env, jclass, jstring name, jint value) {
     else if (n == "talk_hold") mods::set_talk_hold(value != 0);
     else if (n == "talk_hold_ff") mods::set_talk_hold_ff(value != 0);
     else if (n == "talk_hold_pad") mods::set_talk_hold_pad(value != 0);
+    else if (n == "lock_nearest") mods::set_lock_nearest(value != 0);
     else if (n == "mod_song_replay") mods::set_song_replay(value != 0);
     else if (n == "mod_picto_pages") mods::set_picto_pages(value != 0);
     else if (n == "link_clothes") mods::set_link_clothes(value);
@@ -1127,6 +1131,12 @@ JNI_FN(void, loadState)(JNIEnv*, jclass, jint slot) { ss::request_load(slot); }
 JNI_FN(void, setStartHold)(JNIEnv*, jclass, jboolean on) { ss::set_start_hold(on); }
 JNI_FN(jint, startHoldState)(JNIEnv*, jclass) { return ss::start_hold_state(); }
 JNI_FN(jint, frontScreen)(JNIEnv*, jclass) { return g_started ? ss::front_screen() : 4; }
+// mod packs per save file (packs.h file_service): the save file 1..3 the file select handed over whose packs differ
+// (the game waits for the restart), 0 none
+JNI_FN(jint, packFileSwitch)(JNIEnv*, jclass) { return g_started ? packs::file_switch_wanted() : 0; }
+JNI_FN(void, packFileContinue)(JNIEnv*, jclass) { packs::file_switch_continue(); }
+JNI_FN(void, packFileBack)(JNIEnv*, jclass) { packs::file_switch_back(); }
+JNI_FN(jint, saveSlotsUsed)(JNIEnv*, jclass) { return g_started ? mods::save_slots_used() : -1; }
 // the game's own GamePad screens as drawing orders for a GamePad device (drc_mirror.h; PadHost)
 JNI_FN(void, drcMirror)(JNIEnv*, jclass, jboolean on) { drc_mirror::set_on(on); }
 JNI_FN(jbyteArray, drcMirrorFrame)(JNIEnv* env, jclass) {
@@ -1164,6 +1174,7 @@ JNI_FN(jbyteArray, drcMirrorTexture)(JNIEnv* env, jclass, jint id) {
     return a;
 }
 JNI_FN(jstring, drcTargets)(JNIEnv* env, jclass) { return env->NewStringUTF(g_started ? aspect::drc_targets().c_str() : ""); }
+JNI_FN(jstring, menuTargets)(JNIEnv* env, jclass) { return env->NewStringUTF(g_started ? aspect::menu_targets().c_str() : ""); }
 JNI_FN(jboolean, drcGameCursor)(JNIEnv*, jclass) { return g_started && aspect::drc_game_cursor(); }
 // the world stops for a few frames: the play scene's hit-stop timer (dScnPly_ply_c::nextPauseTimer 101EACB7,
 // taken into pauseTimer 101EACB6 by calcPauseTimer 025B02E8; actors and events wait while it runs). Not the

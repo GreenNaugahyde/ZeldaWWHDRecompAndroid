@@ -13,6 +13,7 @@
 //   second). mMiniGameType follows them as on the GameCube (+0x12 -> 0x5CEA, to confirm).
 #include <algorithm>
 #include <atomic>
+#include <cmath>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
@@ -68,17 +69,61 @@ constexpr uint32_t kLinkAttention = 0x6894, kLinkLockOnActor = 0x65B0;
 // mType (+8) tells a door (5) from a chest (6) behind the same Open
 constexpr uint32_t kLinkAttnEntryA = 0x6898;
 constexpr uint32_t kAttLockState = 0x18, kAttLockCount = 0xD4;
+// mLockOnList[8] +0x54 (dAttList_c, 0x10 each: mWeight, mDistance, mType +0x8, mActorID +0xC), sorted by weight
+// (sortList: [0] the one a new ZL press locks, mLockOnOffset 0 while none is locked); mType 2 = an enemy (BATL)
+constexpr uint32_t kAttLockList = 0x54, kAttListType = 0x8, kAttnTypeBattle = 2;
 constexpr uint32_t kActorBsType = 0x0, kActorProcId = 0x4, kActorAttnFlags = 0x39C, kActorHealth = 0x3A1;
 constexpr uint32_t kAttnLockonBattle = 0x4;
 constexpr int kLostWatchSteps = 30;  // 1 s
 std::atomic<int> g_defeats{0};
-std::atomic<int> g_locked{0}, g_lock_reach{0};
+std::atomic<int> g_locked{0}, g_lock_reach{0}, g_enemy_first{0};
 
 uint32_t attention(uint32_t link) {
     if (!link) return 0;
     uint32_t a = ld32(link + kLinkAttention);
     if (a < 0x10000000 || a > 0x50000000 || ld32(a) != link) return 0;  // mpPlayer
     return a;
+}
+
+// Every enemy (the app's ZL choice, set while its ZL is latched: set_lock_nearest): while a lock on an enemy holds,
+// the nearest lockable enemy takes it. The game builds its list only while none is locked (stockAttention), so each
+// actor's execute measures the enemies itself (touch_actor_seen); the locked entry (mLockOnList[mLockOnOffset],
+// +0xD8) gets the nearer one's process id, as the game's own nextAttention moves to another entry
+constexpr uint32_t kAttLockOffset = 0xD8, kAttListId = 0xC, kActorPos = 0x314;  // current.pos
+bool actor_ptr(uint32_t a);
+constexpr float kNearerBy = 150.0f;  // a switch needs this much less distance (and 4/5 of it): no back and forth
+constexpr int kSwitchGapSteps = 15;
+std::atomic<bool> g_lock_nearest{false};
+uint32_t g_near_actor, g_near_id;  // this step's nearest lockable enemy (game thread)
+float g_near_dist;
+uint32_t g_near_link;              // Link while measuring (0: not wanted)
+
+float actor_dist(uint32_t a, uint32_t b) {
+    float d[3];
+    for (int i = 0; i < 3; i++) d[i] = u32_as_f32(ld32(a + kActorPos + 4 * i)) - u32_as_f32(ld32(b + kActorPos + 4 * i));
+    return std::sqrt(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
+}
+
+void lock_nearest_step(uint32_t link, uint32_t a, uint32_t t) {
+    static int gap = 0;
+    uint32_t cand = g_near_actor, cand_id = g_near_id;
+    float cand_d = g_near_dist;
+    g_near_actor = 0;
+    g_near_dist = 1e30f;
+    g_near_link = g_lock_nearest.load(std::memory_order_relaxed) ? link : 0;
+    if (gap > 0) gap--;
+    if (!g_near_link || !actor_ptr(t) || !(ld32(t + kActorAttnFlags) & kAttnLockonBattle) || gap > 0) return;
+    if (!cand || cand == t || ld32(cand + kActorProcId) != cand_id || !(ld32(cand + kActorAttnFlags) & kAttnLockonBattle)) return;
+    float cur = actor_dist(t, link);
+    if (!(cand_d < cur - kNearerBy && cand_d < cur * 0.8f)) return;
+    uint32_t off = ld32(a + kAttLockOffset), count = ld32(a + kAttLockCount);
+    if (off >= 8 || off >= count) return;
+    uint32_t e = a + kAttLockList + 0x10 * off;
+    if (ld32(e + kAttListId) != ld32(t + kActorProcId)) return;  // the entry isn't the one Link follows
+    st32(e + kAttListId, cand_id);
+    st32(e + kAttListType, kAttnTypeBattle);
+    gap = kSwitchGapSteps;
+    LOG("[touch] lock-on: nearer enemy %08X (%.0f, was %.0f)", cand_id, cand_d, cur);
 }
 
 // each logic step: the lock's target is remembered; when the lock ends and it was an enemy that is now
@@ -105,10 +150,12 @@ void lockon_step() {
         }
     }
     if (!a) {
+        lock_nearest_step(0, 0, 0);
         target = 0;
         lost_steps = 0;
         g_locked = 0;
         g_lock_reach = 0;
+        g_enemy_first = 0;
         return;
     }
     uint8_t st = ld8(a + kAttLockState);
@@ -116,6 +163,8 @@ void lockon_step() {
     bool locked = st == 1 || (st == 2 && t);
     g_locked = locked;
     g_lock_reach = locked ? 0 : (int)ld32(a + kAttLockCount);
+    g_enemy_first = g_lock_reach > 0 && g_lock_reach <= 8 && ld32(a + kAttLockList + kAttListType) == kAttnTypeBattle;
+    lock_nearest_step(link, a, st == 1 ? t : 0);
     if (locked && t >= 0x10000000 && t < 0x50000000) {
         if (ld32(t + kActorAttnFlags) & kAttnLockonBattle) {
             if (t != target) had_health = false;
@@ -204,7 +253,17 @@ uint32_t kept_actor(uint32_t link, uint32_t off) {
 }
 }  // namespace
 
+void set_lock_nearest(bool on) { g_lock_nearest = on; }
+
 void touch_actor_seen(uint32_t a) {
+    if (uint32_t link = g_near_link; link && a != link && (ld32(a + kActorAttnFlags) & kAttnLockonBattle) && (int8_t)ld8(a + kActorHealth) > 0) {
+        float d = actor_dist(a, link);
+        if (d < g_near_dist) {
+            g_near_dist = d;
+            g_near_actor = a;
+            g_near_id = ld32(a + kActorProcId);
+        }
+    }
     uint32_t want = g_want_id.load(std::memory_order_relaxed);
     if (want && ld32(a + 4) == want) g_want_actor.store(a, std::memory_order_relaxed);
 }
@@ -254,6 +313,7 @@ void touch_state(int32_t out[kTouchStateLen]) {
     out[29] = link ? ld16(link + 0x69B0) : -1;  // daPy_lk_c::mEquipItem: in his hand (0x22 the Wind Waker, 0x103 sword)
     out[31] = g_locked;
     out[32] = g_lock_reach;
+    out[40] = g_enemy_first;
     uint32_t e = link ? ld32(link + kLinkAttnEntryA) : 0;
     out[34] = e >= 0x10000000 && e < 0x50000000 ? (int32_t)ld32(e + 8) : -1;
     // A's Jump is the jump attack: the game shows Jump (0x12) while locked on for the side hop, the back flip and,

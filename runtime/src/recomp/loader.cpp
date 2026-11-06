@@ -165,7 +165,7 @@ std::string code_cache_key(const std::string& rpxPath, const std::string& featur
 }
 
 namespace {
-constexpr int kKeepSets = 3;  // manifests (code sets) whose objects stay in the cache
+constexpr int kKeepSets = 4;  // manifests (code sets) whose objects stay in the cache (mod packs per save file: 3 lists + one)
 std::atomic<bool> g_keep_plain{true};  // set_keep_plain_code
 
 }  // namespace

@@ -133,6 +133,7 @@ int hit_stop_off();  // the kinds switched off
 void set_hit_stop_off(int mask);
 void app_pause();  // the app's own pause (setGamePaused) uses that timer: left alone while it is wanted
 void hit_stop_step(uint32_t actor, bool before);
+void set_lock_nearest(bool on);  // touch_state.cpp: a lock on an enemy moves to a clearly nearer one (the app's ZL: Every enemy)
 void touch_actor_seen(uint32_t actor);  // each actor's execute (cheats.cpp's fopAc_Execute hook): the one A acts on  // around each actor's execute (cheats.cpp's fopAc_Execute hook)
 bool ff_button();  // ZR is held (last pad read)
 int event_mode_now();  // turbo.cpp: 0 no event, 1 dialogue, 2 / 3 cutscene
@@ -207,8 +208,9 @@ bool talk_hold_ff();
 // locked on (a count: the lock ended with the enemy dead), [31] locked on now, [32] targets in reach,
 // [33] a fade / wipe is under way (scene change, also on the title screen), [34] the attention type A acts on
 // (fopAc_Attn_TYPE: 5 a door, 6 a chest; -1 none), [35] A's Jump is the jump attack (1; the side hop / back flip 0),
-// [36] Link's mode flags (daPy_lk_c::mModeFlg: 0x400000 on a ladder), [37] has the Swift Sail
-constexpr int kTouchStateLen = 40;
+// [36] Link's mode flags (daPy_lk_c::mModeFlg: 0x400000 on a ladder), [37] has the Swift Sail,
+// [40] none locked and the target a new ZL press would lock is an enemy
+constexpr int kTouchStateLen = 41;
 void touch_state(int32_t out[kTouchStateLen]);
 // the item ring: {21 inventory item ids (0xFF empty), X / Y / R inventory slots, item in Link's hand,
 // the bags' 3 x 8 items (slots 24.., 36.., 48..)} (all -1 outside the game); request_equip puts an
@@ -233,6 +235,22 @@ uint32_t player_save();
 // 0x7E and 0xBE, setInitEventBit) until the "awake" scene sets 0x3510 (progress.cpp); its save file starts as the
 // game's Link (a model, colours, a long name chosen for the file before are the old game's)
 bool save_new_game(uint32_t save);
+// start-up (warp.cpp): 1 = the title skipped, straight to the file select (once, at the title's first draw without a fade)
+void set_boot_skip(int mode);
+// ... and straight into save file 1..3 from the file select (0 none; a file without a game is left to the player);
+// boot_service: game main thread, frame start (interp.cpp)
+void set_boot_file(int file);
+void boot_service(Cpu* c);
+// the save files holding a game as the file select shows them (bits 0..2), -1 outside its file list
+int save_slots_used();
+// fopScnM_ChangeReq's hook (turbo.cpp), before the call: the logo's request for the title changed into
+// the file select's (set_boot_skip)
+void boot_scene_request(Cpu* c, uint32_t lr);
+// the title/name controller (warp.cpp): 0 not the file select, 1 its files, 2 Start (the file not loaded yet: it is the
+// next step), 3 another state; the file's number 1..3 in the game info; back from Start to the files (game thread)
+int name_state(Cpu* c);
+int name_file();
+void name_back_to_files(Cpu* c);
 // the mini map (minimap.cpp, drawn by the app's MiniMap.java), all 0 off the Great Sea or outside a game:
 // [0] on the sea, [1] / [2] Link's x / z, [3] his facing (radians, 0 = +z, south), [4] on the boat, [5] the King of
 // Red Lions known, [6] / [7] / [8] its x / z / facing, [9] event mode (event_mode_now), [10] Link aims or looks

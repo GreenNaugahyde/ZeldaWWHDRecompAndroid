@@ -1,4 +1,4 @@
-# Controls guide (0.9.9b)
+# Controls guide (0.9.9c)
 
 Version 0.9.6 brought new on-screen controls, a setup for game controllers, an item ring, touch
 controls for the minigames and new ways to conduct the Wind Waker's songs; 0.9.7 adds talks, answers
@@ -135,8 +135,8 @@ can't be used right now (dimmed in the game) don't show at all.
 
 How they behave in the main situations:
 
-- **Walking**: the sword on B, the items on X / Y / R, A only when there is something to do, the
-  d-pad's up (Wind Waker) while Link has it. ZL targets; tapped once it latches (stays on) until you
+- **Walking**: the sword on B, the items on X / Y / R, A only when there is something to do, a
+  round Wind Waker button (Link conducting) while Link has it. ZL targets; tapped once it latches (stays on) until you
   tap it again (Controls › Touch › **ZL / ZR stay on after a tap**, on; off: ZL and ZR work only while
   held, like any button).
 - **Talking, reading, cutscenes**: with Minigames by touch on (the default), no button shows in a
@@ -154,6 +154,10 @@ How they behave in the main situations:
 - **Carrying** something: A throws, B drops.
 - **Swimming**: only ZL and + (and A when the game offers an action); the sword, items, first person
   and jumps can't be used in water and hide.
+- **In the boat**: the **cannon** (once Link has bombs) and the **salvage arm** (once he has the
+  grappling hook) get round buttons of their own below the Wind Waker's, animated; A then shows Fire
+  or Salvage, and Put away takes them down. These three buttons replace the d-pad in play and can be
+  moved in the layout editor (the d-pad stays only for the album's arrows).
 - **Picto Box and telescope**: only their own buttons (shutter, album, selfie, back); the item
   buttons, d-pad and jumps hide.
 - **Item in hand** (Link holds the bow, the Wind Waker, the Deku Leaf ...): the put-away button shows
@@ -164,8 +168,13 @@ Related options on Controls › Touch:
 
 - **ZL / ZR stay on after a tap** (on): a tap on ZL keeps targeting until the next tap, and ZR stays
   held for crouching or the shield. Off: both work only while held. (Classic always latches.)
-- **ZL when the target is defeated** (only with the latch): with a tapped ZL, **Let go** (default) releases the lock once
-  the enemy is defeated; **Next target** keeps ZL on and locks the next enemy in reach.
+- **ZL when the target is defeated** (right under the latch switch, for a tapped or a held ZL):
+  - **Let go** (default): a tapped ZL releases the lock once the enemy is defeated (a held one works as
+    in the game);
+  - **Next target**: ZL locks the next enemy in reach (a tapped ZL lets go if there is none);
+  - **Every enemy** (the first-start touch preset's choice): ZL stays on, also with no enemy in reach,
+    and locks each enemy that comes in reach (people, signs and things are skipped); while locked, a
+    clearly nearer enemy takes over the lock.
 - **Link in the button icons**, see above.
 
 ## Items by tap
@@ -222,8 +231,10 @@ uses the item as before.
 - The ring has an **empty** entry (a struck-through circle) while the button has an item: pick it to
   leave the button empty.
 
-With the item ring on in the Flexible style and no controller connected, the d-pad hides in play: the
-ring has what it did (Wind Waker, cannon, salvage arm).
+With the item ring on in the Flexible style and no controller connected, the Wind Waker, cannon and
+salvage arm buttons hide in play: the ring has them. Two switches on Controls › Item ring (off by
+default) keep them anyway: **Wind Waker button too** and **Cannon and salvage arm buttons too**. When
+conducting started from the ring is cancelled, Link puts the Wind Waker away by himself.
 
 ## Item buttons: names, L1 and d-pad down, emptying
 
@@ -461,6 +472,10 @@ button for it (analog triggers and a hat d-pad count too). A button already in u
 every Wii U button keeps one. Also here: the rows for Jump anywhere, the moon jump, L1 and d-pad down
 as item buttons. Home / Guide and holding Select always open the menu.
 
+Controls › Controller › **ZL locks every enemy** (off): while the controller's ZL is held, each enemy
+that comes in reach is locked on by itself, and a clearly nearer enemy takes over the lock (the touch
+ZL's Every enemy, for controllers).
+
 ### Motion controls and rumble
 
 Controls › **Motion controls** (gyro aiming) and **Rumble** work for touch and controllers. While a
@@ -581,11 +596,10 @@ Defaults in brackets.
 - On-screen controls (on) · Touch controls (Classic) · Edit on-screen layout · Motion controls (on) · Rumble (on)
 - **Touch**: On-screen controls size (100 %) · Menu button in the game (off) · Left stick follows the
   thumb (on) · *Flexible only*: Show sticks (on), Context buttons (off), Item buttons (Tap), Only
-  aiming buttons while aiming (on), Put away by itself (on with Tap), ZL / ZR stay on after a tap (on) ·
-  Pinch to zoom (on) · Link
-  in the button icons (on) · ZL when the target is defeated
-  (Let go)
-- **Item ring**: Item ring (on) · While the ring is open (Slow motion) · Item button names (Auto)
+  aiming buttons while aiming (on), Put away by itself (on with Tap), ZL / ZR stay on after a tap (on), ZL when the target is
+  defeated (Let go; Next target, Every enemy) · Pinch to zoom (on) · Link in the button icons (on)
+- **Item ring**: Item ring (on) · While the ring is open (Slow motion) · Item button names (Auto) · Wind Waker
+  button too (off) · Cannon and salvage arm buttons too (off)
 - **Camera**: Invert camera up/down (off; or First person and aiming, Always, Normal camera only) · Direct right-stick camera (off), Direct camera speed (1×)
   · First person on the mouse wheel (off) · Walking direction (original), Stick re-syncs after (1°),
   Camera swings behind Link (off), Swing starts after (1 s) · *Flexible*: Camera (right half) (Stick),
@@ -594,18 +608,19 @@ Defaults in brackets.
 - **Screen (HUD)**: Hearts only in combat (off) · Rupees only when they change (off) · Mini map (on),
   Map style (Square), Map inside (Filled), Map facing (North up), Corner (Bottom left), Size, Progress
   marks (Off) · Large Picto Box view (on)
-- **Controller**: Set up controller · Controller buttons · L turns the GamePad page (off) · Controller details
+- **Controller**: Set up controller · Controller buttons · L turns the GamePad page (off) · ZL locks every enemy (off) ·
+  Controller details
 
 **Game**: Game language · Menu language (English) · Quick doors · Fast scene changes · Fast forward cutscenes · Fast forward
 dialogues · Hold to go on in talks (on), Fast forward while held (off) · Album pages (off) · Picto subjects (on) · Mail pictos at postboxes (on), Same day delivery
-(off) · Link's clothes (As in the story) · GamePad sounds (on) · Game progress (Percent on screen
+(off) · Link's clothes (As in the story) · GamePad sounds (on) · Skip the title screen (off) · Game progress (Percent on screen
 (off), Show, Map) · Achievements (Pop-up on screen (on), Link holds it up (on), Jingle (on), Jingle volume (70 %),
 Earn with cheats (off), Pop-ups in every save game, Reset) · **Songs**: Replay conducted songs (off), Sing the songs (off), Mic button (on), Play
 buttons in the song list (on), Play button in song scenes (on)
 
 **Mods**: Jump anywhere (Controller button, Double jump, No automatic ledge jumps) · Moon jump
 (Controller button, Rise speed, Flight speed, No fall damage, Random lift-off animations) · Climb any
-wall · Faster running / swimming / climbing / sidling · Deku Leaf: wave to rise (off) · Cheats · Mod packs
+wall · Faster running / swimming / climbing / sidling · Deku Leaf: wave to rise (off) · Cheats · Mod packs (Per save file (off), Loading order)
 
 **Graphics**: Preset · Find the best settings · Rendering resolution · Frame rate · Frame generation ·
 **Resolution & upscaling** (Dynamic resolution, Upscaling, Display resolution) · **Picture quality**

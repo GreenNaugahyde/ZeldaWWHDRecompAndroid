@@ -18,6 +18,8 @@
 #include <string>
 #include <vector>
 
+struct Cpu;
+
 namespace packs {
 
 constexpr uint32_t kCodeCave = 0x01800000, kCodeCaveEnd = 0x01C00000;  // Cemu's code cave area (4 MiB)
@@ -26,7 +28,14 @@ constexpr uint32_t kCodeCave = 0x01800000, kCodeCaveEnd = 0x01C00000;  // Cemu's
 // folder return at once) and hands it to the recompiler (recomp::set_code_patch)
 void init(const std::string& gameDir);
 
-void apply_memory();  // boot, after the executable is in guest memory: the patched bytes
+void apply_memory();
+
+// mod packs per save file (packs.cpp): game main thread, frame start (interp.cpp); a save file handed over by the file
+// select whose enabled_<N>.txt differs from the running list holds the game until the app restarts it
+void file_service(Cpu* c);
+int file_switch_wanted();  // that save file 1..3, 0 none (asked: the game waits for the app's answer)
+void file_switch_continue();  // the player's answer: that file with the packs running (no restart)
+void file_switch_back();      // ... or not that file now: back to the file select  // boot, after the executable is in guest memory: the patched bytes
 
 // Randomizer (TWWHD Randomizer's output folder, runtime/src/android/rando_jni.cpp): code/cking.rpx is
 // compiled and run instead of the game's (CodePatch::rpx), its content/ replaces game files. "" off.

@@ -63,9 +63,11 @@ The original project (macOS, the 60 fps modes, decompilation tools) is described
   saves** (`.gci`, USA, Europe and Japan) imported as the HD game save (after the original project's
   converter).
 - **Mod packs**: Cemu graphic packs (for example from GameBanana or GitHub) and plain game file mods,
-  imported from `.zip` and `.rar` files: code patches (`patch_*.asm`, Cemuhook `patches.txt`), game
+  imported from `.zip`, `.rar` and `.7z` files: code patches (`patch_*.asm`, Cemuhook `patches.txt`), game
   file replacements, shader replacements and texture filtering rules. A code patch only applies to
-  the game version it was made for; turning packs on or off recompiles the changed code once.
+  the game version it was made for; turning packs on or off recompiles the changed code once. A
+  loading order decides which pack wins where two change the same file, and each save file can have
+  packs of its own.
 - **Performance overlay**: frame rate with its average, frame time, CPU and GPU load, CPU, GPU and
   battery temperatures, the graphics settings in use, the SoC, GPU and GPU driver; you choose the
   values and drag it where you want it.
@@ -179,6 +181,35 @@ The original project (macOS, the 60 fps modes, decompilation tools) is described
 - **No internet access**: the app doesn't request it, and its manifest explicitly excludes it.
 
 ## Version history
+
+**0.9.9c**
+
+- Mods › Mod packs › **Per save file**: each save file has its own packs, presets and loading order.
+  Choosing a file with other packs in the file select asks whether to restart with them; the game then
+  restarts behind a loading screen and goes straight into that file. A deleted save file lets go of its
+  packs.
+- Mods › Mod packs › **Loading order** (with two or more packs on): the top pack loads first, the lower
+  one wins where two change the same game file, shader or code. Drag a row, or with a controller pick
+  it up with A and move it up or down; each row names the packs whose files it replaces.
+- Mod packs from **`.7z` files**, and dialogue or translation mods made only for the American English
+  text now also work in the European game (#49).
+- Game › **Skip the title screen** (off): after the logos the game goes straight to the file select;
+  B there still leads to the title screen.
+- Controls › Touch › **ZL when the target is defeated**: new choice **Every enemy**: ZL stays on and
+  locks each enemy that comes in reach, and a clearly nearer enemy takes over the lock. The choice now
+  also works for a held ZL and with "ZL / ZR stay on after a tap" off; the first-start touch preset
+  picks Every enemy. Controls › Controller › **ZL locks every enemy**: the same while a controller's ZL
+  is held.
+- Touch (Flexible with context buttons): the **Wind Waker**, and in the boat the **cannon** and the
+  **salvage arm**, are round buttons of their own (movable in the layout editor), each shown while it
+  can be used, with animated icons for firing the cannon and letting the hook down. Without the item
+  ring the boat's cannon and salvage arm can now be used by touch. Controls › Item ring › **Wind Waker
+  button too** and **Cannon and salvage arm buttons too** keep them while the ring is on. The Wind
+  Waker picked from the ring and cancelled is put away by itself.
+- The game's picture now also fills the strip beside a front camera cutout on Android 14 and older,
+  as it already did on Android 15 and newer (#29).
+- The "Preparing the game code" screen keeps its progress and a smaller Cancel button in view below
+  the text, so the text no longer scrolls on wide phones (#29).
 
 **0.9.9b**
 
@@ -642,7 +673,7 @@ swap too.)
   the Flexible touch controls: the talk goes on by itself up to a question, optionally fast forward),
   album pages, picto subjects, mailing pictos at postboxes (and same day delivery), Link's clothes,
   GamePad sounds (the sounds the Wii U plays on the GamePad speaker alone: its menus, switching items,
-  saving; also used by the options menu), game progress (with its map) and achievements, and the
+  saving; also used by the options menu), skipping the title screen, game progress (with its map) and achievements, and the
   **Songs** page (replay conducted songs, singing
   into the microphone, play buttons).
 - **Graphics**: a **preset** (Lowest to High) and **Find the best settings** (a 2-minute test of the
@@ -668,8 +699,8 @@ swap too.)
   **Cheats** (from the original project) change the save file you play: items, hearts, magic,
   rupees, filled bags, infinite health, magic, ammunition, rupees, bait and spoils, and swimming, one
   hit kills, faster block pushing, the complete Nintendo Gallery, and story cheats (save to a spare file first; they can change story events). **Mod packs**: import,
-  turn on and off, choose a pack's presets; changes apply after a restart, which the menu offers when
-  you leave it.
+  turn on and off, choose a pack's presets, the loading order (the lower pack wins), and packs for
+  each save file; changes apply after a restart, which the menu offers when you leave it.
 - **Controls**: on-screen controls on or off (off: only the menu button, for playing with a
   controller), the touch style and the layout editor, motion controls and rumble (and where from),
   and the pages Touch, Item ring, Camera, Minigames & hints, Screen (HUD) and Controller, all
@@ -781,7 +812,7 @@ created on your device from your own legal dump and must not be redistributed.
 
 The code of this project is licensed under the Mozilla Public License 2.0 (see `LICENSE`).
 Third-party code keeps its own license: Cemu (MPL-2.0), {fmt} (MIT), fast_float (MIT), zstd (BSD-3-Clause), glslang (BSD-3-Clause and
-others), the Vulkan Memory Allocator (MIT), volk (MIT), libadrenotools (BSD-2-Clause), libarchive (BSD-2-Clause), and in the
+others), the Vulkan Memory Allocator (MIT), volk (MIT), libadrenotools (BSD-2-Clause), libarchive (BSD-2-Clause), liblzma from XZ Utils (0BSD), and in the
 APK without game code
 [LLVM](https://llvm.org) and the NDK's libc++ (Apache-2.0 with LLVM Exceptions). The app shows all
 of these licenses under About.

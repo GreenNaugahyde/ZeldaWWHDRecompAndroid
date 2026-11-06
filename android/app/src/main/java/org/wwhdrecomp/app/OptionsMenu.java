@@ -1041,6 +1041,7 @@ final class OptionsMenu extends Dialog {
         else if (tab == 2) graphics();
         else if (tab == 3) mods();
         else controls();
+        if (!onPacksPage) orderHeld = null;
         if (focusIndex >= 0 && focusIndex < rows.getChildCount()) rows.getChildAt(focusIndex).requestFocus();
     }
 
@@ -1364,6 +1365,8 @@ final class OptionsMenu extends Dialog {
         submenu(R.string.opt_ach_settings, R.string.opt_ach_settings_hint, "", () -> openPage(this::achievementSettingsPage));
         submenu(R.string.rando_title, R.string.rando_hint, Randomizer.playing(a) ? a.getString(R.string.rando_on_now) : "",
                 () -> openPage(this::randoPage));
+        toggle(R.string.opt_skip_title, R.string.opt_skip_title_hint, a.prefs.getBoolean("skip_title", false),
+                on -> a.prefs.edit().putBoolean("skip_title", on).apply());  // (read at the next start)
         modToggle(3, R.string.opt_mod_quick_doors, R.string.opt_mod_speed_hint);
         modToggle(10, R.string.opt_mod_walk_doors, R.string.opt_mod_walk_doors_hint);
         if (a.prefs.getBoolean(MainActivity.MODS[10], false)) {  // how they open: Link coming near, or A on the game's Open prompt
@@ -2699,10 +2702,13 @@ final class OptionsMenu extends Dialog {
             if (played > 0) a.prefs.edit().putInt("save_name_file", played).apply();
             openPage(this::saveNamesPage);
         });
-        int packsOn = 0;
-        for (String f : ModPacks.list(a.baseDir())) if (a.prefs.getBoolean("pack_on_" + f, false)) packsOn++;
-        submenu(R.string.opt_packs, R.string.opt_packs_hint, packsOn > 0 ? a.getString(R.string.packs_on_count, packsOn) : "",
-                () -> openPage(this::packsPage));
+        int packsOn = ModPacks.countOn(a.baseDir(), a.prefs);
+        submenu(R.string.opt_packs, R.string.opt_packs_hint, packsOn > 0 ? a.getString(R.string.packs_on_count, packsOn) : "", () -> {
+            // (per save file: opens on the file in play; at the title on the one picked last)
+            int played = PlayerModels.playedFile();
+            if (played > 0 && ModPacks.perFile(a.prefs)) a.prefs.edit().putInt("packs_edit_file", played).apply();
+            openPage(this::packsPage);
+        });
         if (developer()) submenu(R.string.opt_warp, R.string.opt_warp_hint, "", () -> openPage(this::warpPage));
     }
 
@@ -2981,6 +2987,19 @@ final class OptionsMenu extends Dialog {
         submenu(R.string.packs_import, R.string.packs_import_hint, "", () -> a.pickPacks(this::fill));
         java.io.File base = a.baseDir();
         java.util.List<String> folders = ModPacks.list(base);
+        // per save file: each file its own packs (ModPacks.perFile); the rows below are the chosen file's
+        toggle(rowText(a.getString(R.string.packs_per_file), a.getString(R.string.packs_per_file_hint)), ModPacks.perFile(a.prefs),
+                v -> packsEdit(() -> ModPacks.setPerFile(base, a.prefs, v), false));
+        if (ModPacks.perFile(a.prefs)) {
+            String[] files = new String[ModPacks.FILES];
+            for (int i = 0; i < files.length; i++) files[i] = a.getString(R.string.look_file_n, i + 1);
+            indentNext = true;
+            choice(rowText(a.getString(R.string.look_file), a.getString(R.string.packs_file_hint)), files, ModPacks.editScope(a.prefs) - 1, i -> {
+                a.prefs.edit().putInt("packs_edit_file", i + 1).apply();
+                fill();
+            });
+            note(a.getString(R.string.packs_file_running, ModPacks.activeScope(a.prefs)));
+        }
         // player models: one row, their own page (a whole collection made this page slow and long)
         java.util.List<String> models = new java.util.ArrayList<>();
         for (String f : folders) if (ModPacks.isPlayerModel(f)) models.add(f);
@@ -2999,33 +3018,177 @@ final class OptionsMenu extends Dialog {
             });
         }
         if (folders.isEmpty() && models.isEmpty()) note(a.getString(R.string.packs_none));
+        java.util.Map<String, String> names = new java.util.HashMap<>();
         for (String f : folders) {
             ModPacks.Info info = ModPacks.describe(base, a.gameDir(), a.prefs, f);
-            boolean on = a.prefs.getBoolean("pack_on_" + f, false);
-            toggle(rowText(info.name, info.summary(a)), on, v -> {
-                a.prefs.edit().putBoolean("pack_on_" + f, v).commit();
-                ModPacks.writeEnabled(base, a.prefs);
-                a.markPacksChanged();
-            });
+            boolean on = ModPacks.isOn(a.prefs, f);
+            names.put(f, info.name);
+            toggle(rowText(info.name, info.summary(a)), on, v -> packsEdit(() -> ModPacks.setOn(base, a.prefs, f, v), false));
             if (on)
                 for (String[] c : info.categories) {
                     String[] presets = java.util.Arrays.copyOfRange(c, 2, c.length);
                     int cur = java.util.Arrays.asList(presets).indexOf(c[1]);
                     indentNext = true;
-                    choice(rowText(c[0].isEmpty() ? a.getString(R.string.packs_preset) : c[0], null), presets, cur, k -> {
+                    choice(rowText(c[0].isEmpty() ? a.getString(R.string.packs_preset) : c[0], null), presets, cur, k -> packsEdit(() -> {
                         ModPacks.select(a.prefs, f, c[0], presets[k]);
                         ModPacks.writeEnabled(base, a.prefs);
-                        a.markPacksChanged();
-                    });
+                    }, false));
                 }
             indentNext = true;
             submenu(R.string.packs_details, 0, "", () -> openPage(() -> packDetailPage(f)));
         }
+        java.util.List<String> order = ModPacks.order(base, a.prefs);
+        if (order.size() >= 2) packOrder(order, names);
+        else orderHeld = null;
         if (a.packsChanged) {
             note(a.getString(R.string.packs_restart_note));
             note(a.getString(R.string.packs_title_hint));
             addAction(rows, R.string.packs_restart, a::restartForPacks);
         }
+    }
+
+    // a change on the mod packs page: a restart is offered only when the list the game starts with changed (per save
+    // file, another file's list loads when that file is chosen); `refill`: the page drawn again (a toggle's rows)
+    private void packsEdit(Runnable change, boolean refill) {
+        java.io.File f = new java.io.File(ModPacks.dir(a.baseDir()), "enabled.txt");
+        String before = readText(f);
+        change.run();
+        if (!before.equals(readText(f))) a.markPacksChanged();
+        if (refill) fill();
+    }
+
+    private static String readText(java.io.File f) {
+        try {
+            return new String(java.nio.file.Files.readAllBytes(f.toPath()), java.nio.charset.StandardCharsets.UTF_8);
+        } catch (java.io.IOException | RuntimeException e) {
+            return "";
+        }
+    }
+
+    private String orderHeld;  // the pack a controller picked up in the loading order (d-pad up / down moves it)
+
+    // the loading order of the packs turned on: top first, a lower one wins where they change the same game file (or
+    // the same shader or code); the grip drags a row, a controller picks one up with A and moves it with up / down
+    private void packOrder(java.util.List<String> order, java.util.Map<String, String> names) {
+        heading(a.getString(R.string.packs_order), false);
+        note(a.getString(R.string.packs_order_note));
+        if (!order.contains(orderHeld)) orderHeld = null;
+        java.io.File base = a.baseDir();
+        java.util.List<java.util.Set<String>> files = new java.util.ArrayList<>();
+        for (String f : order) files.add(ModPacks.contentFiles(base, f));
+        java.util.List<LinearLayout> list = new java.util.ArrayList<>();
+        for (int i = 0; i < order.size(); i++) {
+            String f = order.get(i);
+            String name = names.containsKey(f) ? names.get(f) : f;
+            // the packs above whose files this one replaces
+            StringBuilder over = new StringBuilder();
+            for (int j = 0; j < i; j++) {
+                int n = 0;
+                for (String x : files.get(i)) if (files.get(j).contains(x)) n++;
+                if (n == 0) continue;
+                String other = names.containsKey(order.get(j)) ? names.get(order.get(j)) : order.get(j);
+                over.append(over.length() > 0 ? ", " : "").append(a.getResources().getQuantityString(R.plurals.packs_order_files, n, other, n));
+            }
+            boolean held = f.equals(orderHeld);
+            String hint = held ? a.getString(R.string.packs_order_moving)
+                    : over.length() > 0 ? a.getString(R.string.packs_order_over, over.toString()) : null;
+            LinearLayout r = rowText((i + 1) + ".  " + name, hint);
+            if (held) r.setBackground(states(slot(GLOW, YELLOW), slot(GLOW, YELLOW)));
+            TextView grip = GameUi.text(getContext(), gameStyle);
+            grip.setText("≡");
+            grip.setTextColor(gameStyle ? GameUi.OPTION_TEXT : INK);
+            sp(grip, 28);
+            grip.setGravity(Gravity.CENTER);
+            r.addView(grip, new LinearLayout.LayoutParams(px(64), px(52)));
+            list.add(r);
+        }
+        for (int i = 0; i < list.size(); i++) {
+            final int idx = i;
+            LinearLayout r = list.get(i);
+            String f = order.get(i);
+            r.setOnClickListener(v -> {
+                if (v.isInTouchMode()) return;  // (by touch: the grip)
+                sound(MenuSounds.DECIDE);
+                orderHeld = f.equals(orderHeld) ? null : f;
+                int at = rows.indexOfChild(v);
+                fill();
+                if (at >= 0 && at < rows.getChildCount()) rows.getChildAt(at).requestFocus();
+            });
+            r.setOnKeyListener((v, code, e) -> {
+                if (!f.equals(orderHeld) || (code != KeyEvent.KEYCODE_DPAD_UP && code != KeyEvent.KEYCODE_DPAD_DOWN)) return false;
+                if (e.getAction() != KeyEvent.ACTION_DOWN) return true;
+                int to = idx + (code == KeyEvent.KEYCODE_DPAD_UP ? -1 : 1);
+                if (to < 0 || to >= order.size()) return true;  // (held: the cursor stays on it)
+                int at = rows.indexOfChild(v) + to - idx;
+                moveInOrder(order, idx, to);
+                sound(MenuSounds.CURSOR);
+                if (at >= 0 && at < rows.getChildCount()) rows.getChildAt(at).requestFocus();
+                return true;
+            });
+            r.getChildAt(r.getChildCount() - 1).setOnTouchListener(new View.OnTouchListener() {
+                private float y0;
+                private int to = idx;
+
+                @Override
+                public boolean onTouch(View v, android.view.MotionEvent e) {
+                    switch (e.getActionMasked()) {
+                        case android.view.MotionEvent.ACTION_DOWN:
+                            v.getParent().requestDisallowInterceptTouchEvent(true);  // (not the scroll, not the page swipe)
+                            y0 = e.getRawY();
+                            to = idx;
+                            r.setElevation(px(8));
+                            r.animate().scaleX(1.03f).scaleY(1.03f).setDuration(80).start();
+                            sound(MenuSounds.DECIDE);
+                            return true;
+                        case android.view.MotionEvent.ACTION_MOVE: {
+                            float dy = e.getRawY() - y0;
+                            r.setTranslationY(dy);
+                            // the place its middle is at; the rows in between make room
+                            float mid = r.getTop() + dy + r.getHeight() / 2f;
+                            int t = idx;
+                            for (int j = 0; j < list.size(); j++) {
+                                View o = list.get(j);
+                                float c = o.getTop() + o.getHeight() / 2f;
+                                if (j < idx && mid < c) t = Math.min(t, j);
+                                if (j > idx && mid > c) t = Math.max(t, j);
+                            }
+                            if (t != to) sound(MenuSounds.CURSOR);
+                            to = t;
+                            int step = r.getHeight() + ((LinearLayout.LayoutParams) r.getLayoutParams()).bottomMargin;
+                            for (int j = 0; j < list.size(); j++) {
+                                if (j == idx) continue;
+                                float ty = j > idx && j <= to ? -step : j < idx && j >= to ? step : 0;
+                                if (list.get(j).getTranslationY() != ty) list.get(j).animate().translationY(ty).setDuration(120).start();
+                            }
+                            return true;
+                        }
+                        case android.view.MotionEvent.ACTION_UP:
+                            if (to != idx) moveInOrder(order, idx, to);
+                            else back();
+                            return true;
+                        case android.view.MotionEvent.ACTION_CANCEL:
+                            back();
+                            return true;
+                        default:
+                            return true;
+                    }
+                }
+
+                private void back() {
+                    for (View o : list) o.animate().translationY(0).setDuration(120).start();
+                    r.animate().scaleX(1f).scaleY(1f).setDuration(80).withEndAction(() -> r.setElevation(0)).start();
+                }
+            });
+        }
+    }
+
+    private void moveInOrder(java.util.List<String> order, int from, int to) {
+        java.util.List<String> o = new java.util.ArrayList<>(order);
+        o.add(to, o.remove(from));
+        packsEdit(() -> {
+            ModPacks.setOrder(a.prefs, o);
+            ModPacks.writeEnabled(a.baseDir(), a.prefs);
+        }, true);
     }
 
     private void packDetailPage(String folder) {
@@ -3047,9 +3210,7 @@ final class OptionsMenu extends Dialog {
         addAction(rows, R.string.packs_delete, () -> new GameDialog(getContext()).title(info.name).message(R.string.packs_delete_confirm)
                 .button(R.string.opt_cancel, null)
                 .button(R.string.packs_delete, () -> {
-                    boolean wasOn = a.prefs.getBoolean("pack_on_" + folder, false);
-                    ModPacks.delete(base, a.prefs, folder);
-                    if (wasOn) a.markPacksChanged();
+                    packsEdit(() -> ModPacks.delete(base, a.prefs, folder), false);
                     if (ModPacks.isPlayerModel(folder)) PlayerModels.handOver(a);  // (a save file's model gone: HD Link)
                     page = pageStack.poll();
                     fill();
@@ -3256,8 +3417,9 @@ final class OptionsMenu extends Dialog {
             toggle(R.string.opt_z_latch, R.string.opt_z_latch_hint, a.prefs.getBoolean("z_latch", true), on -> {
                 a.prefs.edit().putBoolean("z_latch", on).apply();
                 a.applyControlsAppearance();
-                fill();  // (ZL when the target is defeated: only with the latch)
+                fill();
             });
+            zlDefeatChoice();  // (tapped or held: ControlsView.targetDefeated / setPadZl)
             toggle(R.string.opt_context_buttons, R.string.opt_context_buttons_hint, a.prefs.getBoolean("context_buttons", false), on -> {
                 a.prefs.edit().putBoolean("context_buttons", on).apply();
                 a.applyControlsAppearance();
@@ -3285,8 +3447,13 @@ final class OptionsMenu extends Dialog {
             a.prefs.edit().putBoolean("link_poses", on).apply();
             a.applyControlsAppearance();
         });
-        if (a.prefs.getInt("controls_style", 0) == 1 && !a.prefs.getBoolean("z_latch", true)) return;  // ZL held: the game's own
-        String[] defeat = {a.getString(R.string.opt_zl_defeat_release), a.getString(R.string.opt_zl_defeat_next)};
+        if (a.prefs.getInt("controls_style", 0) != 1) zlDefeatChoice();  // (classic: ZL always latches; flexible: under the latch)
+    }
+
+    // ZL when the target is defeated: let go, the next target, every enemy (ControlsView.targetDefeated / relockEnemy)
+    private void zlDefeatChoice() {
+        String[] defeat = {a.getString(R.string.opt_zl_defeat_release), a.getString(R.string.opt_zl_defeat_next),
+                a.getString(R.string.opt_zl_defeat_every)};
         choice(R.string.opt_zl_defeat, R.string.opt_zl_defeat_hint, defeat, a.prefs.getInt("zl_after_defeat", 0), i -> {
             a.prefs.edit().putInt("zl_after_defeat", i).apply();
             a.applyControlsAppearance();
@@ -3314,6 +3481,17 @@ final class OptionsMenu extends Dialog {
             indentNext = true;
             choice(R.string.opt_item_ring_pace, 0, a.getResources().getStringArray(R.array.item_ring_paces),
                     a.prefs.getInt("item_ring_pace", 1), k -> a.prefs.edit().putInt("item_ring_pace", k).apply());
+            // the d-pad's own buttons (context buttons) kept besides the ring, which has them too
+            indentNext = true;
+            toggle(R.string.opt_ring_baton_button, R.string.opt_ring_baton_button_hint, a.prefs.getBoolean("ring_baton_button", false), on -> {
+                a.prefs.edit().putBoolean("ring_baton_button", on).apply();
+                a.applyRingButtons();
+            });
+            indentNext = true;
+            toggle(R.string.opt_ring_boat_buttons, R.string.opt_ring_boat_buttons_hint, a.prefs.getBoolean("ring_boat_buttons", false), on -> {
+                a.prefs.edit().putBoolean("ring_boat_buttons", on).apply();
+                a.applyRingButtons();
+            });
         }
         // the item buttons' names on the game's HUD and drop slots (MainActivity.applySlotLabels)
         choice(R.string.opt_slot_labels, R.string.opt_slot_labels_hint, a.getResources().getStringArray(R.array.slot_labels),
@@ -3589,6 +3767,10 @@ final class OptionsMenu extends Dialog {
                 () -> openPage(this::buttonsPage));
         toggle(R.string.opt_l_drc_pages, R.string.opt_l_drc_pages_hint, a.prefs.getBoolean("l_drc_pages", false),
                 on -> a.prefs.edit().putBoolean("l_drc_pages", on).apply());
+        toggle(R.string.opt_pad_zl_every, R.string.opt_pad_zl_every_hint, a.prefs.getBoolean("pad_zl_every", false), on -> {
+            a.prefs.edit().putBoolean("pad_zl_every", on).apply();
+            a.applyControlsAppearance();
+        });
         if (!ControllerInfo.connected(null).isEmpty())
             submenu(R.string.cd_title, R.string.cd_hint, "", () -> openPage(detailsPage));
     }

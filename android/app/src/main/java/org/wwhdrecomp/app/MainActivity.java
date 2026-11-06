@@ -126,6 +126,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         @Override
         public void run() {
             int f = Native.frontScreen();
+            packFileSwitch(f);
             firstStartMessage();
             checkMemory();
             if (controls != null && !benchRunning && tour == null) {
@@ -213,6 +214,10 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         prefs = getSharedPreferences("settings", MODE_PRIVATE);
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         getWindow().getAttributes().layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES;
+        // edge to edge on every Android version, as Android 15+ does anyway for targetSdk 35+ (issue #29: on Android 14
+        // the decor kept the game's view clear of the camera cutout, a black strip beside it); the menus keep clear of
+        // the cutout themselves (OptionsMenu, FullMap)
+        getWindow().setDecorFitsSystemWindows(false);
         // testing (debug builds): --es bench "fg,show" runs the graphics benchmark at this start
         String benchExtra = debuggable() && !libraryLoaded ? getIntent().getStringExtra("bench") : null;
         // testing (not in published releases): --es shader_tour <slot> plays by itself (ShaderTour); with
@@ -877,10 +882,8 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
             box.addView(t);
             android.widget.ProgressBar bar = new android.widget.ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
             bar.setMax(1000);
-            box.addView(bar);
             TextView detail = cardText();
-            box.addView(detail);
-            setContentView(seaScreen(box));
+            setContentView(seaScreen(box, workFooter(bar, detail, GameUi.barButton(this, getString(android.R.string.cancel), v -> {}, false, true))));
             final long t0 = android.os.SystemClock.elapsedRealtime();
             final android.os.Handler h = new android.os.Handler(android.os.Looper.getMainLooper());
             h.post(new Runnable() {
@@ -997,6 +1000,9 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
                 new File(getNoBackupFilesDir(), "shadercache").getAbsolutePath(), base.getAbsolutePath());
         started = true;
         applyOptions();
+        // Game > Skip the title screen: the logos go straight to the file select (mods/warp.cpp; B there still leads
+        // to the title); not for the benchmark (it warps from the title)
+        if (prefs.getBoolean("skip_title", false) && !bench) Native.setOption("boot_skip", 1);
         startMotion();
         showGame();
         if (padHost != null) padHost.gameStarted();
@@ -1243,7 +1249,10 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         pickDll();
     }
 
-    private View seaScreen(LinearLayout content) {
+    private View seaScreen(LinearLayout content) { return seaScreen(content, null); }
+
+    /** footer: shown below the scrolling text, always in view (the work screens' progress and Cancel) */
+    private View seaScreen(LinearLayout content, LinearLayout footer) {
         float d = getResources().getDisplayMetrics().density;
         android.widget.FrameLayout root = new android.widget.FrameLayout(this);
         sea = new SeaView(this);
@@ -1275,6 +1284,13 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         card.setBackground(new GameUi.GamePaper(this, unit));
         card.setPadding(frame, frame, frame, frame);
         card.addView(sv, new LinearLayout.LayoutParams(-1, -2, 1));  // (the part that shrinks when the card is too tall)
+        if (footer != null) {
+            styleCardText(footer);
+            LinearLayout.LayoutParams flp = new LinearLayout.LayoutParams(-1, -2);
+            flp.leftMargin = (int) (24 * d);
+            flp.rightMargin = (int) (24 * d);
+            card.addView(footer, flp);
+        }
         if (!buttons.isEmpty()) {
             GameUi.ButtonRows rows = new GameUi.ButtonRows(this, (int) (12 * d));
             for (View b : buttons) rows.addView(b, new android.view.ViewGroup.LayoutParams(-2, (int) (54 * d)));
@@ -1293,7 +1309,33 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         root.addView(card, lp);
         // a TV: the remote's d-pad starts on the first button (else its first press goes to the scrolling text)
         if (tv && !buttons.isEmpty()) root.post(() -> buttons.get(0).requestFocus());
+        else if (tv && footer != null) root.post(() -> { java.util.List<View> f = footer.getFocusables(View.FOCUS_FORWARD); if (!f.isEmpty()) f.get(0).requestFocus(); });
         return root;
+    }
+
+    /** the work screens' footer: the progress bar, below it the progress line and a small grey Cancel beside it
+     *  (issue #29: the big green button made the text scroll on 20:9 phones and hid the progress line) */
+    private LinearLayout workFooter(android.widget.ProgressBar bar, TextView detail, TextView cancel) {
+        float d = getResources().getDisplayMetrics().density;
+        LinearLayout f = new LinearLayout(this);
+        f.setOrientation(LinearLayout.VERTICAL);
+        f.addView(bar, new LinearLayout.LayoutParams(-1, -2));
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.addView(detail, new LinearLayout.LayoutParams(0, -2, 1));
+        if (cancel != null) {
+            cancel.setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, 14);
+            cancel.setPadding((int) (14 * d), 0, (int) (16 * d), (int) (3 * d));
+            cancel.setMinWidth((int) (96 * d));
+            LinearLayout.LayoutParams clp = new LinearLayout.LayoutParams(-2, (int) (38 * d));
+            clp.leftMargin = (int) (12 * d);
+            row.addView(cancel, clp);
+        }
+        LinearLayout.LayoutParams rlp = new LinearLayout.LayoutParams(-1, -2);
+        rlp.topMargin = (int) (4 * d);
+        f.addView(row, rlp);
+        return f;
     }
 
     private static boolean isCardButton(View v) {
@@ -1738,6 +1780,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         controls.setConductPads(prefs.getBoolean("conduct_pads", true));
         controls.setStickFollows(prefs.getBoolean("stick_follows", true));
         controls.setAfterDefeat(nw ? prefs.getInt("zl_after_defeat", 0) : 0);
+        controls.setPadZlEvery(prefs.getBoolean("pad_zl_every", false));
         controls.setZLatch(!flexible || prefs.getBoolean("z_latch", true));
         controls.setViewPinch(prefs.getBoolean("view_pinch", true));
         controls.setItemTap(nw && prefs.getBoolean("item_tap", true));
@@ -1771,6 +1814,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         applyHudHidden();
         Native.setOption("picto_big", pictoBig ? 1 : 0);
         Native.setOption("ring_no_baton", itemRingOn() ? 1 : 0);  // the Wind Waker conducts from the ring, never kept on a button
+        applyRingButtons();
         Native.setHudFade(0, nw && prefs.getBoolean("hearts_combat", false));
         Native.setHudFade(2, nw && prefs.getBoolean("hearts_combat", false));  // the magic bar: on its own while used
         Native.setHudFade(1, nw && prefs.getBoolean("rupees_on_change", false));
@@ -1792,11 +1836,11 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
 
     // (Large Picto Box view: its zoom bar, stick guides and d-pad icons too; the game's d-pad in play
     // (Shortcut_00: Wind Waker, cannon, salvage arm) while the item ring has them: Flexible style, no
-    // controller connected, ControlsView.dpadInRing)
+    // controller connected, ControlsView.dpadInRing), and while the context buttons show (their d-pad has them)
     private void applyHudHidden() {
         Native.setHudHidden((hudContext || filesTouch || menuTouch ? HUD_BUTTONS : "")
                 + (hudPicto ? ",N_Zoom_00,P_LStick_00,P_RStick_00,N_ControlPad_00" : "")
-                + (shortcutHidden ? ",N_Shortcut_00" : "") + slotHidden);
+                + (shortcutHidden || hudContext ? ",N_Shortcut_00" : "") + slotHidden);
     }
 
     // the item buttons' names on the game's HUD and its drop slots, and on the touch buttons (Controls > Item button
@@ -2099,7 +2143,10 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         if (controls == null) return;
         // − only swapped the TV and GamePad pictures (the GamePad is the only controller now): never sent
         int touchB = controls.buttons();
-        int b = (touchB | mapper.padButtons | mapper.keyButtons | padButtons()) & ~Native.MINUS;
+        int padRaw = mapper.padButtons | mapper.keyButtons | padButtons();
+        // a controller's ZL held with ZL locks every enemy: let go for a moment for each new lock (ControlsView.relockEnemy)
+        controls.setPadZl((padRaw & Native.ZL) != 0);
+        int b = (touchB | (padRaw & ~controls.padZlMask())) & ~Native.MINUS;
         // an item button on d-pad down (InputMapper.setExtraItem) only in play: elsewhere it is d-pad down
         int downItem = mapper.downItemBits();
         if (downItem != 0 && !padInPlay()) b &= ~downItem;
@@ -2187,6 +2234,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
             ry = 1;
         }
         if (windByPad(rx, ry)) rx = ry = 0;  // − held, the right stick chooses the wind (the camera gets none of it)
+        b |= autoButtons;  // (the start into a save file after a mod pack restart: A on the title)
         Native.setPad(b, lx, ly, rx, ry);
     }
 
@@ -3422,6 +3470,11 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     }
 
     /** the item ring works (also with a controller): the d-pad's up / left / right may be taken off for a jump */
+    /** Controls > Item ring: the Wind Waker's / the boat's own buttons kept while the ring is on */
+    void applyRingButtons() {
+        if (controls != null) controls.setRingButtons(prefs.getBoolean("ring_baton_button", false), prefs.getBoolean("ring_boat_buttons", false));
+    }
+
     boolean itemRingOn() { return itemRing != null ? itemRing.enabled() : prefs.getBoolean("item_ring", true); }
 
     /** the game waits (each frame, while ControllerSetup shows) */
@@ -3874,20 +3927,17 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         box.addView(t);
         android.widget.ProgressBar bar = new android.widget.ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
         bar.setMax(1000);
-        box.addView(bar);
         TextView detail = cardText();
-        box.addView(detail);
         TextView[] cancel = new TextView[1];
-        cancel[0] = cardButton(getText(android.R.string.cancel), v -> {  // a compile's parts in progress still finish (up to half a minute)
+        cancel[0] = GameUi.barButton(this, getString(android.R.string.cancel), v -> {  // a compile's parts in progress still finish (up to half a minute)
             WorkService.Work.markCancelled();
             if (extract) Native.extractCancel();
             else Native.compileCancel();
             cancel[0].setEnabled(false);
             cancel[0].setAlpha(0.5f);
             cancel[0].setText(R.string.compile_stopping);
-        });
-        box.addView(cancel[0], cardButtonLp());
-        setContentView(seaScreen(box));
+        }, false, true);
+        setContentView(seaScreen(box, workFooter(bar, detail, cancel[0])));
         final SeaView mySea = sea;
         mySea.setFrameInterval(66);  // the CPU is for the work (SeaView)
         final android.os.Handler h = new android.os.Handler(android.os.Looper.getMainLooper());
@@ -4507,6 +4557,185 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     }
 
     void restartForPacks() { restartApp(); }
+
+    // mod packs per save file (ModPacks.perFile): the file select handed over a save file whose packs differ from the
+    // running ones (the runtime holds the game, packs.h file_service): the game restarts with that file's; at the file
+    // select after the restart a note asks for that file again
+    private boolean packSwitching;
+
+    private void packFileSwitch(int front) {
+        if (prefs == null || !started || packSwitching) return;  // (this process is ending: the next one goes on)
+        autoStart(front);
+        int file = Native.packFileSwitch();
+        if (file <= 0) return;
+        packSwitching = true;  // (the game waits for the answer)
+        Log.i(TAG, "save file " + file + " has other mod packs: asking");
+        new GameDialog(this).title(R.string.opt_packs).message(getString(R.string.packs_switch_ask, file)).cancelable(false)
+                .button(R.string.opt_cancel, () -> {
+                    Log.i(TAG, "save file " + file + ": not started, back to the file select");
+                    Native.packFileBack();
+                    if (prefs.getInt("packs_auto_file", 0) > 0) autoEnd(false);  // (the player's own choice from here)
+                    packLoadingEnd();
+                    packSwitching = false;
+                })
+                .button(R.string.opt_ok, () -> {
+                    Log.i(TAG, "save file " + file + ": restarting with its mod packs");
+                    ModPacks.makeActive(baseDir(), prefs, file);
+                    prefs.edit().putInt("packs_auto_file", file).commit();
+                    packLoading(file, 0.1f);
+                    keyHandler.postDelayed(this::restartForPacks, 300);  // (the loading screen drawn first)
+                }).show();
+    }
+
+    // The loading screen over the switch (the sea card, MainActivity.coverScreen): from the player's OK through the
+    // restart, the title and the file select, until the save file's stage shows; the game's sound off meanwhile.
+    // The boat sails across as the start goes on.
+    private View packCover;
+    private SeaView packSea;
+
+    private void packLoading(int file, float progress) {
+        if (packCover == null) {
+            LinearLayout box = new LinearLayout(this);
+            box.setOrientation(LinearLayout.VERTICAL);
+            TextView t = new TextView(this);
+            t.setText(getString(R.string.packs_loading, file));
+            t.setTextSize(20);
+            box.addView(t);
+            packCover = coverScreen(box);
+            packSea = coverSea();
+            ((FrameLayout) getWindow().getDecorView()).addView(packCover, new FrameLayout.LayoutParams(-1, -1));
+            Native.setOption("audio_mute", 1);
+        }
+        packCover.bringToFront();
+        if (packSea != null) packSea.setProgress(progress);
+    }
+
+    private void packLoadingEnd() {
+        if (packCover == null) return;
+        ((FrameLayout) getWindow().getDecorView()).removeView(packCover);
+        packCover = null;
+        packSea = null;
+        Native.setOption("audio_mute", 0);
+    }
+
+    // After that restart the app goes on into the save file by itself (pref packs_auto_file): A on the title (the
+    // controller question answers itself, controller_selection.cpp), on the file select a tap on the file's box
+    // (L_SaveData_0<N-1>, Native.menuTargets), then, once only that file shows above the four buttons, a tap on the
+    // rightmost (L_BtnSeqence_03, Start). Each tap only when the screen is the one expected; another file opened: B
+    // (back to the list). Not there within 40 s (or the player's own file / screen): the note to choose it again.
+    private int autoButtons;
+    private long autoSince, autoActed;
+    private int autoSteady;
+    private long autoFiles, autoTitle;
+    private String autoSeen = "";
+
+    private void autoStart(int front) {
+        int file = prefs.getInt("packs_auto_file", 0);
+        if (file <= 0) return;
+        long now = android.os.SystemClock.uptimeMillis();
+        if (autoSince == 0) {
+            autoSince = now;
+            Native.setOption("boot_skip", 1);  // (the title skipped: straight to the file select, mods/warp.cpp)
+            Native.setOption("boot_file", file);  // (and from there into the file, as its Start does)
+        }
+        packLoading(file, front == Native.FRONT_BOOT ? 0.25f : front == Native.FRONT_TITLE ? 0.5f : 0.75f);
+        if (front == Native.FRONT_OPENING || front == 0) {  // in: done (the file select's handing over checks the file)
+            Log.i(TAG, "mod pack restart: save file " + file + " started");
+            if (packSea != null) packSea.setProgress(1f);
+            autoEnd(false);
+            keyHandler.postDelayed(this::packLoadingEnd, 1800);  // (the stage's own fade in under it)
+            return;
+        }
+        if (now - autoSince > 40000) {
+            Log.i(TAG, "mod pack restart: save file " + file + " not reached by itself, the player chooses it");
+            autoEnd(true);
+            return;
+        }
+        if (front == Native.FRONT_TITLE) {
+            // (the runtime skips the title; A only when it is still there after 4 s)
+            if (autoTitle == 0) autoTitle = now;
+            if (now - autoTitle > 4000 && now - autoActed > 1500) {
+                autoActed = now;
+                autoPress(Native.A);
+            }
+            return;
+        }
+        if (front != Native.FRONT_FILES) return;
+        // (the runtime goes into the file by itself; the taps only when it hasn't within 3 s: a file without a game)
+        if (autoFiles == 0) autoFiles = now;
+        if (now - autoFiles < 3000 || now - autoActed < 1200) return;
+        // the file select's boxes now: name -> {x, y, alpha} (parent "L_SaveData_01<N_SaveData_00|v1|a255")
+        java.util.Map<String, float[]> box = new java.util.HashMap<>();
+        for (String t : Native.menuTargets().split(";")) {
+            String[] f = t.trim().split(" ");
+            if (f.length != 6 || !f[0].equals("B_Btn_00")) continue;
+            String[] p = f[1].split("\\|");
+            if (p.length != 3 || !p[1].equals("v1")) continue;
+            try {
+                // (a bottom button's box sits in N_All_00 of its own part: named by that part, L_BtnSeqence_03 = Start)
+                String[] path = p[0].split("<");
+                String key = path[0].equals("N_All_00") && path.length > 1 ? path[1] : path[0];
+                box.put(key, new float[] {Float.parseFloat(f[2]), Float.parseFloat(f[3]), Float.parseFloat(p[2].substring(1))});
+            } catch (NumberFormatException ignored) {
+            }
+        }
+        String mine = "L_SaveData_0" + (file - 1);
+        float[] start = box.get("L_BtnSeqence_03"), own = box.get(mine);
+        int files = 0, others = 0;
+        for (java.util.Map.Entry<String, float[]> e : box.entrySet())
+            if (e.getKey().startsWith("L_SaveData_0")) {
+                files++;
+                if (!e.getKey().equals(mine)) others++;
+            }
+        // (what it sees, each time it changes: names, place, alpha)
+        StringBuilder seen = new StringBuilder();
+        for (java.util.Map.Entry<String, float[]> e : new java.util.TreeMap<>(box).entrySet())
+            seen.append(e.getKey()).append(String.format(java.util.Locale.ROOT, "@%.2f,%.2f/%d ", e.getValue()[0], e.getValue()[1], (int) e.getValue()[2]));
+        if (!seen.toString().equals(autoSeen)) {
+            autoSeen = seen.toString();
+            Log.i(TAG, "mod pack restart: file select " + autoSeen);
+        }
+        // settled: the boxes acted on fully shown (fading in / out: wait), the same for two looks
+        boolean settled = start != null ? start[2] >= 255 && (own == null || own[2] >= 255) : own != null && own[2] >= 255;
+        if (start == null) for (java.util.Map.Entry<String, float[]> e : box.entrySet())
+            if (e.getKey().startsWith("L_SaveData_0") && e.getValue()[2] < 255) settled = false;
+        if (!settled || box.isEmpty()) { autoSteady = 0; return; }
+        if (++autoSteady < 2) return;
+        if (start != null) {  // a file opened: its box alone above the buttons
+            if (files == 1 && own != null && own[1] < 0.4f) {
+                Log.i(TAG, "mod pack restart: save file " + file + " opened, Start");
+                drcTap(new float[] {start[0], start[1]});
+                autoActed = now;
+                autoSteady = 0;
+            } else if (files == 1 && own == null) {
+                Log.i(TAG, "mod pack restart: another file opened, back");
+                autoActed = now;
+                autoSteady = 0;
+                autoPress(Native.B);
+            }
+            return;
+        }
+        if (files == 3 && own != null && others == 2 && Math.abs(own[0] - 0.5f) < 0.03f) {  // the list, settled
+            Log.i(TAG, "mod pack restart: save file " + file + " tapped in the list");
+            drcTap(new float[] {own[0], own[1]});
+            autoActed = now;
+            autoSteady = 0;
+        }
+    }
+
+    private void autoPress(int button) {
+        autoButtons = button;
+        pushInput();
+        keyHandler.postDelayed(() -> { autoButtons = 0; pushInput(); }, 150);
+    }
+
+    private void autoEnd(boolean note) {
+        int file = prefs.getInt("packs_auto_file", 0);
+        prefs.edit().remove("packs_auto_file").apply();
+        autoButtons = 0;
+        if (note) packLoadingEnd();
+        if (note) new GameDialog(this).title(R.string.opt_packs).message(getString(R.string.packs_switched, file)).button(R.string.opt_ok, null).show();
+    }
 
     void chooseImport() {
         new GameDialog(this).title(R.string.opt_import).message(R.string.backup_import_how)

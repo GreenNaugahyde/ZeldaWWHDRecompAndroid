@@ -87,7 +87,7 @@ final class StarterQuestions {
                 .putBoolean("context_buttons", true)
                 .putBoolean("item_tap", true)
                 .putBoolean("item_tap_focus", true)          // while aiming only the aiming buttons
-                .putInt("zl_after_defeat", 1)                // ZL locks the next target
+                .putInt("zl_after_defeat", 2)                // ZL locks every enemy (the nearest)
                 .putInt("touch_camera", 1)                   // the right half: swipe
                 .putFloat("swipe_speed", MainActivity.SWIPE_SPEED_DEFAULT + 1f)  // +100
                 .putBoolean("item_ring", true)

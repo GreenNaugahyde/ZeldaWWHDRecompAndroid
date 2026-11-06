@@ -44,6 +44,7 @@
 #include "mods.h"
 #include "release.h"
 #include "runtime.h"
+#include "guest_addr.h"
 
 namespace mods {
 namespace {
@@ -240,7 +241,59 @@ void set_warp_place(float x, float y, float z, int angle) {
     g_next_place = Place{true, x, y, z, (int16_t)angle};
 }
 
+// Straight to the file select (set_boot_skip): on the title's draw, once no fade runs, the file select's scene
+// asked for as the title actor does it after a press (daTitle_Execute 024B8890: fopScnM_ChangeReq(stage scene, 9 = the
+// name scene in this release, 0, 5)); once per start
+std::atomic<int> g_boot_skip{0};
+void set_boot_skip(int mode) {
+    g_boot_skip = mode;
+    LOG("[boot] title skip %s", mode ? "on" : "off");
+}
+
+namespace {
+// a guest call from the draw hook: its arguments and the other volatile registers must survive
+uint32_t call_keeping(Cpu* c, uint32_t fn, std::initializer_list<uint32_t> args) {
+    uint32_t r[13];
+    uint8_t cr[32];
+    std::remove_reference_t<decltype(c->f[0])> f[14];
+    memcpy(r, c->r, sizeof r);
+    memcpy(cr, c->cr, sizeof cr);
+    memcpy(f, c->f, sizeof f);
+    uint8_t so = c->xer_so, ov = c->xer_ov, ca = c->xer_ca;
+    uint32_t pc = c->pc;
+    uint32_t ret = guest_call(c, release::Code{fn}, args);
+    memcpy(c->r, r, sizeof r);
+    memcpy(c->cr, cr, sizeof cr);
+    memcpy(c->f, f, sizeof f);
+    c->xer_so = so, c->xer_ov = ov, c->xer_ca = ca;
+    c->pc = pc;
+    return ret;
+}
+
+void boot_skip_draw(Cpu* c, uint32_t scene) {
+    if (g_boot_skip.load(std::memory_order_relaxed) == 0) return;
+    {  // (what it waits for, each time it changes)
+        static std::string last;
+        std::string now = name_at(kPlay + kStartStage) + (ld32(kOverlap) ? " fading" : "");
+        if (now != last) LOG("[boot] title skip: scene draw on %s", (last = now).c_str());
+    }
+    // (the title; also while it fades in: the request is refused until the scene manager takes one, asked again
+    // at each draw)
+    if (name_at(kPlay + kStartStage) != "sea_T") return;
+    constexpr uint32_t kNameScene = 9;  // (the file select in this release: daTitle_Execute 024B8888 on a press; 0xD is the title demo loop)
+    uint32_t ok = call_keeping(c, 0x025DC86C, {scene, kNameScene, 0, 5});
+    static int refused = 0;
+    if (!ok) {
+        if (refused++ == 0) LOG("[boot] title: file select refused, asked again at each draw");
+        return;
+    }
+    LOG("[boot] title: file select requested (%d times refused before)", refused);
+    g_boot_skip = 0;
+}
+}  // namespace
+
 void warp_title_draw(Cpu* c, uint32_t scene) {
+    boot_skip_draw(c, scene);
     if (!g_title_change.load(std::memory_order_relaxed)) return;
     if (name_at(kPlay + kStartStage) != "sea_T") {
         g_title_change = false;
@@ -375,6 +428,158 @@ void warp_service() {
     g_watch = 450;
     LOG("[warp] %s -> %.8s room %d spawn %d layer %d", name_at(p + kStartStage).c_str(), r.stage, r.room, r.spawn,
         r.layer);
+}
+
+// ---- straight into a save file from the file select (set_boot_file), as its Start does. The title/name controller's
+// states (objects of 0x2C: +0 id, +0x10 enter, +0x18 execute; made by 0270C04C): 1049EA58 the file select,
+// 1049EB34 Start (enter 0270B5B4: the music faded out; execute 0270B5F4: the file numbered in the game info +0x12B0
+// loaded through the save manager, 02721908: dSv_info_c init, card_to_memory 025BA7B0, pictures; then 1049EB60), on
+// 1049EB60 the file select's scene starts the game (025ADD1C -> 025ADC60: dComIfGs_gameStart, play scene). Here: the
+// file's number set and the controller put into Start (its state change 020063C0), as the Start button does. Only for
+// a file with data (a new game asks for a name: left to the player).
+std::atomic<int> g_boot_file{0};
+void set_boot_file(int file) {
+    g_boot_file = file;
+    LOG("[boot] straight into save file %d", file);
+}
+
+namespace {
+const release::Data kNameOwner{0x101F82EC};  // the title/name controller (controller_selection.cpp)
+const release::Data kSaveMgr{0x101F852C};    // the save manager: +0x64 the card buffer (3 x 0xA94)
+const release::Data kGameInfo{0x101F84DC};   // dSv_info_c (save at +0x20): +0x12B0 the file's number
+constexpr uint32_t kStateSaveDataSelect = 0x1049EA58, kStateStart = 0x1049EB34, kCardSlot = 0xA94, kInfoDataNum = 0x12B0;
+bool object(uint32_t p) { return p >= mem::kMem2Start && p < mem::kMem2End - 0x200; }
+
+uint32_t state_key(Cpu* c, uint32_t state) {
+    uint32_t vt = ld32(state + 8);
+    return object(vt) ? guest_call(c, ld32(vt + 0x14), {state}) : 0;
+}
+}  // namespace
+
+int name_state(Cpu* c) {
+    uint32_t owner = ld32(kNameOwner);
+    if (!object(owner) || name_at(kPlay + kStartStage) != "Name") return 0;
+    Cpu saved = *c;
+    uint32_t state = guest_call(c, GC(0x02006478), {owner + 0x10});
+    int out = 3;
+    if (object(state)) {
+        uint32_t k = state_key(c, state);
+        if (k == state_key(c, GD(kStateSaveDataSelect))) out = 1;
+        else if (k == state_key(c, GD(kStateStart))) out = 2;
+    }
+    *c = saved;
+    return out;
+}
+
+int name_file() {
+    uint32_t info = ld32(kGameInfo);
+    return object(info) ? ld8(info + kInfoDataNum) + 1 : 0;
+}
+
+void name_back_to_files(Cpu* c) {
+    uint32_t owner = ld32(kNameOwner);
+    if (!object(owner)) return;
+    // the menu (+0x134) back to choosing first, as after a cancelled name entry (NameInput's execute 0270AEC8): 026D23DC
+    // clears its Start / new-file decisions (+0x1CC, +0x1CD; the file select's state would take Start again at once)
+    // and puts the menu back into its choosing state; then the controller back to the file select
+    uint32_t menu = ld32(owner + 0x134);
+    Cpu saved = *c;
+    if (object(menu)) guest_call(c, GC(0x026D23DC), {menu});
+    guest_call(c, GC(0x020063C0), {owner + 0x10, GD(kStateSaveDataSelect)});
+    *c = saved;
+    LOG("[boot] file select: back from Start to the files");
+}
+
+// The title cut out (set_boot_skip): the logo scene's end (025ABFB0, all loaded) hands over with
+// dComIfG_changeOpeningScene 02520230, at each of its draws until the scene changes: next stage sea_T,
+// fopScnM_ChangeReq(logo, 8 = the opening scene, 0, 30), then fopScnM_ReRequest(8, 0), which writes the
+// proc name into the queued request again (r29 holds it across the ChangeReq). At the ChangeReq (its hook,
+// turbo.cpp) the proc name becomes 9, the file select (name) scene, as the title asks for it after a
+// press, in the argument and in r29, and the next stage the file select's own "Name" (else its create
+// loads the title's island first). Only while no stage is set yet (the logos).
+namespace {
+constexpr uint32_t kOpeningScene = 8, kNameScene = 9;
+std::atomic<bool> g_title_cut{false};  // the logos handed over to the file select
+const release::Data kPermOnce{0x101F4F28}, kResMgr{0x101F4F7C};
+}  // namespace
+
+void boot_scene_request(Cpu* c, uint32_t lr) {
+    if (c->r[4] != kOpeningScene || !g_boot_skip.load(std::memory_order_relaxed)) return;
+    if (lr != GC(0x025202D4)) return;  // (from dComIfG_changeOpeningScene)
+    if (!name_at(kPlay + kStartStage).empty()) return;  // (not the logos: back from the file select, a reset)
+    c->r[4] = kNameScene;
+    c->r[29] = kNameScene;  // (the ReRequest after it)
+    static const char kName[8] = "Name";
+    for (int i = 0; i < 8; i++) st8(kPlay + kNextStage + i, (uint8_t)kName[i]);
+    st16(kPlay + kNextPoint, 0);
+    st8(kPlay + kNextRoom, 0);
+    st8(kPlay + kNextLayer, 0);
+    if (!g_title_cut.exchange(true)) LOG("[boot] logos: the title cut out, the file select asked for in its place");
+}
+
+// The save files that hold a game, as the file select shows them (bits 0..2; -1: not in the file select's file
+// list): its menu ([owner+0x134]) keeps per file a 72-byte entry at [menu+0x2D4], refreshed from the card buffer
+// (02726FC4); a file is new (empty) when its u16 at +0x24 is 0 (026CCECC, which sets menu+0x1CD "new file").
+// Read by the app (a deleted file lets go of its mod packs)
+std::atomic<int> g_slots_used{-1};
+int save_slots_used() { return g_slots_used.load(std::memory_order_relaxed); }
+
+void boot_service(Cpu* c) {
+    {
+        static int tick = 0;
+        if (++tick % 15 == 0) {
+            int used = -1;
+            uint32_t owner = ld32(kNameOwner);
+            uint32_t menu = object(owner) ? ld32(owner + 0x134) : 0;
+            uint32_t info = object(menu) ? ld32(menu + 0x2D4) : 0;
+            if (object(info) && name_state(c) == 1) {
+                used = 0;
+                for (int k = 0; k < 3; k++)
+                    if (ld16(info + k * 72 + 0x24)) used |= 1 << k;
+            }
+            g_slots_used = used;
+        }
+    }
+    if (g_title_cut.load(std::memory_order_relaxed) && name_at(kPlay + kStartStage) == "Name") {
+        g_title_cut = false;
+        g_boot_skip = 0;  // (the file select there: its way back to the title stays)
+        // The first play scene asks the resource manager once for the room packs szs_permanent0..2 and
+        // doesn't wait for them (025B1F54: a flag at [101F4F28]+0x212C, then 02612A80 on [101F4F7C]); the
+        // title's play scene was that first one, seconds ahead. Without it the save file's stage asks only
+        // itself and reads its rooms before the packs are there (d_s_room.cpp "fileList != 0", a halt).
+        // So asked here, as that phase does, while the file select shows.
+        uint32_t sys = ld32(kPermOnce), mgr = ld32(kResMgr);
+        if (object(sys) && object(mgr) && !ld8(sys + 0x212C)) {
+            st8(sys + 0x212C, 1);
+            Cpu saved = *c;
+            uint32_t ok = guest_call(c, GC(0x02612A80), {mgr});
+            *c = saved;
+            LOG("[boot] file select: room packs asked for (as the title's play scene does)%s", ok ? "" : ", already under way");
+        }
+    }
+    static int seen = 0;  // frames the file select has been there
+    const int file = g_boot_file.load(std::memory_order_relaxed);
+    if (file <= 0 || file > 3) return;
+    uint32_t owner = ld32(kNameOwner);
+    if (!object(owner) || ld32(kOverlap) || name_state(c) != 1) { seen = 0; return; }
+    if (++seen < 20) return;  // (its boxes in place first)
+    g_boot_file = 0;
+    uint32_t mgr = ld32(kSaveMgr), info = ld32(kGameInfo);
+    uint32_t card = object(mgr) ? ld32(mgr + 0x64) : 0;
+    if (!object(card) || !object(info)) {
+        LOG("[boot] file select: no save buffer, save file %d left to the player", file);
+        return;
+    }
+    uint16_t maxLife = ld16(card + (uint32_t)(file - 1) * kCardSlot);
+    if (maxLife < 12 || maxLife > 80) {
+        LOG("[boot] file select: save file %d has no game (max life %u), left to the player", file, maxLife);
+        return;
+    }
+    st8(info + kInfoDataNum, (uint8_t)(file - 1));
+    Cpu saved = *c;
+    guest_call(c, GC(0x020063C0), {owner + 0x10, GD(kStateStart)});
+    *c = saved;
+    LOG("[boot] file select: save file %d started (the controller's Start)", file);
 }
 
 }  // namespace mods

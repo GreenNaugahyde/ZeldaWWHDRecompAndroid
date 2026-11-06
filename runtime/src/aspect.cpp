@@ -949,6 +949,29 @@ std::atomic<uint64_t> g_cursor_frame{0};
 
 std::string pane_name(uint32_t p) { return std::string((const char*)mem::ptr(p + kPaneName), strnlen((const char*)mem::ptr(p + kPaneName), 24)); }
 
+// the touch boxes of a menu drawn to the TV and the GamePad at once (the file select): menu_targets
+std::unordered_map<uint32_t, Target> g_menu_targets;
+void note_menu_target(uint32_t pane) {
+    const uint32_t m = pane + kPaneGlobal;
+    float gx = (float)ldf32(m + 0xC), gy = (float)ldf32(m + 0x1C);
+    float w = (float)ldf32(pane + kPaneSize) * std::hypot((float)ldf32(m), (float)ldf32(m + 0x10));
+    float h = (float)ldf32(pane + kPaneSize + 4) * std::hypot((float)ldf32(m + 4), (float)ldf32(m + 0x14));
+    if (!(w > 1.0f && h > 1.0f) || std::fabs(gx) > 640.0f || std::fabs(gy) > 360.0f) return;  // parked
+    // (the parent's parent too: a file's box sits in its own part)
+    uint32_t p = ld32(pane + kPaneParent), pp = p ? ld32(p + kPaneParent) : 0;
+    std::string parent = pane_name(p) + (pp ? "<" + pane_name(pp) : "");
+    // visible: the pane and its parents shown, alpha (global) above 0
+    int vis = 1;
+    for (uint32_t a = pane; a; a = ld32(a + kPaneParent))
+        if (!(ld8(a + kPaneFlags) & 1)) vis = 0;
+    char tag[16];
+    snprintf(tag, sizeof tag, "|v%d|a%d", vis, ld8(pane + kPaneAlpha + 1));
+    Target t{pane_name(pane), parent + tag, 0.5f + gx / 1280.0f, 0.5f - gy / 720.0f, w / 1280.0f, h / 720.0f, g_swaps};
+    std::lock_guard<std::mutex> lk(g_target_mu);
+    if (g_menu_targets.size() > 256) g_menu_targets.clear();
+    g_menu_targets[pane] = std::move(t);
+}
+
 void note_drc_pane(uint32_t pane) {
     const char* n = (const char*)mem::ptr(pane + kPaneName);
     bool target = n[0] == 'B' && n[1] == '_', cursor = !target && name_is(pane, "W_Cursor_00");
@@ -968,6 +991,10 @@ void note_drc_pane(uint32_t pane) {
     if (!target && !cursor && !floor && !fig) return;
     uint32_t root = pane;
     for (int i = 0; i < 16 && ld32(root + kPaneParent); i++) root = ld32(root + kPaneParent);
+    if (target && !ld32(root + kPaneParent) && root_screen(root) == kTvTarget && root_also_elsewhere(root)) {
+        note_menu_target(pane);  // (a menu on both screens: the title's, the file select)
+        return;
+    }
     if (ld32(root + kPaneParent) || root_screen(root) != kDrcTarget) return;
     if (cursor) { g_cursor_frame.store(g_swaps, std::memory_order_relaxed); return; }
     const uint32_t m = pane + kPaneGlobal;  // layout space: 1280x720, centre 0,0, y up
@@ -1099,6 +1126,20 @@ std::string drc_targets() {
                 LOG("[drc-inventory] %s", b);
             }
         }
+    }
+    return out;
+}
+
+std::string menu_targets() {
+    std::string out;
+    std::lock_guard<std::mutex> lk(g_target_mu);
+    char buf[200];
+    for (auto it = g_menu_targets.begin(); it != g_menu_targets.end();) {
+        const Target& t = it->second;
+        if (g_swaps - t.frame > 3) { it = g_menu_targets.erase(it); continue; }
+        snprintf(buf, sizeof buf, "%s %s %.4f %.4f %.4f %.4f;", t.name.c_str(), t.parent.c_str(), t.x, t.y, t.w, t.h);
+        out += buf;
+        ++it;
     }
     return out;
 }

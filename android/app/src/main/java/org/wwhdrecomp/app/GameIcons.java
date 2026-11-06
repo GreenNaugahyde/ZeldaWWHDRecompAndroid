@@ -21,7 +21,7 @@ import java.util.Map;
  */
 final class GameIcons {
     private static final String DIR = "game_icons";
-    private static final int VERSION = 50;  // bump to rebuild after a change of the list
+    private static final int VERSION = 52;  // bump to rebuild after a change of the list
     private static final String ITEMS = "BtnItemIcon_00", COLLECT = "BtnCollectIcon_00";
     private static final Map<String, Bitmap> cache = new HashMap<>();
     private static volatile boolean building, failed;  // (failed: one try per start without a 2D pack)
@@ -270,7 +270,8 @@ final class GameIcons {
             LINK_JATTACK = "link_jattack_", LINK_LADDER = "link_ladder_", LINK_IVY = "link_ivy_", LINK_HANG = "link_hang_",
             SAIL_UP = "link_sailup_", SAIL_UP_SWIFT = "link_sailup_swift_", SAIL_DOWN = "link_saildown_",
             SAIL_DOWN_SWIFT = "link_saildown_swift_", SAILING = "link_sailing_", DRIFTING = "link_drifting_",
-            CRUISE = "link_cruise_",
+            CRUISE = "link_cruise_", CANNON = "link_cannon_", SALVAGE = "link_salvage_", CANNON_FIRE = "link_cannonfire_",
+            CRANE = "link_crane_", CANNON_STOW = "link_cannonstow_", SALVAGE_STOW = "link_salvagestow_",
             LINK_GETIN = "link_getin_", LINK_GETOUT = "link_getout_", LINK_TALK = "link_talk_", LINK_WALKAWAY = "link_walkaway_",
             LINK_CHECK = "link_check_", LINK_ROPE = "link_rope_", LINK_WEAPON = "link_weapon_", LINK_WTHROW = "link_wthrow_", LINK_WDROP = "link_wdrop_", LINK_GET = "link_get_", LINK_CONDUCT = "link_conduct_";
     static final int LINK_ROLL_FRAMES = 12, LINK_ROLL_REST = 12;
@@ -278,6 +279,7 @@ final class GameIcons {
             {LINK_DOOR, 12}, {LINK_CHEST, 10}, {LINK_PUSH, 21}, {LINK_PICKUP, 8}, {LINK_KNEEL, 8}, {LINK_RISE, 8}, {POSTBOX, 10},
             {LINK_JATTACK, 12}, {LINK_LADDER, 10}, {LINK_IVY, 10}, {LINK_HANG, 10},
             {SAIL_UP, 10}, {SAIL_UP_SWIFT, 10}, {SAIL_DOWN, 10}, {SAIL_DOWN_SWIFT, 10}, {SAILING, 8}, {DRIFTING, 8}, {CRUISE, 16},
+            {CANNON, 16}, {SALVAGE, 16}, {CANNON_FIRE, 10}, {CRANE, 12}, {CANNON_STOW, 8}, {SALVAGE_STOW, 8},
             {LINK_GETIN, 10}, {LINK_GETOUT, 10}, {LINK_TALK, 12}, {LINK_WALKAWAY, 12}, {LINK_CHECK, 12},
             {LINK_GET, 18}, {LINK_CONDUCT, 12}, {LINK_ROPE, 16}, {LINK_WEAPON, 10}, {LINK_WTHROW, 8}, {LINK_WDROP, 8}};
     /** the variants of some of them by what Link holds or lifts (link_icons.cpp: <name>_<variant>_<i>; the plain one is
@@ -348,7 +350,7 @@ final class GameIcons {
         if (b == null) return false;
         for (Map.Entry<String, Bitmap> e : cache.entrySet())
             if (e.getValue() == b) return e.getKey().startsWith("link_") || e.getKey().startsWith("#sidle:") || e.getKey().startsWith("#carry:")
-                        || e.getKey().startsWith("#sailing:") || e.getKey().startsWith("#stop:") || e.getKey().startsWith("#cruise:")
+                        || e.getKey().startsWith("#sailing:") || e.getKey().startsWith("#stop:") || e.getKey().startsWith("#cruise:") || e.getKey().startsWith("#cannon:")
                         || e.getKey().startsWith("#speak:") || e.getKey().startsWith("#exit:") || e.getKey().startsWith("#check:");
         return false;
     }
@@ -568,6 +570,58 @@ final class GameIcons {
                 cv.drawRoundRect(new android.graphics.RectF(r.left - e, r.top - e, r.right + e, r.bottom + e), rr + e, rr + e, bar);
                 bar.setColor(0xFFFFFFFF);
                 cv.drawRoundRect(r, rr, rr, bar);
+                return out;
+            }
+            case "cannon": {  // the boat's cannon firing (#cannon:<picture>; CANNON: rising first, the shot at 8; CANNON_FIRE: at 1): a
+                Bitmap ship = get(c, k[1], whenReady);    // flash at its muzzle, a puff of smoke growing and fading, the ball flying off up ahead
+                if (ship == null) return null;
+                int i = Integer.parseInt(k[1].substring(k[1].lastIndexOf('_') + 1));
+                final float sx = 0.47f, sy = 0.56f, ss = 0.86f;  // (the boat's picture here; its muzzle at 0.671, 0.12 in it)
+                float mx = sx + (0.671f - 0.5f) * ss, my = sy + (0.12f - 0.5f) * ss;
+                place(cv, ship, 0, sx, sy, ss);
+                android.graphics.Paint p = new android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG);
+                int f = i - (k[1].startsWith(CANNON_FIRE) ? 1 : 8);  // (pictures after the shot)
+                if (f >= 0 && f <= 4) {  // smoke: three puffs round the muzzle, growing, then thinning out
+                    float g = 0.05f + 0.025f * f;
+                    int alpha = f < 2 ? 255 : 255 - (f - 1) * 60;
+                    float[][] puffs = {{0, 0}, {-0.05f, 0.03f}, {0.04f, 0.035f}};
+                    for (int pass = 0; pass < 2; pass++) {
+                        p.setColor(pass == 0 ? 0xFF0A0A14 : 0xFFF2F2F2);
+                        p.setAlpha(alpha);
+                        for (float[] q : puffs) {
+                            float r = (g + (q[0] == 0 ? 0.01f : 0)) * SIZE + (pass == 0 ? SIZE * 0.018f : 0);
+                            cv.drawCircle((mx + q[0] - 0.01f * f) * SIZE, (my + q[1] - 0.012f * f) * SIZE, r, p);
+                        }
+                    }
+                }
+                if (f == 0) {  // the flash: a yellow star at the muzzle
+                    android.graphics.Path star = new android.graphics.Path();
+                    for (int v = 0; v < 16; v++) {
+                        double a = Math.PI * 2 * v / 16 - Math.PI / 2;
+                        float r = (v % 2 == 0 ? 0.11f : 0.05f) * SIZE;
+                        float x = mx * SIZE + (float) Math.cos(a) * r, y = (my - 0.02f) * SIZE + (float) Math.sin(a) * r;
+                        if (v == 0) star.moveTo(x, y); else star.lineTo(x, y);
+                    }
+                    star.close();
+                    p.setStyle(android.graphics.Paint.Style.STROKE);
+                    p.setStrokeJoin(android.graphics.Paint.Join.ROUND);
+                    p.setStrokeWidth(SIZE * 0.03f);
+                    p.setColor(0xFF0A0A14);
+                    cv.drawPath(star, p);
+                    p.setStyle(android.graphics.Paint.Style.FILL);
+                    p.setColor(0xFFFFE04A);
+                    cv.drawPath(star, p);
+                }
+                if (f >= 0 && f <= 3) {  // the ball: off up ahead (right), getting a little smaller
+                    float bx = mx + 0.045f + 0.075f * f, by = my - 0.03f - 0.05f * f + 0.006f * f * f, br = SIZE * (0.04f - 0.004f * f);
+                    p.setStyle(android.graphics.Paint.Style.FILL);
+                    p.setColor(0xFF0A0A14);
+                    cv.drawCircle(bx * SIZE, by * SIZE, br + SIZE * 0.016f, p);
+                    p.setColor(0xFF3A3A40);
+                    cv.drawCircle(bx * SIZE, by * SIZE, br, p);
+                    p.setColor(0xFF8A8A96);
+                    cv.drawCircle((bx - 0.012f) * SIZE, (by - 0.012f) * SIZE, br * 0.35f, p);
+                }
                 return out;
             }
             case "cruise": {  // the boat, the sail down, creeping ahead over the pictures, its wake behind it: R Cruise (#cruise:<picture>)

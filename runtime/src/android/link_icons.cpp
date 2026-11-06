@@ -221,6 +221,10 @@ struct Part {
     int onJoint = -1;  // ... at this joint of it (its own bones at rest from there); -1: skinned to that part's bones
     std::string poseAnim;  // ... in this animation of its file (at poseFrame), not at rest
     float poseFrame = 0;
+    int turnBone = -1;  // Request.turn turns this bone of it (its children with it) about its axis turnAxis (0 x, 1 y, 2 z)
+    int turnAxis = 0;
+    float turnSign = 1, turnBase = 0;  // (degrees: turnBase + turnSign * Request.turn)
+    int hideBone = -1;  // shown: that bone of its onPart (and its children) hidden (the mast, for the cannon / salvage arm)
 };
 
 struct Model {
@@ -886,6 +890,33 @@ int render(const std::string& gameDir, const std::string& outDir, const std::vec
             head.poseAnim = "fn_talk_a";  // (its bind pose is a tangle: the game always plays one of its animations)
             m.parts.push_back(std::move(head));
         }
+        // the cannon (vfncn) and the salvage arm (vfncr), variants "cannon" / "crane": d_a_ship's bodyJointCallBack puts
+        // them on the mast's joint turned ZrotS(0xC000) (the cannon then YrotM(0x8000)) and shrinks the mast to nothing;
+        // cannonJointCallBack tilts canon2 (YrotS(-m0396)), craneJointCallBack swings V_crane_rotation (ZrotS(-m0398))
+        if (mast >= 0) {
+            constexpr float kD = (float)M_PI / 180;
+            static const struct { const char* model; const char* variant; const char* bone; int axis; float sign; float yaw; } kParts[] = {
+                {"vfncn", "cannon", "canon2", 1, -1, -180}, {"vfncr", "crane", "V_crane_rotation", 2, -1, 0}};
+            for (const auto& k : kParts) {
+                Part pt;
+                if (!load_model(r, k.model, m, pt)) {
+                    LOG("[link_icons] %s not loaded", k.model);
+                    continue;
+                }
+                pt.tag = "ship";
+                pt.variant = k.variant;
+                pt.hasVariant = true;
+                pt.onPart = (int)si;
+                pt.onJoint = mast;
+                pt.hideBone = mast;
+                pt.offset = mul(srt({1, 1, 1}, {0, 0, -90 * kD}, {0, 0, 0}), srt({1, 1, 1}, {0, k.yaw * kD, 0}, {0, 0, 0}));
+                for (size_t b = 0; b < pt.bones.size(); b++)
+                    if (pt.bones[b].name == k.bone) pt.turnBone = (int)b;
+                pt.turnAxis = k.axis;
+                pt.turnSign = k.sign;
+                m.parts.push_back(std::move(pt));
+            }
+        }
         if (mast < 0 || sail1 < 0) break;
         for (int v = 0; v < 2; v++) {
             Texture t;
@@ -1070,6 +1101,12 @@ int render(const std::string& gameDir, const std::string& outDir, const std::vec
         } else {
             LOG("[link_icons] the rope (Always: rope) not loaded");
         }
+        // the salvage arm's hook at the rope's foot (Request.craneRope; d_a_ship's mpLinkModel: Link's ropeend)
+        Part end;
+        if (load_model(link, "ropeend", m, end)) {
+            end.tag = "ropeend";
+            m.parts.push_back(std::move(end));
+        }
     }
     pack.clear();
     int written = 0;
@@ -1185,26 +1222,53 @@ int render(const std::string& gameDir, const std::string& outDir, const std::vec
                 for (M34& b : body) b.m[11] += slide;
             Frame f;
             std::vector<std::vector<M34>> worlds(m.parts.size());  // (the parts on other parts use theirs)
+            std::map<int, int> hideOn;  // part -> its bone hidden (Part.hideBone), done once all are placed
+            std::vector<bool> fits(m.parts.size(), false);  // (the parts the framing fits)
+            V3 craneTop;
             for (size_t pi = 0; pi < m.parts.size(); pi++) {
                 const Part& p = m.parts[pi];
                 bool drawn = p.tag.empty() && pi > 0 && rq.sword && p.hand >= 0;
-                if (!p.tag.empty() ? p.tag != rq.with || (p.hasVariant && p.variant != rq.withVariant)
-                                   : rq.noLink || (pi > 0 && (!rq.gear || (p.drawnOnly && !drawn)))) {
+                float ropeLen = rq.craneRope.empty() ? 0 : rq.craneRope[std::min((size_t)i, rq.craneRope.size() - 1)];
+                bool craneRope = ropeLen > 0 && (p.tag == "rope" || p.tag == "ropeend");
+                if (!craneRope && (!p.tag.empty() ? p.tag != rq.with || (p.hasVariant && p.variant != rq.withVariant)
+                                                  : rq.noLink || (pi > 0 && (!rq.gear || (p.drawnOnly && !drawn))))) {
                     f.parts.emplace_back();
                     continue;
                 }
                 std::vector<M34>& world = worlds[pi];
                 world = body;
-                if (p.tag == "rope") {  // from the hook down to his hands (or swinging alone)
+                if (craneRope) {  // from the salvage arm's end (its rope_offset 160 along V_crane_rotation) straight down
+                    V3 top = craneTop, foot = craneTop - V3{0, ropeLen, 0};
+                    if (p.tag == "rope") world = {srt({1, 1, 1}, {0, 0, 0}, top), srt({1, 1, 1}, {0, 0, 0}, foot)};
+                    else {
+                        world.resize(p.rest.size());
+                        for (size_t b = 0; b < p.rest.size(); b++) world[b] = mul(srt({1, 1, 1}, {0, 0, 0}, foot), p.rest[b]);
+                    }
+                } else if (p.tag == "rope") {  // from the hook down to his hands (or swinging alone)
                     world = {srt({1, 1, 1}, {0, 0, 0}, ropeTop), srt({1, 1, 1}, {0, 0, 0}, ropeFoot)};
                 } else if (p.onPart >= 0 && p.onJoint < 0) {
                     world = worlds[p.onPart];
                 } else if (p.onPart >= 0) {
-                    M34 base = p.onJoint < (int)worlds[p.onPart].size() ? worlds[p.onPart][p.onJoint] : M34();
+                    M34 base = mul(p.onJoint < (int)worlds[p.onPart].size() ? worlds[p.onPart][p.onJoint] : M34(), p.offset);
                     auto pa = partPoses.find(pi);
-                    const std::vector<M34>& own = pa != partPoses.end() ? pa->second : p.rest;
+                    std::vector<M34> turned;
+                    if (p.turnBone >= 0 && !rq.turn.empty()) {  // (Request.turn: about the bone's own axis, its children with it)
+                        float deg = p.turnBase + p.turnSign * rq.turn[std::min((size_t)i, rq.turn.size() - 1)];
+                        V3 r{0, 0, 0};
+                        (&r.x)[p.turnAxis] = deg * (float)M_PI / 180;
+                        M34 extra = srt({1, 1, 1}, r, {0, 0, 0});
+                        turned.resize(p.bones.size());
+                        for (size_t b = 0; b < p.bones.size(); b++) {
+                            M34 l = srt(p.bones[b].s, p.bones[b].r, p.bones[b].t);
+                            if ((int)b == p.turnBone) l = mul(l, extra);
+                            turned[b] = p.bones[b].parent >= 0 ? mul(turned[p.bones[b].parent], l) : l;
+                        }
+                    }
+                    const std::vector<M34>& own = !turned.empty() ? turned : pa != partPoses.end() ? pa->second : p.rest;
                     world.resize(own.size());
                     for (size_t b = 0; b < own.size(); b++) world[b] = mul(base, own[b]);
+                    if (p.hideBone >= 0) hideOn[p.onPart] = p.hideBone;
+                    if (p.variant == "crane" && p.turnBone >= 0) craneTop = world[p.turnBone].point({160, 0, 0});
                 } else if (!p.tag.empty() && p.joint < 0) {  // standing in front of him, in its own animation (or at rest)
                     M34 at = srt({1, 1, 1}, {0, rq.withYaw * (float)M_PI / 180, 0}, {rq.withAt[0], rq.withAt[1], rq.withAt[2] + slide});
                     if (rq.withRock != 0) {  // rocking on the waves: once round over the pictures
@@ -1227,7 +1291,8 @@ int render(const std::string& gameDir, const std::string& outDir, const std::vec
                 std::vector<std::vector<Posed>> shapes;
                 for (const Shape& s : p.shapes) {
                     shapes.push_back(skin(p, s, world));
-                    if (rq.fitLink && !p.tag.empty()) continue;  // (the thing may go past the picture's edges)
+                    if (rq.fitLink && !p.tag.empty() || craneRope) continue;  // (the thing may go past the picture's edges)
+                    fits[pi] = true;
                     for (const Posed& v : shapes.back()) {
                         float x = dot(v.p, cam.right), y = dot(v.p, cam.up);
                         f.lo[0] = std::min(f.lo[0], x), f.hi[0] = std::max(f.hi[0], x);
@@ -1235,6 +1300,29 @@ int render(const std::string& gameDir, const std::string& outDir, const std::vec
                     }
                 }
                 f.parts.push_back(std::move(shapes));
+            }
+            for (auto [pi, hb] : hideOn) {  // the hidden bone and its children shrunk to nothing at its place (as d_a_ship's mast)
+                const Part& p = m.parts[pi];
+                std::vector<M34> w = worlds[pi];
+                M34 squash = mul(w[hb], mul(srt({0.001f, 0.001f, 0.001f}, {0, 0, 0}, {0, 0, 0}), inverse(w[hb])));
+                for (size_t b = 0; b < p.bones.size(); b++) {
+                    int a = (int)b;
+                    while (a >= 0 && a != hb) a = p.bones[a].parent;
+                    if (a == hb) w[b] = mul(squash, w[b]);
+                }
+                for (size_t k = 0; k < p.shapes.size() && k < f.parts[pi].size(); k++) f.parts[pi][k] = skin(p, p.shapes[k], w);
+            }
+            if (!hideOn.empty()) {  // (the bounds again, without the hidden bone's shapes)
+                f.lo[0] = f.lo[1] = 1e30f, f.hi[0] = f.hi[1] = -1e30f;
+                for (size_t pi = 0; pi < f.parts.size(); pi++) {
+                    if (!fits[pi]) continue;
+                    for (const auto& sh : f.parts[pi])
+                        for (const Posed& v : sh) {
+                            float x = dot(v.p, cam.right), y = dot(v.p, cam.up);
+                            f.lo[0] = std::min(f.lo[0], x), f.hi[0] = std::max(f.hi[0], x);
+                            f.lo[1] = std::min(f.lo[1], y), f.hi[1] = std::max(f.hi[1], y);
+                        }
+                }
             }
             extent = std::max({extent, f.hi[0] - f.lo[0], f.hi[1] - f.lo[1]});
             frames.push_back(std::move(f));
@@ -1679,6 +1767,63 @@ int render_buttons(const std::string& gameDir, const std::string& outDir) {
     conduct.with = "baton";
     conduct.fixedFrame = true;
     rq.push_back(conduct);
+    // d-pad left / right in the boat: the cannon and the salvage arm (d_a_ship's setPartOnAnime: fn_mast_on2 brings the
+    // part up; 12 frames, 4 .. 5 past its bounce skipped, it rests from 11), the boat facing right, seen from a little
+    // ahead. The cannon rises with its barrel straight up (m0396 0), tilts down, fires (picture 8: GameIcons adds the
+    // flash, smoke and the ball; the barrel kicks up at 9) and stays up (the last picture rests between the plays)
+    Request cannon;
+    cannon.name = "link_cannon";
+    cannon.anim = "wait";
+    cannon.noLink = true;
+    cannon.with = "ship";
+    cannon.withAnim = "fn_mast_on2";
+    cannon.withVariant = "cannon";
+    cannon.frames = 1;
+    cannon.first = cannon.last = 0;
+    cannon.extra = {3.5f, 4.2f, 4.8f, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11};
+    cannon.turn = {0, 15, 35, 50, 55, 55, 50, 50, 50, 42, 47, 50};
+    cannon.yaw = -35;
+    cannon.pitch = 12;
+    cannon.fixedFrame = true;
+    rq.push_back(cannon);
+    // the salvage arm: rising, swinging out over the side (m0398 up to mCraneBaseAngle 0x3000), its rope with the hook
+    // let down
+    Request salvage = cannon;
+    salvage.name = "link_salvage";
+    salvage.withVariant = "crane";
+    salvage.extra = {3.5f, 4.2f, 4.8f, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11};
+    salvage.turn = {0, 0, 10, 35, 60, 67.5f};
+    salvage.craneRope = {0, 0, 0, 0, 0, 0, 30, 60, 90, 120, 145, 160};
+    rq.push_back(salvage);
+    // the action buttons while one of them is up: Fire (0x3F) the cannon shooting (picture 1: GameIcons' flash, the
+    // barrel kicking up at 2), Salvage (0x40) the hook let down and wound up again, Put away (0x08) the part going down
+    // (fn_mast_on2 backwards, its bounce skipped)
+    Request fire = cannon;
+    fire.name = "link_cannonfire";
+    fire.extra = std::vector<float>(9, 11);
+    fire.first = fire.last = 11;
+    fire.turn = {50, 50, 42, 47, 50};
+    rq.push_back(fire);
+    Request hook = salvage;
+    hook.name = "link_crane";
+    hook.extra = std::vector<float>(11, 11);
+    hook.first = hook.last = 11;
+    hook.turn = {67.5f};
+    hook.craneRope = {0, 30, 60, 90, 120, 150, 160, 160, 120, 80, 40, 0};
+    rq.push_back(hook);
+    Request cannonStow = cannon;
+    cannonStow.name = "link_cannonstow";
+    cannonStow.first = cannonStow.last = 11;
+    cannonStow.extra = {11, 4.8f, 4.2f, 3.5f, 2, 1, 0};
+    cannonStow.turn = {50, 40, 30, 20, 10, 5, 0};
+    rq.push_back(cannonStow);
+    Request salvageStow = salvage;
+    salvageStow.name = "link_salvagestow";
+    salvageStow.first = salvageStow.last = 11;
+    salvageStow.extra = {11, 4.8f, 4.2f, 3.5f, 2, 1, 0};
+    salvageStow.turn = {67.5f, 40, 15, 0};
+    salvageStow.craneRope.clear();
+    rq.push_back(salvageStow);
     for (Request& r : rq) r.size = 160;
     // an achievement earned: his item get (itemget: the hop round to face the camera, then the arm up; the game turns
     // him from behind to the camera with it), from behind, smiling, larger (AchievementPopup puts the icon over his hand)

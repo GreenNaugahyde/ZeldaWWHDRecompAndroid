@@ -141,14 +141,29 @@ elseif(ANDROID)
     set(CMAKE_ANDROID_ARCH_ABI ${ANDROID_ABI})  # libadrenotools checks it
   endif()
   FetchContent_MakeAvailable(glslang vma volk adrenotools)
-  # mod pack import (runtime/src/android/archive.cpp): zip and RAR 4/5 archives, read only, no crypto
+  # liblzma for 7z archives (LZMA/LZMA2) in the mod pack import: library only
+  FetchContent_Declare(xz GIT_REPOSITORY https://github.com/tukaani-project/xz.git GIT_TAG v5.8.1 GIT_SHALLOW TRUE)
+  foreach(opt XZ_NLS XZ_DOC XZ_TOOL_XZ XZ_TOOL_XZDEC XZ_TOOL_LZMADEC XZ_TOOL_LZMAINFO XZ_TOOL_SCRIPTS XZ_DOXYGEN)
+    set(${opt} OFF CACHE BOOL "" FORCE)
+  endforeach()
+  set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+  FetchContent_MakeAvailable(xz)
+  # libarchive's find_package(LibLZMA) takes these as found (no library file exists at configure time;
+  # its try-compile checks then fail quietly: LZMA_API_STATIC is a Windows matter, the MT encoder unused)
+  set(LIBLZMA_INCLUDE_DIR ${xz_SOURCE_DIR}/src/liblzma/api CACHE PATH "" FORCE)
+  set(LIBLZMA_LIBRARY liblzma CACHE STRING "" FORCE)
+  foreach(v LIBLZMA_HAS_AUTO_DECODER LIBLZMA_HAS_EASY_ENCODER LIBLZMA_HAS_LZMA_PRESET)
+    set(${v} 1 CACHE INTERNAL "")
+  endforeach()
+  # mod pack import (runtime/src/android/archive.cpp): zip, RAR 4/5 and 7z archives, read only, no crypto
   FetchContent_Declare(libarchive GIT_REPOSITORY https://github.com/libarchive/libarchive.git GIT_TAG v3.7.7 GIT_SHALLOW TRUE)
-  foreach(opt ENABLE_MBEDTLS ENABLE_NETTLE ENABLE_OPENSSL ENABLE_LIBB2 ENABLE_LZ4 ENABLE_LZO ENABLE_LZMA ENABLE_ZSTD ENABLE_BZip2
+  foreach(opt ENABLE_MBEDTLS ENABLE_NETTLE ENABLE_OPENSSL ENABLE_LIBB2 ENABLE_LZ4 ENABLE_LZO ENABLE_ZSTD ENABLE_BZip2
               ENABLE_LIBXML2 ENABLE_EXPAT ENABLE_PCREPOSIX ENABLE_PCRE2POSIX ENABLE_LIBGCC ENABLE_CNG ENABLE_TAR ENABLE_CPIO ENABLE_CAT
               ENABLE_UNZIP ENABLE_XATTR ENABLE_ACL ENABLE_ICONV ENABLE_TEST ENABLE_INSTALL ENABLE_COVERAGE ENABLE_WERROR)
     set(${opt} OFF CACHE BOOL "" FORCE)
   endforeach()
   set(ENABLE_ZLIB ON CACHE BOOL "" FORCE)
+  set(ENABLE_LZMA ON CACHE BOOL "" FORCE)
   set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
   set(CMAKE_POLICY_VERSION_MINIMUM 3.5)  # libarchive 3.7 declares an older minimum, which CMake 4 refuses
   FetchContent_MakeAvailable(libarchive)
@@ -235,7 +250,8 @@ elseif(ANDROID)
     "Vulkan Memory Allocator|MIT|${vma_SOURCE_DIR}/LICENSE.txt"
     "volk|MIT|${volk_SOURCE_DIR}/LICENSE.md"
     "libadrenotools|BSD-2-Clause|${adrenotools_SOURCE_DIR}/LICENSE"
-    "libarchive (mod pack archives: zip, RAR)|BSD-2-Clause|${libarchive_SOURCE_DIR}/COPYING"
+    "libarchive (mod pack archives: zip, RAR, 7z)|BSD-2-Clause|${libarchive_SOURCE_DIR}/COPYING"
+    "liblzma from XZ Utils (7z mod pack archives)|0BSD|${xz_SOURCE_DIR}/COPYING.0BSD"
     "linkernsbypass (part of libadrenotools)|BSD-2-Clause|${adrenotools_SOURCE_DIR}/lib/linkernsbypass/LICENSE"
     "TWWHD Randomizer (Game > Randomizer, in runtime/third_party/twwhd_rando)|MIT|${RANDO_DIR}/LICENSE.txt"
     "yaml-cpp (the randomizer's settings and logic files)|MIT|${RANDO_DIR}/libs/yaml-cpp/LICENSE"

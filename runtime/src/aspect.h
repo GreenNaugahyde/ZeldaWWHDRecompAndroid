@@ -21,6 +21,9 @@ float game();
 // "name parent x y w h;" (16:9 screen, 0..1, y down), and whether the game shows its own button
 // cursor there (W_Cursor_00: it takes the buttons itself, e.g. Options)
 std::string drc_targets();
+// the touch boxes (B_* panes) of a menu drawn to the TV and the GamePad at once (title, file select): as drc_targets,
+// the parent "<parent>[<its parent>]|v<shown>|a<alpha>"
+std::string menu_targets();
 bool drc_game_cursor();
 uint64_t game_frame();                // swaps so far                      // aspect the game draws with this frame
 // HD layouts: the game thread marks uploads of layout projection matrices and the drawing of layout

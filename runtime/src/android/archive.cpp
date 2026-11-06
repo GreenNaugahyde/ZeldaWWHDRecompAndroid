@@ -38,7 +38,7 @@ std::string extract(int fd, const std::string& dest) {
     archive_read_support_format_zip(a);
     archive_read_support_format_rar(a);
     archive_read_support_format_rar5(a);
-    archive_read_support_format_7zip(a);  // (stored and deflate entries; LZMA needs liblzma, not built in)
+    archive_read_support_format_7zip(a);  // (stored, deflate, LZMA/LZMA2 through liblzma)
     archive_read_support_filter_all(a);
     std::string err;
     if (archive_read_open_fd(a, fd, 1 << 16) != ARCHIVE_OK) {

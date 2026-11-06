@@ -69,7 +69,7 @@ final class ModPacks {
 
     static Info describe(File base, String gameDir, SharedPreferences prefs, String folder) {
         Info info = new Info();
-        String d = Native.packDescribe(new File(dir(base), folder).getAbsolutePath(), prefs.getString("pack_sel_" + folder, ""), gameDir);
+        String d = Native.packDescribe(new File(dir(base), folder).getAbsolutePath(), prefs.getString(selKey(editScope(prefs), folder), ""), gameDir);
         for (String line : d.split("\n")) {
             String[] f = line.split("\t", -1);
             if (f.length < 2) continue;
@@ -101,55 +101,214 @@ final class ModPacks {
     }
 
     static void select(SharedPreferences prefs, String folder, String category, String preset) {
+        String key = selKey(editScope(prefs), folder);
         Map<String, String> sel = new LinkedHashMap<>();
-        for (String line : prefs.getString("pack_sel_" + folder, "").split("\n")) {
+        for (String line : prefs.getString(key, "").split("\n")) {
             String[] f = line.split("\t", -1);
             if (f.length >= 2) sel.put(f[0], f[1]);
         }
         sel.put(category, preset);
         StringBuilder b = new StringBuilder();
         for (Map.Entry<String, String> e : sel.entrySet()) b.append(e.getKey()).append('\t').append(e.getValue()).append('\n');
-        prefs.edit().putString("pack_sel_" + folder, b.toString()).commit();
+        prefs.edit().putString(key, b.toString()).commit();
     }
 
-    /** files/packs/enabled.txt from the prefs (read by the native side at start) */
-    static void writeEnabled(File base, SharedPreferences prefs) {
-        StringBuilder b = new StringBuilder("# written by the app: enabled mod packs and their presets\n");
-        for (String folder : list(base)) {
-            if (!prefs.getBoolean("pack_on_" + folder, false)) continue;
-            b.append("pack\t").append(folder).append('\n');
-            for (String line : prefs.getString("pack_sel_" + folder, "").split("\n")) {
-                String[] f = line.split("\t", -1);
-                if (f.length >= 2) b.append("preset\t").append(folder).append('\t').append(f[0]).append('\t').append(f[1]).append('\n');
+    // ---- per save file (Mods > Mod packs > Per save file, pref packs_per_file): each save file 1..3 has its own packs
+    // turned on, presets and loading order (pack_f<N>_on_<folder>, pack_f<N>_sel_<folder>, pack_f<N>_order); scope 0 is
+    // the one list as before (pack_on_<folder>, pack_sel_<folder>, pack_order). The page edits save file
+    // packs_edit_file; enabled.txt holds packs_active_file's list (the one the game starts with), enabled_<N>.txt each
+    // file's: when the file select hands over a file whose list differs, the runtime holds the game and the app restarts
+    // it with that file's (MainActivity.packFileSwitch). Player models have their own choice per file (PlayerModels).
+    static final int FILES = 3;
+
+    static boolean perFile(SharedPreferences prefs) { return prefs.getBoolean("packs_per_file", false); }
+
+    /** the save file 1..3 the page edits (0: packs aren't per save file) */
+    static int editScope(SharedPreferences prefs) {
+        return perFile(prefs) ? Math.max(1, Math.min(FILES, prefs.getInt("packs_edit_file", 1))) : 0;
+    }
+
+    /** the save file 1..3 whose packs enabled.txt holds (0: packs aren't per save file) */
+    static int activeScope(SharedPreferences prefs) {
+        return perFile(prefs) ? Math.max(1, Math.min(FILES, prefs.getInt("packs_active_file", 1))) : 0;
+    }
+
+    private static String onKey(int scope, String folder) {
+        return scope == 0 || isPlayerModel(folder) ? "pack_on_" + folder : "pack_f" + scope + "_on_" + folder;
+    }
+
+    private static String selKey(int scope, String folder) {
+        return scope == 0 || isPlayerModel(folder) ? "pack_sel_" + folder : "pack_f" + scope + "_sel_" + folder;
+    }
+
+    private static String orderKey(int scope) { return scope == 0 ? "pack_order" : "pack_f" + scope + "_order"; }
+
+    /** a pack is on (for the save file the page edits) */
+    static boolean isOn(SharedPreferences prefs, String folder) { return prefs.getBoolean(onKey(editScope(prefs), folder), false); }
+
+    /** a change on the page needs a restart: it is to the list the game started with */
+    static boolean editsRunning(SharedPreferences prefs) { return editScope(prefs) == activeScope(prefs); }
+
+    /**
+     * Per save file on: each file starts with the one list as it is (nothing changes until one is edited); off: the one
+     * list again (the files' own lists are kept for the next time).
+     */
+    static void setPerFile(File base, SharedPreferences prefs, boolean on) {
+        SharedPreferences.Editor e = prefs.edit().putBoolean("packs_per_file", on);
+        if (on && !prefs.getBoolean("packs_per_file_made", false)) {
+            e.putBoolean("packs_per_file_made", true);
+            for (int n = 1; n <= FILES; n++) {
+                for (String f : list(base)) {
+                    if (isPlayerModel(f)) continue;
+                    e.putBoolean(onKey(n, f), prefs.getBoolean(onKey(0, f), false));
+                    String sel = prefs.getString(selKey(0, f), null);
+                    if (sel != null) e.putString(selKey(n, f), sel);
+                }
+                e.putString(orderKey(n), prefs.getString(orderKey(0), ""));
             }
         }
-        File d = dir(base);
-        //noinspection ResultOfMethodCallIgnored
-        d.mkdirs();
-        try (OutputStream out = new FileOutputStream(new File(d, "enabled.txt"))) {
-            out.write(b.toString().getBytes(StandardCharsets.UTF_8));
-        } catch (IOException ignored) {
-        }
-    }
-
-    /** the number of packs turned on */
-    static int countOn(File base, SharedPreferences prefs) {
-        int n = 0;
-        for (String folder : list(base)) if (prefs.getBoolean("pack_on_" + folder, false)) n++;
-        return n;
-    }
-
-    /** turns every pack off (their files stay), e.g. when the game no longer starts with them */
-    static void turnAllOff(File base, SharedPreferences prefs) {
-        SharedPreferences.Editor e = prefs.edit();
-        for (String folder : list(base)) e.remove("pack_on_" + folder);
         e.commit();
         writeEnabled(base, prefs);
     }
 
+    /** the game starts with save file `file`'s packs from now on (enabled.txt); false: they are the ones it has */
+    static boolean makeActive(File base, SharedPreferences prefs, int file) {
+        String before = enabledText(base, prefs, activeScope(prefs));
+        prefs.edit().putInt("packs_active_file", file).commit();
+        writeEnabled(base, prefs);
+        return !before.equals(enabledText(base, prefs, file));
+    }
+
+    /**
+     * The packs turned on (player models aside: they always go last), in their loading order: top first, a later
+     * pack's files, shaders and code patches win over an earlier one's. Pref pack_order (folders, one a line); a pack
+     * not in it yet goes to the end.
+     */
+    static List<String> order(File base, SharedPreferences prefs) { return order(base, prefs, editScope(prefs)); }
+
+    private static List<String> order(File base, SharedPreferences prefs, int scope) {
+        List<String> on = new ArrayList<>(), out = new ArrayList<>();
+        for (String f : list(base)) if (!isPlayerModel(f) && prefs.getBoolean(onKey(scope, f), false)) on.add(f);
+        for (String f : prefs.getString(orderKey(scope), "").split("\n"))
+            if (on.remove(f)) out.add(f);
+        out.addAll(on);
+        return out;
+    }
+
+    static void setOrder(SharedPreferences prefs, List<String> folders) {
+        prefs.edit().putString(orderKey(editScope(prefs)), String.join("\n", folders)).commit();
+    }
+
+    /** a pack turned on or off: on, it loads last (it wins over the ones on before) */
+    static void setOn(File base, SharedPreferences prefs, String folder, boolean on) {
+        List<String> o = order(base, prefs);
+        o.remove(folder);
+        if (on) o.add(folder);
+        prefs.edit().putBoolean(onKey(editScope(prefs), folder), on).commit();
+        setOrder(prefs, o);
+        writeEnabled(base, prefs);
+    }
+
+    /** the game files below a pack's content/ folder (lower case, "Common/Pack/x.pack" as "common/pack/x.pack") */
+    static java.util.Set<String> contentFiles(File base, String folder) {
+        List<String> all = new ArrayList<>();
+        File[] kids = new File(dir(base), folder).listFiles();
+        if (kids != null)
+            for (File k : kids)
+                if (k.isDirectory() && k.getName().equalsIgnoreCase("content")) listFiles(k, "", all);
+        java.util.Set<String> out = new java.util.HashSet<>();
+        for (String f : all) out.add(f.toLowerCase(java.util.Locale.ROOT));
+        return out;
+    }
+
+    /** a list as enabled.txt has it (scope 0: the one list, 1..3: that save file's) */
+    private static String enabledText(File base, SharedPreferences prefs, int scope) {
+        StringBuilder b = new StringBuilder("# written by the app: enabled mod packs (in their loading order: the last wins) and their presets\n");
+        List<String> folders = order(base, prefs, scope);
+        for (String f : list(base)) if (isPlayerModel(f) && prefs.getBoolean(onKey(0, f), false)) folders.add(f);
+        for (String folder : folders) {
+            b.append("pack\t").append(folder).append('\n');
+            for (String line : prefs.getString(selKey(scope, folder), "").split("\n")) {
+                String[] f = line.split("\t", -1);
+                if (f.length >= 2) b.append("preset\t").append(folder).append('\t').append(f[0]).append('\t').append(f[1]).append('\n');
+            }
+        }
+        return b.toString();
+    }
+
+    private static void write(File f, String text) {
+        try (OutputStream out = new FileOutputStream(f)) {
+            out.write(text.getBytes(StandardCharsets.UTF_8));
+        } catch (IOException ignored) {
+        }
+    }
+
+    /**
+     * files/packs/enabled.txt from the prefs (read by the native side at start), in the loading order; per save file
+     * also enabled_1..3.txt (the runtime compares the chosen file's with the running list), else none of them
+     */
+    static void writeEnabled(File base, SharedPreferences prefs) {
+        File d = dir(base);
+        //noinspection ResultOfMethodCallIgnored
+        d.mkdirs();
+        boolean per = perFile(prefs);
+        write(new File(d, "enabled.txt"), enabledText(base, prefs, activeScope(prefs)));
+        for (int n = 1; n <= FILES; n++) {
+            File f = new File(d, "enabled_" + n + ".txt");
+            if (per) write(f, enabledText(base, prefs, n));
+            else //noinspection ResultOfMethodCallIgnored
+                f.delete();
+        }
+    }
+
+    /** the number of packs turned on (for the save file the page edits) */
+    static int countOn(File base, SharedPreferences prefs) {
+        int n = 0;
+        for (String folder : list(base)) if (isOn(prefs, folder)) n++;
+        return n;
+    }
+
+    /** turns every pack off in every list (their files stay), e.g. when the game no longer starts with them */
+    static void turnAllOff(File base, SharedPreferences prefs) {
+        SharedPreferences.Editor e = prefs.edit();
+        for (String folder : list(base))
+            for (int n = 0; n <= FILES; n++) e.remove(onKey(n, folder));
+        e.commit();
+        writeEnabled(base, prefs);
+    }
+
+    /**
+     * Per save file: a save file deleted in the file select (it shows as a new file there) lets go of its packs, so a
+     * new game there starts without the old game's (packs chosen for an empty file stay). Read every two seconds with
+     * the achievements while the file select's list shows (Native.saveSlotsUsed); the files holding a game are kept
+     * in "packs_slots_used" (bits), the first read only notes them.
+     */
+    static void slotsCheck(MainActivity a) {
+        if (a.prefs == null || !perFile(a.prefs)) return;
+        int used = Native.saveSlotsUsed();
+        if (used < 0) return;
+        int before = a.prefs.getInt("packs_slots_used", -1);
+        if (before == used) return;
+        SharedPreferences.Editor e = a.prefs.edit().putInt("packs_slots_used", used);
+        boolean changed = false;
+        if (before >= 0)
+            for (int k = 0; k < FILES; k++) {
+                if ((before & 1 << k) == 0 || (used & 1 << k) != 0) continue;
+                int scope = k + 1;
+                android.util.Log.i("wwhd", "save file " + scope + " deleted: its mod packs let go");
+                for (String folder : list(a.baseDir()))
+                    if (!isPlayerModel(folder)) e.remove(onKey(scope, folder)).remove(selKey(scope, folder));
+                changed = true;
+            }
+        e.commit();
+        if (changed) writeEnabled(a.baseDir(), a.prefs);
+    }
+
     static void delete(File base, SharedPreferences prefs, String folder) {
         deleteTree(new File(dir(base), folder));
-        prefs.edit().remove("pack_on_" + folder).remove("pack_sel_" + folder).commit();
+        SharedPreferences.Editor e = prefs.edit();
+        for (int n = 0; n <= FILES; n++) e.remove(onKey(n, folder)).remove(selKey(n, folder));
+        e.commit();
         writeEnabled(base, prefs);
     }
 
@@ -162,7 +321,7 @@ final class ModPacks {
     }
 
     /**
-     * Imports the mods in an archive (zip, RAR). Packs are found, in this order:
+     * Imports the mods in an archive (zip, RAR, 7z). Packs are found, in this order:
      * - every folder with a rules.txt (a Cemu graphic pack; the deepest one owns the files below it);
      * - else every folder named content (a plain game file mod; the folder above it is the pack);
      * - else each file is placed by the end of its path among the game's own files ("Pack/x.pack" ->

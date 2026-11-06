@@ -50,6 +50,11 @@ struct Request {
                                   // letGo on about his middle, kept where it was (he turns back upright); missing: 0
     int letGo = 1 << 30;          // the picture from which he has let go (the rope swings on by ropeSwing, alone)
     std::vector<float> ropeSwing; // per picture from letGo: the rope's angle about the pivot
+    // the boat's cannon / salvage arm (withVariant "cannon" / "crane": on the mast's joint, the mast hidden): per
+    // picture the barrel's tilt (0 straight up, 90 level; as d_a_ship's m0396) or the arm's swing out (degrees, as
+    // m0398); missing pictures: the last
+    std::vector<float> turn;
+    std::vector<float> craneRope;  // the salvage arm: per picture how far its rope hangs down (0: none), with the hook
 };
 // renders each request; returns how many pictures were written
 int render(const std::string& gameDir, const std::string& outDir, const std::vector<Request>& requests);
@@ -61,6 +66,9 @@ int render(const std::string& gameDir, const std::string& outDir, const std::vec
 // the Swift Sail), link_drifting_0..7 (the sail down, still moving),
 // link_cruise_0..15 (the same, for R Cruise),
 // link_getin_0..9 / link_getout_0..9 (climbing into the boat, jumping out of it), link_talk_0..11 (talking: Speak),
-// link_walkaway_0..11 (walking, seen from behind: leaving a shop), link_conduct_0..11 (the Wind Waker raised and brought down)
+// link_walkaway_0..11 (walking, seen from behind: leaving a shop), link_conduct_0..11 (the Wind Waker raised and brought down),
+// link_cannon_0..15 (the boat's cannon rising, tilting down and firing), link_salvage_0..15 (the salvage arm rising,
+// swinging out and letting its rope down), link_cannonfire_0..9 (Fire: it shooting), link_crane_0..11 (Salvage: the hook
+// let down and wound up), link_cannonstow_0..7 / link_salvagestow_0..7 (Put away: the cannon / salvage arm going down)
 int render_buttons(const std::string& gameDir, const std::string& outDir);
 }  // namespace link_icons

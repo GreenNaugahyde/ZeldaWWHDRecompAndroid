@@ -65,7 +65,10 @@ final class AchievementPopup {
         @Override
         public void run() {
             Context c = view.getContext();
-            if (c instanceof MainActivity) NewGames.check((MainActivity) c, Native.progressData());
+            if (c instanceof MainActivity) {
+                NewGames.check((MainActivity) c, Native.progressData());
+                ModPacks.slotsCheck((MainActivity) c);
+            }
             List<Achievements.Def> got = Achievements.check(c, settings, settings.getBoolean("achievement_each_file", true));
             if (!got.isEmpty() && enabled) {
                 String line = c.getString(R.string.ach_popup);

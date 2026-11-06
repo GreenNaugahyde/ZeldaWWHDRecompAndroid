@@ -159,6 +159,16 @@ final class ControlsView extends View {
         controls.add(new Control(KIND_SCREEN, 0, "", false));  // 15: TV / GamePad picture (GamePad on demand)
         controls.add(new Control(KIND_BUTTON, Native.JUMP, "J", false));  // 16: Jump anywhere (its own input, not L)
         controls.add(new Control(KIND_BUTTON, Native.MOON, "MJ", false));  // 17: the moon jump
+        // 18..20, the context buttons only (Flexible): what the d-pad does in play, each a button of its own: up the Wind
+        // Waker, in the boat left the cannon and right the salvage arm (shown while they can be used: shortcutOffer)
+        controls.add(new Control(KIND_BUTTON, Native.UP, "WW", false));
+        controls.add(new Control(KIND_BUTTON, Native.LEFT, "CN", false));
+        controls.add(new Control(KIND_BUTTON, Native.RIGHT, "SV", false));
+    }
+
+    /** one of the d-pad's own buttons (18..20: the Wind Waker, the cannon, the salvage arm) */
+    private boolean shortcutButton(Control c) {
+        return c.kind == KIND_BUTTON && (c.bit == Native.UP || c.bit == Native.LEFT || c.bit == Native.RIGHT);
     }
 
     // ---- the full GamePad picture (+, or the screen button of "GamePad on demand"): the TV picture
@@ -1401,10 +1411,16 @@ final class ControlsView extends View {
     // A latched ZL (targeting) when the locked-on enemy is defeated (Native.touchState [30..32]): it lets go,
     // or (Controls > Defeated target: Next target) lets go for a moment and presses again, which locks the
     // next enemy in reach (the game locks only on a new press); with none in reach it stays let go
-    private int afterDefeat;  // 0 let go, 1 the next target
+    // Every enemy (2): ZL stays on after a defeat (or a lock lost by distance, or tapped with none in reach) and,
+    // whenever no lock holds and the target a press would lock is an enemy (state [40]), lets go for a moment and
+    // presses again, so each enemy coming in reach is locked
+    private int afterDefeat;  // 0 let go, 1 the next target, 2 every enemy
     private int defeats = -1;
     private int relockGen;  // a tap on ZL meanwhile cancels the press again
+    private boolean relockGap;  // every enemy: ZL let go for the new press (a tap meanwhile turns it off)
+    private long relockAfter;  // every enemy: no new press before (uptime ms; a press that locked nothing waits)
     private static final int RELOCK_GAP_MS = 120, RELOCK_CHECK_MS = 400;  // (logic steps at 30 per second)
+    private static final int RELOCK_RETRY_MS = 1500;
     void setAfterDefeat(int mode) { afterDefeat = mode; }
 
     // Controls > Touch > ZL / ZR latch (flexible style; the classic style always latches): off, ZL and ZR are
@@ -1415,7 +1431,7 @@ final class ControlsView extends View {
         zLatch = on;
         Control zl = controls.get(0);
         zl.latch = on;
-        if (!on && zl.pressed && pointers.indexOfValue(zl) < 0) releaseZl();  // latched on, no finger on it
+        if (!on && (zl.pressed || relockGap) && pointers.indexOfValue(zl) < 0) releaseZl();  // latched on, no finger on it
         if (!on && zrLatched) {
             zrLatched = false;
             for (Control z : controls)
@@ -1427,7 +1443,17 @@ final class ControlsView extends View {
 
     private void targetDefeated(int[] s) {
         Control zl = controls.get(0);
+        if (heldMode == 1 && !(zl.latch && zl.pressed) && s[31] == 0) {  // a held ZL, Next target: pressed anew if one is in reach then
+            int gen = heldGen;
+            postDelayed(() -> {  // (in the step the lock ends the game's list is still empty)
+                if (gen != heldGen || heldMode != 1 || heldGap) return;
+                int[] t = Native.touchState();
+                if (t.length > 32 && t[32] > 0 && t[31] == 0) startHeldGap();
+            }, RELOCK_GAP_MS);
+            return;
+        }
         if (!zl.latch || !zl.pressed || s[31] != 0) return;  // not latched, or already on another target
+        if (afterDefeat == 2) return;  // ZL stays on: relockEnemy presses again when an enemy is in reach
         releaseZl();
         if (afterDefeat != 1) return;
         int gen = ++relockGen;
@@ -1442,6 +1468,103 @@ final class ControlsView extends View {
         }, RELOCK_GAP_MS);
     }
 
+    // every enemy: a latched ZL (no finger on it) with no lock while an enemy is the target in reach: ZL lets go for
+    // RELOCK_GAP_MS and is pressed again (the game locks only on a new press); the shield (ZR) stays as it is. While
+    // ZL is latched the game also moves a lock to a clearly nearer enemy (touch_state.cpp lock_nearest_step)
+    // ZL held, not latched: a controller's (Controls > Controller > ZL locks every enemy, pad_zl_every: as Every
+    // enemy) or a finger on a ZL that doesn't latch (ZL when the target is defeated: Next target / Every enemy). For a
+    // new press its ZL is left out for RELOCK_GAP_MS (heldGap: buttons() and MainActivity.pushInput's padZlMask)
+    private boolean padZlEvery, padZl, heldGap, zlPolling;
+    private int heldMode;  // 0 none, 1 the next target, 2 every enemy
+    private int heldGen;
+    void setPadZlEvery(boolean on) { padZlEvery = on; }
+    /** MainActivity.pushInput, at each input change: the controllers' ZL (raw, before padZlMask) */
+    void setPadZl(boolean held) {
+        padZl = held && padZlEvery;
+        Control z = controls.get(0);
+        boolean finger = !z.latch && z.pressed && pointers.indexOfValue(z) >= 0;
+        int mode = Math.max(padZl ? 2 : 0, finger ? afterDefeat : 0);
+        // the game's state is looked at while any of it is on (pollState runs only with the context buttons)
+        boolean poll = mode > 0 || afterDefeat > 0 && z.latch && (z.pressed || relockGap);
+        if (poll != zlPolling) {
+            zlPolling = poll;
+            removeCallbacks(zlPoll);
+            if (poll) post(zlPoll);
+        }
+        if (mode == heldMode) return;
+        heldMode = mode;
+        if (mode == 0 && heldGap) {
+            heldGap = false;
+            heldGen++;
+        }
+        if (state.length > 40) relockEnemy(state);  // (the nearest switch on / off at once)
+    }
+    private final Runnable zlPoll = new Runnable() {
+        @Override
+        public void run() {
+            if (!zlPolling) return;
+            int[] s = Native.touchState();
+            checkDefeats(s);
+            relockEnemy(s);
+            postDelayed(this, 100);
+        }
+    };
+    /** the controllers' ZL to leave out now (Native.ZL during a new press's gap) */
+    int padZlMask() { return heldGap ? Native.ZL : 0; }
+
+    private void checkDefeats(int[] s) {
+        if (s.length > 32 && s[30] != defeats) {
+            if (defeats >= 0) targetDefeated(s);
+            defeats = s[30];
+        }
+    }
+
+    // a held ZL let go for RELOCK_GAP_MS: the game sees a new press after it
+    private void startHeldGap() {
+        int gen = ++heldGen;
+        heldGap = true;
+        listener.onControlsChanged();
+        postDelayed(() -> {
+            if (gen != heldGen) return;
+            heldGap = false;
+            listener.onControlsChanged();
+        }, RELOCK_GAP_MS);
+    }
+
+    private boolean lockNearest;  // told to the game (mods::set_lock_nearest): a lock moves to a clearly nearer enemy
+    private void relockEnemy(int[] s) {
+        Control z = controls.get(0);
+        boolean touchZl = afterDefeat == 2 && z.latch && (z.pressed || relockGap);
+        boolean near = touchZl || heldMode == 2;
+        if (near != lockNearest) {
+            lockNearest = near;
+            Native.setOption("lock_nearest", near ? 1 : 0);
+        }
+        if (heldMode == 2 && !(z.latch && (z.pressed || relockGap)) && !heldGap && s.length > 40 && s[40] != 0 && s[31] == 0
+                && s[0] != 0 && s[8] == 0 && s[9] == 0 && SystemClock.uptimeMillis() >= relockAfter) {
+            relockAfter = SystemClock.uptimeMillis() + RELOCK_GAP_MS + RELOCK_RETRY_MS;
+            startHeldGap();
+            return;
+        }
+        if (afterDefeat != 2 || s.length <= 40 || s[40] == 0 || s[31] != 0 || s[0] == 0 || s[8] != 0 || s[9] != 0) return;
+        Control zl = controls.get(0);
+        if (!zl.latch || !zl.pressed || pointers.indexOfValue(zl) >= 0) return;
+        long now = SystemClock.uptimeMillis();
+        if (now < relockAfter) return;
+        relockAfter = now + RELOCK_GAP_MS + RELOCK_RETRY_MS;  // (a press that locks nothing: tried again after this)
+        int gen = ++relockGen;
+        zl.pressed = false;
+        relockGap = true;
+        listener.onControlsChanged();
+        postDelayed(() -> {
+            if (gen != relockGen || zl.pressed) return;  // tapped meanwhile
+            relockGap = false;
+            zl.pressed = true;
+            listener.onControlsChanged();
+            invalidate();
+        }, RELOCK_GAP_MS);
+    }
+
     private boolean bPressed() {
         for (Control c : controls)
             if (c.kind == KIND_BUTTON && c.bit == Native.B && c.pressed) return true;
@@ -1450,6 +1573,8 @@ final class ControlsView extends View {
 
     private void releaseZl() {
         controls.get(0).pressed = false;
+        relockGap = false;
+        relockGen++;
         if (zrLatched) {  // the shield goes down, as when ZL is tapped off
             zrLatched = false;
             for (Control z : controls)
@@ -1475,6 +1600,8 @@ final class ControlsView extends View {
     private long tapDownAt, aimSince, shootAt, reaimAt;
     private boolean aimSeen, reaim;  // Link aimed since the latch; ZL let go for first person: press again
     private long putAwaySince = -1, lastAPulse;
+    private boolean conductWas;  // (the Wind Waker put away after a cancelled conducting: pollState)
+    private long stowBatonUntil;
     private boolean putAwayReturnOnly;
     private int stowLogItem = -2;  // B while aiming with Put away by itself off: Return only (issue #66)
     private boolean stowBusy;
@@ -1722,14 +1849,34 @@ final class ControlsView extends View {
             if (aimBtn != null || putAwaySince >= 0) postDelayed(this, 33);
         }
     };
+    private int boatBits, boatBitsCached;  // d-pad left / right in the boat: the cannon, the salvage arm (pollState)
+    private long boatBitsAt = -1;
     private final Runnable pollState = new Runnable() {
         @Override
         public void run() {
             int[] s = Native.touchState();
-            if (s.length > 32 && s[30] != defeats) {
-                if (defeats >= 0) targetDefeated(s);
-                defeats = s[30];
+            // in the boat: its cannon / salvage arm (bombs / grappling hook owned) for the d-pad's left / right
+            int bb = 0;
+            if (s.length > 12 && (s[12] & ST0_SHIP) != 0) {
+                long t = android.os.SystemClock.uptimeMillis();
+                if (boatBitsAt < 0 || t - boatBitsAt > 1000) {
+                    int[] r = Native.itemRing();
+                    int b = 0;
+                    for (int k = 0; r != null && k < 21 && k < r.length; k++) {
+                        if (r[k] == 0x31) b |= Native.LEFT;
+                        if (r[k] == 0x25) b |= Native.RIGHT;
+                    }
+                    boatBitsCached = b;
+                    boatBitsAt = t;
+                }
+                bb = boatBitsCached;
+            } else boatBitsAt = -1;
+            if (bb != boatBits) {
+                boatBits = bb;
+                invalidate();
             }
+            checkDefeats(s);
+            relockEnemy(s);
             boolean l3 = MainActivity.instance != null && MainActivity.instance.l3InUse();
             int l = MainActivity.instance != null ? MainActivity.instance.jumpInputsInUse() : 0;
             boolean as = context && Native.getOption("album_screen") != 0;
@@ -1741,6 +1888,18 @@ final class ControlsView extends View {
                 boolean view = pictoMode() || telescope();
                 if (viewWas && !view && tapMode() && autoStow && itemInHand() && aimBtn == null && putAwaySince < 0) startPutAway();
                 viewWas = view;
+                // conducting ended (cancelled) with the Wind Waker still in Link's hand (picked from the item ring: the game
+                // leaves it there): put it away by A's Put away as soon as A offers it
+                boolean conducts = (state[13] & ST1_CONDUCT) != 0;
+                if (conductWas && !conducts && state[29] == 0x22) stowBatonUntil = SystemClock.uptimeMillis() + 3000;
+                conductWas = conducts;
+                if (stowBatonUntil > 0) {
+                    if (state[29] != 0x22 || conducts || SystemClock.uptimeMillis() > stowBatonUntil) stowBatonUntil = 0;
+                    else if (state[1] == 0x08 && state[8] == 0) {
+                        stowBatonUntil = 0;
+                        pulse(Native.A);
+                    }
+                }
                 // the first glide with the Deku Leaf by tap: how its button closes / waves it (once, GameHint)
                 if (leafFlying() && tapMode() && controlsVisible && !editing) offerHint(HINT_LEAF_GLIDE);
                 // the Deku Leaf held LEAF_STOW_MS (walking counts; flying and waving start again), the sword
@@ -2135,6 +2294,10 @@ final class ControlsView extends View {
 
     /** whether the context buttons show this control now (always true without them) */
     private boolean shown(Control c) {
+        // the d-pad's own buttons: only with the context buttons (Flexible), while they can be used
+        if (shortcutButton(c))
+            return context && flexible && !blind && (editing || c.pressed || (shortcutOffer() & c.bit) != 0 && !singing() && !conductPads()
+                    && !quietScene && !talking() && minigame != MINIGAME_QUESTION);
         if (editing) return true;  // the editor: all of the style's controls
         // the classic style hides no button at any time (only Jump anywhere's / the moon jump's while that is off)
         // (the eyes-free layout neither, but while conducting by the note pads: as below)
@@ -2337,7 +2500,7 @@ final class ControlsView extends View {
 
     /** the d-pad directions the context buttons offer (all without them): up conducts with the Wind
      *  Waker; down does nothing in play (checked 2026-10-08); left / right the boat's cannon and salvage
-     *  arm. In the Flexible style with the item ring and no controller connected these are in the ring,
+     *  arm (in the boat, with the bombs / the grappling hook owned). In the Flexible style with the item ring and no controller connected these are in the ring,
      *  so the d-pad goes in play (up stays only while no X / Y / R shows to open the ring); the Classic
      *  style and a connected controller keep it */
     private int dpadMask() {
@@ -2345,10 +2508,33 @@ final class ControlsView extends View {
         if (!contextActive()) return dpadInRing() && !editing && state[0] != 0 && state[9] == 0 ? 0 : all;
         if (album() && (state[1] != 0x17 || chooser())) return pictoBig ? 0 : Native.LEFT | Native.RIGHT;  // the album: browse the photos (large view: by swiping)
         if (pictoMode() || telescope() || swimming() || climbing()) return 0;  // no Wind Waker in water, on a ladder (the game still shows it there)
-        if (clusterHidden()) return 0;  // the game's buttons are faded out (fading in after a door, events)
-        // up: the Wind Waker
+        return 0;  // (up, left, right: buttons of their own, shortcutOffer)
+    }
+
+    /** the boat's part up now, by the game's action on A / B / ZR: 1 the cannon (Fire), 2 the salvage arm (Salvage), 0 none */
+    private int boatPart() {
+        for (int k : new int[] {1, 6, 7}) {
+            if (state[k] == 0x3F || state[k] == 0x3D) return 1;
+            if (state[k] == 0x40) return 2;
+        }
+        return 0;
+    }
+
+    /** the d-pad's uses the context buttons offer as buttons of their own (18..20): up the Wind Waker; in the boat left /
+     *  right its cannon and salvage arm (bombs / grappling hook owned); none while the item ring has them */
+    private int shortcutOffer() {
+        if (!contextActive() || album() || pictoMode() || telescope() || swimming() || climbing() || clusterHidden()) return 0;
         boolean ringOpens = dpadInRing() && (itemShown(0) || itemShown(1) || itemShown(2));
-        return state[10] != 0 && !ringOpens ? Native.UP : 0;
+        return (state[10] != 0 && (!ringOpens || ringBaton) ? Native.UP : 0) | ((state[12] & ST0_SHIP) != 0 && (!ringOpens || ringBoat) ? boatBits : 0);
+    }
+
+    // Controls > Item ring: these buttons stay while the ring (which has them too) is on
+    private boolean ringBaton, ringBoat;
+
+    void setRingButtons(boolean baton, boolean boat) {
+        ringBaton = baton;
+        ringBoat = boat;
+        invalidate();
     }
 
     /** the game's icon the context buttons show on this control, or null (then its label) */
@@ -2357,6 +2543,13 @@ final class ControlsView extends View {
         if (c.kind == KIND_BUTTON && (c.bit == Native.JUMP || c.bit == Native.MOON) && GameIcons.linkPoses)
             return GameIcons.get(getContext(), c.bit == Native.JUMP ? GameIcons.LINK_JUMP : "#moon:" + GameIcons.LINK_JUMP,
                     () -> post(this::invalidate));
+        if (shortcutButton(c) && context && flexible) {  // (also in the editor) the Wind Waker: Link conducting; the boat bringing
+            String anim = c.bit == Native.UP ? GameIcons.LINK_CONDUCT + "*"     // up its cannon / salvage arm
+                    : c.bit == Native.LEFT ? "#cannon:" + GameIcons.CANNON + "*" : GameIcons.SALVAGE + "*";
+            String t = GameIcons.linkPoses ? anim.replace("*", Integer.toString(loopFrame(anim, GameIcons.pictures(anim))))
+                    : c.bit == Native.UP ? "CollectIcon118_15^l" : c.bit == Native.LEFT ? "IconCannon_00^q" : "IconSalvage_00^q";
+            return GameIcons.get(getContext(), t, () -> post(this::invalidate));
+        }
         if (!contextActive() || c.kind != KIND_BUTTON) return null;
         String t = null;
         if (c.bit == Native.B && pictoChoice()) t = "#cross";  // keep the photo / delete it? B: no
@@ -2379,7 +2572,7 @@ final class ControlsView extends View {
         // aiming the bow: ZL held (latched) is the third person (the target); else it shows Link, to switch there
         // (the mode bit is the same in both)
         else if (c.bit == Native.ZL && (state[12] & ST0_BOW_AIM) != 0 && !c.pressed) t = thirdPerson();
-        else if (c.bit == Native.ZL) t = c.pressed ? "#target:1" : "#target:0";  // targeting: arrows closing in, latched closer
+        else if (c.bit == Native.ZL) t = c.pressed || relockGap ? "#target:1" : "#target:0";  // targeting: arrows closing in, latched closer
         else if (c.bit == Native.STICK_L) t = "LStick_00^t";
         // R3 (the game's first person look) shows the view a press switches to: the Picto Box's finder, in first person Link
         else if (c.bit == Native.STICK_R)
@@ -2486,7 +2679,13 @@ final class ControlsView extends View {
         if (code == 0x13 && (state[12] & ST0_SHIP) != 0) return "#stop:" + GameIcons.DRIFTING + "*";
         if (code == 0x2C && (state[12] & ST0_SHIP) != 0) return "#cruise:" + GameIcons.CRUISE + "*";  // R held: creeping ahead
         if (code == 0x14 || code == 0x2C) return (swift ? GameIcons.SAIL_UP_SWIFT : GameIcons.SAIL_UP) + "*";
-        if (code == 0x08 && (state[12] & ST0_SHIP) != 0 && (state[29] < 0 || state[29] >= 0xFF || state[29] == 0x77 || state[29] == 0x78))
+        // the boat's cannon / salvage arm up (the game shows Fire, 0x3F, or Salvage, 0x40, on another button then): Fire the
+        // cannon shooting, Salvage the hook let down and wound up, Put away the part going down (not the sail)
+        boolean ship = (state[12] & ST0_SHIP) != 0;
+        if (GameIcons.linkPoses && ship && (code == 0x3F || code == 0x3D)) return "#cannon:" + GameIcons.CANNON_FIRE + "*";
+        if (GameIcons.linkPoses && ship && code == 0x40) return GameIcons.CRANE + "*";
+        if (GameIcons.linkPoses && ship && code == 0x08 && boatPart() != 0) return (boatPart() == 1 ? GameIcons.CANNON_STOW : GameIcons.SALVAGE_STOW) + "*";
+        if (code == 0x08 && ship && (state[29] < 0 || state[29] >= 0xFF || state[29] == 0x77 || state[29] == 0x78))
             return (swift ? GameIcons.SAIL_DOWN_SWIFT : GameIcons.SAIL_DOWN) + "*";
         if (code == 0x41 || code == 0x42) return "#sailing:" + GameIcons.SAILING + "*:" + (code == 0x41 ? 2 : 1);
         // Let go on a ladder, on a wall of vines, hanging from a ledge (touch state 36: Link's mode flags): Link letting go
@@ -2612,6 +2811,7 @@ final class ControlsView extends View {
             if (c.kind == KIND_DPAD) b |= c.dpadBits;
         }
         if (titlePointer >= 0 || SystemClock.uptimeMillis() < titleAUntil) b |= titleBit;
+        if (heldGap && !controls.get(0).latch) b &= ~Native.ZL;  // a held ZL let go for a new press (setPadZl)
         return b | albumBits;
     }
     float stickX(int i) { return i == 0 && putAwaySince >= 0 ? 0 : controls.get(5 + i).sx; }
@@ -2678,8 +2878,14 @@ final class ControlsView extends View {
             set(16, colL + u * 1.75f, m + u * 0.4f, u * 1.6f, u * 0.65f);
             set(17, colL + u * 1.75f, m + u * 1.25f, u * 1.6f, u * 0.65f);
         }
+        // the d-pad's own buttons (context buttons): the Wind Waker on the d-pad's place, the cannon and the salvage arm
+        // below it, left and right
+        float dy = H * 0.5f - u * 0.1f;
+        set(18, colL, dy, u * 0.72f, u * 0.72f);
+        set(19, colL - u * 0.8f, dy + u * 0.95f, u * 0.72f, u * 0.72f);
+        set(20, colL + u * 0.8f, dy + u * 0.95f, u * 0.72f, u * 0.72f);
         // context buttons: the shoulder buttons (and the jumps) are round, the size of the face buttons
-        for (int i : new int[] {0, 1, 2, 3, 16, 17}) {
+        for (int i : new int[] {0, 1, 2, 3, 16, 17, 18, 19, 20}) {
             Control s = controls.get(i);
             s.round = context && flexible;
             if (s.round) s.w = s.h = u * 0.72f;
@@ -2776,6 +2982,7 @@ final class ControlsView extends View {
         set(16, cw + gap + u * 0.8f, ch / 2, u * 1.6f, ch);           // the jumps beside ZL and L
         set(17, cw + gap + u * 0.8f, ch + gap + lh / 2, u * 1.6f, lh);
         controls.get(16).corner = controls.get(17).corner = 0.22f;
+        for (int i = 18; i <= 20; i++) set(i, u * 0.85f, H - u * 0.85f, u * 0.72f, u * 0.72f);  // (not used there: the d-pad)
     }
 
     private void set(int i, float cx, float cy, float w, float h) {
@@ -2840,10 +3047,6 @@ final class ControlsView extends View {
     }
 
     private void updateDpad(Control c, float x, float y) {
-        if (batonOnly()) {  // one round button: anywhere on it
-            c.dpadBits = Native.UP;
-            return;
-        }
         float dx = x - c.cx, dy = y - c.cy, dead = c.w * 0.25f;
         int b = 0;
         if (dx < -dead && Math.abs(dy) < Math.abs(dx) * 2.4f) b |= Native.LEFT;
@@ -3456,8 +3659,11 @@ final class ControlsView extends View {
                     // not in the Picto Box and its album: there ZR switches between them (a tap)
                     boolean crouchLatch = c.bit == Native.ZR && zLatch && !pictoMode() && (zrLatched || zlLatched || (contextActive() && state[7] == 0x0F));
                     if (c.latch || crouchLatch) {  // switches on the tap; lifting the finger changes nothing
-                        c.pressed = !c.pressed;
-                        if (c.bit == Native.ZL) relockGen++;
+                        c.pressed = c.bit == Native.ZL && relockGap ? false : !c.pressed;  // (in the gap it shows on)
+                        if (c.bit == Native.ZL) {
+                            relockGen++;
+                            relockGap = false;
+                        }
                         if (c.bit == Native.ZR) {
                             zrCrouch = c.pressed && state.length > 7 && state[7] == 0x0F;
                             zrLatched = c.pressed;
@@ -4824,7 +5030,6 @@ final class ControlsView extends View {
                 break;
             }
             case KIND_DPAD: {
-                if (batonOnly() && drawBatonButton(canvas, c, a)) break;
                 float s = c.w * 0.36f;
                 int mask = editing ? -1 : dpadMask();
                 if ((mask & Native.UP) != 0) drawDpadArm(canvas, c, 0, -1, s, (c.dpadBits & Native.UP) != 0, a);
@@ -4956,26 +5161,6 @@ final class ControlsView extends View {
         iconSrc.set(0, 0, icon.getWidth(), icon.getHeight());
         tmp.set(x - s / 2, y - s / 2, x + s / 2, y + s / 2);
         canvas.drawBitmap(icon, iconSrc, tmp, iconPaint);
-    }
-
-    /** the context buttons' d-pad with only up (the Wind Waker) to offer: a round button as the others, the size of the
-     *  face buttons, on the d-pad's centre (a touch anywhere on the d-pad presses up); Link conducting
-     *  (GameIcons.LINK_CONDUCT, its pictures looping), else the Wind Waker */
-    private boolean batonOnly() { return contextActive() && !editing && dpadMask() == Native.UP; }
-
-    private boolean drawBatonButton(Canvas canvas, Control c, int a) {
-        android.graphics.Bitmap base = GameIcons.get(getContext(), GameIcons.BASE_ROUND, () -> post(this::invalidate));
-        String t = GameIcons.linkPoses ? GameIcons.LINK_CONDUCT + "*" : "CollectIcon118_15^l";
-        if (GameIcons.linkPoses) t = t.replace("*", Integer.toString(loopFrame(t, GameIcons.pictures(t))));
-        android.graphics.Bitmap icon = GameIcons.get(getContext(), t, () -> post(this::invalidate));
-        if (base == null || icon == null) return false;
-        float r = c.w * 0.38f, k = (c.dpadBits & Native.UP) != 0 ? 0.9f : 1f, bs = r * 2 * 1.14f * k;
-        baseSrc.set(0, 0, base.getWidth(), base.getHeight());
-        tmp.set(c.cx - bs / 2, c.cy - bs / 2, c.cx + bs / 2, c.cy + bs / 2);
-        iconPaint.setAlpha(Math.min(255, a + 70));
-        canvas.drawBitmap(base, baseSrc, tmp, iconPaint);
-        drawCentred(canvas, icon, c.cx + bs * (0.49f - 0.5f), c.cy + bs * (0.46f - 0.5f), r * 2 * 0.78f * k);
-        return true;
     }
 
     private void drawDpadArm(Canvas canvas, Control c, int dx, int dy, float s, boolean on, int a) {
