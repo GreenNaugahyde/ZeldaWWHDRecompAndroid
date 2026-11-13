@@ -1,0 +1,86 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Russian translation of the texts in values/strings_more.xml. -->
+<resources>
+    <string name="app_name">TLoZ:TWW HD Recompiled</string>
+    <string name="menu_resolution">Разрешение: %1$s</string>
+    <string name="res_title">Разрешение рендера</string>
+    <string name="res_restart">Новое разрешение применится при перезапуске игры. Прогресс с последнего сохранения будет потерян.</string>
+    <string name="menu_fg">Генерация кадров: %1$s</string>
+    <string name="menu_states">Сохранения…</string>
+    <string name="states_title">Сохранения</string>
+    <string name="state_slot">Сохранение %1$d %2$s</string>
+    <string name="state_empty">— пусто</string>
+    <string name="state_incompatible">%1$s (из другой сборки, загрузить нельзя)</string>
+    <string name="state_save">Сохранить здесь</string>
+    <string name="state_load">Загрузить</string>
+    <string name="menu_mods">Игровые моды…</string>
+    <string name="menu_aspect">Соотношение сторон: %1$s</string>
+    <string name="aspect_title">Соотношение сторон картинки</string>
+    <string name="menu_backup">Импорт / экспорт сохранений…</string>
+    <string name="mods_title">Игровые моды</string>
+    <string name="mod_direct_camera">Прямая камера на правом стике (без сглаживания): %1$s</string>
+    <string name="mod_camera_speed">Скорость прямой камеры: %1$.1f×</string>
+    <string name="mod_speed_title">Скорость прямой камеры</string>
+    <string name="mod_speed_item">%1$.1f×</string>
+    <string name="mod_first_person">Вид от первого лица на R3: %1$s</string>
+    <string name="mod_climb">Лазать по любым стенам (со шкалой выносливости; B или A — отпустить): %1$s</string>
+    <string name="mod_quick_doors">Быстрые двери (скорость 4×): %1$s</string>
+    <string name="mod_fast_scenes">Быстрые смены сцен (скорость 4×): %1$s</string>
+    <string name="fg_choose_dll">Выбрать Lossless.dll…</string>
+    <string name="fg_replace_dll">Выбрать другой Lossless.dll…</string>
+    <string name="fg_remove_dll">Удалить Lossless.dll</string>
+    <string name="fg_enabled">Генерация кадров: %1$s</string>
+    <string name="fg_multiplier">Множитель: ×%1$d (%2$d fps)</string>
+    <string name="fg_multiplier_title">Кадров на кадр игры</string>
+    <string name="fg_mode">Сеть: %1$s</string>
+    <string name="fg_flow_scale">Масштаб потока: %1$d%%</string>
+    <string name="fg_flow_title">Разрешение оценки движения</string>
+    <string name="fg_flow_item">%1$d%%</string>
+    <string name="fg_ui_detection">Распознавание интерфейса: %1$s</string>
+    <string name="menu_layout">Раскладка экрана: %1$s</string>
+    <string name="menu_controls_hide">Скрыть кнопки на экране</string>
+    <string name="menu_controls_show">Показать кнопки на экране</string>
+    <string name="menu_controls_size">Размер кнопок на экране</string>
+    <string name="menu_ao">Затенение окружения (AO): %1$s</string>
+    <string name="menu_ao_hires">Глубина окклюзии в полном размере: %1$s</string>
+    <string name="menu_aniso">16× анизотропная фильтрация: %1$s</string>
+    <string name="menu_perf_hud">Оверлей производительности (FPS, нагрузка, температуры): %1$s…</string>
+    <string name="perf_title">Оверлей производительности</string>
+    <string name="perf_done">Готово</string>
+    <string name="perf_move">Двигать оверлей</string>
+    <string name="perf_reset">Сбросить положение</string>
+    <string name="bench_step_sea">Замер: открытое море</string>
+    <plurals name="packs_texture_rules">
+        <item quantity="one">Меняет фильтрацию текстур (%d правило)</item>
+        <item quantity="few">Меняет фильтрацию текстур (%d правила)</item>
+        <item quantity="many">Меняет фильтрацию текстур (%d правил)</item>
+        <item quantity="other">Меняет фильтрацию текстур (%d правил)</item>
+    </plurals>
+    <plurals name="packs_shaders">
+        <item quantity="one">Заменяет %d шейдер</item>
+        <item quantity="few">Заменяет %d шейдера</item>
+        <item quantity="many">Заменяет %d шейдеров</item>
+        <item quantity="other">Заменяет %d шейдеров</item>
+    </plurals>
+    <plurals name="packs_content">
+        <item quantity="one">Заменяет или добавляет %d файл игры</item>
+        <item quantity="few">Заменяет или добавляет %d файла игры</item>
+        <item quantity="many">Заменяет или добавляет %d файлов игры</item>
+        <item quantity="other">Заменяет или добавляет %d файлов игры</item>
+    </plurals>
+    <plurals name="packs_added">
+        <item quantity="one">%d файл новый для вашей игры; файл другой версии игры здесь ничего не делает:</item>
+        <item quantity="few">%d файла новых для вашей игры; файлы другой версии игры здесь ничего не делают:</item>
+        <item quantity="many">%d файлов новых для вашей игры; файлы другой версии игры здесь ничего не делают:</item>
+        <item quantity="other">%d файлов новых для вашей игры; файлы другой версии игры здесь ничего не делают:</item>
+    </plurals>
+    <string name="opt_states">Сохранения</string>
+    <string name="opt_backup">Импорт / экспорт сохранений</string>
+    <string name="preset_name">Имя</string>
+    <string name="crash_not_now">Не сейчас</string>
+    <string name="menu_capture">Снять кадр (отладка)</string>
+    <string name="menu_clear_shaders">Удалить кэш шейдеров…</string>
+    <string name="menu_quit">Выход</string>
+    <string name="layout_title">Раскладка экрана</string>
+    <string name="ao_title">Затенение окружения (AO)</string>
+</resources>

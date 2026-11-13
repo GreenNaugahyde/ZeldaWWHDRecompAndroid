@@ -305,8 +305,8 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     // ------------------------------------------------------------------ game language
     // The console language the game sees (runtime: UCReadSysConfig), from the release's languages;
     // by default the device's, else English. Applies at the next start.
-    static final String[] LANGUAGES = {"en", "fr", "de", "it", "es", "ja"};
-    static final String[] LANGUAGE_NAMES = {"English", "Français", "Deutsch", "Italiano", "Español", "日本語"};
+    static final String[] LANGUAGES = {"en", "fr", "de", "it", "es", "ja", "ru"};
+    static final String[] LANGUAGE_NAMES = {"English", "Français", "Deutsch", "Italiano", "Español", "日本語", "Русский"};
 
     /** the release's languages (indexes into LANGUAGES): USA English, French, Spanish; EUR the first
      *  five; JPN Japanese */
@@ -330,7 +330,8 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     }
 
     /** the language of the app's own texts (menus, hints, dialogs): its own setting, English unless chosen;
-     *  only English or one of the release's languages (Menu language), whose letters the game's font has */
+     *  English, Russian (res/values-ru) or one of the release's languages (Menu language), whose letters the
+     *  game's font has */
     static String menuLanguage(android.content.SharedPreferences p) {
         String l = p.getString("menu_language", "en");
         for (String s : LANGUAGES)
