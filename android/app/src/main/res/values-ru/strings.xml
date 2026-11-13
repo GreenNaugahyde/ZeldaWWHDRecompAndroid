@@ -1,0 +1,1816 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Russian translation of the app's texts. Texts missing here are shown in English (values/strings.xml).
+     Corrections and more translations are welcome. -->
+<resources>
+    <!-- touch hints (GameHint): *...* shows in orange -->
+    <string name="hint_ok">Понятно!</string>
+    <string name="hint_never">Больше не показывать</string>
+    <string name="hint_mg_board">*Коснитесь клетки* на доске, чтобы прицелиться.\nМожно провести пальцем к другой.\n*Отпустите палец*, чтобы выстрелить!</string>
+    <string name="hint_mg_puzzle">*Коснитесь детали* на одной линии с пустым местом,\nчтобы сдвинуть её, или *потяните* её к пустому месту.\nЦелые ряды двигаются вместе!</string>
+    <string name="hint_mg_mail">*Коснитесь ячейки* со знаком письма,\nчтобы положить его туда!</string>
+    <string name="hint_mg_cannon">*Проведите* по экрану, чтобы навести пушку.\n*Коснитесь*, чтобы выстрелить!</string>
+    <string name="hint_mg_auction">*Коснитесь в любом месте* экрана,\nчтобы поднять ставку!</string>
+    <string name="hint_mg_choice">Чтобы ответить, просто *коснитесь строки*,\nкоторую хотите сказать.</string>
+    <string name="hint_mg_number">*Смахивайте вверх или вниз*, чтобы менять цифру,\n*влево или вправо* — чтобы выбрать другую.\n*Коснитесь*, когда число нужное!</string>
+    <string name="hint_mg_shop">*Коснитесь предмета*, чтобы рассмотреть его.\n*Коснитесь снова*, чтобы купить!</string>
+    <string name="hint_mg_figure">*Проведите*, чтобы повернуть фигурку.\n*Сведите два пальца*, чтобы приблизить!</string>
+    <string name="hint_mg_conduct">Держите палец на *левой половине* для такта:\nвлево — 4/4, вправо — 6/4, нигде — 3/4.\n*Проводите по правой половине*, чтобы дирижировать!</string>
+    <string name="hint_mg_conduct_pad">*Правая панель*: коснитесь или проведите к знаку ноты,\nчтобы взмахнуть палочкой в эту сторону.\n*Левая панель*: коснитесь размера (4/4, 3/4, 6/4)!</string>
+    <string name="hint_mg_wind">*Потяните синюю стрелку* по компасу,\nчтобы выбрать, куда дует ветер.\nЗатем коснитесь *зелёной кнопки*!</string>
+    <string name="hint_leaf_glide">Парение: *коснитесь кнопки листка*,\nчтобы убрать листок и упасть; коснитесь снова\nв падении, чтобы снова парить.\n*Держите её*, чтобы махать листком в воздухе!</string>
+    <string name="hint_ring">*Держите кнопку предмета*, чтобы выбрать предмет\nиз кольца: *проведите* к предмету и *отпустите*.\nКороткое касание использует предмет как раньше.\nСумки открываются своими кольцами!</string>
+    <string name="hint_wind_dial">*Указатель ветра* на мини-карте показывает направление ветра.\n*Смахните* от него — ветер сразу повернёт туда.\nГеймпад: *держите −*, *наклоните правый стик* и отпустите −.</string>
+    <string name="hint_songs_button">Держите *кнопку микрофона* (или *L*) и спойте, промычите\nили просвистите выученную песню.\n*Отпустите*, когда закончите: Линк сыграет её!</string>
+    <string name="hint_songs_auto">Спойте, промычите или просвистите выученную песню:\n*микрофон* слушает!\nСделайте паузу после *последней ноты*.</string>
+    <string name="hint_songs_try">Хотите *сначала попробовать*? Держите кнопку микрофона\nи пойте: вы увидите каждую *ноту*, которую берёте.\nЛинк ничего не играет, пока вы упражняетесь.</string>
+    <string name="hint_try_yes">Давайте попробуем!</string>
+    <string name="hint_try_no">Не сейчас</string>
+    <string name="song_play_now">*%1$s* распознана!\nСыграть по-настоящему? Спойте её\nещё раз: Линк сыграет.</string>
+    <string name="song_play_yes">Сыграть!</string>
+    <string name="song_play_no">Ещё потренироваться</string>
+    <!-- options menu -->
+    <string name="cheat_apply">Применить</string>
+    <string name="cheat_bags">Заполнить сумки</string>
+    <string name="cheat_bags_done">Сумка для трофеев и мешок для приманок заполнены.</string>
+    <string name="cheat_bags_hint">Сумка для трофеев и мешок для приманок (если их ещё нет), все виды трофеев ×99, приманка и груши Гуо</string>
+    <string name="cheat_figurines">Собрать Галерею Nintendo</string>
+    <string name="cheat_figurines_hint">Все фигурки, которые делает Карлов. После этого он уходит из мастерской, как в финале игры</string>
+    <string name="cheat_figurines_done">Все фигурки в галерее.</string>
+    <string name="cheat_figurines_member">Сначала станьте членом Галереи Nintendo: отдайте Карлову цветной снимок.</string>
+    <string name="cheat_dungeon">Карта, компас и ключ босса (это подземелье)</string>
+    <string name="cheat_dungeon_done">Карта, компас и ключ босса для этого подземелья.</string>
+    <string name="cheat_inf_ammo">Бесконечные стрелы и бомбы</string>
+    <string name="cheat_inf_bags">Бесконечная приманка и трофеи</string>
+    <string name="cheat_inf_bags_hint">Использованная приманка и груши Гуо возвращаются, трофеи остаются на 99</string>
+    <string name="cheat_inf_breath">Бесконечное плавание</string>
+    <string name="cheat_inf_breath_hint">Шкала плавания всегда полна: Линк не устаёт и не тонет на глубине</string>
+    <string name="cheat_one_hit">Убийство с одного удара</string>
+    <string name="cheat_one_hit_hint">Враги падают от одного удара (кроме боссов — у них свои счётчики)</string>
+    <string name="cheat_fast_push">Быстрее толкать блоки</string>
+    <string name="cheat_fast_push_hint">Блоки и ящики сдвигаются примерно в два с половиной раза быстрее и срываются с места сразу</string>
+    <string name="cheat_inf_health">Бесконечное здоровье</string>
+    <string name="cheat_inf_magic">Бесконечная магия</string>
+    <string name="cheat_inf_rupees">Бесконечные рупии</string>
+    <string name="cheat_items">Выдать все предметы</string>
+    <string name="cheat_items_done">Все предметы выданы.</string>
+    <string name="cheat_items_hint">Все предметы инвентаря, световые стрелы, улучшенный фотоаппарат, браслеты силы, 4 бутылки, 99 стрел и бомб</string>
+    <string name="cheat_key">Добавить маленький ключ (это подземелье)</string>
+    <string name="cheat_key_done">Добавлен один маленький ключ.</string>
+    <string name="cheat_moon_anims">Случайные анимации прыжка</string>
+    <string name="cheat_moon_anims_hint">Каждый прыжок берёт одну из 14 поз вместо двух обычных</string>
+    <string name="cheat_moon_fly">Скорость полёта</string>
+    <string name="cheat_moon_jump">Лунный прыжок</string>
+    <string name="cheat_moon_jump_hint">Держите кнопку, чтобы подниматься; направление — левым стиком. Кнопка та же, что у «Прыжка везде»; если включены оба, работает лунный прыжок</string>
+    <string name="opt_jump_button">Кнопка геймпада</string>
+    <string name="opt_jump_button_hint">На сенсоре у неё своя кнопка. Если игра использует эту кнопку, её действие переходит на другую, а кнопка предмета снимается</string>
+    <string name="opt_jump_clash">%1$s нажимает в игре %2$s. Если повесить на неё ещё и %3$s, она будет делать и то и другое.</string>
+    <string name="opt_jump_clash_move">Переместить: %1$s перейдёт на %2$s.</string>
+    <string name="opt_jump_clash_nofree">Для %1$s не осталось свободной кнопки геймпада.</string>
+    <string name="opt_jump_clash_remove">Отключить: ни одна кнопка геймпада больше не нажимает %1$s, и предмет с геймпада не использовать (остальные кнопки предметов остаются).</string>
+    <string name="opt_jump_clash_remove_ring">Отключить: ни одна кнопка геймпада больше не нажимает %1$s; кольцо предметов остаётся как было (Повелитель Ветров, пушка, лебёдка).</string>
+    <string name="opt_jump_move">Переместить</string>
+    <string name="opt_jump_remove">Снять</string>
+    <string name="opt_jump_move_l1">На L1</string>
+    <string name="opt_jump_move_down">На крестовину вниз</string>
+    <string name="opt_jump_clash_extra">На L1 / крестовину вниз: %1$s перейдёт на эту кнопку и сохранит свой предмет, а слот на странице предметов покажет новую кнопку. Тогда L1 больше не нажимает L консоли Wii U (страницы не листаются, кнопки микрофона для песен нет); вне игры крестовина вниз остаётся крестовиной.</string>
+    <string name="cheat_moon_nofall">Без урона от падения</string>
+    <string name="cheat_moon_nofall_hint">После полёта Линк приземляется без урона</string>
+    <string name="cheat_moon_rise">Скорость подъёма</string>
+    <string name="cheat_songs">Все песни</string>
+    <string name="cheat_songs_done">Все песни выучены.</string>
+    <string name="cheat_stats">20 сердец, двойная магия, 5000 рупий</string>
+    <string name="cheat_stats_done">20 сердец, двойная магия и 5000 рупий.</string>
+    <string name="cheat_stats_hint">Заодно восполняет сердца и магию</string>
+    <string name="cheat_sword">Надеть Мастер-меч и Зеркальный щит</string>
+    <string name="cheat_sword_done">Мастер-меч и Зеркальный щит надеты до следующей загрузки файла.</string>
+    <string name="cheat_sword_hint">Действует до следующей загрузки сохранения</string>
+    <string name="cheat_triforce">Все осколки Триединства</string>
+    <string name="cheat_triforce_done">Все осколки Триединства собраны.</string>
+    <string name="cheats_about">Читы правят игровой файл, в котором вы играете (из оригинала). Действуют сразу после загрузки сохранения; чтобы сохранить их, сохранитесь в игре.</string>
+    <string name="cheats_story_about">⚠️ Сюжетные читы могут поломать события: игра пропустит или повторит сцены, где их выдают или проверяют. Сначала сохранитесь в отдельный файл.</string>
+    <string name="cheats_story_confirm">Это может изменить или сломать события сюжета. Сначала сохранитесь в отдельный файл. Применить?</string>
+    <string name="controller_pro">Wii U Pro Controller</string>
+    <string name="controls_classic">Классика</string>
+    <string name="controls_flexible">Гибкие</string>
+    <string name="dev_off">Параметры разработчика выключены</string>
+    <string name="dev_on">Параметры разработчика включены (вкладка «Моды»: телепорт)</string>
+    <string name="drc_in_layout">В раскладке экрана</string>
+    <string name="drc_second_display">Второй экран</string>
+    <string name="drc_shape_fill">Заполнить экран</string>
+    <string name="drc_shape_original">Исходный 16:9</string>
+    <string name="dyn_res_down_to">Вплоть до %1$s× (%2$s)</string>
+    <string name="fg_about">Добавляет промежуточные кадры между кадрами игры в 30 fps — генерацией кадров Lossless Scaling. Нужна ваша копия Lossless.dll из установки Lossless Scaling (Steam: steamapps/common/Lossless Scaling). Скопируйте её на это устройство и выберите здесь. С генерацией картинка отстаёт примерно на кадр.</string>
+    <string name="fg_dll_tested_hint">Установлена: проверенная версия</string>
+    <string name="fg_dll_untested_hint">Установлена: непроверенная версия (кадры могут выглядеть неправильно)</string>
+    <string name="fg_error">Генерация кадров не работает: %1$s</string>
+    <string name="fg_multiplier_item">×%1$d (%2$d fps)</string>
+    <string name="fg_multiplier_item_over">×%1$d (%2$d fps: больше, чем показывает экран, сгенерированных кадров нет)</string>
+    <string name="fg_performance">Производительность</string>
+    <string name="fg_quality">Качество (больше нагрузка на GPU)</string>
+    <string name="gpu_driver_about">На GPU Adreno игра может работать не на системном драйвере Vulkan, а на другом — например, на сборке Mesa Turnip или более новом драйвере Qualcomm. Подойдут пакеты драйверов в формате AdrenoTools (.zip с meta.json и драйвером), как в других эмуляторах. Новый драйвер включается после перезапуска. Если игра с ним не запускается, следующий запуск вернётся к системному драйверу.</string>
+    <string name="gpu_driver_fell_back">Не удалось загрузить %1$s, поэтому работает системный драйвер. Следующий запуск вернётся к нему.</string>
+    <string name="gpu_driver_install">Установить пакет драйвера…</string>
+    <string name="gpu_driver_install_hint">.zip с meta.json и драйвером</string>
+    <string name="gpu_driver_remove">Удалить</string>
+    <string name="gpu_driver_running">Сейчас работает: %1$s</string>
+    <string name="gpu_driver_system">Системный драйвер</string>
+    <string name="gpu_driver_system_hint">Драйвер, который шёл с устройством</string>
+    <string name="gpu_driver_use">Использовать</string>
+    <string name="interp_fps">%d fps (интерполяция)</string>
+    <string name="interp_off">30 fps (исходно)</string>
+    <string name="fps_generated">60 fps (генерация)</string>
+    <string name="opt_about">О программе</string>
+    <string name="opt_aniso">16× анизотропная фильтрация</string>
+    <string name="opt_ao">Затенение окружения (AO)</string>
+    <string name="opt_ao_hires">Глубина окклюзии в полном размере</string>
+    <string name="opt_area_blur">Плавное размытие при высоком разрешении</string>
+    <string name="opt_area_blur_hint">Выше 1.5× разрешения размытие света и свечения игры остаётся таким же крупным, как при 720p — без мелкой сетки вокруг объектов на земле</string>
+    <string name="opt_bloom">Сила блуминга</string>
+    <string name="opt_bloom_hint">Свечение вокруг ярких участков. 100% — как в оригинальной игре</string>
+    <string name="opt_distant_shadows">Дальние тени</string>
+    <string name="opt_distant_shadows_hint">Дальние тени. Выкл.: меньше нагрузки на GPU в лесах и на открытой местности — для слабых телефонов</string>
+    <string name="opt_aspect">Соотношение сторон</string>
+    <string name="opt_auto_slot">Автосохранение %1$d</string>
+    <string name="opt_auto_state">Автосохранение состояния</string>
+    <string name="opt_auto_state_hint">Сохраняет состояние по ходу игры, не останавливая её, — по очереди в два автослота</string>
+    <string name="opt_back">Назад</string>
+    <string name="opt_bench">Найти лучшие настройки</string>
+    <string name="opt_bench_hint">Короткий тест устройства; по его итогам ставится пресет (игра перезапустится)</string>
+    <string name="opt_buttons">Кнопки геймпада</string>
+    <string name="opt_buttons_custom">Свои</string>
+    <string name="opt_buttons_default">По умолчанию</string>
+    <string name="opt_buttons_hint">Какая кнопка геймпада нажимает какую кнопку Wii U</string>
+    <string name="opt_buttons_note">Выберите кнопку Wii U, затем нажмите кнопку геймпада для неё. Если кнопка занята, кнопки меняются местами — у каждой кнопки Wii U остаётся своя. «Прыжок везде» и лунный прыжок сначала спросят, если кнопка занята в игре. Home / Guide и удержание Select всегда открывают меню, и меню работает по расположению кнопок.</string>
+    <string name="opt_buttons_press">Нажмите кнопку геймпада для %1$s (сейчас: %2$s).\n\nHome / Guide или «Отмена» оставят как есть.</string>
+    <string name="opt_buttons_reset">Сбросить на умолчания</string>
+    <string name="opt_extra_l1">L1 как кнопка предмета</string>
+    <string name="opt_extra_l1_hint">Забирает у геймпада слот X, Y или R (прыжок там меняется местами) вместе с предметом, его слотом на странице предметов и местом в кольце. Тогда L1 больше не нажимает L консоли Wii U: страницы не листаются, кнопки микрофона для песен нет.</string>
+    <string name="opt_extra_down">Крестовина вниз как кнопка предмета</string>
+    <string name="opt_extra_down_hint">Как L1, но только в игре; в меню остаётся крестовиной. На странице предметов: удерживайте ZL и нажмите крестовину вниз, чтобы положить туда предмет под курсором.</string>
+    <string name="opt_slot_labels">Названия кнопок предметов</string>
+    <string name="opt_slot_labels_hint">На кнопках игры и слотах предметов GamePad. Авто: A1, A2, A3 для сенсора; с геймпадом — та кнопка, которая нажимает</string>
+    <string-array name="slot_labels">
+        <item>Авто</item>
+        <item>A1, A2, A3</item>
+        <item>X, Y, R (как в игре)</item>
+    </string-array>
+    <!-- the controller setup (ControllerSetup) -->
+    <string name="cs_title">Настройка геймпада</string>
+    <string name="cs_menu_hint">По шагам: что делают кнопки, готовая раскладка, проверка</string>
+    <string name="cs_no_controller">Геймпад не подключён. Подключите его (или нажмите любую его кнопку) и попробуйте снова.</string>
+    <string name="cs_buttons_for">Для: %1$s</string>
+    <string name="cs_offer_title">Новый геймпад</string>
+    <string name="cs_offer_text">%1$s подключён.\n\nНастроить его? Несколько шагов покажут, что делают его кнопки в игре, и предложат раскладку, в том числе для «Прыжка везде». Всё можно изменить позже в «Управление › Настройка геймпада».</string>
+    <string name="cs_offer_never">Не спрашивать</string>
+    <string name="cs_offer_later">Позже</string>
+    <string name="cs_offer_yes">Настроить</string>
+    <string name="cs_intro">%1$s\n\nИгра знает только GamePad от Wii U, и каждую его кнопку нажимает одна кнопка вашего геймпада. Назначение можно менять свободно, у каждого геймпада оно своё.\n\nВо время игры игра использует все кнопки, кроме L и крестовины вниз. Поэтому «Прыжок везде» и лунный прыжок либо делят L (L1 / LB), либо забирают кнопку у игры: её действие переходит на L, а для кнопки предмета просто снимается.</string>
+    <string name="cs_next">Далее</string>
+    <string name="cs_letters_title">Буквы на вашем геймпаде (%1$d/4)</string>
+    <string name="cs_letters_first">Какие буквы напечатаны на четырёх кнопках справа? У разных брендов они стоят в разных местах, а на некоторых геймпадах их можно менять.\n\nНажмите кнопку с буквой %1$s.\n\nКнопки предметов в игре и слоты предметов GamePad тогда покажут буквы вашего геймпада, а кнопки игры на телевизоре будут стоять так, как на вашем геймпаде.</string>
+    <string name="cs_letters_next">Нажмите кнопку с буквой %1$s.</string>
+    <string name="cs_letters_none">Без букв</string>
+    <string name="cs_letters_keep">Оставить</string>
+    <string name="cs_letters_not_face">Это не одна из четырёх кнопок справа.</string>
+    <string name="cs_letters_taken">Эта кнопка уже %1$s.</string>
+    <string name="cs_place_text">Где стоит кнопка с буквой %1$s?\n\nТогда кнопки игры на телевизоре будут нарисованы так же, как на вашем геймпаде.</string>
+    <string name="cs_place_south">Юг (низ)</string>
+    <string name="cs_place_east">Восток (право)</string>
+    <string name="cs_place_north">Север (верх)</string>
+    <string name="cs_place_west">Запад (лево)</string>
+    <string name="cs_place_marks">Nintendo %1$s · Xbox %2$s · PlayStation %3$s</string>
+    <string name="cs_face_title">Кнопки действий</string>
+    <string name="cs_face_text">Как должны работать четыре кнопки справа?\n\nПо расположению: как на GamePad от Wii U — нижняя кнопка бьёт мечом (B на Wii U), правая — действие (A). Кнопки предметов в игре всё равно показывают буквы вашего геймпада.\n\nПо буквам: A геймпада — действие (A в игре), B — меч, X и Y — кнопки предметов A2 и A1.</string>
+    <string name="cs_face_letters">По буквам</string>
+    <string name="cs_face_position">По положению</string>
+    <string name="cs_preset_title">Раскладка</string>
+    <string name="cs_preset_text">Выберите отправную точку. Отдельные кнопки можно поменять потом.</string>
+    <string name="cs_preset_original">Исходная</string>
+    <string name="cs_preset_original_text">Все кнопки как на Wii U. «Прыжок везде» и лунный прыжок (если включён) — на L1 / LB, которую игра во время игры не использует.</string>
+    <string name="cs_preset_takeoff">Прыжок на кнопку предмета, предмет снимается</string>
+    <string name="cs_preset_takeoff_text">«Прыжок везде» — на одной из кнопок предметов (A1, A2 или A3). Эта кнопка предмета снимается: предмет с геймпада не вызвать, две другие остаются. Включает «Прыжок везде».</string>
+    <string name="cs_preset_tol">Прыжок на любую кнопку, её действие на L</string>
+    <string name="cs_preset_tol_text">«Прыжок везде» на выбранной кнопке, например на кнопке действия. Её действие в игре переходит на L1 / LB, так что ничего не теряется. Включает «Прыжок везде». Для кнопки предмета L1 становится этой кнопкой предмета, а у L консоли Wii U не остаётся кнопки геймпада (страницы на странице предметов не листаются, кнопки микрофона для песен нет).</string>
+    <string name="cs_jump_title">Кнопка для прыжка</string>
+    <string name="cs_jump_takeoff">Нажмите кнопку предмета, которая будет прыгать: %1$s (A1), %2$s (A2) или %3$s (A3).\n\nЛунный прыжок, пока включён, забирает ту же кнопку.</string>
+    <string name="cs_jump_tol">Нажмите кнопку, которая будет прыгать, например кнопку действия. Её действие в игре перейдёт на L1 / LB.\n\nЛунный прыжок, пока включён, забирает ту же кнопку.</string>
+    <string name="cs_jump_not_item">%1$s нажимает в игре %2$s, а не кнопку предмета: снять нельзя.</string>
+    <string name="cs_jump_not_menu">%1$s открывает меню. Выберите другую кнопку.</string>
+    <string name="cs_try_title">Проверка</string>
+    <string name="cs_try_text">Нажимайте кнопки геймпада — каждая подсвечивается тем, что делает в игре. Держите %1$s, чтобы закончить («Готово»), %2$s — чтобы изменить («Изменить»). Отдельные кнопки: «Управление › Кнопки геймпада».</string>
+    <string name="cs_change">Изменить</string>
+    <string name="cs_done">Готово</string>
+    <string name="cs_nothing">ничего</string>
+    <string name="cs_select_hold">удержание: меню приложения</string>
+    <string name="cs_tag_jump">Прыжок</string>
+    <string name="cs_tag_moon">Луна</string>
+    <string name="cs_takeoff_ring">Если включено кольцо предметов, работает и направление крестовины (кроме «вниз» — игра его не использует): в кольце есть Повелитель Ветров, пушка и лебёдка.</string>
+    <string name="cs_jump_not_item_ring">%1$s нажимает в игре %2$s — это не кнопка предмета и не направление крестовины из кольца предметов: снять нельзя.</string>
+    <string name="cs_in_ring">также в кольце предметов</string>
+    <string name="cs_taken_off">Нет кнопки: %1$s</string>
+    <string name="cs_ring_off_warn">Ни одна кнопка геймпада больше не нажимает %1$s: кнопку забрал прыжок, пока её держало кольцо предметов. Без кольца её действие с геймпада недоступно — назначьте кнопку в «Управление › Кнопки геймпада» или запустите «Управление › Настройка геймпада».</string>
+    <string-array name="cs_wiiu_actions">
+        <item>Действие (говорить, открыть, поднять)</item>
+        <item>Меч</item>
+        <item>Кнопка предмета A2</item>
+        <item>Кнопка предмета A1</item>
+        <item>Не используется в игре</item>
+        <item>Кнопка предмета A3</item>
+        <item>Захват цели</item>
+        <item>Присесть, щит</item>
+        <item>Не используется</item>
+        <item>Пауза, экран GamePad</item>
+        <item>Ускорение (Моды, если на L3)</item>
+        <item>Вид от первого лица</item>
+        <item>Ветроуказатель</item>
+        <item>Не используется в игре</item>
+        <item>Пушка (лодка)</item>
+        <item>Лебёдка (лодка)</item>
+    </string-array>
+    <string name="opt_cancel">Отмена</string>
+    <string name="opt_capture">Снять кадр</string>
+    <string name="opt_capture_hint">Для отладки: сохраняется в папку приложения</string>
+    <string name="opt_cheats">Читы</string>
+    <string name="opt_cheats_hint">Предметы, сердца, бесконечное здоровье… — для сохранения, в котором играете</string>
+    <string name="opt_context_buttons">Контекстные кнопки</string>
+    <string name="opt_context_buttons_hint">A, B, X, Y, R и ZR появляются, когда есть что нажать, и подписаны своим действием; кнопки самой игры при этом скрыты</string>
+    <string name="opt_talk_hold">Держать, чтобы продолжать диалог</string>
+    <string name="opt_talk_hold_hint">Если держать, диалог идёт сам, страница за страницей, и останавливается на вопросе: A на геймпаде или касание в любом месте (гибкий стиль с контекстными кнопками). Выкл.: каждое нажатие перелистывает на шаг</string>
+    <string name="opt_talk_hold_ff">Ускорять, пока держите</string>
+    <string name="opt_talk_hold_ff_hint">Удерживаемый диалог идёт ещё и с ускорением (до 4×, насколько тянет устройство)</string>
+    <string name="opt_controls">Управление</string>
+    <string name="opt_controls_edit">Изменить раскладку на экране</string>
+    <string name="opt_controls_edit_hint">Двигать, масштабировать и скрывать каждую кнопку; прозрачность и стиль (контур или заливка)</string>
+    <string name="opt_controls_style">Сенсорное управление</string>
+    <string name="opt_controls_style_hint">Гибкий: стики появляются там, где вы касаетесь пальцем (левая половина: движение, правая: камера)</string>
+    <string name="opt_display_res">Разрешение вывода</string>
+    <string name="opt_display_res_hint">Авто: картинка рисуется в нужном ей размере, а экран её растягивает — на экранах высокого разрешения это быстрее. Полное: всегда в родном разрешении экрана</string>
+    <string name="opt_drc_display">Экран GamePad</string>
+    <string name="opt_drc_display_hint">Найден второй дисплей: нижний экран двухэкранного устройства либо телевизор через трансляцию или кабель HDMI. На телевизоре выберите картинку игры — тогда это устройство показывает экран GamePad.</string>
+    <string name="opt_drc_shape">Картинка GamePad</string>
+    <string name="opt_drc_shape_hint">Заполнить: экран GamePad повторяет форму дисплея, фон доходит до краёв</string>
+    <string name="opt_dyn_res">Динамическое разрешение</string>
+    <string name="opt_dyn_res_hint">Снижает разрешение рендера, когда GPU не даёт держать частоту кадров (тогда игра замедляется), и поднимает обратно, когда есть запас. Текущее значение видно в оверлее производительности</string>
+    <string name="opt_export">Экспорт сохранений</string>
+    <string name="opt_export_hint">Сохранить сохранение игры и сохранения в слотах в один архив</string>
+    <string name="opt_fg_choose_dll">Выбрать Lossless.dll</string>
+    <string name="opt_fg_flow">Масштаб потока</string>
+    <string name="opt_fg_flow_hint">Точность оценки движения: ниже — быстрее</string>
+    <string name="opt_fg_multiplier">Множитель</string>
+    <string name="opt_fg_multiplier_hint">Сколько кадров на один кадр игры</string>
+    <string name="opt_fg_network">Сеть</string>
+    <string name="opt_fg_remove_confirm">Удалить Lossless.dll из приложения? Генерация кадров выключится, пока вы не выберете её снова.</string>
+    <string name="opt_fg_remove_dll">Удалить Lossless.dll</string>
+    <string name="opt_fg_replace_dll">Выбрать Lossless.dll</string>
+    <string name="opt_fg_ui">Распознавание интерфейса</string>
+    <string name="opt_fg_ui_hint">Сохраняет меню и текст чёткими</string>
+    <string name="opt_framegen">Генерация кадров</string>
+    <string name="opt_game">Игра</string>
+    <string name="opt_gpu_driver">Драйвер GPU</string>
+    <string name="opt_gpu_driver_hint">Системный или установленный пакет драйвера</string>
+    <string name="opt_graphics">Графика</string>
+    <string name="opt_hearts_combat">Сердца только в бою</string>
+    <string name="opt_hearts_combat_hint">Сердца скрыты, пока меч убран, и появляются, когда он вынут, когда Линк получает урон или лечится; шкала магии показывается сама, пока магия используется</string>
+    <string name="opt_import">Импорт сохранений</string>
+    <string name="opt_import_hint">Восстановить их из файлов; импортированное сохранение игры перезапускает игру</string>
+    <string name="opt_interp">Частота кадров</string>
+    <string name="opt_interp_hint">Интерполяция кадров: промежуточные кадры из 30 fps игры. Нужен быстрый CPU; где кадр не успевает, он пропускается и игра держит свою скорость. 60 fps (генерация): каждый второй кадр строится на GPU из предыдущего, нагрузка на CPU мала</string>
+    <string name="opt_invert_camera_y">Инвертировать камеру вверх/вниз</string>
+    <string name="opt_invert_camera_y_hint">Меняет местами верх и низ на правом стике (и при свайпе). От первого лица и при прицеливании игра сама смотрит вниз, когда вы нажимаете вверх: чтобы «вверх = смотреть вниз» работало везде, выберите «Только обычная камера». Дирижирование Повелителем Ветров не инвертируется никогда</string>
+    <string name="opt_item_ring">Кольцо предметов</string>
+    <string name="opt_item_ring_hint">Держите X, Y или R (сенсор или геймпад), чтобы выбрать для неё предмет; короткое касание использует предмет как раньше</string>
+    <string name="opt_item_ring_pace">Пока кольцо открыто</string>
+    <string name="opt_ring_baton_button">Отдельная кнопка Повелителя Ветров</string>
+    <string name="opt_ring_baton_button_hint">Её собственная кнопка остаётся, пока кольцо включено (гибкий стиль с контекстными кнопками)</string>
+    <string name="opt_ring_boat_buttons">Кнопки пушки и лебёдки тоже</string>
+    <string name="opt_ring_boat_buttons_hint">В лодке их собственные кнопки остаются, пока кольцо включено</string>
+    <string name="opt_language">Язык игры</string>
+    <string name="opt_language_hint">Языки вашей копии игры; применяется после перезапуска</string>
+    <string name="opt_menu_language">Язык меню</string>
+    <string name="opt_menu_language_hint">Язык меню, подсказок и диалогов приложения; применяется после перезапуска</string>
+    <string name="opt_last_slot">Последний сеанс</string>
+    <string name="opt_layout">Раскладка экрана</string>
+    <string name="opt_leave_state">Сохранять состояние при выходе</string>
+    <string name="opt_leave_state_hint">Сохраняет, где вы были, если Android выгрузит игру из памяти</string>
+    <string name="opt_menu_overlay">Кнопка меню в игре</string>
+    <string name="opt_menu_overlay_hint">Выкл.: эти настройки — страница меню +, за стрелкой слева от предметов. Вкл.: кнопка ≡ открывает их поверх игры, как раньше</string>
+    <string name="opt_minigame_touch">Мини-игры касанием</string>
+    <string name="opt_minigame_touch_hint">Касайтесь картинки игры: клеток Sploosh Kaboom, деталей картинок-головоломок, ячеек почты, товаров в лавке, ответов; наводите пушку, делайте ставку, поворачивайте фигурки и дирижируйте перетаскиванием. Выкл.: только стик и кнопки, как в оригинале</string>
+    <string name="opt_conduct_pads">Нотные панели для дирижирования</string>
+    <string name="opt_conduct_pads_hint">При дирижировании показываются две панели: пять знаков нот (направления палочки, крестовина) и три размера. Выкл.: палец на каждой половине картинки работает как стик</string>
+    <string name="opt_mod_camera_speed">Скорость прямой камеры</string>
+    <string name="opt_mod_climb">Лазать по любым стенам</string>
+    <string name="opt_mod_climb_fast">Быстрее лазать</string>
+    <string name="opt_mod_climb_fast_hint">Быстрее по лестницам и лианам и быстрее вдоль уступа в висе</string>
+    <string name="opt_mod_climb_hint">Со шкалой выносливости; B или A — отпустить</string>
+    <string name="opt_mod_leaf_lift">Листок Деку: взмах — подъём</string>
+    <string name="opt_mod_leaf_lift_hint">В парении каждый взмах листка (его кнопка ещё раз) немного поднимает Линка</string>
+    <string name="opt_mod_leaf_lift_height">Высота одного взмаха</string>
+    <string name="opt_mod_leaf_lift_height_hint">Насколько каждый взмах поднимает Линка; 100% — примерно его рост</string>
+    <string name="opt_mod_direct_camera">Прямая камера на правом стике</string>
+    <string name="opt_mod_direct_camera_hint">Без сглаживания: камера сразу следует за стиком</string>
+    <string name="opt_mod_fast_scenes">Быстрые смены сцен</string>
+    <string name="opt_mod_ff_cutscenes">Ускорять катсцены</string>
+    <string name="opt_mod_ff_dialogues">Ускорять диалоги</string>
+    <string name="opt_skip_title">Пропускать титульный экран</string>
+    <string name="opt_skip_title_hint">После логотипов игра идёт сразу к выбору файла. B там по-прежнему ведёт на титульный экран. Действует со следующего запуска</string>
+    <string name="opt_mod_instant_text">Мгновенный текст</string>
+    <string name="opt_mod_instant_text_hint">Окна сообщений показывают текст целиком, а не по буквам; B тоже пропускает, а окна закрываются, не дожидаясь стрелки</string>
+    <string name="opt_mod_text_pauses">Без пауз в текстах</string>
+    <string name="opt_mod_text_pauses_hint">Убирает и короткие паузы, вписанные в некоторые тексты</string>
+    <string name="opt_hit_stops">Заморозки от ударов</string>
+    <string name="opt_hit_stops_hint">Короткая остановка мира при попадании — по видам ударов; выкл.: игра идёт дальше без паузы</string>
+    <string name="opt_hit_stop_hit">Попадания</string>
+    <string name="opt_hit_stop_hit_hint">Удар по врагу (1–2 кадра)</string>
+    <string name="opt_hit_stop_strong">Сильные удары</string>
+    <string name="opt_hit_stop_strong_hint">Сбитый с ног враг, Darknut без брони, Stalfos без головы (4–6 кадров)</string>
+    <string name="opt_hit_stop_defeat">Добивания</string>
+    <string name="opt_hit_stop_defeat_hint">Добивающий удар (6 кадров)</string>
+    <string name="opt_hit_stop_boss">Боссы</string>
+    <string name="opt_hit_stop_boss_hint">Удар по боссу и его собственные задержки (до 8 кадров)</string>
+    <string name="opt_hit_stop_sign">Указатели</string>
+    <string name="opt_hit_stop_sign_hint">Разрубание указателя (1 кадр)</string>
+    <string name="opt_mod_picto_pages">Страницы альбома</string>
+    <string name="opt_mod_picto_pages_hint">Альбом улучшенного фотоаппарата получает сколько угодно страниц по 12 снимков: когда страница заполнена, новый снимок начинает следующую. Полоса сверху в альбоме (или ZL / L) листает страницы. Ваше сохранение хранит текущую страницу, остальные лежат рядом с ним</string>
+    <string name="picto_page">Страница %1$d / %2$d</string>
+    <string name="opt_picto_subject">Сюжеты для снимков</string>
+    <string name="opt_picto_subject_hint">В альбоме фотоаппарата: кого поймал снимок — по имени фигурки в галерее. Снимок с золотой медалью (★) годится для фигурки; иначе будет сказано, чего не хватает</string>
+    <string name="picto_mono">чёрно-белое</string>
+    <string name="picto_turned_away">отвернулся</string>
+    <string name="picto_hidden">частично скрыт</string>
+    <string name="opt_postbox">Отправка снимков через почтовые ящики</string>
+    <string name="opt_postbox_hint">Покажите почтовому ящику фотоаппарат и выберите снимок: он уйдёт Карлову, и тот сделает фигурку, как в Галерее Nintendo. На следующий день фигурка будет в галерее — идти туда не нужно</string>
+    <string name="opt_postbox_same_day">Доставка в тот же день</string>
+    <string name="opt_postbox_same_day_hint">Отправленная фигурка сразу оказывается в Галерее Nintendo</string>
+    <string name="postbox_mailed">Отправлено Карлову: %1$s. Фигурка будет в Галерее Nintendo завтра.</string>
+    <string name="postbox_delivered">Фигурка %1$s теперь в Галерее Nintendo.</string>
+    <string name="postbox_no_carlov">Сначала познакомьтесь с Карловом в Галерее Nintendo.</string>
+    <string name="postbox_mono">Карлову нужен цветной снимок.</string>
+    <string name="postbox_no_subject">Из этого снимка фигурка не получится.</string>
+    <string name="postbox_made">Фигурка %1$s уже есть в галерее.</string>
+    <string name="postbox_queued">Фигурка %1$s уже заказана.</string>
+    <string name="postbox_face">%1$s: лицо видно недостаточно хорошо.</string>
+    <string name="postbox_body">%1$s: в снимок попал не весь объект.</string>
+    <string name="postbox_full">У Карлова уже 12 фигурок в заказе.</string>
+    <string name="postbox_ask">Отправить снимок Карлову в Галерею Nintendo? Он сделает из него фигурку.</string>
+    <string name="postbox_ask_yes">Да, выбрать снимок</string>
+    <string name="postbox_ask_no">Нет</string>
+    <string name="opt_link_clothes">Одежда Линка</string>
+    <string name="opt_link_clothes_hint">Одежда героя или повседневная (рубашка с лобстером) — в любой момент; смена показывается облачком дыма. Как в сюжете: решает игра</string>
+    <string name="opt_gamepad_sounds">Звуки GamePad</string>
+    <string name="opt_gamepad_sounds_hint">Звуки, которые Wii U играет только через динамик GamePad: его меню, смена предметов, сохранение, а также звуки меню настроек</string>
+    <string name="opt_l_drc_pages">L листает страницы GamePad</string>
+    <string name="opt_l_drc_pages_hint">В игре L переключает экран GamePad между «Предметами» и «Картой», как на Wii U (для картинки GamePad на втором экране); выкл.: вне игры не переключает</string>
+    <string name="opt_pad_zl_every">ZL захватывает каждого врага</string>
+    <string name="opt_pad_zl_every_hint">Пока ZL удерживается, каждый враг в радиусе захватывается сам, а более близкий враг перехватывает захват (у сенсорного ZL это «ZL при захвате цели: каждый враг»)</string>
+    <string name="clothes_story">Как в сюжете</string>
+    <string name="clothes_hero">Одежда героя</string>
+    <string name="clothes_casual">Повседневная одежда</string>
+    <string name="opt_mod_song_replay">Повторять сыгранные песни</string>
+    <string name="opt_mod_song_replay_hint">Как на GameCube: после песни, которую вы продирижировали, Линк играет её ещё раз, прежде чем она сработает (версия для Wii U переходит к эффекту сразу)</string>
+    <string name="opt_mod_ff_hint">Быстрее (до 4×, насколько тянет устройство), пока удерживается ZR (R2); окна текста всё равно ждут вашу кнопку</string>
+    <string name="opt_mod_first_person">Вид от первого лица на колесе мыши</string>
+    <string name="opt_mod_jump">Прыжок везде</string>
+    <string name="opt_mod_jump_double">Двойной прыжок</string>
+    <string name="opt_mod_jump_double_hint">Кнопка прыжка ещё раз — уже в воздухе</string>
+    <string name="opt_mod_jump_hint">Прыжок работает и с места, и на бегу — как с уступа</string>
+    <string name="opt_mod_jump_noauto">Без автоматических прыжков с уступа</string>
+    <string name="opt_mod_jump_noauto_hint">Сбегая с края, Линк падает, а не прыгает: прыжок — только вашей кнопкой</string>
+    <string name="opt_mod_quick_doors">Быстрые двери</string>
+    <string name="opt_mod_walk_doors">Проходные двери</string>
+    <string name="opt_mod_walk_doors_hint">Двери подземелий и домов открываются, вы проходите сами, и они закрываются за вами — без сцены с дверью</string>
+    <string name="opt_mod_walk_doors_open">Двери открываются</string>
+    <string name="opt_mod_walk_doors_open_hint">Когда Линк подходит близко, или по A на подсказке «Открыть» игры (тогда проходите сами)</string>
+    <string name="opt_mod_walk_doors_near">Когда вы подходите</string>
+    <string name="opt_mod_walk_doors_a">По A</string>
+    <string name="opt_mod_run">Быстрее бегать</string>
+    <string name="opt_mod_run_always">Всегда</string>
+    <string name="opt_mod_run_hint">Линк пробегает больше за то же время; прыжки и кувырки остаются как есть</string>
+    <string name="opt_mod_run_l3">L3</string>
+    <string name="opt_mod_run_l3_hold">Удержание</string>
+    <string name="opt_mod_run_l3_switch">Нажатие: вкл / выкл</string>
+    <string name="opt_mod_run_off">Выкл.</string>
+    <string name="opt_mod_run_when">Когда действует</string>
+    <string name="opt_mod_run_with_l3">С L3</string>
+    <string name="opt_mod_sidle">Быстрее двигаться спиной к стене</string>
+    <string name="opt_mod_sidle_hint">Движение боком, когда Линк прижимается к стене</string>
+    <string name="opt_mod_speed_hint">Скорость 4×</string>
+    <string name="opt_mod_swim">Быстрее плавать</string>
+    <string name="opt_mod_swim_hint">То же, пока Линк плывёт</string>
+    <string name="opt_mods">Моды</string>
+    <string name="opt_motion">Управление наклоном</string>
+    <string name="opt_motion_hint">Прицеливание наклоном устройства или геймпада с датчиками движения</string>
+    <string name="opt_motion_hint_missing">Прицеливание наклоном этого устройства: его датчики движения %1$s не видны приложениям (почему — «Управление › Сведения о геймпаде»)</string>
+    <string name="opt_off">ВЫКЛ</string>
+    <string name="opt_on">ВКЛ</string>
+    <string name="opt_page_touch">Сенсор</string>
+    <string name="opt_page_touch_hint">Размер, стики, кнопки предметов, значки, кнопка меню</string>
+    <string name="opt_page_ring_hint">Выбор предметов на кольце; названия кнопок предметов</string>
+    <string name="opt_page_camera">Камера</string>
+    <string name="opt_page_camera_hint">Вверх/вниз, прямая камера, направление ходьбы, камера свайпом</string>
+    <string name="opt_page_minigames">Мини-игры и подсказки</string>
+    <string name="opt_page_minigames_hint">Мини-игры и дирижирование касанием, сенсорные подсказки</string>
+    <string name="opt_page_hud">Экран (HUD)</string>
+    <string name="opt_page_hud_hint">Сердца, рупии, мини-карта, вид фотоаппарата</string>
+    <string name="opt_page_controller">Геймпад</string>
+    <string name="opt_page_controller_hint">Настройка, кнопки, сведения о геймпаде</string>
+    <string name="cd_title">Сведения о геймпаде</string>
+    <string name="cd_hint">Имя, ID, заряд, вибрация, датчики движения, подсветка, кнопки, оси</string>
+    <string name="cd_sec_general">Геймпад</string>
+    <string name="cd_sec_app">В этом приложении</string>
+    <string name="cd_sec_battery">Батарея</string>
+    <string name="cd_sec_rumble">Вибрация</string>
+    <string name="cd_sec_motion">Датчики движения</string>
+    <string name="cd_sec_lights">Подсветка</string>
+    <string name="cd_sec_buttons">Кнопки</string>
+    <string name="cd_sec_axes">Стики и триггеры (оси)</string>
+    <string name="cd_name">Имя</string>
+    <string name="cd_vendor">ID производителя</string>
+    <string name="cd_product">ID продукта</string>
+    <string name="cd_device_id">ID устройства</string>
+    <string name="cd_player">Номер игрока</string>
+    <string name="cd_descriptor">Дескриптор</string>
+    <string name="cd_connection">Подключение</string>
+    <string name="cd_external">Внешний</string>
+    <string name="cd_builtin">Встроенный</string>
+    <string name="cd_enabled">Включён</string>
+    <string name="cd_mic">Микрофон</string>
+    <string name="cd_keyboard">Клавиатура</string>
+    <string name="cd_kb_alpha">Буквы</string>
+    <string name="cd_kb_buttons">Только кнопки</string>
+    <string name="cd_sources">Источники ввода</string>
+    <string name="cd_face">Кнопки действий</string>
+    <string name="cd_face_sony">Символы PlayStation</string>
+    <string name="cd_face_nintendo">Буквы Nintendo (по положению)</string>
+    <string name="cd_face_xbox">Буквы Xbox</string>
+    <string name="cd_in_use">Сейчас используется</string>
+    <string name="cd_set_up">Настроен</string>
+    <string name="cd_motion_from">Гироскоп от</string>
+    <string name="cd_rumble_on">Вибрация на</string>
+    <string name="cd_this_controller">Этот геймпад</string>
+    <string name="cd_this_device">Это устройство</string>
+    <string name="opt_src_auto">Автоматически</string>
+    <string name="opt_src_device">Это устройство</string>
+    <string name="opt_src_controller">Геймпад</string>
+    <string name="opt_src_both">Оба</string>
+    <string name="opt_motion_from_hint">Авто: геймпад, когда играете им (если у него есть датчики движения), это устройство — когда играете касанием</string>
+    <string name="opt_rumble_on_hint">Автоматически: геймпад, когда вы играете им (если он вибрирует), это устройство — когда играете касанием</string>
+    <string name="cd_both">Этот геймпад и это устройство</string>
+    <string name="cd_battery">Батарея</string>
+    <string name="cd_charge">Заряд</string>
+    <string name="cd_status">Состояние</string>
+    <string name="cd_bat_charging">Заряжается</string>
+    <string name="cd_bat_discharging">Разряжается</string>
+    <string name="cd_bat_not_charging">Не заряжается</string>
+    <string name="cd_bat_full">Полный</string>
+    <string name="cd_motors">Моторы</string>
+    <string name="cd_motor">Мотор %1$d</string>
+    <string name="cd_amplitude">Управление силой</string>
+    <string name="cd_on_off_only">Только вкл / выкл</string>
+    <string name="cd_resonance">Резонанс %1$s Гц</string>
+    <string name="cd_effects">Эффекты: %1$s</string>
+    <string name="cd_sensors">Датчики</string>
+    <string name="cd_gyro">Гироскоп</string>
+    <string name="cd_accel">Акселерометр</string>
+    <string name="cd_range">Диапазон ±%1$s, разрешение %2$s</string>
+    <string name="cd_rate">до %1$s Гц</string>
+    <string name="cd_lights">Подсветка</string>
+    <string name="cd_light">Подсветка</string>
+    <string name="cd_light_mic">Подсветка микрофона</string>
+    <string name="cd_light_input">Подсветка ввода</string>
+    <string name="cd_light_player">Подсветка игрока</string>
+    <string name="cd_light_keyboard">Подсветка клавиатуры</string>
+    <string name="cd_light_colour">цвет</string>
+    <string name="cd_light_brightness">яркость</string>
+    <string name="cd_button_count">Кнопок: %1$d</string>
+    <string name="cd_axes">Оси</string>
+    <string name="cd_axis_left">левый стик</string>
+    <string name="cd_axis_right">правый стик</string>
+    <string name="cd_axis_dpad">крестовина</string>
+    <string name="cd_axis_lt">левый триггер</string>
+    <string name="cd_axis_rt">правый триггер</string>
+    <string name="cd_resolution">разрешение %1$s</string>
+    <string name="cd_yes">Да</string>
+    <string name="cd_no">Нет</string>
+    <string name="cd_none">Нет</string>
+    <string name="cd_none_reported">Не сообщается</string>
+    <string name="cd_why_motion">Почему нет: Android отдаёт приложениям датчики движения геймпада только тогда, когда ядро Linux устройства управляет геймпадом своим драйвером — для этого %1$s. В ядре этого устройства (%2$s) такого драйвера нет, поэтому геймпад работает как обычный HID-геймпад: кнопки и стики работают, но Android не делает из него датчиков движения (нет устройства ввода «Motion Sensors»). Приложение этого не обойдёт: по Bluetooth система держит сырые данные геймпада у себя. Обновление системы или ядро с драйвером (на кастомной прошивке — спросите её автора) их принесёт; до тех пор управление наклоном берёт датчики этого устройства.</string>
+    <string name="cd_why_rumble">Почему нет: Android отдаёт приложениям моторы вибрации геймпада только тогда, когда ядро Linux устройства управляет геймпадом своим драйвером — для этого %1$s. В ядре этого устройства (%2$s) такого драйвера нет, поэтому геймпад работает как обычный HID-геймпад: кнопки и стики работают, но Android не получает вибрацию (force feedback) для него. Приложение этого не обойдёт: по Bluetooth система держит геймпад у себя. Обновление системы или ядро с драйвером (на кастомной прошивке — спросите её автора) это принесёт; до тех пор вибрирует это устройство.</string>
+    <string name="cd_why_motion_android">Почему нет: Android отдаёт приложениям датчики движения геймпада начиная с Android 12; на этом устройстве Android %1$s. Управление наклоном берёт датчики этого устройства.</string>
+    <string name="cd_unknown">Неизвестно</string>
+    <string name="opt_page_res">Разрешение и масштабирование</string>
+    <string name="opt_page_res_hint">Динамическое разрешение, масштабирование, разрешение вывода</string>
+    <string name="opt_page_quality">Качество картинки</string>
+    <string name="opt_page_quality_hint">Затенение окружения, фильтрация текстур</string>
+    <string name="opt_page_screen">Экраны</string>
+    <string name="opt_page_screen_hint">Широкий экран, угол обзора, соотношение сторон, экраны ТВ и GamePad</string>
+    <string name="opt_page_advanced">Дополнительно</string>
+    <string name="opt_page_advanced_hint">Драйвер GPU, VSync, поток записи команд, кэш шейдеров</string>
+    <string name="opt_page_songs">Песни</string>
+    <string name="opt_page_songs_hint">Повтор, пение в микрофон, кнопки проигрывания</string>
+    <string name="opt_progress">Прогресс игры</string>
+    <string name="opt_progress_hint">Что этот файл собрал и чего ещё нет — списком</string>
+    <string name="progress_on_screen">Процент на экране</string>
+    <string name="progress_on_screen_hint">В игре, вверху картинки. Касание по нему открывает этот список</string>
+    <string name="progress_show">Показывать</string>
+    <string name="progress_no_game">Сначала загрузите файл: список показывает файл, в который вы играете.</string>
+    <string name="progress_about">Все %1$d частей весят одинаково. Не считаются: статуи Тингла, вихревое вращение, обмены сумки доставки и последний бой (после него игра ничего не сохраняет).</string>
+    <string name="progress_part_done">Всё собрано.</string>
+    <string name="progress_part_dungeons">Подземелья</string>
+    <string name="progress_part_hearts">Сердца</string>
+    <string name="progress_part_items">Предметы</string>
+    <string name="progress_part_equipment">Снаряжение</string>
+    <string name="progress_part_upgrades">Улучшения</string>
+    <string name="progress_part_songs">Песни</string>
+    <string name="progress_part_quest">Жемчужины и Триединство</string>
+    <string name="progress_part_charts">Карты сокровищ</string>
+    <string name="progress_part_sea">Морская карта</string>
+    <string name="progress_part_figurines">Галерея Nintendo</string>
+    <string name="progress_fire_ice">Огненные и ледяные стрелы</string>
+    <string name="progress_light">Световые стрелы</string>
+    <string name="progress_master_half">Мастер-меч (полсилы)</string>
+    <string name="progress_master_full">Мастер-меч (полная сила)</string>
+    <string name="progress_pirate">Амулет пирата</string>
+    <string name="progress_salvaged">Поднято сокровищ</string>
+    <string name="progress_magic">Магия ×2</string>
+    <string name="progress_deluxe">Улучшенный фотоаппарат</string>
+    <string name="progress_square">Квадрат %1$d</string>
+    <string name="progress_figurine">Фигурка %1$d</string>
+    <string name="pmap_title">Карта</string>
+    <string name="pmap_hint">Где каждая вещь была найдена на морской карте, и, если хотите, чего ещё нет</string>
+    <string name="pmap_show">Метки</string>
+    <string name="pmap_kind">Объекты</string>
+    <string name="pmap_about">Касание квадрата показывает его объекты. Метка стоит там, где объект; число на квадрате считает объекты, включая те, что в пещерах, на кораблях и в подземельях. В неизменённой игре у каждой вещи своё место, поэтому то, что есть в файле, показывается как найденное там.</string>
+    <string name="pmap_boss">Босс · %1$s</string>
+    <string name="pmap_inside">внутри</string>
+    <string name="pmap_src_chest">Сундук</string>
+    <string name="pmap_src_sub">Подлодка</string>
+    <string name="pmap_src_sunken">Затонувшее сокровище</string>
+    <string name="pmap_src_octo">Большой окто</string>
+    <string name="pmap_src_gunboat">Канонерка</string>
+    <string name="pmap_src_ground">На земле</string>
+    <string name="pmap_src_reward">Награда</string>
+    <string name="pmap_src_auction">Аукцион</string>
+    <string name="pmap_src_minigame">Мини-игра</string>
+    <string name="pmap_src_letter">Письмо</string>
+    <string name="pmap_src_shop">Магазин</string>
+    <string name="pmap_src_boss">Босс</string>
+    <string name="pmap_src_fishman">Рыбак</string>
+    <string name="pmap_src_fairy">Великая фея</string>
+    <string name="pmap_src_unknown">Место неизвестно</string>
+    <string name="pmap_dungeon_map">Карта подземелья</string>
+    <string name="pmap_sea">Морская карта</string>
+    <string name="pmap_floor">Этаж</string>
+    <string name="pmap_elsewhere">Без постоянного места</string>
+    <string name="pmap_elsewhere_hint">Вещи, которые двигаются (Корабль-призрак), или чьё место неизвестно. Для найденных в игре сохраняется остров, где был Линк.</string>
+    <string name="pmap_found_on">найдено %1$s</string>
+    <string name="pmap_maybe">найдено, но неясно, что именно из этого</string>
+    <string name="pmap_none">Для этого выбора здесь ничего нет.</string>
+    <string name="pmap_game_map">На карте игры</string>
+    <string name="pmap_game_map_hint">Метки на собственной морской карте игры (экран GamePad по +), в том числе в приближении квадрата</string>
+    <string name="pmap_mini_map_hint">Те же метки на мини-карте в игре (также в «Управление > Экран (HUD)»)</string>
+    <!-- achievements (Achievements.java) -->
+    <string name="opt_achievements">Достижения</string>
+    <string name="opt_achievements_hint">Цели в игре; открываются один раз и навсегда</string>
+    <string name="ach_total">%1$d из %2$d получено · %3$d из %4$d очков</string>
+    <string name="ach_popups">Всплывающее окно на экране</string>
+    <string name="ach_popups_hint">Когда достижение получено — на несколько секунд вверху картинки</string>
+    <string name="ach_link">Линк поднимает его</string>
+    <string name="ach_link_hint">Во всплывающем окне Линк поворачивается и поднимает достижение — как когда находит сокровище</string>
+    <string name="ach_sound">Джингл</string>
+    <string name="ach_sound_hint">Фанфара важного предмета из игры — вместе с всплывающим окном</string>
+    <string name="ach_sound_volume">Громкость джингла</string>
+    <string name="opt_ach_settings">Настройки достижений</string>
+    <string name="opt_ach_settings_hint">Всплывающее окно, Линк, сохранения, сброс</string>
+    <string name="ach_each_file">Окна в каждом сохранении</string>
+    <string name="ach_each_file_hint">Вкл.: у каждого сохранения свои достижения, и они открываются заново. Выкл.: только те, которых не было ни в одном сохранении</string>
+    <string name="ach_with_cheats">Получать с читами</string>
+    <string name="ach_with_cheats_hint">Вкл.: читы и сюжетные пресеты больше не останавливают достижения</string>
+    <string name="ach_files_about">Каждое сохранение (номер файла и имя) ведёт свой список достижений отдельно от общего. Новый файл, начатый в слоте, начинает список заново.</string>
+    <string name="ach_scope">Сохранения</string>
+    <string name="ach_scope_all">Все сохранения</string>
+    <string name="ach_scope_file">Это сохранение</string>
+    <string name="ach_file">%1$s · файл %2$d</string>
+    <string name="ach_file_no">Файл %1$d</string>
+    <string name="ach_no_file">Сейчас не загружено ни одно сохранение: загрузите его, чтобы увидеть его собственные достижения.</string>
+    <string name="ach_about">Достижения бывают двух видов. «Все сохранения» — открыты в любом сохранении и остаются, даже если его удалить. «Сохранение» — только в том, где получены. Уже выполненные цели засчитываются при загрузке сохранения. Пока включён чит, достижения не идут, а после одноразового чита или сюжетного пресета — до перезапуска приложения.</string>
+    <plurals name="ach_paused_on">
+        <item quantity="one">Приостановлено, потому что включён чит: %1$s</item>
+        <item quantity="few">Приостановлено, потому что включены читы: %1$s</item>
+        <item quantity="many">Приостановлено, потому что включены читы: %1$s</item>
+        <item quantity="other">Приостановлено, потому что включены читы: %1$s</item>
+    </plurals>
+    <string name="ach_paused_used">Приостановлено до перезапуска приложения, использовано в этом запуске: %1$s</string>
+    <string name="ach_paused_title">Достижения приостановлены</string>
+    <string name="ach_paused_many">Сейчас приостановлено: читов %1$d</string>
+    <string name="ach_paused_many_hint">Коснитесь, чтобы посмотреть, какие именно</string>
+    <string name="ach_paused_on_list">Сейчас включено:</string>
+    <string name="ach_paused_used_list">Использовано в этом запуске (приостановлено до перезапуска приложения):</string>
+    <string name="ach_earned_on">Получено %1$s</string>
+    <string name="ach_points">%1$d очков</string>
+    <string name="ach_popup">Достижение получено</string>
+    <string name="ach_popup_many">Получено достижений: %1$d</string>
+    <string name="ach_reset">Сбросить достижения</string>
+    <string name="ach_reset_hint">Все достижения снова станут закрытыми — для каждого сохранения; цели, которые сохранение уже выполнило, засчитаются сразу</string>
+    <string name="ach_reset_ask">Сбросить все достижения?</string>
+    <string name="ach_group_story">Сюжет</string>
+    <string name="ach_group_items">Предметы и улучшения</string>
+    <string name="ach_group_songs">Песни</string>
+    <string name="ach_group_quests">Побочные задания</string>
+    <string name="ach_group_collect">Коллекции</string>
+    <string name="ach_group_gallery">Галерея Nintendo</string>
+    <string name="ach_get">Получите %1$s.</string>
+    <string name="ach_learn">Выучите %1$s.</string>
+    <string name="ach_d_chests">Откройте все сундуки в %1$s.</string>
+    <string name="ach_t_set_sail">В открытое море</string>
+    <string name="ach_d_set_sail">Покиньте %1$s на пиратском корабле.</string>
+    <string name="ach_t_king_red_lions">Говорящая лодка</string>
+    <string name="ach_d_king_red_lions">Познакомьтесь с Королём Красных Львов.</string>
+    <string name="ach_t_pearl_din">Дар рито</string>
+    <string name="ach_t_pearl_farore">Дар леса</string>
+    <string name="ach_t_pearl_nayru">Дар моря</string>
+    <string name="ach_t_tower_rises">Восходящая башня</string>
+    <string name="ach_d_tower_rises">Поднимите %1$s из моря.</string>
+    <string name="ach_t_bell">Звон колокола</string>
+    <string name="ach_d_bell">Позвоните в колокол на вершине %1$s.</string>
+    <string name="ach_t_master_sword">Клинок, губящий зло</string>
+    <string name="ach_t_tetra">Пиратская принцесса</string>
+    <string name="ach_d_tetra">Узнайте, кто такая Тетра на самом деле.</string>
+    <string name="ach_t_sword_half">Наполовину пробуждён</string>
+    <string name="ach_d_sword_half">Верните половину силы Мастер-меча.</string>
+    <string name="ach_t_sword_full">Полностью пробуждён</string>
+    <string name="ach_d_sword_full">Верните Мастер-мечу полную силу.</string>
+    <string name="ach_t_triforce">Мужество обретено</string>
+    <string name="ach_d_triforce">Найдите все восемь осколков Триединства.</string>
+    <string name="ach_t_the_end">Новая земля</string>
+    <string name="ach_d_the_end">Пройдите игру и сохраните пройденный файл.</string>
+    <string name="ach_t_hero_mode">Ни лишнего сердца</string>
+    <string name="ach_d_hero_mode">Играйте в файле в режиме героя.</string>
+    <string name="ach_t_the_end_hero">Герой легенды</string>
+    <string name="ach_d_the_end_hero">Пройдите игру в режиме героя и сохраните пройденный файл.</string>
+    <string name="ach_t_bait_bag">Приманка готова</string>
+    <string name="ach_t_wind_waker">Маэстро</string>
+    <string name="ach_t_bottle">По бутылкам</string>
+    <string name="ach_t_grappling_hook">Время качаться</string>
+    <string name="ach_t_deku_leaf">Унесённый ветром</string>
+    <string name="ach_t_boomerang">Всё возвращается</string>
+    <string name="ach_t_bombs">Взрывное начало</string>
+    <string name="ach_t_tingle_bottle">Послание в бутылке</string>
+    <string name="ach_t_bow">Тетива</string>
+    <string name="ach_t_skull_hammer">Время молота</string>
+    <string name="ach_t_fire_ice">То жарко, то холодно</string>
+    <string name="ach_t_iron_boots">Тяжёлый шаг</string>
+    <string name="ach_t_power_bracelets">Сильные руки</string>
+    <string name="ach_t_mirror_shield">Отражения</string>
+    <string name="ach_t_hookshot">Дотянуться</string>
+    <string name="ach_t_light_arrows">Стрела света</string>
+    <string name="ach_t_magic_armor">Неуязвимый</string>
+    <string name="ach_t_heros_charm">Лик героя</string>
+    <string name="ach_t_deluxe_picto">В полном цвете</string>
+    <string name="ach_t_swift_sail">Полный вперёд</string>
+    <string name="ach_t_bottles">Коллекционер бутылок</string>
+    <string name="ach_d_bottles">Соберите все четыре бутылки.</string>
+    <string name="ach_t_magic">Двойная магия</string>
+    <string name="ach_d_magic">Удвойте шкалу магии.</string>
+    <string name="ach_t_hearts">Большое сердце</string>
+    <string name="ach_d_hearts">Соберите 20 сердец.</string>
+    <string name="ach_t_wallet_1000">Карманные деньги</string>
+    <string name="ach_t_wallet_5000">Купаться в рупиях</string>
+    <string name="ach_t_bombs_60">Больше бомб</string>
+    <string name="ach_t_bombs_99">Бомбы прочь</string>
+    <string name="ach_t_arrows_60">Больше стрел</string>
+    <string name="ach_t_arrows_99">Стрел хоть отбавляй</string>
+    <string name="ach_t_song_requiem">Перемена ветра</string>
+    <string name="ach_t_song_ballad">Оседлать шквал</string>
+    <string name="ach_t_song_command">Под управлением</string>
+    <string name="ach_t_song_earth">Песнь земли</string>
+    <string name="ach_t_song_wind">Песнь ветра</string>
+    <string name="ach_t_song_passing">День и ночь</string>
+    <string name="ach_t_grandma_chest">Секрет бабушки</string>
+    <string name="ach_d_grandma_chest">Откройте сундук, спрятанный в доме бабушки.</string>
+    <string name="ach_t_grandma_soup">Стало легче</string>
+    <string name="ach_d_grandma_soup">Развеселите бабушку феей и получите её суп.</string>
+    <string name="ach_t_black_pig">Охотник за трюфелями</string>
+    <string name="ach_d_black_pig">Дайте чёрной свинье выкопать сокровище на %1$s.</string>
+    <string name="ach_t_orca_500">Уроки меча</string>
+    <string name="ach_d_orca_500">Нанесите 500 ударов на тренировке с Оркой.</string>
+    <string name="ach_t_orca_1000">Тысяча ударов</string>
+    <string name="ach_d_orca_1000">Нанесите 1000 ударов на тренировке с Оркой.</string>
+    <string name="ach_t_hurricane_spin">Вращение до победы</string>
+    <string name="ach_d_hurricane_spin">Выучите последний приём меча Орки.</string>
+    <string name="ach_t_killer_bees">Прятки</string>
+    <string name="ach_d_killer_bees">Найдите всех пчёл-убийц на %1$s.</string>
+    <string name="ach_t_joy_pendant">Подарок на день рождения</string>
+    <string name="ach_d_joy_pendant">Принесите миссис Мари подарок на день рождения.</string>
+    <string name="ach_t_lenzo">Помощник фотографа</string>
+    <string name="ach_d_lenzo">Сделайте все три снимка, о которых просит Ленцо.</string>
+    <string name="ach_t_anton_linda">Сват</string>
+    <string name="ach_d_anton_linda">Сведите Антона и Линду.</string>
+    <string name="ach_t_maggie_moe">Письма о любви</string>
+    <string name="ach_d_maggie_moe">Носите письма между Мэгги и Мо и примите благодарность Мэгги.</string>
+    <string name="ach_t_lighthouse">Освети путь</string>
+    <string name="ach_d_lighthouse">Снова запустите маяк на %1$s и заберите награду.</string>
+    <string name="ach_t_potions">Мастер зелий</string>
+    <string name="ach_d_potions">Помогите доку Бандаму сварить зелёное и синее зелье.</string>
+    <string name="ach_t_letter_sorting">Всё разобрано</string>
+    <string name="ach_d_letter_sorting">Разберите 25 писем для Байто на %1$s.</string>
+    <string name="ach_t_golden_feathers">Птицы одного пера</string>
+    <string name="ach_d_golden_feathers">Помогите стражу рито завоевать любимую и получите его письмо.</string>
+    <string name="ach_t_aryll_letter">Письмо из дома</string>
+    <string name="ach_d_aryll_letter">Прочитайте письмо Арилл.</string>
+    <string name="ach_t_flight_record">Вверх и вдаль</string>
+    <string name="ach_d_flight_record">Побейте рекорд на %1$s.</string>
+    <string name="ach_t_squid_hunt">Чемпион морского боя</string>
+    <string name="ach_d_squid_hunt">Выиграйте все три приза в игре с кальмаром на %1$s.</string>
+    <string name="ach_t_beedle_silver">Серебряный член</string>
+    <string name="ach_d_beedle_silver">Получите серебряное членство в плавучем магазине Бидла.</string>
+    <string name="ach_t_beedle_gold">Золотой член</string>
+    <string name="ach_d_beedle_gold">Получите золотое членство в плавучем магазине Бидла.</string>
+    <string name="ach_t_trading">Мастер обмена</string>
+    <string name="ach_d_trading">Завершите обмены странствующих торговцев и получите последнюю награду.</string>
+    <string name="ach_t_puzzle_1">Начало скольжения</string>
+    <string name="ach_d_puzzle_1">Решите головоломку-сдвиг в хижине (%1$s).</string>
+    <string name="ach_t_puzzle_8">Ловкий в сдвигах</string>
+    <string name="ach_d_puzzle_8">Решите 8 головоломок-сдвигов в хижине (%1$s).</string>
+    <string name="ach_t_puzzle_16">Мастер сдвигов</string>
+    <string name="ach_d_puzzle_16">Решите все 16 головоломок-сдвигов в хижине (%1$s).</string>
+    <string name="ach_t_fire_mountain_fast">Холодные ноги, горячие руки</string>
+    <string name="ach_d_fire_mountain_fast">Откройте сундук внутри %1$s в течение 1:15 после заморозки.</string>
+    <string name="ach_t_ice_ring_fast">Быстрая оттепель</string>
+    <string name="ach_d_ice_ring_fast">Откройте сундук внутри %1$s в течение 1:15 после таяния.</string>
+    <string name="ach_t_trees_fast">Зелёный палец</string>
+    <string name="ach_d_trees_fast">Полейте все 8 засохших деревьев в течение 20 минут после первого.</string>
+    <string name="ach_t_platforms">Налётчик на платформы</string>
+    <string name="ach_d_platforms">Откройте все сундуки на платформах в море.</string>
+    <string name="ach_t_unarmed_robbery">Ограбление без оружия</string>
+    <string name="ach_d_unarmed_robbery">Откройте все четыре сундука в %1$s до того, как вернёте меч.</string>
+    <string name="ach_t_labyrinth_30">Сквозь огонь и воду</string>
+    <string name="ach_d_labyrinth_30">Доберитесь до сокровища на 30-м этаже пещеры испытаний на %1$s.</string>
+    <string name="ach_t_special_charts">Картофил</string>
+    <string name="ach_d_special_charts">Соберите все 12 особых карт (Тингла, Корабль-призрак, Окто, Великая фея, Сердца, Тайная пещера, Светлое кольцо, Платформа, Бидл, Подлодка и Невероятная карта).</string>
+    <string name="ach_t_tingle_statues">Коллекционер идолов</string>
+    <string name="ach_d_tingle_statues">Найдите статую Тингла в каждом из пяти подземелий.</string>
+    <string name="ach_t_chests_drc">Горячая добыча</string>
+    <string name="ach_t_chests_fw">Лесные находки</string>
+    <string name="ach_t_chests_totg">Божественные сокровища</string>
+    <string name="ach_t_chests_et">Зарытые сокровища</string>
+    <string name="ach_t_chests_wt">Унесённые вместе с сокровищем</string>
+    <string name="ach_t_submarines">Охотник на подлодки</string>
+    <string name="ach_d_submarines">Откройте сундуки во всех 7 подлодках.</string>
+    <string name="ach_t_big_octos">Истребитель окто</string>
+    <string name="ach_d_big_octos">Победите всех 6 больших окто.</string>
+    <string name="ach_t_charts_20">Читатель карт</string>
+    <string name="ach_d_charts_20">Соберите 20 карт.</string>
+    <string name="ach_t_charts_all">Все карты</string>
+    <string name="ach_d_charts_all">Соберите все 49 карт.</string>
+    <string name="ach_t_salvage_all">Затонувшие богатства</string>
+    <string name="ach_d_salvage_all">Поднимите сокровища по всем 49 картам.</string>
+    <string name="ach_t_sea_half">Полморя</string>
+    <string name="ach_d_sea_half">Заполните 25 квадратов морской карты.</string>
+    <string name="ach_t_sea_all">Картографированные воды</string>
+    <string name="ach_d_sea_all">Заполните все 49 квадратов морской карты.</string>
+    <string name="ach_t_progress_100">Сто процентов</string>
+    <string name="ach_d_progress_100">Достигните 100 % в «Прогрессе игры».</string>
+    <string name="ach_t_gallery_open">Любитель искусства</string>
+    <string name="ach_d_gallery_open">Откройте путь в Галерею Nintendo.</string>
+    <string name="ach_t_figurine_first">Первая фигурка</string>
+    <string name="ach_d_figurine_first">Сделайте фигурку в Галерее Nintendo.</string>
+    <string name="ach_t_room_outset">Домой</string>
+    <string name="ach_d_room">Заполните зал галереи: %1$s.</string>
+    <string name="ach_t_room_windfall">Оживлённый город</string>
+    <string name="ach_t_room_sea">Морской народ</string>
+    <string name="ach_d_room_sea">Заполните зал Великого моря в галерее.</string>
+    <string name="ach_t_room_dragon">Пернатые друзья</string>
+    <string name="ach_t_room_forest">Маленькие листья</string>
+    <string name="ach_t_room_enemies">Знай своего врага</string>
+    <string name="ach_d_room_enemies">Заполните зал врагов в галерее.</string>
+    <string name="ach_t_room_fortress">Фигурки крепости</string>
+    <string name="ach_t_figurines_all">Галерея собрана</string>
+    <string name="ach_d_figurines_all">Соберите все 134 фигурки.</string>
+    <!-- end of achievements -->
+    <string name="opt_onscreen">Кнопки на экране</string>
+    <string name="opt_onscreen_hint">Выкл.: на экране нет кнопок и стиков, только кнопка меню (для игры только с геймпадом)</string>
+    <string name="opt_onscreen_size">Размер кнопок на экране</string>
+    <string name="opt_packs">Наборы модов</string>
+    <string name="opt_packs_hint">Графические паки Cemu и моды файлов игры, импортированные из .zip, .rar и .7z</string>
+    <string name="opt_pad_hint">Геймпад: держите Select или Home — меню · L / R — вкладки · крестовина — выбор · нижняя кнопка — назад</string>
+    <string name="opt_perf">Оверлей производительности</string>
+    <string name="opt_perf_hint">FPS, нагрузка и температуры</string>
+    <string name="opt_perf_move">Двигать оверлей</string>
+    <string name="opt_perf_move_hint">Закрывает меню: тащите оверлей пальцем; коснитесь в другом месте, когда закончите</string>
+    <string name="opt_perf_reset">Сбросить его положение</string>
+    <string name="opt_picto_big">Большой вид фотоаппарата</string>
+    <string name="opt_picto_big_hint">С контекстными кнопками: видоискатель фотоаппарата занимает весь экран, сводите пальцы для приближения (так же и подзорная труба). Выкл.: исходные экраны фотоаппарата и подзорной трубы из игры</string>
+    <string name="opt_preset">Пресет</string>
+    <string name="opt_preset_hint">Задаёт сразу разрешение рендера, динамическое разрешение и частоту кадров (с генерацией кадров 30 fps удваиваются, а разрешения становятся выше). Стоит поменять что-то вручную — станет «Свои»</string>
+    <string name="opt_quit">Выход</string>
+    <string name="opt_record_thread">Поток записи команд</string>
+    <string name="opt_record_thread_hint">Второй поток CPU готовит работу для GPU: на большинстве устройств быстрее, на некоторых медленнее (например, Snapdragon 855)</string>
+    <string name="opt_vsync">VSync</string>
+    <string name="opt_vsync_hint">Каждый кадр ждёт обновления экрана. Включайте, если картинка сильно дёргается или превращается в слайд-шоу; может добавить небольшую задержку ввода. Выкл.: синхронизацию задаёт только генерация кадров</string>
+    <string name="st_touch_title">Новое сенсорное управление</string>
+    <string name="st_touch_text">Попробовать новое сенсорное управление?\n\nСтики появляются там, где встают ваши пальцы (справа камера поворачивается свайпом), кнопки показываются, только когда что-то делают, и подписаны своим действием, предметы наводятся и выпускаются касанием, а удержание кнопки предмета открывает кольцо всех ваших предметов. Мини-игры играются касанием картинки.\n\nВсё можно изменить позже в «Управлении»; «Классика» возвращает фиксированный GamePad на экране.</string>
+    <string name="st_touch_yes">Новое управление</string>
+    <string name="st_touch_no">Оставить классику</string>
+    <string name="st_jump_title">Прыжок везде</string>
+    <string name="st_jump_text">Прыгать когда угодно? Отдельная кнопка заставляет Линка прыгать с места или с бега — как с уступа. (Моды › Прыжок везде)</string>
+    <string name="st_double_text">И второй прыжок в воздухе?</string>
+    <string name="st_sing_title">Петь песни</string>
+    <string name="st_sing_text">Хотите играть песни Повелителя Ветров голосом — напевая, мыча или насвистывая их в микрофон? (экспериментально; звук разбирается только на этом устройстве и нигде не записывается)\n\nИначе вы дирижируете двумя</string>
+    <string name="st_sing_yes">Попробовать пение</string>
+    <string name="st_sing_no">Нотные панели</string>
+    <string name="st_yes">Да</string>
+    <string name="st_no">Нет</string>
+    <string name="opt_render_aspect">Widescreen</string>
+    <string name="opt_render_aspect_hint">Форма экрана: игра рендерится в пропорциях вашего экрана и показывает больше по бокам, а HUD у краёв сохраняет пропорции</string>
+    <string name="opt_view_zoom">Угол обзора</string>
+    <string name="opt_view_zoom_original">Исходный</string>
+    <string name="opt_view_zoom_hint">Отдалите, чтобы видеть больше вокруг Линка. Сведение двух пальцев на картинке тоже меняет масштаб</string>
+    <string name="opt_view_pinch">Приближение пальцами</string>
+    <string name="opt_view_pinch_hint">Два пальца на картинке меняют угол обзора. Выкл.: вид возвращается к исходному, и меняет его только «Графика › Экраны › Угол обзора»</string>
+    <string name="opt_resolution">Разрешение рендера</string>
+    <string name="opt_rumble">Вибрация</string>
+    <string name="opt_rumble_hint">На геймпаде, или на этом устройстве, если у геймпада нет вибрации либо при игре касанием</string>
+    <string name="opt_rumble_hint_missing">На этом устройстве: его вибрация %1$s не видна приложениям (почему — «Управление › Сведения о геймпаде»)</string>
+    <string name="opt_rupees_change">Рупии только при изменении</string>
+    <string name="opt_rupees_change_hint">Счётчик рупий проявляется, когда вы собираете или тратите рупии, и исчезает через несколько секунд</string>
+    <string name="opt_minimap">Мини-карта</string>
+    <string name="opt_minimap_hint">Карта в углу картинки на телевизоре, в стиле карты GamePad: в Великом море — нанесённые острова и Король Красных Львов, в подземельях — их комнаты, в остальных местах — план этажа. Коснитесь её для следующего размера, тяните в «Раскладке экрана». Удерживайте — откроется вся карта</string>
+    <string name="opt_minimap_style">Стиль карты</string>
+    <string name="opt_minimap_inside">Карта внутри</string>
+    <string name="opt_minimap_pictures">Картинки карты</string>
+    <string name="opt_minimap_pictures_hint">Острова, комнаты подземелий и планы помещений. «Перерисованные» — нарисованы заново, с плавными чёткими краями. «HD» — увеличенные картинки GamePad с резкими краями. «Исходные» — как есть (на больших экранах мягче). «Местность» — острова и этажи такими, какие они сверху, окрашены по своему грунту (в подземельях — комнаты, где вы были)</string>
+    <string name="opt_fullmap">Вся карта</string>
+    <string name="opt_fullmap_hint">Вся морская карта на экране: сводите пальцы или приближайте — от всех квадратов до земли острова. Открывается и удержанием мини-карты, и кнопкой карты на карте меню +</string>
+    <string name="opt_fullmap_pictures">Картинки всей карты</string>
+    <string name="opt_fullmap_deco">Оформление карты</string>
+    <string name="opt_fullmap_deco_hint">Бумажная рамка с буквами и цифрами квадратов, указатель ветра и синий фон меню; выкл.: простая карта</string>
+    <string name="opt_chart_pictures">Карта в меню +</string>
+    <string name="opt_chart_pictures_hint">Морская карта и карта подземелья в меню +: собственные карты игры либо перерисованные в стиле «Картинок карты» (касания работают как раньше)</string>
+    <string name="fullmap_button">Вся карта</string>
+    <string name="opt_minimap_sea_zoom">Масштаб моря</string>
+    <string name="opt_minimap_sea_zoom_hint">Сколько Великого моря видно на карте: Авто — четверть квадрата карты с «Местностью» (острова в настоящем размере), иначе — один квадрат</string>
+    <string name="opt_minimap_face">Лицо Линка</string>
+    <string name="opt_minimap_face_hint">Лицо Линка на его месте на карте; выкл.: только красная стрелка, чтобы острова не закрывались</string>
+    <string name="opt_minimap_mark_size">Размер метки Линка</string>
+    <string name="opt_minimap_arrow_colour">Цвет стрелки</string>
+    <string name="opt_minimap_move_zoom">Приближение в движении</string>
+    <string name="opt_minimap_move_zoom_hint">Карта приближается, пока Линк бежит или плывёт лодка, и отдаляется, когда он стоит</string>
+    <string name="opt_minimap_names">Названия островов</string>
+    <string name="opt_minimap_names_hint">В Великом море: название каждого нанесённого острова — под ним</string>
+    <string name="opt_minimap_opacity">Прозрачность карты</string>
+    <string name="opt_minimap_fade">Бледнее в движении</string>
+    <string name="opt_minimap_fade_hint">Карта становится прозрачной, пока Линк или лодка движутся, и возвращается, когда он останавливается</string>
+    <string name="opt_minimap_fade_opacity">Прозрачность в движении</string>
+    <string name="opt_minimap_wind">Стрелка ветра</string>
+    <string name="opt_minimap_wind_hint">Стрелка на указателе ветра в углу карты показывает, куда дует ветер</string>
+    <string name="opt_minimap_wind_swipe">Поворот ветра (указатель)</string>
+    <string name="opt_minimap_wind_swipe_hint">Смахните от указателя ветра — ветер сразу повернёт туда, без паузы, в любом месте и без Реквиема Ветра. На геймпаде: держите − и наклоните правый стик, отпустите −, чтобы задать направление</string>
+    <string name="opt_minimap_charts">Карты сокровищ</string>
+    <string name="opt_minimap_charts_hint">В Великом море: если у Линка есть карта квадрата, где он находится, и сокровище там ещё не поднято, рядом с мини-картой показывается карта этого квадрата — со своим X и Линком на нём</string>
+    <string name="opt_minimap_buttons">Кнопки карты</string>
+    <string name="opt_minimap_buttons_hint">Кнопка у карты скрывает её (кнопка карты возвращает)</string>
+    <string name="minimap_chart_treasure">Карта сокровищ %1$d</string>
+    <string name="minimap_chart_triforce">Карта Триединства %1$d</string>
+    <string name="opt_minimap_corner">Угол</string>
+    <string name="opt_minimap_size">Размер</string>
+    <string name="opt_minimap_size_hint">Также касание карты или короткое нажатие − на геймпаде: следующий размер</string>
+    <string name="opt_minimap_turn">Ориентация карты</string>
+    <string name="opt_minimap_marks">Метки прогресса</string>
+    <string name="opt_minimap_marks_hint">Объекты «Прогресса игры» на своих местах: только то, чего ещё нет, или всё</string>
+    <string name="opt_saves">Сохранения</string>
+    <string name="opt_shaders">Удалить кэш шейдеров</string>
+    <string name="opt_shaders_hint">Перезапускает игру, как при первом запуске</string>
+    <string name="opt_controls_blind">Раскладка вслепую</string>
+    <string name="opt_controls_blind_hint">Когда игра на другом экране: каждая кнопка всегда на своём месте, крупные кнопки действий, плавающие стики, вибрация на каждую кнопку. Выкл.: ваша сенсорная раскладка</string>
+    <string name="opt_controls_edit_blind">Изменить раскладку вслепую</string>
+    <string name="opt_controls_edit_blind_hint">Своя раскладка для игры вслепую: двигайте, масштабируйте, меняйте форму и скрывайте каждую кнопку. «Сброс» возвращает исходные места</string>
+    <string name="opt_blind_face">Кнопки действий</string>
+    <string name="opt_blind_face_hint">Ромб: A, B, X и Y на своих местах. Свайп: поставьте палец в любом месте их круга и ведите — вверх это X, вправо A, вниз B, влево Y (кнопка держится, пока палец на месте). Касание — это A</string>
+    <string name="opt_classic_face">Кнопки действий (классика)</string>
+    <string name="blind_face_diamond">Ромб</string>
+    <string name="blind_face_swipe">Свайп</string>
+    <string name="opt_controls_tv_backdrop">Картинка ТВ в виде геймпада</string>
+    <string name="opt_controls_tv_backdrop_hint">Когда игра на другом экране: за кнопками видна картинка телевизора вместо затемнённого экрана GamePad — взгляд на телефон ничего не упускает. Кнопка экрана по-прежнему показывает GamePad</string>
+    <string name="opt_show_sticks">Показывать стики</string>
+    <string name="opt_show_sticks_hint">Выкл.: стики работают с пустого экрана</string>
+    <string name="opt_stick_follows">Левый стик следует за пальцем</string>
+    <string name="opt_stick_follows_hint">Палец, скользящий за край левого стика, тянет стик за собой. Выкл.: стик остаётся на месте</string>
+    <string name="opt_z_latch">ZL / ZR остаются после касания</string>
+    <string name="opt_z_latch_hint">Вкл.: касание ZL держит захват цели до следующего касания, а ZR остаётся нажатым для приседания или щита. Выкл.: ZL и ZR работают, только пока удерживаются</string>
+    <string name="opt_slot">Сохранение %1$d</string>
+    <string name="opt_slot_empty">Пусто</string>
+    <string name="opt_slot_incompatible">%1$s · из другой сборки, загрузить нельзя</string>
+    <string name="opt_slot_load">Загрузить</string>
+    <string name="opt_slot_save">Сохранить</string>
+    <string name="opt_start_mode">При запуске</string>
+    <string name="opt_start_mode_hint">До заставки: выбрать сохранение или сразу вернуться туда, где вы остановились</string>
+    <string name="opt_steer">Направление ходьбы</string>
+    <string name="opt_steer_hint">Линк сохраняет направление ходьбы, когда камера поворачивается. Сдвиньте стик (или отпустите его), чтобы снова идти относительно камеры</string>
+    <string name="opt_steer_resync">Стик пересинхронизируется через</string>
+    <string name="opt_steer_resync_hint">Насколько должен сдвинуться стик, чтобы Линк снова пошёл относительно камеры. Меньше — отзывчивее</string>
+    <string name="opt_steer_swing">Камера заходит за Линка</string>
+    <string name="opt_steer_swing_delay">Заход начинается через</string>
+    <string name="opt_steer_swing_delay_hint">Сколько времени без правого стика — или бег в сторону камеры</string>
+    <string name="opt_steer_swing_hint">Пока Линк бежит, а правый стик не трогают</string>
+    <string name="opt_swipe_boat">Скорость свайпа на лодке</string>
+    <string name="opt_swipe_boat_hint">Свайпы поворачивают камеру на столько же быстрее, пока Линк плывёт. Подзорная труба и другие виды от первого лица остаются как есть</string>
+    <string name="opt_swipe_speed">Скорость свайпа</string>
+    <string name="opt_to_inventory">Обратно к предметам</string>
+    <string name="opt_touch_camera">Камера (правая половина)</string>
+    <string name="opt_touch_camera_hint">Стик: как правый аналоговый стик. Свайп: камера поворачивается за пальцем</string>
+    <string name="opt_touch_hints">Сенсорные подсказки</string>
+    <string name="opt_touch_hints_hint">Когда мини-игру или меню игры впервые проходят касанием, подсказка объясняет, как. Включите снова — каждая подсказка покажется ещё раз</string>
+    <string name="opt_link_poses">Линк в значках кнопок</string>
+    <string name="opt_link_poses_hint">Прыжок, приседание, кувырок, движение боком, подъём, бросок, опускание, открывание, захват и подбор показывают самого Линка — он нарисован по модели игры и анимирован. Выкл.: обычные пиктограммы</string>
+    <string name="opt_zl_defeat">ZL при победе над целью</string>
+    <string name="opt_zl_defeat_hint">Когда враг, на котором держится ZL, побеждён. «Отпустить»: нажатый ZL отпускает (удерживаемый работает как в игре). «Следующая цель»: ZL захватывает следующего врага в радиусе (если такого нет, нажатый ZL отпускает). «Каждый враг»: ZL остаётся включённым и без цели в радиусе и берёт каждого подходящего врага, а более близкий перехватывает захват. Для нажатого или удерживаемого ZL</string>
+    <string name="opt_zl_defeat_release">Отпустить</string>
+    <string name="opt_zl_defeat_next">Следующая цель</string>
+    <string name="opt_zl_defeat_every">Каждый враг</string>
+    <string name="opt_upscale">Масштабирование</string>
+    <string name="opt_upscale_hint">Как картинка растягивается на экран: «Резкое» сохраняет чёткие края при низком разрешении рендера, «Пиксель в пиксель» показывает каждый отрендеренный пиксель чётким блоком</string>
+    <string name="opt_warp">Телепорт (для разработчика)</string>
+    <string name="opt_warp_hint">Перейти в любое место, комнату или точку появления игры</string>
+    <string name="packs_about">Импортирует моды из .zip, .rar и .7z: графические паки Cemu (например, с GameBanana или GitHub) и обычные моды файлов игры (папка content). Работают патчи кода (patch_*.asm), замена файлов игры, замена пиксельных шейдеров и правила фильтрации текстур; вершинные шейдеры и правила разрешения текстур — пока нет. Патч кода применяется только к той версии игры, для которой сделан. Включение, выключение паков и смена их настроек действуют после перезапуска.</string>
+    <string name="packs_delete">Удалить пак</string>
+    <string name="packs_delete_confirm">Удалить этот пак с устройства?</string>
+    <string name="packs_details">Подробности</string>
+    <string name="packs_order">Порядок загрузки</string>
+    <string name="packs_order_note">Верхний загружается первым. Где паки меняют один и тот же файл, шейдер или код, побеждает нижний. Тащите ≡, чтобы переместить пак; с геймпадом возьмите его на A и двигайте вверх или вниз.</string>
+    <string name="packs_per_file">Для каждого файла</string>
+    <string name="packs_per_file_hint">У каждого сохранения свои паки, пресеты и порядок загрузки. Выбор файла с другими паками перезапускает игру с ними</string>
+    <string name="packs_file_hint">Паки ниже относятся к этому сохранению</string>
+    <string name="packs_file_running">Игра сейчас работает с паками файла %1$d. Изменения другого файла не требуют перезапуска: они загрузятся, когда вы выберете тот файл.</string>
+    <string name="packs_switched">Наборы модов файла %1$d включены. Выберите файл %1$d снова, чтобы играть в него.</string>
+    <string name="packs_switch_ask">Файл %1$d использует другие наборы модов. Перезапустить игру с ними сейчас? «Отмена» вернёт к выбору файла.</string>
+    <string name="packs_loading">Загрузка файла %1$d с его наборами модов…</string>
+    <string name="packs_order_moving">Перемещение: вверх / вниз, нажмите снова, чтобы поставить</string>
+    <string name="packs_order_over">Над %1$s</string>
+    <plurals name="packs_order_files">
+        <item quantity="one">%1$s: %2$d файл</item>
+        <item quantity="few">%1$s: %2$d файла</item>
+        <item quantity="many">%1$s: %2$d файлов</item>
+        <item quantity="other">%1$s: %2$d файлов</item>
+    </plurals>
+    <string name="packs_folder">Папка: packs/%s</string>
+    <string name="packs_groups">Группы патчей: %1$d для этой версии игры, %2$d для других</string>
+    <string name="packs_import">Импорт паков</string>
+    <string name="packs_import_hint">Выберите один или несколько файлов .zip, .rar или .7z, а также модели игрока с GameCube (пак модели с Link.arc, сделанный для рандомайзера GameCube) — они конвертируются для HD</string>
+    <string name="packs_gc_model_name">Модель игрока с GameCube: %1$s</string>
+    <string name="packs_gc_model_desc">Сконвертирована из модели игрока GameCube. Выберите её для сохранения на странице моделей игрока</string>
+    <string name="packs_gc_model_desc_by">Сконвертирована из модели игрока GameCube автором %1$s. Выберите её для сохранения на странице моделей игрока</string>
+    <string name="packs_gc_converting" formatted="true">Конвертация модели игрока %1$d из %2$d: %3$s (%4$d %%)</string>
+    <string name="packs_gc_imported_n">Модели игрока с GameCube: %1$d</string>
+    <string name="packs_gc_model">Модель игрока с GameCube</string>
+    <string name="packs_gc_model_hint">Кем играет каждое сохранение: Линком или одной из %1$d импортированных моделей</string>
+    <string name="packs_gc_off">Линк (нет)</string>
+    <string name="packs_gc_current">Играет</string>
+    <string name="packs_gc_switching">Подготовка %1$s…</string>
+    <string name="packs_gc_model_about">Модели, импортированные из наборов кастомных моделей GameCube. У каждого сохранения своя: выберите файл, затем модель. В игре она меняется сразу, без перезапуска — в рандомизированных играх тоже.</string>
+    <string name="packs_gc_file_hint">У каждого сохранения своя модель; она меняется, как только в этот файл начинают играть</string>
+    <string name="packs_gc_report">Что было сконвертировано</string>
+    <string name="packs_gc_trimming">Освобождение места: прежние модели игрока оставляют только нужное…</string>
+    <string name="packs_none">Паки ещё не импортированы.</string>
+    <string name="packs_on_count">%d вкл.</string>
+    <string name="packs_preset">Настройка</string>
+    <string name="packs_restart">Перезапустить</string>
+    <string name="packs_restart_note">Изменения действуют после перезапуска; изменённый код тогда перекомпилируется (компиляция короткая, а для уже использованной комбинации — никакой).</string>
+    <string name="packs_title_hint">После включения пака, который патчит код, один раз начните с титульного экрана и загрузите там свой журнал заданий: пак настраивается, пока игра загружается. В сохранениях, сделанных без пака, он не настроен.</string>
+    <string name="packs_unsupported">Пока не поддерживается: %s</string>
+    <string name="packs_versions">Сделано для: %s (не эта версия игры)</string>
+    <string name="perf_show">Показывать оверлей</string>
+    <string name="preset_about">Пресет — это сюжетная часть сохранения (предметы, сердца, песни, карта, переключатели и сундуки каждого места, флаги сюжета) плюс место. Телепорт в пресет загружает этот сюжет в текущую игру; ваш файл изменится, только если вы сохранитесь. Пресеты остаются на этом устройстве.</string>
+    <string name="preset_ask">%1$s\n\nТелепортироваться туда с этим сюжетом? Он заменит сюжет игры, в которую вы играете, пока вы снова не загрузите своё сохранение.</string>
+    <string name="preset_custom">Свои</string>
+    <string name="preset_delete">Удалить</string>
+    <string name="preset_guess_hint">Предложено для этого устройства: %1$s</string>
+    <string name="preset_hint">Загрузить сюжет сохранения или сохранённый момент и перенестись на его место</string>
+    <string name="preset_song_scenes">Сцены песен</string>
+    <string name="preset_song_scenes_hint">Сюжет прямо перед изучением песни, Линк — перед её скрижалью или учителем</string>
+    <string name="preset_song_scenes_about">Каждый пресет загружает встроенный сюжетный фрагмент прямо перед изучением песни и ставит Линка перед тем, кто её учит (скрижаль, Тотт). Прочитайте скрижаль или поговорите с учителем, затем достаньте Повелитель Ветров — и игра сама подскажет, что делать дальше</string>
+    <string name="preset_import">Импортировать сохранение…</string>
+    <string name="preset_import_hint">Выберите cking.sav от WWHD, сохранения GameCube (.gci: США, Европа, Япония) или пресеты (.wwp). Можно сразу несколько: каждый занятый слот станет пресетом</string>
+    <string name="preset_save">Сохранить текущий сюжет как пресет</string>
+    <string name="preset_save_hint">Здесь и сейчас: сюжет на этот момент и место, куда вы вошли</string>
+    <string name="preset_title">Сюжетные пресеты</string>
+    <string name="preset_warp">Телепорт</string>
+    <string name="start_states_loading">Загрузка сохранения…</string>
+    <string name="start_states_pad_hint">Геймпад: крестовина двигает · правая кнопка выбирает · нижняя запускает игру</string>
+    <string name="start_states_title">Продолжить</string>
+    <string name="start_states_title_hint">Начать игру как обычно</string>
+    <string name="state_overwrite">Заменить сохранение %1$d?</string>
+    <string name="touch_camera_stick">Стик</string>
+    <string name="touch_camera_swipe">Свайп</string>
+    <string name="warp_about">Переносит Линка на место сразу, как дверь. Сюжет остаётся из вашего сохранения: кто и что там есть, зависит от него (или выберите слой). Сохраняйтесь в игре, только если хотите оставить новое место.</string>
+    <string name="warp_going">Телепорт в %1$s</string>
+    <string name="warp_layer">Слой</string>
+    <string name="warp_layer_auto">Сюжет</string>
+    <string name="warp_layer_hint">Какая версия места загрузится; «Сюжет» выбирает по вашему прогрессу</string>
+    <string name="warp_no_save">Сначала загрузите сохранение.</string>
+    <string name="warp_reading">Чтение мест из файлов игры… (несколько секунд, только один раз)</string>
+    <string name="warp_spawn">Комната %1$d · точка %2$d</string>
+    <string name="warp_test">Тестовый оверлей</string>
+    <string name="warp_test_hint">Панель поверх игры: ✓ / ✗ оценивают место и переносят к следующему; результаты в warp_tests.tsv</string>
+    <string name="warp_where">Сейчас: %1$s · комната %2$s · точка %3$s · слой %4$s</string>
+    <string-array name="ao_modes">
+        <item>Исходное (как на Wii U)</item>
+        <item>Правка центра</item>
+        <item>Правка центра и шума</item>
+    </string-array>
+    <string-array name="aspect_modes">
+        <item>Исходное 16:9 (полосы)</item>
+        <item>Растянуть на экран</item>
+        <item>Заполнить экран (края обрезаются)</item>
+    </string-array>
+    <string-array name="minimap_styles">
+        <item>Квадратная (пергамент)</item>
+        <item>Круглая (компас)</item>
+    </string-array>
+    <string-array name="minimap_insides">
+        <item>Залитая</item>
+        <item>Только контуры (прозрачная)</item>
+    </string-array>
+    <string-array name="minimap_pictures">
+        <item>Перерисованные</item>
+        <item>HD</item>
+        <item>Исходные</item>
+        <item>Местность</item>
+    </string-array>
+    <string-array name="chart_pictures">
+        <item>Как в игре</item>
+        <item>Перерисованные</item>
+        <item>HD</item>
+        <item>Местность</item>
+    </string-array>
+    <string-array name="minimap_mark_sizes">
+        <item>Мелкая</item>
+        <item>Обычная</item>
+        <item>Крупная</item>
+        <item>Очень крупная</item>
+    </string-array>
+    <string-array name="minimap_arrow_colours">
+        <item>Красный</item>
+        <item>Оранжевый</item>
+        <item>Жёлтый</item>
+        <item>Зелёный</item>
+        <item>Бирюзовый</item>
+        <item>Синий</item>
+        <item>Розовый</item>
+        <item>Белый</item>
+    </string-array>
+    <string-array name="minimap_move_zooms">
+        <item>Выкл.</item>
+        <item>1.5×</item>
+        <item>2×</item>
+        <item>3×</item>
+    </string-array>
+    <string-array name="minimap_sea_zooms">
+        <item>Авто</item>
+        <item>1 квадрат</item>
+        <item>1/2 квадрата</item>
+        <item>1/3 квадрата</item>
+        <item>1/4 квадрата</item>
+    </string-array>
+    <string-array name="minimap_corners">
+        <item>Внизу слева</item>
+        <item>Вверху слева</item>
+        <item>Вверху справа</item>
+        <item>Внизу справа</item>
+        <item>Своё место («Раскладка экрана»)</item>
+    </string-array>
+    <string-array name="minimap_sizes">
+        <item>Мелкая</item>
+        <item>Средняя</item>
+        <item>Крупная</item>
+    </string-array>
+    <string-array name="minimap_turns">
+        <item>Север вверху</item>
+        <item>Поворачивается за Линком</item>
+    </string-array>
+    <string-array name="minimap_marks">
+        <item>Выкл.</item>
+        <item>Только чего нет</item>
+        <item>Всё</item>
+    </string-array>
+    <string-array name="progress_filters">
+        <item>Всё</item>
+        <item>Чего не хватает</item>
+    </string-array>
+    <string-array name="pmap_shows">
+        <item>Найденное</item>
+        <item>Найденное и пропущенное</item>
+        <item>Только пропущенное</item>
+    </string-array>
+    <string-array name="pmap_kinds">
+        <item>Всё</item>
+        <item>Сердца</item>
+        <item>Карты и сокровища</item>
+        <item>Предметы</item>
+        <item>Подземелья</item>
+    </string-array>
+    <string-array name="auto_state_modes">
+        <item>Выкл.</item>
+        <item>Каждые 2 мин</item>
+        <item>Каждые 5 мин</item>
+        <item>Каждые 10 мин</item>
+    </string-array>
+    <string-array name="display_res_modes">
+        <item>Авто</item>
+        <item>Полное (классика)</item>
+    </string-array>
+    <string-array name="invert_camera_y_modes">
+        <item>Выкл.</item>
+        <item>От первого лица и при прицеливании</item>
+        <item>Всегда</item>
+        <item>Только обычная камера</item>
+    </string-array>
+    <string-array name="item_ring_paces">
+        <item>Продолжать бег</item>
+        <item>Замедление</item>
+        <item>Пауза</item>
+    </string-array>
+    <string-array name="layouts">
+        <item>ТВ с GamePad внутри</item>
+        <item>ТВ и GamePad рядом</item>
+        <item>ТВ, GamePad на +</item>
+        <item>GamePad с ТВ внутри</item>
+        <item>ТВ, GamePad по требованию</item>
+    </string-array>
+    <string-array name="preset_steps">
+        <item>Самый низкий</item>
+        <item>Низкий</item>
+        <item>Средний</item>
+        <item>Высокий</item>
+    </string-array>
+    <string-array name="record_thread_modes">
+        <item>Автоматически</item>
+        <item>Вкл.</item>
+        <item>Выкл.</item>
+    </string-array>
+    <string-array name="render_aspect_modes">
+        <item>Исходное 16:9</item>
+        <item>Форма экрана</item>
+    </string-array>
+    <string-array name="start_modes">
+        <item>Заставка</item>
+        <item>Предлагать сейв-стейты</item>
+        <item>Загружать последний сеанс</item>
+    </string-array>
+    <string-array name="steer_modes">
+        <item>За камерой (как в оригинале)</item>
+        <item>Сохраняется, когда вы поворачиваете камеру</item>
+        <item>Сохраняется, пока держите стик</item>
+    </string-array>
+    <string-array name="upscale_modes">
+        <item>Билинейное (классика)</item>
+        <item>Резкое</item>
+        <item>Пиксель в пиксель</item>
+    </string-array>
+    <string-array name="wiiu_buttons">
+        <item>A</item>
+        <item>B</item>
+        <item>X</item>
+        <item>Y</item>
+        <item>L</item>
+        <item>R</item>
+        <item>ZL</item>
+        <item>ZR</item>
+        <item>− (минус)</item>
+        <item>+ (плюс)</item>
+        <item>Нажатие левого стика</item>
+        <item>Нажатие правого стика</item>
+        <item>Крестовина вверх</item>
+        <item>Крестовина вниз</item>
+        <item>Крестовина влево</item>
+        <item>Крестовина вправо</item>
+    </string-array>
+    <!-- setup, dialogs and screens around the menu -->
+    <string name="setup_text">Файлы игры не найдены или не подходят этой сборке.\n\nПриложение содержит только рекомпилированный код, собранный из вашей копии игры, — ему нужны извлечённые файлы из того же дампа. Извлеките их на компьютере (см. README.md: tools/wudextract.py), затем скопируйте получившуюся папку (внутри code/, content/ и meta/) в:\n\n%1$s\n\nНапример: adb push game /sdcard/Android/data/org.wwhdrecomp.app/files/\n\nПроблема: %2$s</string>
+    <string name="setup_retry">Проверить снова</string>
+    <string name="setup_welcome">Добро пожаловать!\n\nВ этом приложении нет файлов игры. Оно играет вашу собственную копию The Legend of Zelda: The Wind Waker HD для Wii U (версии США, Европы или Японии).\n\nПоложите эти три файла на устройство и выберите их вместе:\n•  образ диска (.wux или .wud)\n•  его ключ диска (имя образа с .key)\n•  общий ключ консоли (common.key)\n\nИли выберите архив вашей игры от Cemu (.wua); ему ключи не нужны.\n\nЗатем приложение извлечёт файлы игры (около 1.7 ГБ) и подготовит код игры для этого устройства. Это происходит один раз и занимает время, зависящее от процессора устройства.</string>
+    <string name="setup_problem">Найденные файлы игры не работают: %1$s</string>
+    <string name="setup_extract">Извлечь из образа диска или .wua…</string>
+    <string name="setup_extract_files">Выбрать файлы игры…</string>
+    <string name="extract_missing">Выберите образ диска, его ключ диска и общий ключ консоли вместе (долгое нажатие на первом, затем коснитесь остальных):
+
+%1$s образ (.wux или .wud)
+%2$s его ключ диска (имя образа с .key)
+%3$s common.key
+
+Или архив вашей игры от Cemu (.wua).
+
+Если в выборе файлов их не видно, положите их прямо в Download и откройте «Загрузки» там.</string>
+    <string name="extract_bad_key">Файл ключа должен содержать 16 байт или 32 шестнадцатеричные цифры.</string>
+    <string name="extract_running">Извлечение игры из образа диска…</string>
+    <string name="extract_detail">%1$d из %2$d МБ (%3$.0f МБ/с)</string>
+    <string name="extract_detail_short">%1$d из %2$d МБ</string>
+    <string name="work_channel">Установка игры</string>
+    <string name="work_extracting">Извлечение файлов игры</string>
+    <string name="work_compiling">Подготовка кода игры</string>
+    <string name="space_title">Недостаточно свободного места</string>
+    <string name="space_text">Этому шагу нужно около %1$d МБ свободного места, а свободно %2$d МБ. Освободите место и попробуйте снова.</string>
+    <string name="extract_failed">Не удалось извлечь: %1$s</string>
+    <string name="compile_running">Подготовка кода игры для этого устройства…\n\nЭто происходит один раз и занимает время, зависящее от процессора: несколько минут на быстрых устройствах, дольше на медленных. Можно выйти из приложения: оно продолжит в фоне (см. уведомление), а если его закрыть — продолжит с того места, где остановилось.</string>
+    <string name="compile_detail">%1$d из %2$d частей (%3$d:%4$02d)</string>
+    <string name="compile_detail_split">Разбиение кода игры на части (%1$d:%2$02d)</string>
+    <string name="compile_failed">Не удалось подготовить код игры: %1$s</string>
+    <string name="menu_about">О программе и лицензии</string>
+    <string name="compile_continue">Продолжить</string>
+    <string name="compile_stopping">Остановка…</string>
+    <string name="compile_cancelled">Подготовка кода игры отменена. Она продолжится с того места, где остановилась, когда вы запустите снова.</string>
+    <string name="res_original">Исходное (%1$s)</string>
+    <string name="res_scaled_up">%1$s× (%2$s, большая нагрузка на GPU)</string>
+    <string name="res_scaled_down">%1$s× (%2$s, меньшая нагрузка на GPU)</string>
+    <string name="res_restart_now">Перезапустить</string>
+    <string name="res_restart_later">Позже</string>
+    <string name="backup_title">Импорт / экспорт сохранений</string>
+    <string name="backup_export_title">Экспорт</string>
+    <string name="backup_game_save">Сохранение игры</string>
+    <string name="backup_states">Сохранения (%1$d МБ)</string>
+    <string name="backup_save_file">Сохранить как файл…</string>
+    <string name="backup_scanning">Поиск сохранений…</string>
+    <string name="backup_exporting">Экспорт…</string>
+    <string name="backup_exported">Экспортировано в «%1$s».</string>
+    <string name="backup_import_how">Выберите резервную копию, сделанную через «Экспорт» (WindWakerHD backup ….zip), сохранение Wind Waker с GameCube (.gci, США, Европа или Япония: оно станет вашим сохранением игры, все три журнала заданий) или сами файлы вместе (долгое нажатие на первом, затем коснитесь остальных): cking.sav с другими cking….sav одного сохранения, slot1–5.bin и .png сохранений. Если в выборе файлов их не видно, положите файлы прямо в Download и откройте «Загрузки» там.</string>
+    <string name="backup_choose_files">Выбрать файлы…</string>
+    <string name="backup_picked_files">выбранные файлы</string>
+    <string name="backup_from_gc">Сохранение GameCube %1$s, сконвертировано: все три журнала заданий</string>
+    <string name="backup_nothing_files">Среди выбранных файлов нет сохранения игры (cking.sav) или сохранений (slot1–5.bin).</string>
+    <string name="backup_import_title">Импорт (заменяет то, что есть)</string>
+    <string name="backup_import_save">Сохранение игры (из %1$s)</string>
+    <string name="backup_import_states">Сохранения: слот %1$s</string>
+    <string name="backup_import_go">Импортировать</string>
+    <string name="backup_importing">Импорт…</string>
+    <string name="backup_imported_states">Сохранения импортированы. Состояния из другой сборки приложения загрузить нельзя.</string>
+    <string name="backup_imported_save">Сохранение игры импортировано. Игра сейчас перезапустится, чтобы использовать его (прежнее сохранение осталось в save-before-import).</string>
+    <string name="backup_failed">Не удалось: %1$s</string>
+    <string name="fg_title">Генерация кадров (Lossless Scaling)</string>
+    <string name="fg_no_dll">нужен Lossless.dll</string>
+    <string name="fg_bad_dll">Этот файл нельзя использовать: %1$s</string>
+    <string name="fg_dll_untested">Lossless.dll установлен и генерация кадров включена, но эта версия его шейдеров не проверялась с приложением: сгенерированные кадры могут выглядеть неправильно. Если так — выберите другой Lossless.dll (проверенная версия названа в README).</string>
+    <string name="fg_not_working">не работает</string>
+    <string name="fg_risk_title">Генерация кадров на этом GPU</string>
+    <string name="fg_risk_text">На этом GPU (%1$s) генерация кадров может подвесить GPU. Игра может упасть, а в редких случаях всё устройство зависнет или перезагрузится.\n\nЕсли игра упадёт, диалог при её следующем запуске предложит запустить без генерации кадров.</string>
+    <string name="fg_risk_accept">Всё равно включить</string>
+    <string name="fg_risk_keep_off">Оставить выключенной</string>
+    <string name="fg_dll_ok">Lossless.dll готов, генерация кадров включена.</string>
+    <string name="perf_fps">Частота кадров</string>
+    <string name="perf_frame">Время кадра</string>
+    <string name="perf_cpu">Нагрузка CPU (это приложение)</string>
+    <string name="perf_gpu">Нагрузка GPU (и время генерации кадров)</string>
+    <string name="perf_temp_cpu">Температура CPU</string>
+    <string name="perf_temp_gpu">Температура GPU</string>
+    <string name="perf_temp_bat">Температура батареи</string>
+    <string name="perf_settings">Настройки (разрешение, эффекты, драйвер GPU)</string>
+    <string name="perf_move_hint">Тащите, чтобы двигать · коснитесь в другом месте, когда закончите</string>
+    <string name="start_last_loading">Загрузка последнего сеанса…</string>
+    <string name="quit_saving">Сохранение последнего сеанса…</string>
+    <string name="opt_ok">ОК</string>
+    <string name="bench_offer_title">Найти лучшие настройки</string>
+    <string name="bench_offer_text">Короткий тест (около 2 минут) подбирает графические настройки под это устройство. Игра при этом запускается, но картинка скрыта и звука нет. Сохранения не затрагиваются. Применять результат или нет — решаете вы.</string>
+    <string name="bench_offer_dll">Генерация кадров: если у вас есть Lossless Scaling (Steam) и вы хотите генерацию кадров, выберите его Lossless.dll сейчас, чтобы тест её учёл.</string>
+    <string name="bench_wide">Widescreen (форма вашего экрана)</string>
+    <string name="bench_show_game">Показывать игру во время замера</string>
+    <string name="bench_with_fg">Учитывать генерацию кадров</string>
+    <string name="bench_choose_dll">Выбрать Lossless.dll</string>
+    <string name="bench_not_now">Не сейчас</string>
+    <string name="bench_start">Начать тест</string>
+    <string name="bench_step_boot">Запуск игры…</string>
+    <string name="bench_shaders">Подготовка шейдеров: готово %1$d</string>
+    <string name="bench_step_warm">Подготовка…</string>
+    <string name="bench_step_warp">Загрузка острова…</string>
+    <string name="bench_step_island">Замер: остров</string>
+    <string name="bench_step_check">Проверка результата…</string>
+    <string name="bench_live">%1$.1f fps · %2$.2f× · %3$d×%4$d</string>
+    <string name="bench_failed_title">Тест не смог завершиться</string>
+    <string name="bench_failed_text">Тест прервался на шаге «%1$s». Настройки остались прежними. Можно запустить снова: «Настройки › Графика».</string>
+    <string name="bench_close">Закрыть</string>
+    <string name="bench_again">Попробовать снова</string>
+    <string name="bench_interrupted">приложение ушло с экрана (экран погас или другое приложение) во время замера</string>
+    <string name="bench_result_title">Рекомендовано для этого устройства</string>
+    <string name="bench_result_60">%1$s: 60 fps, разрешение рендера до %2$s× (снижается при необходимости)</string>
+    <string name="bench_result_30">%1$s: 30 fps, разрешение рендера до %2$s× (снижается при необходимости)</string>
+    <string name="bench_result_fg">%1$s с генерацией кадров: 30 fps удваиваются до 60, разрешение рендера до %2$s× (снижается при необходимости)</string>
+    <string name="bench_fg_no">Генерация кадров не дала 60 fps на этом устройстве, поэтому рекомендация без неё.</string>
+    <string name="bench_fg_crashed">Игра остановилась, когда тест пробовал генерацию кадров, поэтому на этом устройстве она не рекомендуется.</string>
+    <string name="bench_now">сейчас: %1$s</string>
+    <string name="bench_keep">Оставить мои настройки</string>
+    <string name="bench_apply">Применить</string>
+    <string name="packs_importing">Импорт…</string>
+    <string name="packs_imported">Импортировано:</string>
+    <string name="packs_import_failed">Не импортировано:</string>
+    <string name="packs_applies">Патчит код игры этой версии</string>
+    <string name="packs_other_version">Сделано для другой версии игры: здесь ничего не делает</string>
+    <string name="packs_error">Не работает: %s</string>
+    <string name="packs_nothing">Ничего, что этот порт может использовать</string>
+    <string name="packs_restart_ask">Изменения наборов модов действуют только после перезапуска. Перезапустить игру сейчас? Прогресс с последнего сохранения будет потерян.</string>
+    <string name="language_restart">Игра использует новый язык после перезапуска.</string>
+    <string name="menu_language_restart">Меню использует новый язык после перезапуска.</string>
+    <string name="cache_loading">Загрузка кэша шейдеров…</string>
+    <string name="cache_loading_detail">Подготовлено вариантов шейдеров: %1$,d</string>
+    <string name="headstart_building">Поиск шейдеров игры в файлах игры… (только один раз)</string>
+    <string name="headstart_building_detail">Найдено шейдеров: %1$,d</string>
+    <string name="preset_imported">Импортировано пресетов: %1$d</string>
+    <string name="preset_import_none">В этом файле не найдено занятых слотов Wind Waker</string>
+    <string name="preset_import_skipped">Пропущено файлов: %1$d</string>
+    <string name="warp_test_title">Тест телепорта</string>
+    <string name="warp_test_auto_off">Авто: выкл.</string>
+    <string name="warp_test_auto_on">Авто: вкл.</string>
+    <string name="warp_test_auto_secs">%1$d с</string>
+    <string name="warp_test_auto_event">Загружено; «Авто» ждёт конца катсцены / диалога (не более 20 с)</string>
+    <string name="warp_test_last">Последний результат: %1$s</string>
+    <string name="warp_test_ready">Телепорт, либо оцените и идите дальше через ✓ / ✗</string>
+    <string name="warp_test_loading">Загрузка… %1$.0f с</string>
+    <string name="warp_test_loaded">Загружено за %1$.1f с</string>
+    <string name="warp_test_stuck">Нет конца после %1$.0f с: застряло. Перезапустите приложение (это записано, и место пропускается).</string>
+    <string name="warp_test_refused">Не принято: шла смена сцены. Коснитесь «Телепорт» ещё раз.</string>
+    <string name="cheat_keep">Применяется после загрузки сохранения; сохранитесь в игре, чтобы оставить.</string>
+    <string name="record_thread_restart">Настройка действует после перезапуска.</string>
+    <string name="gpu_driver_installing">Установка пакета драйвера…</string>
+    <string name="gpu_driver_install_failed">Не удалось установить пакет драйвера: %1$s</string>
+    <string name="gpu_driver_not_package">это не пакет драйвера (.zip с meta.json и .so файлом драйвера)</string>
+    <string name="gpu_driver_installed">%1$s установлен. Использовать сейчас? Игра перезапустится.</string>
+    <string name="gpu_driver_use_now">Использовать и перезапустить</string>
+    <string name="gpu_lost_title">Драйвер GPU перестал отвечать</string>
+    <string name="gpu_lost_system">Игра закрылась в прошлый раз, потому что завис GPU-драйвер телефона:\n%1$s\n\nЭто бывает с глючными системными драйверами. Обычно игру запускает драйвер Turnip. Выберите пакет драйвера (.zip в формате AdrenoTools, например свежую сборку Turnip для вашего Adreno), чтобы использовать его дальше, или запустите игру как есть.</string>
+    <string name="gpu_lost_custom">Игра закрылась в прошлый раз, потому что завис установленный драйвер GPU:\n%1$s\n\nВернитесь к системному драйверу, выберите другой пакет драйвера или запустите игру с этим снова.</string>
+    <string name="gpu_lost_unknown_driver">(неизвестный драйвер)</string>
+    <string name="gpu_lost_start">Запустить игру</string>
+    <string name="gpu_lost_choose">Выбрать файл драйвера…</string>
+    <string name="gpu_lost_choose_other">Другой файл драйвера…</string>
+    <string name="gpu_lost_system_driver">К системному драйверу</string>
+    <string name="gpu_driver_later">Позже</string>
+    <string name="gpu_driver_switch">Переключиться на %1$s? Игра перезапустится; первый запуск с другим драйвером снова компилирует его конвейеры и занимает дольше.</string>
+    <string name="gpu_driver_remove_active">Этот драйвер используется. Удалить его и перезапустить с системным драйвером?</string>
+    <string name="gpu_driver_failed">Игра не запустилась с драйвером GPU %1$s, поэтому снова работает на системном драйвере. Драйвер можно выбрать заново в «Графика › Драйвер GPU».</string>
+    <string name="crash_title">Игра неожиданно закрылась</string>
+    <string name="crash_text">Журнал сбоя сохранён. Если сообщаете о проблеме (например, в issue на GitHub), приложите его: по нему видно, где игра упала, версии приложения и игры, модель устройства и настройки. Личных данных в нём нет.</string>
+    <string name="crash_share">Поделиться журналом сбоя</string>
+    <string name="crash_without_fg">Запустить без генерации кадров</string>
+    <string name="crash_share_all">Поделиться журналами сбоев</string>
+    <string name="game_log_share">Поделиться журналом игры</string>
+    <string name="game_log_subject">Журнал игры Wind Waker HD</string>
+    <string name="game_log_failed">Не удалось собрать журнал игры.</string>
+    <string name="game_log_text">Собирает журнал текущего запуска — всё, что нужно, чтобы повторить проблему: версии приложения и игры, устройство, GPU и драйвер, настройки. Берутся только строки этого приложения, от других приложений — ничего. Личных данных нет: ни имён, ни аккаунтов; пути к папкам, ссылки, почта, сетевые и Bluetooth-адреса и ID устройств вырезаны. Готовый zip уходит туда, куда вы укажете в меню «Поделиться».\n\nЕсли включён переключатель, добавляются файлы сохранений: прогресс на момент последнего сохранения в игре, снимки и страницы альбома. Имя, которое вы дали Линку, в этой копии станет «Link»; ваше сохранение не меняется.</string>
+    <string name="game_log_saves">Добавить файлы сохранений</string>
+    <string name="game_log_share_button">Поделиться</string>
+    <string name="crash_start_game">Запустить игру</string>
+    <string name="crash_without_packs">Запустить без наборов модов</string>
+    <string name="crash_subject">Журнал сбоя Wind Waker HD</string>
+    <string name="clear_shaders_text">Игра перезапустится без кэша шейдеров — как при первом запуске: шейдеры снова собираются по мере появления сцен, поэтому первый вход в каждую сцену идёт дольше и может подтормаживать. Файлы сохранений, сохранения в слотах и настройки остаются. (Несохранённый прогресс теряется.)</string>
+    <string name="clear_shaders_restart">Удалить и перезапустить</string>
+    <string name="on">вкл</string>
+    <string name="off">выкл</string>
+    <string name="text_title">Введите текст</string>
+    <string name="text_message">До %1$d символов.</string>
+    <!-- touch controls: the on-screen layout editor (ControlsView), button labels -->
+    <string name="edit_size_minus">Размер −</string>
+    <string name="edit_size_plus">Размер +</string>
+    <string name="edit_hide">Скрыть</string>
+    <string name="edit_show">Показать</string>
+    <string name="edit_shape">Форма: %1$s</string>
+    <string name="edit_shape_default">обычная</string>
+    <string name="edit_shape_round">круглая</string>
+    <string name="edit_shape_oval">овальная</string>
+    <string name="edit_shape_square">квадратная</string>
+    <string name="edit_shape_rect">прямоугольная</string>
+    <string name="edit_shape_hex">шестиугольная</string>
+    <string name="edit_shape_diamond">ромб</string>
+    <string name="edit_opacity">Прозрачность %1$d%%</string>
+    <string name="edit_style_filled">Стиль: заливка</string>
+    <string name="edit_style_outline">Стиль: контур</string>
+    <string name="edit_grid_on">Сетка: вкл</string>
+    <string name="edit_grid_off">Сетка: выкл</string>
+    <string name="edit_presets">Пресеты</string>
+    <string name="edit_reset">Сброс</string>
+    <string name="edit_done">Готово</string>
+    <string name="edit_help">Тащите, чтобы двигать (при включённой сетке прилипает к ней), сводите пальцы или «Размер», чтобы масштабировать, коснитесь, чтобы выбрать.</string>
+    <string name="edit_opacity_one">Прозрачность: только у выбранного элемента (коснитесь пустого места — для всех)</string>
+    <string name="edit_opacity_all">Прозрачность: у всех элементов (коснитесь элемента — только у него)</string>
+    <string name="lp_title">Пресеты раскладки</string>
+    <string name="lp_none">Сохранённых раскладок пока нет. «Сохранить текущую» оставит раскладку, которую вы редактируете, под именем.</string>
+    <string name="lp_import">Импорт</string>
+    <string name="lp_export_all">Экспортировать все</string>
+    <string name="lp_save">Сохранить текущую</string>
+    <string name="lp_preset_info">Раскладка для %1$s сенсорного управления. «Загрузить» ставит её в редактор; «Готово» оставляет.</string>
+    <string name="lp_delete">Удалить</string>
+    <string name="lp_delete_confirm">Удалить эту сохранённую раскладку?</string>
+    <string name="lp_export">Экспорт</string>
+    <string name="lp_load">Загрузить</string>
+    <string name="lp_save_title">Сохранить раскладку (%1$s)</string>
+    <string name="lp_saved">Сохранено: %1$s</string>
+    <string name="lp_replace">Сохранённая раскладка этого стиля уже с таким именем. Заменить?</string>
+    <string name="lp_replace_yes">Заменить</string>
+    <string name="lp_switch_style">Эта раскладка для %1$s сенсорного управления. Загрузить её и переключить управление на %1$s?</string>
+    <string name="lp_file_all">Сенсорные раскладки</string>
+    <string name="lp_exported">Экспортировано раскладок: %1$d</string>
+    <string name="lp_failed">Не удалось экспортировать: %1$s</string>
+    <string name="lp_imported">Импортировано раскладок: %1$d</string>
+    <string name="lp_import_skipped">Пропущено: %1$d</string>
+    <string name="edit_layout_classic">Классическая раскладка</string>
+    <string name="edit_layout_flexible">Гибкая раскладка: стики появляются там, где встают ваши пальцы</string>
+    <string name="touch_selfie">Селфи</string>
+    <string name="opt_item_tap">Кнопки предметов</string>
+    <string name="opt_item_tap_hint">Лук, бумеранг, крюк-кошка и крюк-цепь с контекстными кнопками. Касание: касание наводит, кнопка стреляет при каждом касании, ZL переключает вид, B убирает предмет. Удержание: как в игре</string>
+    <string name="opt_item_tap_tap">Касание</string>
+    <string name="opt_item_tap_hold">Удержание (как в игре)</string>
+    <string name="opt_item_tap_focus">При прицеливании только кнопки прицела</string>
+    <string name="opt_item_tap_focus_hint">С «Кнопками предметов»: пока предмет наведён, видны только его кнопка «Выстрелить», B (убрать), ZL и ZR (виды стрел); остальные кнопки предметов, A, +, вид от первого лица, крестовина и кнопки прыжка скрыты — случайное касание не выпустит натянутую стрелу</string>
+    <string name="opt_auto_stow">Убирать сам</string>
+    <string name="opt_auto_stow_hint">С «Контекстными кнопками»: если Линк стоит, меч и любой другой предмет в руке (молот, бумеранг…) убираются через 5 с после последнего взмаха, а листок Деку — через 3 с. С «Кнопками предметов»: касание — также</string>
+    <string name="touch_shoot">Выстрел</string>
+    <string name="touch_throw">Бросок</string>
+    <!-- Mods: songs sung into the microphone (SongListener) -->
+    <string name="opt_sing_songs">Петь песни (экспериментально)</string>
+    <string name="opt_sing_songs_hint">Пока Линк держит Повелитель Ветров, спойте, промычите или просвистите одну из его песен в микрофон — он её сыграет (только выученные). Звук только анализируется и нигде не записывается</string>
+    <string name="opt_sing_button">Кнопка микрофона</string>
+    <string name="opt_sing_button_hint">Держите кнопку микрофона внизу слева (или L на геймпаде), пока поёте; отпустите — и песня сразу сыграет. Переключатель под ней задаёт размер (3/4, 4/4, 6/4): пока кнопка удерживается, Линк дирижирует нотами, которые вы поёте, — по одной на удар метронома. Выкл.: микрофон слушает сам, а песню заканчивает короткая пауза</string>
+    <string name="opt_song_list_play">Кнопки проигрывания в списке песен</string>
+    <string name="opt_song_list_play_hint">Пока Линк держит палочку, + показывает известные ему песни: кнопка проигрывания рядом с каждой играет её сразу, без дирижирования</string>
+    <string name="opt_song_scene_play">Кнопка проигрывания в сценах песен</string>
+    <string name="opt_song_scene_play_hint">Когда сюжет ждёт одну песню (изучение у скрижали, у мудреца), кнопка проигрывания на окне сообщения играет её сразу — выучена она или нет</string>
+    <string name="song_not_learned">%1$s: ещё не выучена</string>
+    <string name="song_practice_title">Тренировка</string>
+    <string name="song_practice_go">Держите кнопку микрофона и пойте</string>
+    <string name="song_count_hum">Промычите свою среднюю ноту</string>
+    <string name="song_count_breathe">Вдохните, и песню!</string>
+    <string name="song_practice_none">Песня не услышана. Попробуйте ещё!</string>
+    <string name="song_wrong_time">%1$s: пойте в размере %2$s!</string>
+    <string name="sing_songs_no_mic">Без разрешения на микрофон песни не услышать. Разрешить можно в системных настройках приложения.</string>
+
+    <!-- Game > Randomizer (OptionsMenu.randoPage, MainActivity.runRandomizer) -->
+    <string name="rando_title">Рандомайзер</string>
+    <string name="rando_hint">Новая игра, где предметы лежат в других местах (TWWHD Randomizer)</string>
+    <string name="rando_on_now">Вкл</string>
+    <string name="rando_about">Рандомайзер (TWWHD Randomizer 1.2.0 от SuperDude88 и других) делает из вашей игры новую: предметы лежат в других местах, море открыто с начала, большинство катсцен убрано. Его логика гарантирует, что любую игру можно пройти. У рандомизированной игры своё сохранение и свои сохранения в слотах; обычная игра остаётся как есть.</string>
+    <string name="rando_need_usa">Рандомайзер не может использовать эти файлы игры: неизвестная версия игры.</string>
+    <string name="rando_keep_plain">Сохранить и код самой игры</string>
+    <string name="rando_keep_plain_hint">Тогда переключение между рандомизированной игрой и обычной не требует компиляции. Стоит примерно на 60 МБ больше (весь скомпилированный код: %1$d МБ).</string>
+    <string name="rando_made">Хеш сида %1$s (сид %2$s): титульный экран игры покажет те же слова. Вместе с его сохранением и сохранениями: %3$d МБ.</string>
+    <string name="rando_spoiler">Спойлер-лог</string>
+    <string name="rando_spoiler_hint">Где лежит каждый предмет. Только если застряли!</string>
+    <string name="rando_spoiler_none">Спойлер-лог не читается.</string>
+    <string name="rando_spoiler_about">Хеш сида %1$s. Всё ниже рассказывает, где что лежит: смотрите, только если застряли.</string>
+    <string name="rando_spoiler_map">Карта</string>
+    <string name="rando_spoiler_map_hint">Каждый предмет на его месте — на морской карте и в подземельях</string>
+    <string name="rando_spoiler_way">Путь через игру</string>
+    <string name="rando_spoiler_way_hint">Порядок, в котором можно получить важные предметы</string>
+    <string name="rando_spoiler_way_about">Каждому шагу нужны только предметы предыдущих шагов (и стартовые).</string>
+    <string name="rando_spoiler_start">На старте</string>
+    <string name="rando_spoiler_step">Шаг %1$d</string>
+    <string name="rando_spoiler_all">Где что лежит</string>
+    <string name="rando_spoiler_all_hint">Предмет каждого места — по островам и подземельям</string>
+    <string name="rando_spoiler_important">Только важные предметы</string>
+    <string name="rando_spoiler_important_hint">Предметы, нужные по ходу игры; остальное — рупии и мелочь</string>
+    <string name="rando_spoiler_charts">Куда ведут карты</string>
+    <string name="rando_spoiler_hints">Подсказки</string>
+    <string name="rando_spoiler_entrances">Входы</string>
+    <string name="rando_spoiler_text">Лог обычным текстом</string>
+    <string name="rando_spoiler_text_hint">Весь лог рандомайзера — прочитать или отправить кому-то</string>
+    <string name="rando_spoiler_show">Показать</string>
+    <string name="rando_spoiler_elsewhere">Без постоянного места (почта, Великое море)</string>
+    <string-array name="rando_spoiler_groups">
+        <item>Важные предметы</item>
+        <item>Всё</item>
+        <item>Сердца</item>
+        <item>Карты</item>
+        <item>Предметы подземелий</item>
+    </string-array>
+    <string name="rando_settings">Настройки следующей игры</string>
+    <string name="rando_preset">Использовать пресет</string>
+    <string name="rando_preset_hint">Новичок, Стандарт или «Всё перемешано»</string>
+    <string name="rando_preset_ask">Пресет заменяет все настройки ниже (и имя сида).\n\nНовичок: меньше мест для поиска, подсказки, обычный урон.\nСтандарт: собственные настройки рандомайзера.\nВсё: предметы почти в каждом месте.</string>
+    <string name="rando_preset_beginner">Новичок</string>
+    <string name="rando_preset_standard">Стандарт</string>
+    <string name="rando_preset_all">Всё перемешано</string>
+    <string name="rando_places">Места с важными предметами</string>
+    <string name="rando_places_hint">Какие места могут содержать нужные вам предметы</string>
+    <string name="rando_places_about">В выключенных местах только рупии и другая мелочь — искать нужное там не придётся.</string>
+    <string name="rando_progress_dungeons_hint">Режим гонки: важные предметы лежат только в подземельях, которые нужно пройти</string>
+    <string name="rando_dungeons">Подземелья и ключи</string>
+    <string name="rando_dungeons_hint">Где лежат ключи, карты и компасы</string>
+    <string name="rando_small_keys">Маленькие ключи</string>
+    <string name="rando_big_keys">Ключи боссов</string>
+    <string name="rando_maps">Карты подземелий и компасы</string>
+    <string name="rando_required">Подземелья, которые нужно пройти</string>
+    <string name="rando_required_hint">Для режима гонки (Места): сколько подземелий нужно пройти, чтобы добраться до Башни Гэнона</string>
+    <string name="rando_entrances">Входы</string>
+    <string name="rando_entrances_hint">Двери и пещеры, ведущие в другое место</string>
+    <string name="rando_entrances_about">Перемешанные входы ведут в другие подземелья, пещеры или комнаты. Ориентироваться в игре становится заметно труднее.</string>
+    <string name="rando_caves">Входы в пещеры</string>
+    <string name="rando_hints">Подсказки</string>
+    <string name="rando_hints_hint">Кто говорит вам, где что лежит</string>
+    <string name="rando_start">Старт и сложность</string>
+    <string name="rando_start_hint">Сердца на старте, мечи, урон</string>
+    <string name="rando_start_hearts">Контейнеры сердец на старте</string>
+    <string name="rando_start_pieces">Осколки сердца на старте</string>
+    <string name="rando_no_swords">Без мечей</string>
+    <string name="rando_no_swords_hint">Линк никогда не получает меч (только для опытных игроков)</string>
+    <string name="rando_damage">Получаемый урон</string>
+    <string name="rando_damage_hint">× 2 — стандарт рандомайзера, × 1 — как в игре</string>
+    <string name="rando_convenience">Удобства</string>
+    <string name="rando_convenience_hint">Быстрый текст, вся морская карта и другое</string>
+    <string name="rando_seed">Сид</string>
+    <string name="rando_seed_hint">Один и тот же сид и настройки дают одну и ту же игру</string>
+    <string name="rando_permalink">Постоянная ссылка</string>
+    <string name="rando_permalink_hint">Все настройки и сид одним текстом: им можно поделиться или вставить из рандомайзера на ПК</string>
+    <string name="rando_permalink_paste">Вставить</string>
+    <string name="rando_share">Поделиться</string>
+    <string name="rando_defaults">К стандартным настройкам</string>
+    <string name="rando_defaults_hint">Собственные настройки рандомайзера и новый сид</string>
+    <string name="rando_pending">Новая игра будет создана при следующем запуске.</string>
+    <string name="rando_make">Создать новую рандомизированную игру</string>
+    <string name="rando_make_ask">Приложение перезапустится и создаст новую игру с этими настройками (несколько секунд), затем код игры снова скомпилируется (первая рандомизированная игра: весь, как при первом запуске; следующая: только изменившиеся части), и новая игра начнётся.\n\nВаши игры остаются, каждая со своим сохранением; при каждом запуске приложение спрашивает, в какую играть. Рандомизированная игра занимает около половины гигабайта.</string>
+    <string name="rando_make_go">Создать</string>
+    <string name="rando_make_same">%1$s уже создана с этими настройками и этим сидом: получится та же игра. Создать с новым сидом?</string>
+    <string name="rando_make_new_seed">Новый сид, создать</string>
+    <string name="rando_games">Ваши игры</string>
+    <string name="rando_games_about">При каждом запуске приложение спрашивает, в какую игру играть. У каждой рандомизированной игры своё сохранение и свои сохранения в слотах.</string>
+    <string name="rando_pick_title">В какую игру хотите играть?</string>
+    <string name="rando_pick_plain">Игра как есть</string>
+    <string name="rando_playing_now">Играете</string>
+    <string name="rando_game_name">Рандомайзер %1$d: %2$s</string>
+    <string name="rando_game_name_nohash">Рандомайзер %1$d</string>
+    <string name="rando_playing_this">Вы сейчас играете в эту игру.</string>
+    <string name="rando_play_this">Играть в эту игру</string>
+    <string name="rando_delete">Удалить эту игру</string>
+    <string name="rando_delete_ask">Эта рандомизированная игра будет удалена. Игра как есть и другие рандомизированные игры остаются.</string>
+    <string name="rando_delete_ask_progress">Эта рандомизированная игра будет удалена вместе со своим сохранением и сохранениями в слотах. Обычная игра и другие рандомизированные остаются.</string>
+    <string name="rando_delete_playing">Вы играете в эту игру: она будет удалена вместе со своим сохранением и сохранениями, а приложение перезапустится с игрой как есть.</string>
+    <string name="rando_delete_go">Удалить</string>
+    <string name="rando_look">Цвета Линка</string>
+    <string name="rando_look_hint">Одежда, волосы и глаза Линка в других цветах — или повседневная одежда с самого начала</string>
+    <string name="rando_look_about">Эти цвета достанутся следующей созданной рандомизированной игре. Уже созданная игра получает их через «Создать заново с цветами Линка» на её странице: та же игра, со своим сохранением и сохранениями в слотах.</string>
+    <string name="rando_casual">Повседневная одежда</string>
+    <string name="rando_casual_hint">Новый файл начинается в повседневной одежде Линка, а не в одежде героя (цвета здесь — от повседневной)</string>
+    <string name="rando_look_preset">Набор цветов</string>
+    <string name="rando_look_default">Цвета игры</string>
+    <string name="rando_look_own">Свои цвета</string>
+    <string name="rando_look_random">Случайные сочетающиеся цвета</string>
+    <string name="rando_look_chaotic">Каждый цвет случайный</string>
+    <string name="rando_look_reset">К цветам игры</string>
+    <string name="rando_color_hue">Оттенок</string>
+    <string name="rando_color_sat">Насыщенность</string>
+    <string name="rando_color_value">Яркость</string>
+    <string name="rando_color_random">Случайный оттенок</string>
+    <string name="rando_color_default">Его обычный цвет</string>
+    <string name="look_hint">Его одежда, волосы и глаза в других цветах в игре (у рандомизированных игр свои)</string>
+    <string name="look_on">Использовать эти цвета</string>
+    <string name="look_on_hint">В игре как есть, для этого сохранения; рандомизированные игры сохраняют цвета, с которыми созданы</string>
+    <string name="look_on_short">Вкл</string>
+    <string name="look_model_note">Сохранение %1$d играет моделью игрока %2$s, у неё свои цвета — цвета Линка к ней не применить. Чтобы раскрасить Линка в этом файле, выберите для него «Линк (нет)» в «Моды › Наборы модов › Модель игрока с GameCube».</string>
+    <string name="look_about">Линк носит одежду родного острова, а позже — одежду героя: у каждой свои цвета. Кожа, рот и глаза у обеих одежд одинаковы, если не включено «Свои кожа, рот и глаза».</string>
+    <string name="look_clothes">Одежда</string>
+    <string name="look_clothes_hint">Цвета какой одежды показываются и меняются</string>
+    <string name="look_clothes_hero">Одежда героя</string>
+    <string name="look_clothes_casual">Островная одежда</string>
+    <string name="look_making">Раскраска Линка…</string>
+    <string name="look_separate">Свои кожа, рот и глаза</string>
+    <string name="look_separate_hint">Выкл.: один цвет для обеих одежд. Вкл.: у каждой свой, и он меняется вместе с одеждой Линка</string>
+    <string name="look_shared_hint">Одинаково у обеих одежд («Свои кожа, рот и глаза»: у каждой свои)</string>
+    <string name="look_file">Сохранение</string>
+    <string name="look_file_n">Файл %1$d</string>
+    <string name="look_file_hint">У каждого сохранения свои цвета; в игре изменения видны сразу</string>
+    <string name="look_rando_note">Сейчас играется рандомизированная игра: у неё свои цвета. Эти показываются в игре как есть.</string>
+    <string name="names_title">Имена файлов</string>
+    <string name="names_hint">Дать сохранению другое имя в игре — до 16 символов</string>
+    <string name="names_file_hint">Имя какого сохранения здесь показывается и меняется</string>
+    <string name="names_about">Игра сразу берёт новое имя; чтобы оставить его, сохранитесь. До %1$d символов: сама игра хранит в сохранении первые %2$d, их и показывает выбор файла. Остальное хранит приложение и возвращает полное имя, когда в файл играют. С длинным именем окна текста переносят строку раньше.</string>
+    <string name="names_no_game">Имена берутся из игры: запустите её (загрузите сохранение), чтобы изменить.</string>
+    <string name="names_name">Имя</string>
+    <string name="names_name_hint">Коснитесь, чтобы изменить</string>
+    <string name="names_bad_char">В игре нет буквы «%1$s». Используйте другие буквы.</string>
+    <string name="rando_remake">Создать заново с цветами Линка</string>
+    <string name="rando_remake_ask">При перезапуске эта игра создастся заново с цветами из «Рандомайзер &gt; Цвета Линка». Всё остальное сохранится: те же предметы в тех же местах, её сохранение и сохранения.</string>
+    <string name="rando_remake_go">Создать заново</string>
+    <string name="rando_remake_pending">%1$s будет создана заново с цветами Линка при следующем запуске.</string>
+    <string-array name="rando_color_names">
+        <item>Волосы</item>
+        <item>Кожа</item>
+        <item>Рот</item>
+        <item>Глаза</item>
+        <item>Белки глаз</item>
+        <item>Туника</item>
+        <item>Рубашка</item>
+        <item>Штаны</item>
+        <item>Сапоги</item>
+        <item>Пояс</item>
+        <item>Пряжка пояса</item>
+        <item>Рубашка</item>
+        <item>Эмблема рубашки</item>
+        <item>Нарукавники</item>
+        <item>Обувь</item>
+        <item>Подошвы</item>
+    </string-array>
+    <string name="rando_running">Создание рандомизированной игры…</string>
+    <string name="rando_failed">Рандомайзер не смог создать игру:\n\n%1$s</string>
+    <string name="rando_play_plain">Играть в игру как есть</string>
+    <string name="rando_no_map">Карта находок в рандомизированной игре выключена: она показывает, где их держит сама игра.</string>
+
+    <string-array name="rando_progress_names">
+        <item>Подземелья</item>
+        <item>Великие феи</item>
+        <item>Пещеры-головоломки</item>
+        <item>Боевые пещеры</item>
+        <item>Короткие побочные задания</item>
+        <item>Длинные побочные задания</item>
+        <item>Обмен трофеев</item>
+        <item>Мини-игры</item>
+        <item>Бесплатные подарки</item>
+        <item>Почта</item>
+        <item>Платформы и плоты</item>
+        <item>Подлодки</item>
+        <item>Сундуки на рифах</item>
+        <item>Большие окто и канонерки</item>
+        <item>Карты Трифорса</item>
+        <item>Карты сокровищ</item>
+        <item>Дорогие покупки</item>
+        <item>Другие места</item>
+        <item>Сундуки Тингла</item>
+        <item>Sploosh Kaboom</item>
+        <item>Лабиринт дикарей</item>
+        <item>Головоломки островов</item>
+        <item>Секреты подземелий</item>
+        <item>Малоизвестные места</item>
+    </string-array>
+    <string-array name="rando_progress_dungeons">
+        <item>Выкл.</item>
+        <item>Вкл.</item>
+        <item>Режим гонки</item>
+    </string-array>
+    <string-array name="rando_placement">
+        <item>Где они всегда</item>
+        <item>В своём подземелье</item>
+        <item>В любом подземелье</item>
+        <item>Вне подземелий</item>
+        <item>Где угодно</item>
+    </string-array>
+    <string-array name="rando_caves">
+        <item>Как есть</item>
+        <item>Пещеры перемешаны</item>
+        <item>Пещеры и фонтаны</item>
+    </string-array>
+    <string-array name="rando_entrance_names">
+        <item>Входы подземелий перемешаны</item>
+        <item>Двери боссов перемешаны</item>
+        <item>Двери мини-боссов перемешаны</item>
+        <item>Двери перемешаны</item>
+        <item>Другие входы перемешаны</item>
+        <item>Смешать подземелья с остальными</item>
+        <item>Смешать двери боссов с остальными</item>
+        <item>Смешать двери мини-боссов с остальными</item>
+        <item>Смешать пещеры с остальными</item>
+        <item>Смешать двери с остальными</item>
+        <item>Смешать другие входы с остальными</item>
+        <item>Односторонние входы (путь назад другой)</item>
+        <item>Случайный стартовый остров</item>
+    </string-array>
+    <string-array name="rando_hint_names">
+        <item>Подсказки от племени хо-хо</item>
+        <item>Племя хо-хо об осколках Трифорса</item>
+        <item>Подсказки от лодки</item>
+        <item>Лодка о мече</item>
+        <item>На Ветреном: где лук</item>
+        <item>Более ясные подсказки</item>
+        <item>Подсказки о всегда важных местах</item>
+        <item>Подсказки говорят, насколько предмет важен</item>
+    </string-array>
+    <string-array name="rando_hint_count_names">
+        <item>Подсказки о пути</item>
+        <item>Подсказки о пустых местах</item>
+        <item>Подсказки о предметах</item>
+        <item>Подсказки о местах</item>
+    </string-array>
+    <string-array name="rando_convenience_names">
+        <item>Мгновенный текст</item>
+        <item>Вся морская карта с начала</item>
+        <item>Тихий быстрый парус</item>
+        <item>Пропускать повторные бои с боссами в Башне Гэнона</item>
+        <item>Переходы между подземельями</item>
+        <item>Фиксированные шансы (меньше удачи)</item>
+        <item>Морской компас отражён по горизонтали</item>
+        <item>Без музыки</item>
+        <item>Карты перемешаны</item>
+        <item>Сундуки показывают содержимое (тип)</item>
+    </string-array>
+    <!-- Android TV (MainActivity.isTv): the setup with the remote, files without a file chooser -->
+    <string name="tv_setup_text">На телевизоре: вы играете геймпадом (Bluetooth или USB), пульт работает в меню. Если на этом телевизоре нет выбора файлов, скопируйте файлы в эту папку (через adb push или файловый менеджер с доступом туда) и выберите «Использовать файлы в папке приложения»:\n%1$s</string>
+    <string name="tv_import_button">Использовать файлы в папке приложения</string>
+    <string name="tv_import_title">Файлы в папке приложения</string>
+    <string name="tv_import_empty">Папка пуста. Скопируйте образ диска с двумя ключами или архив Cemu (.wua) в:\n%1$s\n\nНапример с компьютера: adb push MyGame.wua %1$s/</string>
+    <string name="tv_no_chooser_title">Нет выбора файлов</string>
+    <string name="tv_no_chooser">На этом устройстве нет системного выбора файлов для приложений (обычно на телевизорах). Установите файловый менеджер, который его даёт, или скопируйте файлы в эту папку через adb push:\n%1$s</string>
+    <!-- a phone as the TV's GamePad (PadHost, PadActivity) -->
+    <string name="pad_title">Телефон как GamePad</string>
+    <string name="opt_page_devices">Другие устройства</string>
+    <string name="opt_page_devices_hint">Телефоны, планшеты и телевизоры в одной сети Wi-Fi: одно устройство запускает игру, остальные становятся её GamePad или экраном</string>
+    <string name="devices_note">Игру запускает одно устройство, остальные подключаются к нему по той же сети Wi-Fi.\n\nИгра здесь, картинка на телевизоре или планшете: включите ниже «К этому устройству могут подключаться другие», затем на телевизоре или планшете выберите «Игра › Другие устройства › Быть экраном другого устройства».\n\nИгра на телевизоре, это устройство как GamePad: «Играть на другом экране».\n\nУстройство без игры подключается сразу: удерживайте значок приложения (GamePad или Экран) либо кнопки на его экране настроек.</string>
+    <string name="devices_note_tv">Одно устройство запускает игру, остальные подключаются к нему в одной сети Wi-Fi.\n\nИгра здесь, телефон или планшет как GamePad: оставьте «К этому устройству могут подключаться другие» включённым. На телефоне: «Игра > Другие устройства > Играть на другом экране» или долгое нажатие на значок > GamePad.\n\nИгра на телефоне, этот телевизор как его экран: на телефоне включите «Игра > Другие устройства > К этому устройству могут подключаться другие», затем выберите здесь «Быть экраном другого устройства».</string>
+    <string name="opt_pad_host">К этому устройству могут подключаться другие</string>
+    <string name="opt_pad_host_hint">Это устройство запускает игру: телефоны, планшеты и телевизоры с приложением в той же сети Wi-Fi находят его и становятся его GamePad или экраном. На телевизоре включено по умолчанию.</string>
+    <string name="opt_pad_play">Играть на другом экране</string>
+    <string name="opt_pad_play_hint">Это устройство становится GamePad для телевизора, телефона или планшета с этим приложением в той же сети: там идёт игра, здесь — экран GamePad. Сохранения остаются вашими.</string>
+    <string name="pad_become_text">Игра здесь закроется (сохранится, как при «Выходе»), и это устройство начнёт искать в вашей сети телевизоры, телефоны и планшеты с приложением.</string>
+    <string name="pad_become">Найти</string>
+    <string name="pad_searching">Поиск устройств с приложением в этой сети…</string>
+    <string name="pad_none_hint">На другом устройстве: приложение открыто, включено «Игра › Другие устройства › К этому устройству могут подключаться другие», и оба в одной сети Wi-Fi.</string>
+    <string name="pad_address">Введите адрес…</string>
+    <string name="pad_address_hint">Адрес телевизора в сети (например, 192.168.1.20), если он не находится сам:</string>
+    <string name="pad_leave_search">Перестать искать и вернуться в начало?</string>
+    <string name="pad_keep_looking">Продолжать поиск</string>
+    <string name="pad_back_to_game">Назад в игру</string>
+    <string name="pad_connecting">Подключение к %1$s…</string>
+    <string name="pad_failed">Нет соединения: %1$s</string>
+    <string name="pad_lost">Связь с другим устройством потеряна. Пробую снова…</string>
+    <string name="pad_code_title">Код</string>
+    <string name="pad_code_text">Введите код, который показывает другое устройство:</string>
+    <string name="pad_code_wrong">Неверный код. Введите код, который показывает другое устройство:</string>
+    <string name="pad_old_version">На телевизоре другая версия приложения. Установите одинаковую версию на обоих.</string>
+    <string name="pad_waiting">Подключено к %1$s. Картинка появится, как только там запустится игра.</string>
+    <string name="pad_send_game_title">У %1$s нет файлов игры</string>
+    <string name="pad_send_game_text">Отправить файлы игры этого устройства (%1$s) на %2$s? Ему придётся подготовить игру — это займёт время.</string>
+    <string name="pad_send">Отправить</string>
+    <string name="pad_no_game_here">На этом устройстве тоже нет файлов игры, чтобы отправить.</string>
+    <string name="pad_sending">Отправка %1$s: %2$d %%</string>
+    <string name="pad_send_failed">Отправка не удалась.</string>
+    <string name="pad_space_states">У %1$s свободно только %2$s: сохранения (%3$s) остаются на этом устройстве, остальное переносится сейчас. Освободите</string>
+    <string name="pad_space_none">У %1$s свободно только %2$s, нужно около %3$s: ничего не отправлено. Освободите место там и подключитесь снова.</string>
+    <string name="pad_tv_preparing">%1$s готовит игру. Картинка появится, как только она запустится.</string>
+    <string name="pad_saves_restart">Ваши сохранения на %1$s: оно перезапустится с ними…</string>
+    <string name="pad_end_saving">Возврат сохранений…</string>
+    <string name="pad_touch_buttons">Сенсорные кнопки</string>
+    <string name="pad_saves_to">Взять мои сохранения с собой</string>
+    <string name="pad_saves_back">Вернуть сохранения, когда я выйду</string>
+    <string name="pad_other_tv">Другое устройство</string>
+    <string name="pad_end">Завершить</string>
+    <string name="pad_what_game">файлы игры</string>
+    <string name="pad_what_saves">сохранения</string>
+    <string name="pad_tv_code">%1$s хочет быть GamePad. Введите на нём этот код: %2$s</string>
+    <string name="pad_tv_joined">%1$s теперь GamePad.</string>
+    <string name="pad_tv_left">%1$s больше не GamePad.</string>
+    <string name="pad_tv_receiving">Получение %1$s от %2$s: %3$d %%</string>
+    <string name="pad_tv_game_failed">Не удалось разложить файлы игры.</string>
+    <string name="pad_tv_restart">Сохранения с телефона здесь: игра перезапускается.</string>
+    <string name="pad_picture">Картинка GamePad</string>
+    <string name="pad_picture_text">В каком размере другое устройство отправляет картинку GamePad (сейчас: %1$s). Больше — чётче, но требует больше и от устройств, и от сети. «Нет»: это устройство работает только геймпадом; картинка GamePad остаётся на другом устройстве (и показывается там), сюда ничего не отправляется.</string>
+    <string name="pad_picture_none">Нет (геймпад)</string>
+    <string name="pad_picture_drawn">Рисуется здесь</string>
+    <string name="pad_picture_drawn_video">Рисуется здесь, экраны самой игры как видео</string>
+    <string name="pad_screen_items">ПРЕДМЕТЫ</string>
+    <string name="pad_screen_collection">КОЛЛЕКЦИЯ</string>
+    <string name="pad_screen_wait">Предметы появятся здесь, когда там запустится игра.</string>
+    <string name="pad_screen_options">НАСТРОЙКИ</string>
+    <string name="pad_screen_map">КАРТА</string>
+    <string name="pad_screen_save">Сохранить</string>
+    <string name="pad_screen_options_button">Настройки</string>
+    <string name="pad_screen_back">Назад</string>
+    <string name="pad_screen_collection_hint">Пройдено на этот момент: %1$d%%. Коснитесь объекта, чтобы узнать его название.</string>
+    <string name="pad_picture_on_tv">Картинка GamePad остаётся на телевизоре: + показывает её там.</string>
+    <string name="pad_other_release">Другое устройство играет в версию %1$s игры, это — в версию %2$s. Сохранение игры передаётся всё равно (приводится к другой версии); сохранения нет: они принадлежат игре одной версии и остаются на месте.</string>
+    <string name="pad_screen_title">Экран для другого устройства</string>
+    <string name="pad_screen_become_text">Игра здесь закроется (сохранится, как при «Выходе»), и это устройство начнёт искать в вашей сети устройство с приложением, чтобы стать его экраном: оно показывает игру и играет её звук, а другое играет и показывает GamePad.</string>
+    <string name="pad_screen_picture">Картинка игры</string>
+    <string name="pad_screen_picture_text">В каком размере другое устройство отправляет картинку игры (сейчас: %1$s). Больше — чётче, но требует больше от сети.</string>
+    <string name="opt_pad_screen">Быть экраном другого устройства</string>
+    <string name="opt_pad_screen_hint">Это устройство показывает игру телефона или планшета с приложением в той же сети (и играет её звук): там идёт игра, показывается GamePad и работает геймпад. Для слабого устройства с большим экраном.</string>
+    <string name="pad_tv_screen_joined">%1$s теперь экран.</string>
+    <string name="pad_sound_screen">Звук здесь</string>
+    <string name="pad_sound_pad">Звуки GamePad здесь</string>
+    <string name="pad_delays">Задержка: картинка %1$s мс, сетевой обмен %2$s мс, звук %3$s мс</string>
+    <string name="shortcut_pad">GamePad</string>
+    <string name="shortcut_pad_long">GamePad для другого устройства</string>
+    <string name="shortcut_screen">Экран</string>
+    <string name="shortcut_screen_long">Экран для другого устройства</string>
+    <string name="pad_console_options">Настройки консоли</string>
+    <string name="pad_send_game_code_text">Отправить файлы игры этого устройства (%1$s) на %2$s? Это устройство сначала подготовит код игры под свой процессор (несколько минут здесь) — тогда %2$s запустит игру сразу, а не будет готовить её сам, что там занимает гораздо дольше.</string>
+    <string name="pad_preparing_code">Подготовка кода игры для %1$s: %2$d из %3$d</string>
+    <string name="pad_what_code">код игры</string>
+    <string name="tv_setup_screen">Или совсем без файлов игры здесь: выберите «Быть экраном другого устройства». Телефон или планшет с приложением и вашей игрой запустит её и станет GamePad; этот телевизор покажет игру и сыграет её звук.</string>
+    <string name="drc_game_there">Картинка игры там (ТВ через трансляцию или кабель)</string>
+    <string name="pad_code_title_other">%1$s готовит свой код игры</string>
+    <string name="pad_code_offer">%1$s сам готовит код игры под свой процессор, а это там может быть долго (на ТВ-приставке до часа). Это устройство может сделать это за несколько минут и отправить; %1$s тогда запустит игру. Подготовить здесь?</string>
+    <string name="pad_code_prepare">Подготовить здесь</string>
+    <string name="choice_text">Как вы хотите играть сейчас?</string>
+    <string name="choice_here">Играть здесь</string>
+    <string name="choice_here_text">Игра запущена на этом устройстве.</string>
+    <string name="choice_pad">Быть GamePad</string>
+    <string name="choice_pad_text">Игру запускает другое устройство, это — его GamePad.</string>
+    <string name="choice_screen">Ждать устройство</string>
+    <string name="choice_screen_text">Это устройство станет экраном для телефона или планшета, который к нему подключится.</string>
+    <string name="choice_later">Эта страница появляется при каждом запуске: «Игра > Другие устройства > Выбирать при запуске».</string>
+    <string name="pad_none_hint_screen">На телефоне или планшете с игрой: «Игра › Другие устройства › Показывать на телевизоре», затем выберите это устройство. Либо оно найдёт его здесь само, если там включено «К этому устройству могут подключаться другие» (оба в одной сети Wi-Fi) — подключится к первому найденному.</string>
+    <string name="receiver_close">Закрыть</string>
+    <string name="receiver_leave">Перестать искать и закрыть?</string>
+    <string name="search_splash">Плюх!</string>
+    <string name="search_boom">Бум!</string>
+    <string name="opt_start_choice">Выбирать при запуске</string>
+    <string name="opt_start_choice_hint">Каждый запуск приложения сначала спрашивает: играть здесь, быть GamePad другого устройства или ждать устройство и стать его экраном.</string>
+    <string name="pad_tv_code_screen">%1$s хочет быть экраном этого устройства. Введите на нём этот код: %2$s</string>
+    <string name="opt_pad_cast">Показывать на телевизоре</string>
+    <string name="opt_pad_cast_hint">Выберите телевизор или планшет, который ждёт подключения (там открыто приложение-экран или «Быть экраном другого устройства»): он покажет игру и сыграет её звук, а это устройство останется GamePad. Код вводить не нужно.</string>
+    <string name="pad_cast_looking">Поиск экранов в этой сети Wi-Fi… На телевизоре: открыто приложение-экран (или там «Игра > Другие устройства > Быть экраном другого устройства»).</string>
+    <string name="pad_cast_pick">Эти ждут стать экраном. Выберите: он подключится к этому устройству.</string>
+    <string name="pad_cast_sent">Предложение %1$s стать экраном…</string>
+    <string name="pad_cast_failed">%1$s не ответил. Его страница поиска ещё открыта?</string>
+</resources>
