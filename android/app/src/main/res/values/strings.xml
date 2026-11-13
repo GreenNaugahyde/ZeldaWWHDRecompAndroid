@@ -126,6 +126,10 @@
     <string name="opt_ao_hires">Full-size occlusion depth</string>
     <string name="opt_area_blur">Smooth blur at high resolution</string>
     <string name="opt_area_blur_hint">Above 1.5x resolution the game\'s light and bloom blur covers what it covers at 720p: no fine grid around things on the ground</string>
+    <string name="opt_bloom">Bloom strength</string>
+    <string name="opt_bloom_hint">Glow around bright areas. 100% matches the original game</string>
+    <string name="opt_distant_shadows">Distant shadows</string>
+    <string name="opt_distant_shadows_hint">The far shadows. Off: less GPU work in forests and open areas, for weaker phones</string>
     <string name="opt_aspect">Aspect ratio</string>
     <string name="opt_auto_slot">Auto save %1$d</string>
     <string name="opt_auto_state">Auto save state</string>
