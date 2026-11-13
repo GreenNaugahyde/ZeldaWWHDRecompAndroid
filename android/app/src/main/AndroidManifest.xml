@@ -77,7 +77,7 @@
         <!-- crash logs, read only, for the app the user shares them with (CrashLogs) -->
         <provider
             android:name=".CrashLogProvider"
-            android:authorities="org.wwhdrecomp.app.crashlogs"
+            android:authorities="org.wwhdrecomp.gnp.crashlogs"
             android:exported="false"
             android:grantUriPermissions="true" />
         <!-- this device as a TV's GamePad: a process of its own, without the game -->

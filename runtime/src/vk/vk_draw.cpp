@@ -2632,6 +2632,19 @@ void set_area_blur(bool v) { g_area_blur = v; LOG("[gfx] area-sampled blur %s", 
 static std::atomic<bool> g_ao_hires{[] { const char* e = getenv("WWHD_AO_HIRES"); return !e || atoi(e) != 0; }()};
 bool ao_hires_enabled() { return g_ao_hires.load(std::memory_order_relaxed); }
 void set_ao_hires(bool v) { g_ao_hires = v; LOG("[gfx] full-size occlusion depth %s", v ? "on" : "off"); }
+// Graphics > Picture quality > bloom strength (percent; 100 is the original game): the extract
+// shader's intensity uniform is scaled, see the uniform pack below
+static std::atomic<int> g_bloom_pct{[] {
+    const char* e = getenv("WWHD_BLOOM_STRENGTH");
+    return e ? std::clamp((int)(atof(e) * 100.0f), 0, 200) : 100;
+}()};
+int bloom_strength() { return g_bloom_pct.load(std::memory_order_relaxed); }
+void set_bloom_strength(int pct) { g_bloom_pct = std::clamp(pct, 0, 200); LOG("[gfx] bloom strength %d%%", g_bloom_pct.load()); }
+// Graphics > Picture quality > distant shadows: the far shadow cascade (slice 2 of the game's
+// 3-slice shadow depth array) is not drawn at all (off, for weaker GPUs)
+static std::atomic<bool> g_distant_shadows{[] { const char* e = getenv("WWHD_DISTANT_SHADOWS"); return !e || atoi(e) != 0; }()};
+bool distant_shadows() { return g_distant_shadows.load(std::memory_order_relaxed); }
+void set_distant_shadows(bool v) { g_distant_shadows = v; LOG("[gfx] distant shadows %s", v ? "on" : "off"); }
 constexpr uint32_t kDepthDownsamplePS = 0x3BB9DE00, kOcclusionPS = 0x44BDFD00;
 static bool g_hires_redraw = false;          // inside the second draw of the downsample
 static uint32_t g_hires_src = 0;             // guest address of the game's 640x360 buffer
@@ -3078,6 +3091,12 @@ static void bind_stage(VkCommandBuffer cmd, VkPipelineLayout layout, const uint3
             // for a 640x360 grid; the pass draws 960x540, so tile the 4x4 noise per output pixel instead
             if (vertex && ao_mode() == 2 && (regs[mmSQ_PGM_START_VS] << 8) == 0x44BDF900)
                 ((float*)dst)[3] *= 1.5f;
+            // bloom strength: the extract shader's intensity (remapped[2].z), scaled once before the
+            // blur/downsampling like the original game's own value
+            const int bloom = g_bloom_pct.load(std::memory_order_relaxed);
+            if (!vertex && bloom != 100 && (regs[mmSQ_PGM_START_PS] << 8) == 0x44F91200 &&
+                (uint32_t)dec->uniform.loc_remapped + 2 * 16 + 3 * 4 <= size)
+                ((float*)dst)[2 * 4 + 2] *= bloom / 100.0f;
             // the half-size light buffer's grid on an upscaled buffer (area_sample.h scale_gather_grid)
             for (uint32_t units = sh->gatherUnits; units; units &= units - 1) {
                 const int unit = std::countr_zero(units);
@@ -4542,11 +4561,11 @@ void cache_warm_step() {
 }
 
 enum Skip { SK_GS, SK_RASTER_KILL, SK_NO_FETCH, SK_NO_SHADER, SK_NO_TARGET, SK_PRIM, SK_PASS, SK_PIPELINE, SK_CULL, SK_SCISSOR, SK_COMPILING,
-            SK_DROPPED_DEPTH, SK_DROPPED_COLOR, SK_PIPE_COMPILING, SK_COUNT };
+            SK_DROPPED_DEPTH, SK_DROPPED_COLOR, SK_PIPE_COMPILING, SK_FAR_SHADOW, SK_COUNT };
 static uint64_t g_skip[SK_COUNT];
 static const char* kSkipNames[SK_COUNT] = {"geometry-shader", "raster-kill", "no-fetch-shader", "shader-failed", "no-target",
                                            "unsupported-prim", "no-pass", "pipeline-failed", "cull-all", "empty-scissor",
-                                           "compiling", "dropped-depth", "dropped-color", "pipeline-compiling"};
+                                           "compiling", "dropped-depth", "dropped-color", "pipeline-compiling", "far-shadow"};
 // draws left out so far because their shader or pipeline was still compiling (the benchmark)
 uint64_t skipped_compiling() { return g_skip[SK_COMPILING] + g_skip[SK_PIPE_COMPILING]; }
 
@@ -5111,6 +5130,13 @@ void draw(const uint32_t* regs, uint32_t prim, uint32_t count, uint32_t indexTyp
     for (int i = 0; i < 8; i++)
         if (mask & (1 << i)) colors[i] = color_target(regs, i, &colorSlices[i], ps->sizeRequest);
     Surface* depth = LatteMRT::GetActiveDepthBufferMask(lcr) ? depth_target(regs, &depthSlice) : nullptr;
+    // "Distant shadows" off (Graphics setting, for weaker GPUs): the far shadow cascade (slice 2 of
+    // the game's 3-slice shadow depth array) is not drawn, so it stays clear and casts nothing; the
+    // near and middle cascades keep the shadows around Link (WindWakerHD-Android-Plus)
+    if (depth && depth->slices > 1 && !colors[0] && !colors[1]) {
+        const int skip = (!distant_shadows() && depth->slices == 3) ? 4 : 0;  // the game's 3 cascades
+        if (skip && depthSlice < 31 && ((skip >> depthSlice) & 1)) { g_skip[SK_FAR_SHADOW]++; return; }
+    }
     if (g_hires_redraw) {
         if (!colors[0]) return;
         g_hires_src = colors[0]->addr;
