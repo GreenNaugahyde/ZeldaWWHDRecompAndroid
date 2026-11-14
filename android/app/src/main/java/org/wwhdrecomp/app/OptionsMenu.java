@@ -1349,6 +1349,8 @@ final class OptionsMenu extends Dialog {
         java.util.List<Integer> menuLangs = new java.util.ArrayList<>();
         menuLangs.add(0);  // English
         for (int l : langs) if (l != 0) menuLangs.add(l);
+        int ru = java.util.Arrays.asList(MainActivity.LANGUAGES).indexOf("ru");   // Russian (res/values-ru)
+        if (ru >= 0 && !menuLangs.contains(ru)) menuLangs.add(ru);
         String[] menuNames = new String[menuLangs.size()];
         int curMenu = 0;
         for (int i = 0; i < menuNames.length; i++) {
