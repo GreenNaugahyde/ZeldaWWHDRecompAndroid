@@ -32,10 +32,10 @@ android {
         disable 'MissingTranslation'
     }
     compileSdk 36
-    ndkVersion '27.2.12479018'
+    ndkVersion '27.1.12297006'
 
     defaultConfig {
-        applicationId 'org.wwhdrecomp.app'
+        applicationId 'org.wwhdrecomp.gnp'
         minSdk 30          // Vulkan 1.1, AAudio, 39-bit+ address space handling
         targetSdk 36
         // -PwwhdVersionCode / -PwwhdVersionName for a release; raise the code with every APK you share

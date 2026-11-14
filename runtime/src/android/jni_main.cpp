@@ -57,6 +57,10 @@ bool ao_hires_enabled();
 void set_ao_hires(bool v);
 bool area_blur_enabled();
 void set_area_blur(bool v);
+int bloom_strength();
+void set_bloom_strength(int pct);
+bool distant_shadows();
+void set_distant_shadows(bool v);
 void request_capture();
 }  // namespace gfx
 
@@ -859,6 +863,8 @@ JNI_FN(void, setOption)(JNIEnv* env, jclass, jstring name, jint value) {
     if (n == "ao_mode") gfx::set_ao_mode(value);
     else if (n == "ao_hires") gfx::set_ao_hires(value != 0);
     else if (n == "area_blur") gfx::set_area_blur(value != 0);
+    else if (n == "bloom_strength") gfx::set_bloom_strength(value);
+    else if (n == "distant_shadows") gfx::set_distant_shadows(value != 0);
     else if (n == "aniso") gfx::set_aniso(value != 0);
     else if (n == "vsync") gfx::set_vsync(value != 0);
     else if (n == "drc_window_fps") gfx::set_drc_window_fps(value);
@@ -993,6 +999,8 @@ JNI_FN(jint, getOption)(JNIEnv* env, jclass, jstring name) {
     if (n == "auto_state") return ss::auto_interval();
     if (n == "ao_hires") return gfx::ao_hires_enabled();
     if (n == "area_blur") return gfx::area_blur_enabled();
+    if (n == "bloom_strength") return gfx::bloom_strength();
+    if (n == "distant_shadows") return gfx::distant_shadows();
     if (n == "aniso") return gfx::aniso_enabled();
     if (n == "vsync") return gfx::vsync();
     if (n == "upscale") return gfx::upscale_mode();

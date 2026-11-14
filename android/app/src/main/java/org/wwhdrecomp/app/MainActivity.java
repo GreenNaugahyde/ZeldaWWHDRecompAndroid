@@ -1703,6 +1703,8 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         Native.setOption("ao_mode", prefs.getInt("ao_mode", Native.getOption("ao_mode")));
         Native.setOption("ao_hires", prefs.getBoolean("ao_hires", Native.getOption("ao_hires") != 0) ? 1 : 0);
         Native.setOption("area_blur", prefs.getBoolean("area_blur", Native.getOption("area_blur") != 0) ? 1 : 0);
+        Native.setOption("bloom_strength", prefs.getInt("bloom_strength", Native.getOption("bloom_strength")));
+        Native.setOption("distant_shadows", prefs.getBoolean("distant_shadows", Native.getOption("distant_shadows") != 0) ? 1 : 0);
         Native.setOption("aniso", prefs.getBoolean("aniso", Native.getOption("aniso") != 0) ? 1 : 0);
         Native.setOption("vsync", prefs.getBoolean("vsync", false) ? 1 : 0);
         Native.setOption("upscale", prefs.getInt("upscale", Native.getOption("upscale")));
