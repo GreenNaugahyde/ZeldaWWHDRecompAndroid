@@ -1,0 +1,55 @@
+# The status page (server/status/wwhd_status.py) under systemd (fork; docs/online-server-vps.md). Installed by install.sh.
+# It listens on 127.0.0.1:8780 only; Caddy (deploy/Caddyfile) puts TLS in front of it.
+[Unit]
+Description=WWHD online server status page
+After=network-online.target wwhd-online.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=wwhd-status
+Group=wwhd-status
+# the group of the server's status socket (0660); the server's state directory stays closed to it (0700)
+SupplementaryGroups=wwhd
+ExecStart=/usr/bin/python3 -I /opt/wwhd/status/wwhd_status.py serve --socket /run/wwhd-online/status.sock --users /var/lib/wwhd-status/users.json --bind 127.0.0.1 --port 8780
+StateDirectory=wwhd-status
+StateDirectoryMode=0700
+UMask=0077
+Restart=on-failure
+RestartSec=3
+MemoryMax=256M
+TasksMax=64
+
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+ProcSubset=pid
+InaccessiblePaths=-/var/lib/wwhd-online -/etc/wwhd-online
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+RemoveIPC=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources
+SystemCallErrorNumber=EPERM
+# only loopback: the proxy in front and nothing else
+IPAddressDeny=any
+IPAddressAllow=localhost
+
+[Install]
+WantedBy=multi-user.target

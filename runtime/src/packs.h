@@ -50,6 +50,8 @@ std::string executable(const std::string& gameDir);  // after init: the executab
 
 // content replacement (hle/fs.cpp): `rel` is the path below /vol/content ('/'-separated, any case)
 std::string content_file(const std::string& rel);  // the pack's file for it, or ""
+// a file the runtime adds under /vol/content (online co-op: another player's model archive), before the packs' own
+void add_virtual_file(const std::string& rel, const std::string& host);
 std::string content_dir(const std::string& rel);   // a pack's folder for it, or "" (folders only packs have)
 struct DirEntry {
     std::string name, host;  // the name as the pack spells it, its host path

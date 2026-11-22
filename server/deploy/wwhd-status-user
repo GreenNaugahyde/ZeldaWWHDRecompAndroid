@@ -1,0 +1,3 @@
+#!/bin/sh
+# Status page logins on the VPS (fork): sudo wwhd-status-user adduser NAME | passwd NAME | deluser NAME | users
+exec runuser -u wwhd-status -- /usr/bin/python3 -I /opt/wwhd/status/wwhd_status.py "$@" --users /var/lib/wwhd-status/users.json

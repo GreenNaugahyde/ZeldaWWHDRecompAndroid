@@ -21,6 +21,14 @@ def publicRelease = project.hasProperty('wwhdPublicRelease') ? project.property(
 // remote play (this device as another's GamePad or screen, others joining it, Show on a TV): not in published releases
 // yet (-PwwhdRemotePlay=true there too); test builds have it
 def remotePlay = project.hasProperty('wwhdRemotePlay') ? project.property('wwhdRemotePlay').toString().toBoolean() : !publicRelease
+// online co-op (Game > Online, online games, raids, events): not in published releases yet (-PwwhdOnline=true there too);
+// off, no game or save file plays online and the runtime is never told to go online
+def online = project.hasProperty('wwhdOnline') ? project.property('wwhdOnline').toString().toBoolean() : !publicRelease
+// loot (Mods > loot swords/shields/armour/outfits, the + menu's Loot tab, X/Y/R loot weapons, drops and chests): not in
+// published releases yet (-PwwhdLoot=true there too); off, the game never gets any loot
+def loot = project.hasProperty('wwhdLoot') ? project.property('wwhdLoot').toString().toBoolean() : !publicRelease
+// houses without loading (Game > Walk-through doors, a proof of concept): not in published releases yet (-PwwhdSeamless=true)
+def seamless = project.hasProperty('wwhdSeamless') ? project.property('wwhdSeamless').toString().toBoolean() : !publicRelease
 
 android {
     namespace 'org.wwhdrecomp.app'
@@ -39,8 +47,8 @@ android {
         minSdk 30          // Vulkan 1.1, AAudio, 39-bit+ address space handling
         targetSdk 36
         // -PwwhdVersionCode / -PwwhdVersionName for a release; raise the code with every APK you share
-        versionCode((project.findProperty('wwhdVersionCode') ?: '22') as int)
-        versionName project.findProperty('wwhdVersionName') ?: '0.9.9c'
+        versionCode((project.findProperty('wwhdVersionCode') ?: '23') as int)
+        versionName project.findProperty('wwhdVersionName') ?: '0.9.9d'
         ndk {
             abiFilters 'arm64-v8a'
         }
@@ -49,6 +57,9 @@ android {
         // the screen-only app (module receiver) shares this code: false here
         buildConfigField 'boolean', 'RECEIVER', 'false'
         buildConfigField 'boolean', 'REMOTE_PLAY', remotePlay.toString()
+        buildConfigField 'boolean', 'ONLINE', online.toString()
+        buildConfigField 'boolean', 'LOOT', loot.toString()
+        buildConfigField 'boolean', 'SEAMLESS', seamless.toString()
         // the icon's shortcuts (GamePad / screen for another device): only with remote play
         manifestPlaceholders = [appShortcuts: remotePlay ? '@xml/shortcuts' : '@xml/shortcuts_none']
         externalNativeBuild {

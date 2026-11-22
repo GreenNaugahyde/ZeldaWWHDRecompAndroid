@@ -2051,6 +2051,7 @@ final class ControlsView extends View {
     private static final int MINIGAME_FIGURE = 9;  // looking at a figure: two fingers pinch
     private static final int MINIGAME_CONDUCT = 10;  // conducting: two fingers, each a stick
     private static final int MINIGAME_WIND = 11;  // the wind compass: a finger on it drags its blue arrow (elsewhere: the stick)
+    private static final int MINIGAME_WARPMAP = 14;  // the Ballad of Gales' map: a finger on it is the GamePad's touch (a tap picks a cyclone)
     private static final int MINIGAME_QUESTION = 13;  // a system question's buttons (the save question after a game over): a tap on one takes it
     private static final float WIND_R = 190;  // layout units around the compass's centre
     private int minigamePinch = -1, minigamePointer2 = -1;
@@ -2087,6 +2088,11 @@ final class ControlsView extends View {
     private boolean minigameTouchable(float x, float y) {
         if (minigame == 0 || drcMode || tvRect.isEmpty() || !tvRect.contains(x, y)) return false;
         if (minigame == MINIGAME_CONDUCT && conductPadsOn) return false;  // (the note pads instead)
+        float k0 = layoutScale();
+        if (minigame == MINIGAME_WARPMAP) {  // (the map's grid, runtime hud_warp_map; elsewhere the stick, as the compass)
+            float lx = (x - tvRect.centerX()) / k0, ly = (tvRect.centerY() - y) / k0;
+            return Math.abs(lx) < 330 && ly > -330 && ly < 270;
+        }
         if (minigame != MINIGAME_WIND) return true;
         int[] w = Native.windCompass();
         float k = layoutScale();
@@ -2297,11 +2303,16 @@ final class ControlsView extends View {
         // the d-pad's own buttons: only with the context buttons (Flexible), while they can be used
         if (shortcutButton(c))
             return context && flexible && !blind && (editing || c.pressed || (shortcutOffer() & c.bit) != 0 && !singing() && !conductPads()
-                    && !quietScene && !talking() && minigame != MINIGAME_QUESTION);
+                    && !quietScene && !talking() && minigame != MINIGAME_QUESTION && minigame != MINIGAME_WARPMAP);
         if (editing) return true;  // the editor: all of the style's controls
         // the classic style hides no button at any time (only Jump anywhere's / the moon jump's while that is off)
         // (the eyes-free layout neither, but while conducting by the note pads: as below)
         if (!flexible || blind && !singing() && !conductPads()) return c.kind != KIND_BUTTON || (c.bit & (Native.JUMP | Native.MOON)) == 0 || (c.bit & jumpInputs()) != 0 || c.pressed;
+        // the Ballad of Gales' map: a tap picks a cyclone (minigames.cpp warp_map_step); only B stays (the game's Back: closes
+        // the map), no items (the boat's), no d-pad. (Before the singing rule: Link still holds the baton there, and the
+        // game puts no action on B)
+        if (minigame == MINIGAME_WARPMAP && (c.kind == KIND_BUTTON || c.kind == KIND_DPAD) && !c.pressed)
+            return c.kind == KIND_BUTTON && c.bit == Native.B;
         // singing while Link conducts (the mic button), or conducting by the note pads: only + and B (the game's Back) stay
         if (singing() || conductPads()) {
             if (c.kind == KIND_DPAD) return c.dpadBits != 0;
@@ -2398,6 +2409,7 @@ final class ControlsView extends View {
         if (command(i)) return true;
         // the Picto Box's / telescope's own button in their view: B (the game's Back) already closes it
         if (pictoMode() || telescope()) return false;
+        if (lootQuickIcon[i] != null) return true;  // (a loot weapon on it: the game's item left it)
         return usable(state[3 + i]) && state[15 + i] != 0 && !dimmed(15 + i);  // -1: not seen yet
     }
 
@@ -2450,7 +2462,7 @@ final class ControlsView extends View {
     /** B's action: carrying something (A throws it), B throws it too (it breaks; ZR sets it down whole)
      *  although the game says sword: Throw */
     private int bAction() {
-        if (minigame == MINIGAME_WIND) return 0x07;  // the wind compass: B goes back (the game's bytes there jump around)
+        if (minigame == MINIGAME_WIND || minigame == MINIGAME_WARPMAP) return 0x07;  // the wind compass, the map: B goes back (the game's bytes there jump around)
         if (context && state[1] == 0x0E && state[6] == 0x35) return 0x0E;
         return state[6];
     }
@@ -2458,7 +2470,7 @@ final class ControlsView extends View {
     /** A's action: aiming the Picto Box, A takes the photo (the game's byte is mostly empty there; its
      *  own Picto Box screen shows A anyway); 0x44 (album) does nothing: none */
     private int aAction() {
-        if (minigame == MINIGAME_WIND) return 0x17;  // the wind compass: A takes the direction (the game's A byte is empty)
+        if (minigame == MINIGAME_WIND || minigame == MINIGAME_WARPMAP) return 0x17;  // the wind compass, the map: A takes it (the game's A byte is empty)
         if (context && state[7] == 0x49 && state[1] == 0) return 0x20;
         if (context && state[8] != 0 && state[1] == 0) return 0x19;  // talks, events: A continues (Next; the game's byte is empty)
         return state[1] == 0x44 ? 0 : state[1];
@@ -2583,6 +2595,8 @@ final class ControlsView extends View {
         else if (c.bit == Native.R) t = itemIcon(2);
         if (GameIcons.LINK_ROLL.equals(t)) t = GameIcons.LINK_ROLL + rollFrame();
         else if (t != null && GameIcons.pictures(t) > 0) t = t.replace("*", Integer.toString(loopFrame(t, GameIcons.pictures(t))));  // its picture now
+        final android.graphics.Bitmap loot = lootIconOf(c, t);
+        if (loot != null) return loot;
         return t == null ? null : GameIcons.get(getContext(), t, () -> post(this::invalidate));
     }
 
@@ -2706,7 +2720,85 @@ final class ControlsView extends View {
     }
 
     /** X / Y / R (0..2): the item's icon, or the command's (the album's Delete; others: none yet, then text) */
+    private final String[] lootQuickIcon = new String[LootQuick.BUTTONS];
+
+    /** a loot weapon on X / Y / R (LootQuick): its button's icon, null: none */
+    void setLootQuickIcon(int button, String texture, android.graphics.Bitmap own) {
+        if (java.util.Objects.equals(lootQuickIcon[button], texture) && lootQuickOwn[button] == own) return;
+        lootQuickIcon[button] = texture;
+        lootQuickOwn[button] = own;
+        invalidate();
+    }
+
+    private final android.graphics.Bitmap[] lootQuickOwn = new android.graphics.Bitmap[LootQuick.BUTTONS];
+    private android.graphics.Bitmap lootSword, lootShield;
+    private boolean lootHud;
+    private int[] lootHudPlaces = new int[10];
+
+    /** the real pictures of what Link wears (null: the game's own) */
+    void setLootWorn(android.graphics.Bitmap sword, android.graphics.Bitmap shield) {
+        if (sword == lootSword && shield == lootShield) return;
+        lootSword = sword;
+        lootShield = shield;
+        invalidate();
+    }
+
+    /** the game's own buttons on the screen (not the touch ones): our pictures go on them, at these places */
+    void setLootHud(boolean on, int[] places, int[] touchState) {
+        final boolean shown0 = touchState.length > 17 && touchState[15] > 0, shown1 = touchState.length > 17 && touchState[16] > 0, shown2 = touchState.length > 17 && touchState[17] > 0;
+        final boolean defend = touchState.length > 7 && touchState[7] == 0x36;  // (the game offers Defend on ZR)
+        if (on == lootHud && java.util.Arrays.equals(places, lootHudPlaces) && shown0 == lootHudShown[0] && shown1 == lootHudShown[1] && shown2 == lootHudShown[2] && defend == lootHudDefend) return;
+        lootHud = on;
+        lootHudDefend = defend;
+        lootHudPlaces = places;
+        lootHudShown[0] = shown0;
+        lootHudShown[1] = shown1;
+        lootHudShown[2] = shown2;
+        invalidate();
+    }
+
+    private final boolean[] lootHudShown = new boolean[LootQuick.BUTTONS];
+    private boolean lootHudDefend;
+
+    // a button's real picture over what iconOf would show, or null
+    private android.graphics.Bitmap lootIconOf(Control c, String t) {
+        if (t == null) return null;
+        int i = c.bit == Native.X ? 0 : c.bit == Native.Y ? 1 : c.bit == Native.R ? 2 : -1;
+        if (i >= 0 && lootQuickOwn[i] != null && t.equals(lootQuickIcon[i])) return lootQuickOwn[i];
+        if (lootSword != null && (t.equals(GameIcons.SWORD_DEFAULT) || t.equals(GameIcons.swordTexture(0x39)) || t.equals(GameIcons.swordTexture(0x3A)) || t.equals(GameIcons.swordTexture(0x3E))))
+            return lootSword;
+        if (lootShield != null && (t.equals("CollectIcon118_04^l") || t.equals("CollectIcon118_05^l"))) return lootShield;
+        return null;
+    }
+
+    private final Paint lootHudPaint = new Paint(Paint.FILTER_BITMAP_FLAG | Paint.ANTI_ALIAS_FLAG);
+    private final RectF lootHudRect = new RectF();
+
+    // on the game's own HUD: the weapon on X / Y / R, as the game would draw an item there
+    private void drawLootHud(Canvas canvas) {
+        if (!lootHud || drcMode || tvRect.isEmpty()) return;
+        final float k = layoutScale(), half = LOOT_HUD_SIZE / 2f * k;
+        if (lootSword != null && lootHudPlaces.length > 10 && lootHudPlaces[10] != 0) {  // (the worn sword on B: the game's icon is hidden, MainActivity.setLootBIcon)
+            final float x = tvRect.centerX() + (lootHudPlaces[6] + 6) * k, y = tvRect.centerY() - (lootHudPlaces[7] - 10) * k;
+            lootHudRect.set(x - half, y - half, x + half, y + half);
+            canvas.drawBitmap(lootSword, null, lootHudRect, lootHudPaint);
+        }
+        if (lootShield != null && lootHudDefend && lootHudPlaces.length > 9) {  // (the game only writes Defend on ZR: the worn shield beside it)
+            final float x = tvRect.centerX() + (lootHudPlaces[8] - 62) * k, y = tvRect.centerY() - lootHudPlaces[9] * k;
+            lootHudRect.set(x - half, y - half, x + half, y + half);
+            canvas.drawBitmap(lootShield, null, lootHudRect, lootHudPaint);
+        }
+        for (int i = 0; i < 3; i++) {
+            if (lootQuickOwn[i] == null || !lootHudShown[i]) continue;
+            final float x = tvRect.centerX() + lootHudPlaces[2 * i] * k, y = tvRect.centerY() - lootHudPlaces[2 * i + 1] * k;
+            lootHudRect.set(x - half, y - half, x + half, y + half);
+            canvas.drawBitmap(lootQuickOwn[i], null, lootHudRect, lootHudPaint);
+        }
+    }
+    private static final float LOOT_HUD_SIZE = 62;
+
     private String itemIcon(int i) {
+        if (lootQuickIcon[i] != null && !command(i)) return lootQuickIcon[i];
         if (command(i) && album()) return "#delete";
         if (command(i) && pictoAim()) {  // turns the camera around (selfie): the Picto Box in a turning arrow
             String box = GameIcons.itemTexture(state[3 + i] == 0x23 || state[3 + i] == 0x26 ? state[3 + i] : 0x26);
@@ -3315,6 +3407,53 @@ final class ControlsView extends View {
         arrowIcon.draw(canvas);
     }
 
+    // ---- the Loot tab beside the game's own on the GamePad inventory (MainActivity.lootTab places it): opens LootMenu
+    private boolean lootTab;
+    private GameUi.GameTabPlate lootTabPlate;
+    private float lootTabUnit;
+    private final RectF lootTabGame = new RectF(), lootTabRect = new RectF();
+    private final android.graphics.Paint lootTabText = new android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG | android.graphics.Paint.FILTER_BITMAP_FLAG);
+
+    /** x, y (centre), w, h on the game's 16:9 GamePad screen (0..1); on = false hides it */
+    void setLootTab(boolean on, float x, float y, float w, float h) {
+        if (on == lootTab && lootTabGame.left == x - w / 2 && lootTabGame.top == y - h / 2 && lootTabGame.right == x + w / 2 && lootTabGame.bottom == y + h / 2) return;
+        lootTab = on;
+        lootTabGame.set(x - w / 2, y - h / 2, x + w / 2, y + h / 2);
+        invalidate();
+    }
+
+    private boolean placeLootTab() {
+        // (not over the song list Link's baton shows: the game's menu tabs stay its targets under it)
+        if (!lootTab || songListLearned != 0 || !drcPicture() || drcRect.isEmpty()) return false;
+        pictureRect(pic);
+        lootTabRect.set(pic.left + pictureU(lootTabGame.left) * pic.width(), pic.top + pictureV(lootTabGame.top) * pic.height(),
+                pic.left + pictureU(lootTabGame.right) * pic.width(), pic.top + pictureV(lootTabGame.bottom) * pic.height());
+        return true;
+    }
+
+    private void drawLootTab(Canvas canvas) {
+        if (!placeLootTab()) return;
+        float unit = layoutUnitPx();
+        if (lootTabPlate == null || lootTabUnit != unit) {  // (this view draws often)
+            lootTabPlate = new GameUi.GameTabPlate(getContext(), false, GameUi.VIOLET, 2 * unit);
+            lootTabUnit = unit;
+        }
+        lootTabPlate.setBounds(Math.round(lootTabRect.left), Math.round(lootTabRect.top), Math.round(lootTabRect.right), Math.round(lootTabRect.bottom));
+        lootTabPlate.draw(canvas);
+        String word = getContext().getString(R.string.loot_menu_tab);
+        float h = lootTabRect.height() * 0.40f;
+        Runnable redraw = () -> post(this::invalidate);
+        if (GameFont.ready(getContext(), redraw) && GameFont.covers(word)) {
+            android.graphics.Bitmap b = GameFont.label(word, h / GameFont.cellHeight(), 0xFFFFFFFF, 0xFF4A2080);
+            if (b != null) canvas.drawBitmap(b, lootTabRect.centerX() - b.getWidth() / 2f, lootTabRect.centerY() - b.getHeight() / 2f, lootTabText);
+            return;
+        }
+        lootTabText.setTextSize(h * 0.6f);
+        lootTabText.setTextAlign(android.graphics.Paint.Align.CENTER);
+        lootTabText.setColor(0xFFFFFFFF);
+        canvas.drawText(word, lootTabRect.centerX(), lootTabRect.centerY() + h * 0.21f, lootTabText);
+    }
+
     // ---- play buttons on the game's song list (its GamePad screen while Link conducts, shown by +): one on each
     // learned song's title line, outside the names (left column: left of them, right column: right of them; each
     // column's buttons in one line, by its longest name), a tap
@@ -3327,6 +3466,8 @@ final class ControlsView extends View {
     private static final float SONG_PLAY_R = 30, SONG_PLAY_GAP = 18;
     private final RectF songPlayRect = new RectF();
     private final android.graphics.Path playPath = new android.graphics.Path();
+
+    boolean songListOn() { return songListLearned != 0; }
 
     void setSongList(int learned) {
         if (learned == songListLearned) return;
@@ -3478,6 +3619,8 @@ final class ControlsView extends View {
         if (hint.showing()) return hint.onTouch(e, hintRect());
         int action = e.getActionMasked();
         int idx = e.getActionIndex();
+        if ((action == MotionEvent.ACTION_DOWN || action == MotionEvent.ACTION_POINTER_DOWN) && getContext() instanceof MainActivity
+                && ((MainActivity) getContext()).lootWorld.tapped(e.getX(idx), e.getY(idx))) return true;  // (loot picked up by a tap on its picture)
         if (faceTouch(e, action, idx)) return true;
         mapTapWatch(e, action, idx);
         // a finger that came down on the mini map's wind dial is the dial's alone (no stick, camera, button: Link stays)
@@ -3573,6 +3716,10 @@ final class ControlsView extends View {
                 }
                 if (placeOptionsArrow() && optionsArrowRect.contains(x, y)) {
                     listener.onOptionsPage();
+                    return true;
+                }
+                if (placeLootTab() && lootTabRect.contains(x, y) && MainActivity.instance != null) {
+                    LootMenu.open(MainActivity.instance);
                     return true;
                 }
                 if (drcPicture() && ChartMarks.I.fullMapButton.contains(x, y) && MainActivity.instance != null) {
@@ -4090,6 +4237,10 @@ final class ControlsView extends View {
         drawMenuBack(canvas);
         drawChartMarks(canvas);
         drawOptionsArrow(canvas);
+        drawLootTab(canvas);
+        drawLootHud(canvas);
+        if (getContext() instanceof MainActivity && !drcMode && !tvRect.isEmpty()
+                && ((MainActivity) getContext()).lootWorld.draw(canvas, this, tvRect, layoutScale())) postInvalidateDelayed(33);
         drawSongPlay(canvas);
         drawSongWanted(canvas);
         drawSongs(canvas);
@@ -4370,6 +4521,81 @@ final class ControlsView extends View {
 
     void setStickFollows(boolean on) {
         stickFollows = on;
+    }
+
+    // Button rings (Controls > On-screen controls): the round buttons and the stick in the sailing HUD's bronze bezel
+    // (CompassClock_00, both 92 texels, material black #381302 / white #D78C4B, shadow black at 122, 4 right / 4 down):
+    // the compass's (P_CompassBase_00, seen from texel radius 34 out: the compass face's edge, a thick ring) or the
+    // moon clock's (P_ClockBase_00, from 38 out: the clock face's edge, a thin ring)
+    static final int RING_OFF = 0, RING_COMPASS = 1, RING_CLOCK = 2;
+    private static final float RING_OUTER = 1.08f;  // the ring's outer radius, of the button's
+    private int buttonRing = RING_OFF;
+    private final android.graphics.Bitmap[] ringBmp = new android.graphics.Bitmap[3], ringShadow = new android.graphics.Bitmap[3];
+
+    void setButtonRing(int style) {
+        if (style == buttonRing) return;
+        buttonRing = style;
+        invalidate();
+    }
+
+    /** the ring's inside, of its outer radius */
+    private static float ringInside(int style) {
+        return (style == RING_COMPASS ? 34f : 38f) / 46f;
+    }
+
+    /** the bezel tinted as its material, the inside cut out softly; null while the textures aren't built */
+    private android.graphics.Bitmap ringBitmap(int style) {
+        if (ringBmp[style] != null) return ringBmp[style];
+        android.graphics.Bitmap t = GameIcons.get(getContext(), style == RING_COMPASS ? "CompassBase_00^t" : "ClockBase_00^t",
+                () -> post(this::invalidate));
+        if (t == null) return null;
+        t = MiniMap.tint(t, 0x381302, 0xD78C4B, 0xFF);
+        int w = t.getWidth(), h = t.getHeight();
+        int[] px = new int[w * h];
+        t.getPixels(px, 0, w, 0, 0, w, h);
+        int[] sh = new int[w * h];
+        float cx = (w - 1) / 2f, cy = (h - 1) / 2f, cut = w / 2f * ringInside(style);
+        for (int y = 0; y < h; y++)
+            for (int x = 0; x < w; x++) {
+                float d = (float) Math.hypot(x - cx, y - cy), f = Math.max(0, Math.min(1, d - cut + 0.5f));
+                int i = y * w + x, al = Math.round((px[i] >>> 24) * f);
+                px[i] = al << 24 | px[i] & 0xFFFFFF;
+                sh[i] = (al * 122 / 255) << 24;
+            }
+        ringBmp[style] = android.graphics.Bitmap.createBitmap(px, w, h, android.graphics.Bitmap.Config.ARGB_8888);
+        ringShadow[style] = android.graphics.Bitmap.createBitmap(sh, w, h, android.graphics.Bitmap.Config.ARGB_8888);
+        return ringBmp[style];
+    }
+
+    /** a round control's face of radius r at (x, y) in the chosen ring: its shadow, the fill inside it, the ring over
+     *  the fill's edge. Returns the radius inside the ring, or -1 (no ring chosen or not built: then the plain circle) */
+    private float drawRinged(Canvas canvas, float x, float y, float r, int a) {
+        float in = drawRingShadow(canvas, x, y, r, a);
+        if (in < 0) return -1;
+        canvas.drawCircle(x, y, in + r * RING_OUTER * 0.02f, fill);
+        drawRing(canvas, x, y, r, a);
+        return in;
+    }
+
+    /** the ring's shadow (under the face), or -1 without a ring; returns the radius inside the ring */
+    private float drawRingShadow(Canvas canvas, float x, float y, float r, int a) {
+        if (buttonRing == RING_OFF || ringBitmap(buttonRing) == null) return -1;
+        float outer = r * RING_OUTER, off = outer * 2 * 4 / 92;
+        iconPaint.setAlpha(Math.min(255, a + 70));
+        baseSrc.set(0, 0, ringShadow[buttonRing].getWidth(), ringShadow[buttonRing].getHeight());
+        tmp.set(x - outer + off, y - outer + off, x + outer + off, y + outer + off);
+        canvas.drawBitmap(ringShadow[buttonRing], baseSrc, tmp, iconPaint);
+        return outer * ringInside(buttonRing);
+    }
+
+    /** the ring itself (over the face's edge), after drawRingShadow */
+    private void drawRing(Canvas canvas, float x, float y, float r, int a) {
+        android.graphics.Bitmap ring = ringBmp[buttonRing];
+        float outer = r * RING_OUTER;
+        iconPaint.setAlpha(Math.min(255, a + 70));
+        baseSrc.set(0, 0, ring.getWidth(), ring.getHeight());
+        tmp.set(x - outer, y - outer, x + outer, y + outer);
+        canvas.drawBitmap(ring, baseSrc, tmp, iconPaint);
     }
 
     void setConductPads(boolean on) {
@@ -5021,8 +5247,10 @@ final class ControlsView extends View {
         text.setAlpha(Math.min(255, a + 40));
         switch (c.kind) {
             case KIND_STICK: {
-                canvas.drawCircle(c.cx, c.cy, c.w, fill);
-                canvas.drawCircle(c.cx, c.cy, c.w, stroke);
+                if (drawRinged(canvas, c.cx, c.cy, c.w, a) < 0) {
+                    canvas.drawCircle(c.cx, c.cy, c.w, fill);
+                    canvas.drawCircle(c.cx, c.cy, c.w, stroke);
+                }
                 float kx = c.cx + c.sx * c.w * 0.6f, ky = c.cy - c.sy * c.w * 0.6f;
                 fill.setColor(0xFFFFFFFF);
                 fill.setAlpha(a);
@@ -5065,9 +5293,12 @@ final class ControlsView extends View {
                 if (c.drawShape == SHAPE_HEX || c.drawShape == SHAPE_DIAMOND) {
                     drawPolygon(canvas, c);
                 } else if (c.round) {
-                    float r = Math.min(c.w, c.h) / 2;
-                    canvas.drawCircle(c.cx, c.cy, r, fill);
-                    canvas.drawCircle(c.cx, c.cy, r, stroke);
+                    float r = Math.min(c.w, c.h) / 2, in = drawRinged(canvas, c.cx, c.cy, r, a);
+                    if (in > 0) inner *= Math.min(1f, in / (r * 0.95f));  // (the icon / name inside the ring)
+                    else {
+                        canvas.drawCircle(c.cx, c.cy, r, fill);
+                        canvas.drawCircle(c.cx, c.cy, r, stroke);
+                    }
                 } else {
                     tmp.set(c.cx - c.w / 2, c.cy - c.h / 2, c.cx + c.w / 2, c.cy + c.h / 2);
                     canvas.drawRoundRect(tmp, c.h * c.corner, c.h * c.corner, fill);
@@ -5124,17 +5355,26 @@ final class ControlsView extends View {
         // the base's face (its shadow hangs below): icon, pictogram and name go on its centre
         float fx = c.cx + bs * (0.49f - 0.5f), fy = c.cy + bs * ((star ? 0.485f : 0.46f) - 0.5f);
         int alpha = Math.min(255, a + 70);
+        // Button rings: the ring around the base's face (its shadow under the base, the ring over the face's edge; the
+        // star's points reach out past it); the icon / name shrink to stay inside
+        float ringIn = drawRingShadow(canvas, fx, fy, r * k, a);
         baseSrc.set(0, 0, base.getWidth(), base.getHeight());
         tmp.set(c.cx - bs / 2, c.cy - bs / 2, c.cx + bs / 2, c.cy + bs / 2);
         iconPaint.setAlpha(alpha);
         canvas.drawBitmap(base, baseSrc, tmp, iconPaint);
+        if (ringIn > 0) {
+            drawRing(canvas, fx, fy, r * k, a);
+            float in = Math.min(1f, ringIn / (r * k * 0.95f));
+            k *= in;
+            iconPaint.setAlpha(alpha);
+        }
         if (icon != null) {
             drawCentred(canvas, icon, fx, fy, r * 2 * 0.78f * k);
             return true;
         }
         if (Pictograms.draw(canvas, pictogramOf(c), fx, fy, r * 2 * 0.62f * k, (alpha << 24) | (GAME_INK & 0xFFFFFF), false)) return true;
         String lbl = labelOf(c);
-        float ts = text.getTextSize() * k, fit = r * 2 * (star ? 1.05f : 0.85f) * k;
+        float ts = text.getTextSize() * k, fit = r * 2 * (star && ringIn < 0 ? 1.05f : 0.85f) * k;
         gameText.setTextAlign(Paint.Align.CENTER);
         gameText.setFakeBoldText(true);
         gameText.setTextSize(ts);

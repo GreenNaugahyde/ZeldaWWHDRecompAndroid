@@ -1,0 +1,25 @@
+# Caddy in front of the status page (fork; docs/online-server-vps.md): TLS from Let's Encrypt by itself.
+# Replace status.example.org with your name (a DNS A/AAAA record pointing at this VPS), then:
+#   sudo cp Caddyfile /etc/caddy/Caddyfile && sudo systemctl reload caddy
+status.example.org {
+	encode zstd gzip
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Robots-Tag "noindex, nofollow"
+		-Server
+	}
+	request_body {
+		max_size 16KB
+	}
+	reverse_proxy 127.0.0.1:8780 {
+		# the page reads the client's address from X-Forwarded-For (for its login throttle and fail2ban);
+		# Caddy sets it to the real client and drops what the client sent
+		header_up X-Forwarded-For {remote_host}
+	}
+	log {
+		output file /var/log/caddy/status-access.log {
+			roll_size 10MiB
+			roll_keep 5
+		}
+	}
+}

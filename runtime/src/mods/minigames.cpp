@@ -345,6 +345,66 @@ void puzzle_step(uint32_t a) {
     }
 }
 
+// ==== the Ballad of Gales' destination map (mode 14). HD shows it on the TV only (the GamePad shows its pause frame
+// and refuses touch with SE_INVALID_CONTROL), so as with Sploosh Kaboom a finger on the TV picture picks what the game's
+// cursor would: a tap on a cyclone selects it at once (warp_map_service, the game's own selection path), a tap on the
+// selected cyclone is A (then the game's yes / no, mode 13), a tap on an empty square plays HD's refusal sound. Should
+// the direct selection fail, the stick steers there instead, one step at a time (it jumps to the next cyclone in its
+// direction, dMenu_Fmap_c::wrapMove) until the game selects it
+int g_warp_target = -1, g_warp_tries = 0;
+std::atomic<int> g_warp_pick{-1};          // a tapped cyclone's grid square, for warp_map_service
+std::atomic<bool> g_warp_no{false};        // a tap on a square without a cyclone: the refusal sound
+std::atomic<bool> g_warp_direct_ok{true};  // false after a failed direct selection: stepping instead
+uint64_t g_warp_quiet_until = 0;  // after an A on the selected cyclone: no map taps until its yes / no is up
+
+void warp_map_step() {
+    int32_t xy[32];
+    int sel = -1;
+    uint32_t shown = hud_warp_rings(xy, sel);
+    for (const Touch& t : take_touches()) {
+        if (t.action != 2 || std::isnan(t.x)) continue;
+        int best = -1;
+        float bd = 50.0f;  // (the grid's cells are 77 across)
+        for (int i = 0; i < 16; i++) {
+            if (!(shown >> i & 1)) continue;
+            float d = std::hypot(t.x - xy[2 * i], t.y - xy[2 * i + 1]);
+            if (d < bd) bd = d, best = i;
+        }
+        if (g_watch || getenv("WWHD_TOUCH_LOG")) LOG("[warpmap] tap %.0f %.0f: cyclone %d (selected %d)", t.x, t.y, best, sel);
+        if (best < 0 && std::fabs(t.x) < 270.0f && t.y > -300.0f && t.y < 240.0f && step() >= g_warp_quiet_until)
+            g_warp_no = true;  // (an empty square)
+        if (best < 0 || pushing()) continue;
+        if (step() < g_warp_quiet_until) continue;  // (the yes / no after an A: its buttons, not cyclones)
+        auto square = [&](int i) {  // the map's grid square (row * 7 + column, 7 x 7) under cyclone i
+            int col = (int)std::lround((xy[2 * i] + 231.0f) / 77.0f), row = (int)std::lround((200.0f - xy[2 * i + 1]) / 77.0f);
+            return row * 7 + col;
+        };
+        if (best == sel) {
+            g_warp_target = -1;
+            g_warp_quiet_until = step() + 60;  // (until its yes / no is up, which takes its own taps, mode 13)
+            push(input::kA, 0, 0, 2);
+            push(0, 0, 0, 2);
+            continue;
+        }
+        if (g_warp_direct_ok) {  // (warp_map_service selects it as the game's own selection does)
+            g_warp_pick = square(best);
+            g_warp_target = -1;
+            continue;
+        }
+        g_warp_target = best;
+        g_warp_tries = 0;
+    }
+    if (g_warp_target < 0 || pushing()) return;
+    if (sel == g_warp_target || sel < 0 || !(shown >> g_warp_target & 1) || ++g_warp_tries > 12) {
+        g_warp_target = -1;
+        return;
+    }
+    float dx = (float)(xy[2 * g_warp_target] - xy[2 * sel]), dy = (float)(xy[2 * g_warp_target + 1] - xy[2 * sel + 1]);
+    bool across = std::fabs(dx) >= std::fabs(dy);
+    push(0, across ? (dx > 0 ? 1.0f : -1.0f) : 0.0f, across ? 0.0f : (dy > 0 ? 1.0f : -1.0f), 2);
+    push(0, 0, 0, 3);
+}
+
 // the finger puts the cursor on its square; letting go there fires (A)
 void board_step(uint32_t a) {
     for (const Touch& t : take_touches()) {
@@ -962,6 +1022,7 @@ void minigame_step() {
     if (event_mode_now() == 0) g_shop_peeked = false;  // (the talk is over)
     if (mode != last_mode) {  // touches from before don't carry over
         if (g_watch) LOG("[mg] mode %d -> %d (minigame type %u)", last_mode, mode, minigame_type());
+        if (last_mode == 13 && mode == 14) g_warp_quiet_until = 0;  // (the warp's yes / no closed: the map takes taps again)
         g_shop_ask = mode == 12 && last_mode == 8 ? 2 : 0;  // an item chosen: on to its question (shop_held_step)
         g_shop_ask_at = now();
         g_shop_peek = 0;
@@ -985,6 +1046,8 @@ void minigame_step() {
     if (mode == 10) conduct_step();
     if (mode == 12) shop_held_step();
     if (mode == 13) sequence_step();
+    if (mode == 14) warp_map_step();
+    else g_warp_target = -1;
     if (mode != 9 && mode != 10) {
         std::lock_guard<std::mutex> lk(g_hold_mu);
         g_hold = {};
@@ -1064,6 +1127,7 @@ int minigame_mode() {
     if (choice_shown()) return 6;
     if (sequence_shown()) return 13;
     if (wind_compass()) return 11;
+    if (hud_warp_map()) return 14;  // (before conducting: the baton's flag stays on under the map)
     if (hud_number_entry()) return 7;
     if (shop_open()) return 8;
     if (shop_held()) return 12;
@@ -1186,3 +1250,89 @@ extern "C" void hook_02483C0C(Cpu* c) {
     if (slot) *slot = {a, id, now()};
     f_02483C0C_orig(c);
 }
+
+// ==== the Ballad of Gales' map: a tapped cyclone selected directly, as the game's own selection does (the map screen's
+// select path 026EF644: the square's object by its coordinates 02681A9C, chosen on the chart 02682C30 + 02680340 /
+// 0268034C, the screen's cursor and big ring 026EF574). The map screen: the object that keeps the island name's pane
+// at +0x50 (found by it when the map opens); +0x54 the map, its +0x14C the chart: +0 its 49 square objects (index =
+// square = row * 7 + column; each +0 its square, +4 / +5 its coordinates -3..3, +0x93 the selection flag, +0x97 a
+// flag the screen passes on), +0x118 the selected one. Each frame the chart takes the first square with the flag as
+// its selected one (026829B4) and the screen copies that to its cursor, so the flag is what moves
+namespace mods {
+namespace {
+const release::Code kSquareAt{0x02681A9C}, kChartChoose{0x02682C30}, kSquareOn1{0x02680340}, kSquareOn2{0x0268034C},
+    kScreenCursor{0x026EF574};
+uint32_t g_screen = 0, g_screen_pane = 0;
+bool heap_ptr(uint32_t p) { return p >= mem::kMem2Start && p < mem::kMem2End - 0x200 && !(p & 3); }
+
+uint32_t find_screen(uint32_t pane) {
+    for (uint32_t from : {0x40000000u, 0x10000000u}) {
+        const uint8_t* m = mem::ptr(from);
+        const uint32_t be = __builtin_bswap32(pane);
+        for (uint32_t o = 0x50; o + 0x10 < 0x10000000u; o += 4) {
+            uint32_t w;
+            memcpy(&w, m + o, 4);
+            if (w != be) continue;
+            uint32_t s = from + o - 0x50, map = ld32(s + 0x54);
+            int cur = (int32_t)ld32(s + 0x58);
+            if (heap_ptr(map) && heap_ptr(ld32(map + 0x14C)) && cur >= -1 && cur < 49) return s;
+        }
+    }
+    return 0;
+}
+}  // namespace
+
+void warp_map_service(Cpu* c) {
+    uint32_t pane = hud_warp_name_pane();
+    if (!pane) {
+        g_screen = g_screen_pane = 0;
+        g_warp_pick = -1;
+        return;
+    }
+    if (pane != g_screen_pane) {
+        g_screen_pane = pane;
+        g_screen = find_screen(pane);
+        g_warp_direct_ok = g_screen != 0;
+        LOG("[warpmap] map screen %08X (island name pane %08X)%s", g_screen, pane, g_screen ? "" : ": stepping");
+    }
+    // a tap on an empty square: HD's own refusal sound, as its GamePad touch plays it where nothing takes a touch
+    // (02715270: 02030B38 plays an HD sound by its name, here "SE_INVALID_CONTROL" at 1013F14C)
+    static const release::Code kPlayHdSound{0x02030B38};
+    static const release::Data kInvalidControl{0x1013F14C};
+    if (g_warp_no.exchange(false)) guest_call(c, kPlayHdSound, {kInvalidControl});
+    int pick = g_warp_pick.exchange(-1);
+    if (pick < 0) return;
+    if (!g_screen) return;
+    uint32_t map = ld32(g_screen + 0x54), chart = heap_ptr(map) ? ld32(map + 0x14C) : 0;
+    if (!heap_ptr(chart)) return;
+    // the lookup by coordinates gives the object the chart chooses with (the square object's +0x9C)
+    uint32_t entry = ld32(chart + 4 * (uint32_t)pick);
+    uint32_t cell = heap_ptr(entry) ? guest_call(c, kSquareAt, {chart, entry + 4}) : 0;
+    if (!heap_ptr(cell)) {
+        LOG("[warpmap] square %d: entry %08X, no object (%08X), stepping from now on", pick, entry, cell);
+        g_warp_direct_ok = false;
+        return;
+    }
+    uint32_t chosen = guest_call(c, kChartChoose, {chart, cell});
+    if (heap_ptr(chosen) && (int)ld32(chosen) == pick) {
+        // the selection flag moved from the old square to the new one
+        uint32_t old = ld32(chart + 0x118);
+        uint8_t flag = heap_ptr(old) ? ld8(old + 0x93) : 1;
+        for (uint32_t i = 0; i < 49; i++) {
+            uint32_t e = ld32(chart + 4 * i);
+            if (heap_ptr(e) && e != chosen && ld8(e + 0x93)) st8(e + 0x93, 0);
+        }
+        st8(chosen + 0x93, flag ? flag : 1);
+        st32(chart + 0x118, chosen);
+        guest_call(c, kSquareOn1, {chosen});
+        guest_call(c, kSquareOn2, {chosen});
+        guest_call(c, kScreenCursor, {g_screen, ld32(chosen), ld8(chosen + 0x97)});
+    }
+    if (!heap_ptr(chosen) || (int)ld32(chosen) != pick) {
+        LOG("[warpmap] square %d: the chart chose %08X (square %d), stepping from now on", pick, chosen,
+            heap_ptr(chosen) ? (int)ld32(chosen) : -1);
+        g_warp_direct_ok = false;
+    }
+}
+}  // namespace mods
+

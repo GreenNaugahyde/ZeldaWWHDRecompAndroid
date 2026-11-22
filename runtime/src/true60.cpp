@@ -29,6 +29,7 @@
 
 #include "runtime.h"
 #include "true60.h"
+#include "mods/mods.h"
 #include "release.h"
 
 extern "C" {
@@ -367,6 +368,12 @@ using namespace true60;
 // fpcM_Execute(process): per-process gate and step length
 extern "C" void hook_025DF940(Cpu* c) {
     uint32_t proc = c->r[3];
+    // a new actor of a room a walk-through door just showed waits (#529); a seamless house's actors wait while Link is
+    // not in that house (mods/seamless_houses.cpp)
+    if (mods::walk_doors_hold(proc) || mods::seamless_hold(proc)) {
+        c->r[3] = 1;
+        return;
+    }
     if (!enabled()) {
         bool is_link = g_trace && actor_execute_fn(proc) == kDaPyExecute;
         bool is_cam = g_cam_trace && is_camera(proc);
@@ -500,7 +507,7 @@ extern "C" void hook_025DF940(Cpu* c) {
 // re-implementations of the GameCube source with fractional smoothing and split steps.
 
 // f32 cLib_addCalc(f32* v, f32 target, f32 scale, f32 maxStep, f32 minStep)
-namespace interp { bool zoom_ease(Cpu* c, void (*orig)(Cpu*)); void fx_actor_draw(uint32_t proc, uint32_t exec, bool begin); }
+namespace interp { bool zoom_ease(Cpu* c, void (*orig)(Cpu*)); void fx_actor_draw(uint32_t proc, uint32_t exec, bool begin); void kankyo_draw(uint32_t proc, bool begin); }
 extern "C" void hook_0200ECD4(Cpu* c) {
     // camera_draw's ease of the HD projection zoom: once per logic step with frame interpolation (interp.cpp)
     static const uint32_t zoom_call = release::code(0x0250018C);
@@ -774,7 +781,9 @@ extern "C" void hook_025DF904(Cpu* c) {
     const uint32_t proc = c->r[3];
     const uint32_t keep_exec = interp::enabled() && !true60::enabled() ? actor_execute_fn(proc) : 0;
     if (keep_exec) interp::fx_actor_draw(proc, keep_exec, true);
+    interp::kankyo_draw(proc, true);  // the environment's draw: its draw-time state once per logic step (interp_kankyo.cpp)
     f_025DF904_orig(c);
+    interp::kankyo_draw(proc, false);
     if (keep_exec) interp::fx_actor_draw(proc, keep_exec, false);
     g_draw_depth--;
 }

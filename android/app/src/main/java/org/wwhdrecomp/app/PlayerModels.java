@@ -29,6 +29,7 @@ final class PlayerModels {
 
     /** the files' models to the runtime (it takes them over live) */
     static void handOver(MainActivity a) {
+        if (SavePages.viewing()) return;  // (another page's settings: not the game's)
         File base = a.baseDir();
         Native.setPlayerModels(ModPacks.basePack(a.gameDir(), Randomizer.runtimeDir(a)).getAbsolutePath(), ModPacks.dir(base).getAbsolutePath(),
                 get(a, 1), get(a, 2), get(a, 3));

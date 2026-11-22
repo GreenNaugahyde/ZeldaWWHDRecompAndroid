@@ -49,6 +49,14 @@ bool hud_number_entry();
 void hud_msg_window(int32_t out[5]);
 // the wind compass after the Wind's Requiem (ControlWind_00) is shown: out[0] / [1] its centre, layout units
 bool hud_wind_compass(int32_t out[2]);
+// the Ballad of Gales' destination map (WarpMap_00) is up (HD draws it on the TV only: its 7 x 7 grid about
+// x -270..270, y -300..240 in layout units, squares 77 across)
+bool hud_warp_map();
+// its cyclones as drawn on the TV: bit i set = area i shown, ring centre xy[2i], xy[2i+1] (layout units); the selected one
+uint32_t hud_warp_rings(int32_t xy[32], int& selected);
+uint32_t hud_warp_name_pane();  // its island name's pane (T_AreaName_00), 0 when the map is not up
+bool hud_b_icon_shown();  // the game shows its sword icon on B
+void hud_cluster_place(int which, int32_t out[2]);  // the game's X, Y, R, B, ZR button: its middle in layout units
 // the Picto Box's own screen (aiming, the photo's yes / no): its finder was drawn in the last moments
 bool hud_picto_screen();
 // the picto album is shown (its pictos' row): the Picto Box's own (ZR) or the chooser when showing one to someone

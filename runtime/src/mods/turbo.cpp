@@ -39,6 +39,7 @@
 #include <cstdlib>
 
 #include "mods.h"
+namespace gx2 { extern std::atomic<bool> g_hold_picture; }
 #include "runtime.h"
 #include "../release.h"
 
@@ -62,7 +63,8 @@ namespace interp { bool hold_pass(); }
 
 namespace mods {
 namespace {
-const release::Data kOverlap{0x101F36CC};  // l_fopOvlpM_overlap[0] (fopOvlpM_IsPeek 025DBE00)
+const release::Data kOverlap{0x101F36CC};
+const release::Data kAudioLoadTimer{0x101F4707};  // mDoAud_zelAudio_c::mLoadTimer (read at 025E183C)  // l_fopOvlpM_overlap[0] (fopOvlpM_IsPeek 025DBE00)
 constexpr uint32_t kOvlpTask = 0x20;       // overlap_request_class::mpTask (fopOvlpM_SceneIsStart)
 const release::Data kPadPtr{0x101F5088};   // the game's pad state (pad accessors 0200763C...)
 constexpr uint32_t kCurProc = 0x65F0;      // daPy_lk_c::mCurProc
@@ -96,6 +98,8 @@ int env_i(const char* n, int d) {
 }
 const int kDoorExtra = env_i("WWHD_MOD_DOOR_EXTRA", 3);    // 4 logic steps per frame
 const int kSceneExtra = env_i("WWHD_MOD_SCENE_EXTRA", 3);  // 4 transition steps per frame
+// seamless houses: WWHD_SEAMLESS_EXTRA transition steps per frame for a walk-through house door (15 = nearly at once)
+const int kHouseExtra = env_i("WWHD_SEAMLESS_EXTRA", 3);
 const double kFfRate = env_i("WWHD_MOD_FF_RATE", 4);     // display clock rate while fast forwarding
 
 // The weather effects keep the rule of process deletion (see the quick doors' loop) with a countdown
@@ -241,6 +245,7 @@ void after_execute(Cpu* c, uint32_t execute_fn) {
     if (interp::hold_pass()) return;
     padlog();
     ovlplog();
+    seamless_step(c);
     bool door = g_door_cut;
     g_door_cut = false;
     if (door != g_door_event) {
@@ -251,6 +256,18 @@ void after_execute(Cpu* c, uint32_t execute_fn) {
     if (overlap_active() != ovl) {
         ovl = !ovl;
         trace("overlap (fade) %s", ovl ? "starts" : "ends");
+    }
+    // seamless-houses measurement: every step's wall time from a fade's start until 90 steps after its end
+    if (trace_on()) {
+        static int after = 0;
+        static auto last = std::chrono::steady_clock::now();
+        const auto now = std::chrono::steady_clock::now();
+        if (ovl) after = 90;
+        if (ovl || after > 0) {
+            if (!ovl) after--;
+            trace("step %.1f ms", std::chrono::duration<double, std::milli>(now - last).count());
+        }
+        last = now;
     }
     touch_state_step();
     minigame_step();
@@ -321,13 +338,41 @@ void after_execute(Cpu* c, uint32_t execute_fn) {
     }
     // fast scene changes: transition machinery only
     if (fast_scenes() || walk_door_exit()) {
-        for (int i = 0; i < kSceneExtra && overlap_active(); i++) {
+        const int extra = walk_door_exit() ? kHouseExtra : kSceneExtra;
+        for (int i = 0; i < extra && overlap_active(); i++) {
             // (no fpcCt_Handler: process creation stays once per frame, see the top, issue #15)
             uint32_t ovl_req = ld32(kOverlap);
             uint32_t task = ovl_req ? ld32(ovl_req + kOvlpTask) : 0;
             if (task) call(c, f_025DF940, task);  // the overlap process: fade timers
             call(c, f_025D42C4_orig, 0);  // fapGm_After: scene / overlap request phases
             g_extra_scene++;
+        }
+    }
+    // seamless houses: the scene change's audio load timer (mDoAud_zelAudio_c::mLoadTimer, set to 36 by
+    // mDoAud_setSceneName; the next play scene's phase 1 waits until it is down to 1, the old music's fade-out time)
+    // cut to kAudioWait steps for a walk-through house door. WWHD_SEAMLESS_AUDIO=0 keeps the game's 36.
+    // seamless houses: a walk-through house door's fade is not shown; the picture from before it stays until the
+    // other side's fade-in is over (gx2_core.cpp skips the scan buffer copies), at most 6 s. WWHD_SEAMLESS_HOLD=1: on (off: the user found Link frozen in the doorway odd)
+    static const bool kHold = env_i("WWHD_SEAMLESS_HOLD", 0) != 0;
+    {
+        static uint64_t held_from = 0;
+        const bool want = kHold && walk_door_exit() && overlap_active();
+        const bool on = gx2::g_hold_picture.load(std::memory_order_relaxed);
+        if (want && !on && !held_from) {
+            gx2::g_hold_picture = true, held_from = step();
+            trace("picture held");
+        } else if (on && (!want || step() - held_from > 180)) {
+            gx2::g_hold_picture = false;
+            trace("picture shown again after %llu steps", (unsigned long long)(step() - held_from));
+        }
+        if (!want) held_from = 0;
+    }
+    static const int kAudioWait = env_i("WWHD_SEAMLESS_AUDIO", 3);
+    if (kAudioWait > 0 && walk_door_exit()) {
+        const uint8_t t = ld8(kAudioLoadTimer);
+        if (t > kAudioWait) {
+            st8(kAudioLoadTimer, (uint8_t)kAudioWait);
+            trace("audio load timer %u -> %d", t, kAudioWait);
         }
     }
     c->lr = lr;

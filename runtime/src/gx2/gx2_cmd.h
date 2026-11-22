@@ -33,6 +33,7 @@ enum Op : uint32_t {
     OP_SET_PROJ_REGS,   // first register, 16 values: a layout projection matrix (narrowed when drawing to the TV)
     OP_LAYOUT_ROOT,     // nw::lyt root pane: drawn into the target bound now (which screen it goes to)
     OP_PEEK_Z,          // x, y, result address per point: depth peeks of dDlst_peekZ_c (peekz.cpp)
+    OP_SEE_THROUGH,     // alpha (float bits; 0 ends): online co-op's see-through players (j3d_draw_guard.cpp)
     // host-only (render queue)
     OP_FLUSH,           // submit queued GPU work
     OP_DRAW_DONE,       // wait for the GPU to finish

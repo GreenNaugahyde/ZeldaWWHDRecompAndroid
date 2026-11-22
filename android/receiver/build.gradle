@@ -25,6 +25,9 @@ android {
         buildConfigField 'boolean', 'PUBLIC_RELEASE', 'true'
         buildConfigField 'boolean', 'RECEIVER', 'true'
         buildConfigField 'boolean', 'REMOTE_PLAY', 'true'
+        buildConfigField 'boolean', 'ONLINE', 'false'  // (no game here)
+        buildConfigField 'boolean', 'LOOT', 'false'
+        buildConfigField 'boolean', 'SEAMLESS', 'false'
     }
 
     sourceSets {

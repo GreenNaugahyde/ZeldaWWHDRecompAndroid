@@ -66,12 +66,13 @@
 #include "packs.h"
 #include "runtime.h"
 
-namespace mods { uint32_t player_model_area(uint32_t* size); }  // mods/player_models.cpp
+namespace mods { uint32_t player_model_area(uint32_t* size); uint32_t loot_sword_area(uint32_t* size); uint32_t loot_armor_area(uint32_t* size); uint32_t loot_outfit_area(uint32_t* size); }  // mods/player_models.cpp
 #include "hle/os_time.h"
 #include "gx2/gx2_cmd.h"
 #include "input.h"
 #include "mem_writes.h"
 #include "release.h"
+namespace mods { bool save_page_foreign(); void save_page_home(); }  // (mods/warp.cpp: save file pages)
 
 // module sections
 bool threads_ss_save(ss::Writer& w, std::string& why);
@@ -94,6 +95,7 @@ void gx2_ss_save(ss::Writer& w);
 bool gx2_ss_check(ss::Reader r, std::string& why);
 void gx2_ss_load(ss::Reader& r);
 namespace interp { void ss_reset(); }
+namespace mods { void walk_doors_hold_reset(); }
 namespace gfx {
 uint64_t frame_count();
 void cache_progress(uint64_t out[4]);
@@ -156,6 +158,14 @@ std::vector<Region> regions() {
     // a player model's appended data (mods/player_models.cpp)
     uint32_t pmSize = 0, pm = mods::player_model_area(&pmSize);
     if (pmSize) r.push_back({pm, (pmSize + kChunk - 1) & ~(kChunk - 1)});
+    // a loot sword's corner (always: its header tells what is in)
+    uint32_t lsSize = 0, ls = mods::loot_sword_area(&lsSize);
+    r.push_back({ls, lsSize});
+    // the loot armour's corners
+    uint32_t laSize = 0, la = mods::loot_armor_area(&laSize);
+    r.push_back({la, laSize});
+    uint32_t loSize = 0, lo = mods::loot_outfit_area(&loSize);
+    r.push_back({lo, loSize});
     return r;
 }
 
@@ -1293,6 +1303,11 @@ int min_headroom_mb() {
 // true when done (saved or failed for good); false to retry on the next frame. An auto save (quiet)
 // gives the game threads less time to reach their waits and doesn't retry: it comes again later.
 bool do_save(int slot, bool quiet) {
+    if (::mods::save_page_foreign()) {  // (the game holds another game's files: such a state would bring them back here)
+        LOG("[savestate] %s: not saved: another game's save files show", slot_label(slot).c_str());
+        if (!quiet) message("%s: not saved: the file select shows another game's files", slot_label(slot, true).c_str());
+        return true;
+    }
     std::string busy, why;
     const int headroom = g_headroom_mb.load();
     if (headroom >= 0 && headroom < min_headroom_mb()) {
@@ -1450,6 +1465,7 @@ bool do_load(const std::shared_ptr<Snapshot>& s) {
         os_time::set_bias(os_time::restored_bias(os_time::bias(), has && t.ok, state_bias));
     }
     interp::ss_reset();
+    mods::walk_doors_hold_reset();  // the state's process ids: nothing held, highest id seen again
     r = s->section(kSecThreads);
     threads_ss_load(r);  // last: wakes the parked threads (they continue after the thaw)
     threads_ss_rebuild();
@@ -1573,6 +1589,7 @@ void request_save(int slot) {
 
 void request_load(int slot) {
     if (slot < 1 || slot > kAllSlots) return;
+    ::mods::save_page_home();  // (the state's save files are this game's own)
     if (g_loading.exchange(true)) return;
     std::thread([slot] {
         auto t0 = std::chrono::steady_clock::now();

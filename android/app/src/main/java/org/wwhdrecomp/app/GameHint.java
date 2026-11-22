@@ -84,6 +84,7 @@ final class GameHint {
             case 9: return "hint_mg_figure";
             case 10: return "hint_mg_conduct";
             case 11: return "hint_mg_wind";
+            case 14: return "hint_mg_warpmap";
             case ControlsView.HINT_CONDUCT_PAD: return "hint_mg_conduct_pad";
             case ControlsView.HINT_LEAF_GLIDE: return "hint_leaf_glide";
             case ControlsView.HINT_RING: return "hint_ring";

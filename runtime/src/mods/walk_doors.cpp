@@ -37,6 +37,7 @@
 #include <vector>
 
 #include "mods.h"
+#include "walk_doors_hold.h"
 #include "../release.h"
 #include "../runtime.h"
 
@@ -104,11 +105,22 @@ struct Seen {
 };
 std::unordered_map<uint32_t, Seen> g_seen;
 uint32_t g_open_request = 0;  // a door whose A press was taken: it opens at its next execute
+// the far room's new actors after a walk-through opening wait as in the door scene (walk_doors_hold.h, upstream #529)
+WalkDoorHold g_hold;
+constexpr uint32_t kActorType = 0xC4;  // fopAc_ac_c::actor_type (GameCube 0xC0): the same value in every actor
+constexpr uint32_t kCurRoom = 0x326;   // fopAc_ac_c current.roomNo
+constexpr uint8_t kRoomHidden = 8;
 
 bool guest_ptr(uint32_t a) { return a >= 0x10000000 && a < 0x50000000; }
 float ldf(uint32_t a) { return u32_as_f32(ld32(a)); }
 uint8_t room_flags(int room) { return ld8(kRoomStatus + (uint32_t)room * kRoomStride); }
 int stay_no() { return (int8_t)ld8(kStayNo); }
+// a walk-through opening into `far`: when the room was hidden its actors are made now, and they wait (see above)
+void hold_far_room(int far) {
+    if (far < 0 || far >= 0x3F || !(room_flags(far) & kRoomHidden)) return;
+    g_hold.start(far, ld32(kCounter));
+    if (kLog) LOG("[doors] room %d shown: its new actors wait", far);
+}
 
 // where Link stands against the door: along its facing, sideways, height
 struct Where {
@@ -186,6 +198,8 @@ void door_execute(Cpu* c, const Kind& k, void (*orig)(Cpu*)) {
             if (kLog) LOG("[doors] %s %08X found open: walk-through", k.name, door);
         } else {
             st8(door + kFront, (uint8_t)front);
+            uint16_t ax = ld16(door + kHomeAngleX);
+            hold_far_room(front == 0 ? (ax >> 6) & 0x3F : ax & 0x3F);
             guest_call(c, k.open_init, {door});
             it = g_doors.emplace(door, Door{kOpening, now}).first;
             if (kLog) LOG("[doors] %s %08X opening (Link %.0f along, %.0f side; room %d)", k.name, door, w.along, w.side, stay_no());
@@ -491,26 +505,40 @@ void knob_execute(Cpu* c) {
         g_arrived[door] = true;  // Link stands at the door he came through: it waits until he has left once
     }
     Where w = where(door, link);
-    bool by_a = g_by_a.load(std::memory_order_relaxed);
+    bool by_a = g_by_a.load(std::memory_order_relaxed) || seamless_doors_by_a();
+    if (kLog && now % 30 == 0 && std::fabs(w.along) < 600.0f && w.side < 300.0f)
+        LOG("[doors] knob %08X near: in list %d arrived %d (Link %.0f along %.0f side %.0f up)", door, it != g_knobs.end() ? 1 : 0,
+            g_arrived.count(door) ? 1 : 0, w.along, w.side, w.up);
     if (it == g_knobs.end() && g_arrived.count(door)) {
         if (!in_zone(w, kKnobCloseAlong, kKnobCloseSide)) {
             g_arrived.erase(door);
-        } else if (!by_a) {
+        } else if (!by_a && g_open_request != door) {
             f_021A5008_orig(c);
             return;
+        } else if (g_open_request == door) {
+            g_arrived.erase(door);  // A on the door Link just came through: it opens (seamless houses: leaving at once)
         }
     }
     if (it == g_knobs.end()) {
         int front = -1;
-        if (by_a) {
+        if (by_a || g_open_request == door) {
             if (g_open_request == door) front = knob_may_open(door, link);
         } else if (in_zone(w, kKnobOpenAlong, kKnobOpenSide)) {
             front = knob_may_open(door, link);
         }
         if (g_open_request == door) g_open_request = 0;
+        if (kLog && front < 0 && in_zone(w, kKnobOpenAlong, kKnobOpenSide) && now % 30 == 0)  // why a near door stays shut
+            LOG("[doors] knob %08X stays shut: event %u action %u regist %u front %u carrying %d (Link %.0f along %.0f side)",
+                door, event_mode_now(), ld8(door + kKnobAction), ld8(door + kKnobRegist), ld8(door + kFront), carrying(link) ? 1 : 0,
+                w.along, w.side);
         if (front < 0) {
             f_021A5008_orig(c);
             return;
+        }
+        {
+            uint16_t ax = ld16(door + kHomeAngleX);
+            int f = ax & 0x3F, b = (ax >> 6) & 0x3F;
+            if (f != b) hold_far_room(front == 0 ? b : f);
         }
         guest_call(c, kKnobOpenInit, {door, (uint32_t)front});
         swing_wide(door);
@@ -557,11 +585,31 @@ void knob_execute(Cpu* c) {
 }
 }  // namespace
 
+// fpcM_Execute's hook (true60.cpp), before a process runs: true = it waits this step (a new actor of a room just
+// shown by a walk-through opening; walk_doors_hold.h, upstream #529)
+bool walk_doors_hold(uint32_t proc) {
+    const uint32_t id = ld32(proc + 4);  // base_process_class::mBsPcId
+    if (g_hold.room() < 0) {
+        g_hold.hold(id, -2, 0);  // (only notes the highest process id)
+        return false;
+    }
+    const uint32_t link = link_actor();
+    int room = -2;
+    if (guest_ptr(link) && proc != link && ld32(proc + kActorType) == ld32(link + kActorType) && !g_doors.count(proc) &&
+        !g_knobs.count(proc))
+        room = (int8_t)ld8(proc + kCurRoom);
+    return g_hold.hold(id, room, ld32(kCounter));
+}
+void walk_doors_hold_reset() { g_hold.reset(); }
+
 bool walk_doors() { return g_on.load(std::memory_order_relaxed); }
 void set_walk_doors(bool on) {
     g_on = on;
     LOG("[mods] walk-through doors %s", on ? "on" : "off");
 }
+// seamless houses: Link was just put through a door without a scene change: the knob door he stands at waits until he
+// has left its zone once, as after an arrival (else it swung open again at once behind him)
+void walk_doors_arrived() { g_start_walk_cut = ld32(kCounter); }
 bool walk_door_exit() {
     return g_on.load(std::memory_order_relaxed) && std::chrono::steady_clock::now() < g_exit_until.load();
 }
@@ -581,7 +629,9 @@ extern "C" void hook_02129830(Cpu* c) { mods::door_execute(c, mods::kDoor12, f_0
 extern "C" void hook_025D7710(Cpu* c) {
     using namespace mods;
     uint32_t link = c->r[3], door = c->r[4];
-    if (g_on.load(std::memory_order_relaxed) && g_by_a.load(std::memory_order_relaxed) && guest_ptr(door)) {
+    // (also on a door waiting after Link came through it: A opens it instead of the door scene)
+    if (g_on.load(std::memory_order_relaxed) && (g_by_a.load(std::memory_order_relaxed) || seamless_doors_by_a() || g_arrived.count(door)) &&
+        guest_ptr(door)) {
         auto s = g_seen.find(door);
         if (s != g_seen.end() && ld32(kCounter) - s->second.seen <= 8 &&
             (s->second.kind ? may_open(c, door, link, *s->second.kind) : knob_may_open(door, link)) >= 0) {

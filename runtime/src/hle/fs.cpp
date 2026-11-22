@@ -12,6 +12,8 @@
 #include <cstdio>
 #include <cstring>
 #include <strings.h>
+#include <atomic>
+#include <chrono>
 #include <mutex>
 #include <string>
 #include <unordered_map>
@@ -22,6 +24,10 @@
 #include "../savestate.h"
 #include "os_time.h"
 #include "picto_quest.h"
+#include "mods/mods.h"
+#include "mods/link_masks.h"  // (online co-op)
+#include "online/compat/inc/link_poses.h"
+namespace hlefs { std::atomic<bool> g_block_saves{false}; }  // online co-op's guest (mods/coop_sync.cpp)
 
 namespace {
 
@@ -176,14 +182,33 @@ void fill_stat(uint32_t out, const struct stat& st) {
 
 int32_t open_file(const std::string& gpath, const std::string& mode, uint32_t out_handle) {
     std::string hp = host_path(gpath);
+    if (mode == "r" || mode == "rb") {  // online co-op: Link's files and colour masks from the 3D pack the game reads
+        link_poses::note_open(gpath, hp);
+        link_masks::note_open(gpath, hp);
+    }
+    // online co-op: a guest playing in the host's world writes no save of its own (upstream's; the fork has no
+    // such join yet: never set)
+    if (hlefs::g_block_saves && gpath.rfind("/vol/save", 0) == 0 && mode.find_first_of("wa+") != std::string::npos) {
+        FILE* f = tmpfile();
+        if (!f) return FS_NOT_FOUND;
+        std::lock_guard<std::mutex> lk(g_fs_mutex);
+        const uint32_t h = g_next_handle++;
+        g_files[h] = {f, gpath, mode};
+        st32(out_handle, h);
+        return FS_OK;
+    }
     if (mode.find_first_of("wa+") != std::string::npos) {
         make_parent_dirs(hp);
         own_file_for_writing(hp);
     }
     std::string m = mode;
     if (m.find('b') == std::string::npos) m += "b";
+    if (mode == "r" || mode == "rb")  // seamless houses: the house in sea room 50's slot (mods/seamless_houses.cpp)
+        if (std::string alt = mods::seamless_file(gpath); !alt.empty()) hp = alt;
     FILE* f = fopen(hp.c_str(), m.c_str());
     TRACE("[fs] open %s (%s) -> %s", gpath.c_str(), mode.c_str(), f ? "ok" : "not found");
+    if (mods::trace_on() && gpath.rfind("/vol/content", 0) == 0)  // seamless-houses: what a scene change loads
+        mods::trace("fs open %s%s", gpath.c_str() + 12, f ? "" : " (not found)");
     if (!f) return FS_NOT_FOUND;
     // a written file (the saves): group read/write plus read for others, so a sync tool's copy of it stays readable
     // for this app (issue #70; no other app can enter files/ anyway)
@@ -206,7 +231,9 @@ FILE* file(uint32_t h) {
 
 int32_t stat_path(const std::string& gpath, uint32_t out) {
     struct stat st;
-    if (stat(host_path(gpath).c_str(), &st) != 0) return FS_NOT_FOUND;
+    std::string hp = mods::seamless_file(gpath);  // (seamless houses: sea room 50's current archive)
+    if (hp.empty()) hp = host_path(gpath);
+    if (stat(hp.c_str(), &st) != 0) return FS_NOT_FOUND;
     fill_stat(out, st);
     return FS_OK;
 }
@@ -291,7 +318,11 @@ HLE(coreinit, FSReadFile) {
     {
         BlockingScope b;  // the calling thread waits for the disc; others on its core run
         ss::prepare_host_write(dst, size * count);
+        const auto t0 = std::chrono::steady_clock::now();
         n = fread(mem::ptr(dst), 1, (size_t)size * count, f);
+        if (mods::trace_on() && start < 0)
+            mods::trace("fs read %zu bytes in %.2f ms", n,
+                        std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count());
         if (start >= 0) repair_save_blocks(f, (uint64_t)start, dst, n);
         memw::mark(dst, (uint32_t)n);  // DMA on the console: no flush follows
     }

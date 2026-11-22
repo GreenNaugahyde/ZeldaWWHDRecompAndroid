@@ -17,6 +17,9 @@ float requested();                 // what the setting asks for now
 // for the GamePad picture)
 float on_swap(float& drc);
 float game();
+// game thread: layout units (720 across the 16:9 picture's height) per unit of x / z in the main camera's view, for
+// its authored fovy (degrees) as drawn now (Vert+, the view zoom); 0 for a bad fovy (online co-op's marks over players)
+float layout_scale(float fovyDeg);
 // the GamePad screen's touch targets (the game's hit boxes, panes "B_*", drawn this frame) as
 // "name parent x y w h;" (16:9 screen, 0..1, y down), and whether the game shows its own button
 // cursor there (W_Cursor_00: it takes the buttons itself, e.g. Options)

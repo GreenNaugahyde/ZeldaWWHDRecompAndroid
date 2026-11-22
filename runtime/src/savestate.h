@@ -3,6 +3,8 @@
 #pragma once
 #include <cstdint>
 #include <cstring>
+#include <functional>
+#include <memory>
 #include <string>
 #include <type_traits>
 #include <vector>
@@ -104,5 +106,28 @@ int fault_note(char* buf, size_t n);
 
 // guest memory reader used while validating a snapshot (reads the snapshot's memory, not the live one)
 uint32_t snap_ld32(uint32_t ea);
+
+// ---- online co-op (upstream's co-op code, runtime/src/online/compat/ss_online.cpp) ----
+}  // namespace ss
+namespace pstate { struct State; }
+namespace ss {
+void notice(const std::string& text);    // a short message to the player (the app shows it)
+// FNV-1a of the game's own code file (cking.rpx, or the randomized game's): upstream's game_data_id, which online
+// players must share (another region, version or seed: refused)
+uint64_t game_data_id();
+std::string area_name(const char* stage);  // a stage's name for people ("Dragon Roost Cavern"; else the stage's own)
+std::string control_problem();             // any thread: why Link is not under the player's control now, or ""
+struct Warp {
+    std::string stage;
+    int room = 0, point = 0, angle = 0;
+    bool at_position = false;
+    float pos[3] = {};
+    bool on_ship = false;  // (at sea) on his boat there
+};
+void request_warp(const Warp& w, std::function<void(bool ok, const std::string& why)> done = nullptr);
+inline void request_save_full(int) {}       // (upstream's state test aid: none here)
+inline void request_save_portable(int) {}
+bool capture_portable_text(Cpu* c, std::string& out, std::string& why);  // (Stay together: the host's world as text)
+void request_load_portable_state(std::shared_ptr<pstate::State> s, std::function<void(bool, const std::string&)> done);
 
 }  // namespace ss

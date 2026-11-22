@@ -1,6 +1,7 @@
 // Android input: the Java side merges the on-screen controls, game controllers and a hardware
 // keyboard into one Wii U GamePad state (MainActivity / InputMapper) and hands it over here.
 #include <atomic>
+#include <cstdlib>
 #include <mutex>
 #include <vector>
 
@@ -24,6 +25,8 @@ static bool g_touch_latched;
 
 void set_touch(bool down, float x, float y) {
     std::lock_guard<std::mutex> lk(g_mu);
+    static const bool log = getenv("WWHD_TOUCH_LOG") != nullptr;  // debug: each GamePad touch's start and end, 0..1
+    if (log && down != g_touch) LOG("[touch] GamePad %s at %.3f %.3f", down ? "down" : "up", x, y);
     if (down && !g_touch) g_touch_latched = true;
     g_touch = down;
     g_tx = x;

@@ -68,6 +68,7 @@ final class AchievementPopup {
             if (c instanceof MainActivity) {
                 NewGames.check((MainActivity) c, Native.progressData());
                 ModPacks.slotsCheck((MainActivity) c);
+                OnlineGames.slotsCheck((MainActivity) c);
             }
             List<Achievements.Def> got = Achievements.check(c, settings, settings.getBoolean("achievement_each_file", true));
             if (!got.isEmpty() && enabled) {

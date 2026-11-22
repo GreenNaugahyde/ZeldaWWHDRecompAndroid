@@ -1,0 +1,3 @@
+#!/bin/sh
+# The server's admin commands on the VPS (fork): sudo wwhd-admin players | kick CODE reason | ban CODE 7d reason | ...
+exec runuser -u wwhd -- /opt/wwhd/bin/wwhd-online-server admin --socket /run/wwhd-online/admin.sock "$@"

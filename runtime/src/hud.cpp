@@ -117,10 +117,17 @@ const char* const kCommandNames[3] = {"T_CommandX_00", "T_CommandY_00", "T_Comma
 // Two layouts can hold the button cluster at once (seen after loading a state: a second copy with the item icons at
 // alpha 0 drawn in every frame besides the HUD's); following the last drawn copy switched the touch buttons on and off
 // each frame. The copies drawn in the last moments count, the most visible one wins.
-struct ClusterCopy { uint32_t pane = 0; int alpha = -1, command = -1; int64_t ms = 0; };
+struct ClusterCopy { uint32_t pane = 0; int alpha = -1, command = -1; int64_t ms = 0; int x = 0, y = 0; };
 std::mutex g_cluster_mu;
 ClusterCopy g_copies[kClusterCount][4];
 void note_cluster(int which, uint32_t pane, int alpha, int command);
+float global_x(uint32_t p);
+float global_y(uint32_t p);
+uint32_t find_pane(uint32_t p, const char* name, int depth);
+const char* const kClusterDiscs[kClusterCount] = {"P_X_00", "P_Y_00", "P_R_00", "P_B_00", "P_ZR_00"};
+std::atomic<int> g_cluster_x[kClusterCount] = {}, g_cluster_y[kClusterCount] = {};
+std::atomic<int64_t> g_b_icon_ms{0};
+int pane_alpha(uint32_t p);
 
 // a pane's own alpha, 0 when invisible
 int pane_alpha(uint32_t p) { return (ld8(p + kPaneFlags) & 1) ? ld8(p + kPaneAlpha) : 0; }
@@ -135,11 +142,23 @@ void note_cluster(int which, uint32_t pane, int alpha, int command) {
     for (int k = 0; k < 4 && !slot; k++)
         if (!copies[k].pane || t - copies[k].ms > 250) slot = &copies[k];
     if (!slot) slot = &copies[0];
-    *slot = {pane, alpha, command, t};
+    // (the button's own disc: the groups N_X_00 ... all sit at the cluster's origin)
+    const uint32_t disc = find_pane(pane, kClusterDiscs[which], 3), at = disc ? disc : pane;
+    *slot = {pane, alpha, command, t, (int)global_x(at), (int)global_y(at)};
+    if (which == 3) {  // (the sword's icon on B: the copy that shows one)
+        const uint32_t icon = find_pane(pane, "L_BCollectIcon_00", 1);
+        if (icon && pane_alpha(icon) > 0) g_b_icon_ms = t;
+    }
     const ClusterCopy* best = slot;
     for (int k = 0; k < 4; k++)
         if (copies[k].pane && t - copies[k].ms <= 250 && copies[k].alpha > best->alpha) best = &copies[k];
     g_cluster[which].store(best->alpha, std::memory_order_relaxed);
+    // (of the copies drawn just now the lowest: the other one, higher by 228 units, is not the one on the screen)
+    const ClusterCopy* place = best;
+    for (int k = 0; k < 4; k++)
+        if (copies[k].pane && t - copies[k].ms <= 250 && copies[k].alpha > 0 && copies[k].y < place->y) place = &copies[k];
+    g_cluster_x[which].store(place->x, std::memory_order_relaxed);
+    g_cluster_y[which].store(place->y, std::memory_order_relaxed);
     if (which < 3) g_command[which].store(best->command, std::memory_order_relaxed);
 }
 
@@ -173,6 +192,11 @@ void log_cluster(int which, uint32_t pane) {
 
 int hud_cluster_alpha(int which) { return g_cluster[which].load(std::memory_order_relaxed); }
 int hud_cluster_command(int which) { return g_command[which].load(std::memory_order_relaxed); }
+bool hud_b_icon_shown() { return now_ms() - g_b_icon_ms.load(std::memory_order_relaxed) < 250; }
+void hud_cluster_place(int which, int32_t out[2]) {
+    out[0] = g_cluster_x[which].load(std::memory_order_relaxed);
+    out[1] = g_cluster_y[which].load(std::memory_order_relaxed);
+}
 
 namespace {
 // a descendant by name (depth first, a few levels), or 0
@@ -373,8 +397,29 @@ std::atomic<int64_t> g_seq_ms[3];
 // the wind compass after the Wind's Requiem (ControlWind_00): its centre (P_WindDirectionBase_00), as last drawn
 std::atomic<int> g_wind_x{0}, g_wind_y{0};
 std::atomic<int64_t> g_wind_ms{0};
+// the Ballad of Gales' destination map (WarpMap_00, on the TV only): one L_WarpArea_xx per cyclone, as last drawn; each
+// has a small and a big ring (N_Small_00 / N_Big_00), the big one shown on the selected cyclone
+std::atomic<int64_t> g_warpmap_ms{0};
+constexpr int kWarpAreas = 16;
+std::atomic<int> g_warp_x[kWarpAreas], g_warp_y[kWarpAreas], g_warp_sel{-1};
+std::atomic<uint32_t> g_warp_name_pane{0};  // the map's island name (T_AreaName_00): the map screen keeps it at +0x50
+std::atomic<int64_t> g_warp_ms[kWarpAreas];
+void note_warp_area(uint32_t pane, const char* n) {
+    int i = (n[11] - '0') * 10 + (n[12] - '0');
+    if (i < 0 || i >= kWarpAreas) return;
+    uint32_t big = find_pane(pane, "N_Big_00", 3), small = find_pane(pane, "N_Small_00", 3);
+    int ab = big ? pane_alpha(big) : -1, as = small ? pane_alpha(small) : -1;
+    g_warp_x[i] = (int)(big ? global_x(big) : global_x(pane));
+    g_warp_y[i] = (int)(big ? global_y(big) : global_y(pane) + 77.0f);
+    g_warp_ms[i] = now_ms();
+    if (ab > 0 && as <= 0) g_warp_sel = i;  // (the selected cyclone shows its big ring only)
+}
 constexpr uint32_t kPaneSize = 0x3C;
 void note_choice(uint32_t pane, const char* n) {
+    if (n[0] == 'L' && !strncmp(n, "L_WarpArea_", 11) && pane_alpha(pane)) {
+        g_warpmap_ms = now_ms();
+        note_warp_area(pane, n);
+    }
     if (n[0] == 'P') {
         if (!strncmp(n, "P_WindDirectionBase_00", 24) && pane_alpha(pane)) {
             g_wind_x = (int)global_x(pane);
@@ -454,6 +499,24 @@ bool hud_wind_compass(int32_t out[2]) {
     return true;
 }
 
+bool hud_warp_map() { return now_ms() - g_warpmap_ms.load() < 250; }
+
+uint32_t hud_warp_name_pane() { return hud_warp_map() ? g_warp_name_pane.load() : 0; }
+
+uint32_t hud_warp_rings(int32_t xy[32], int& selected) {
+    uint32_t shown = 0;
+    int64_t t = now_ms();
+    for (int i = 0; i < kWarpAreas; i++) {
+        if (t - g_warp_ms[i].load() >= 250) continue;
+        shown |= 1u << i;
+        xy[2 * i] = g_warp_x[i];
+        xy[2 * i + 1] = g_warp_y[i];
+    }
+    selected = g_warp_sel;
+    if (selected >= 0 && !(shown >> selected & 1)) selected = -1;
+    return shown;
+}
+
 void hud_choice(int32_t out[5]) {
     for (int i = 0; i < 5; i++) out[i] = 0;
     int64_t t = now_ms();
@@ -506,9 +569,15 @@ bool hud_hidden(uint32_t pane) {
     if (pane_log) {
         static std::unordered_set<std::string> seen;
         std::string name(n, strnlen(n, 24));
-        if (seen.insert(name).second) LOG("[pane] %s at %.0f %.0f", name.c_str(), global_x(pane), global_y(pane));
+        uint32_t root = pane;  // (each layout's copy logged: the TV's and the GamePad's)
+        for (int d = 0; d < 32 && ld32(root + 0x0C); d++) root = ld32(root + 0x0C);
+        char key[48];
+        snprintf(key, sizeof key, "%08X ", root);
+        if (seen.insert(key + name).second)
+            LOG("[pane] %s at %.0f %.0f (root %08X, pane %08X, flags %02X)", name.c_str(), global_x(pane), global_y(pane), root, pane, ld8(pane + 0x44));
     }
     if (n[0] == 'T' && n[1] == '_' && n[3] == '_') slot_label(pane, n);
+    if (n[0] == 'T' && !strncmp(n, "T_AreaName_00", 14) && hud_warp_map()) g_warp_name_pane = pane;
     if (n[0] == 'N') note_zoom(pane, n);
     if (n[0] == 'W' || n[0] == 'P' || n[0] == 'L') note_choice(pane, n);
     // the choice box kept out of sight (hud_hide_choice): noted as drawn (hud_choice) but not drawn; its parts are

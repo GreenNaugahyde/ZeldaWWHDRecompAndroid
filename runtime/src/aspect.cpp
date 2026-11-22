@@ -397,6 +397,7 @@ void set_root_tv(uint32_t root, int screen) {
             e.screen = screen;
             return;
         }
+    if (log) LOG("[aspect] root %08X '%.24s' first drawn to target %d", root, (const char*)mem::ptr(root + kPaneName), screen);
     if (g_root_tv.size() > 256) g_root_tv.erase(g_root_tv.begin());
     g_root_tv.push_back({root, screen, screen == kTvTarget ? kTvHold : 0, screen == kTvTarget ? 0 : kTvHold});
 }
@@ -590,6 +591,16 @@ void set_view_zoom(float z) { g_zoom_req = std::fmin(std::fmax(z, 1.0f), 3.0f); 
 void set_view_shift(float units) { g_shift_req = units / 360.0f; }
 float view_tan_scale() { return g_zoom_now.load(std::memory_order_relaxed); }
 float view_shift_ndc() { return g_shift_now.load(std::memory_order_relaxed); }
+// online co-op (upstream's aspect::layout_scale): layout units per unit of x / z in the main camera's view as drawn now
+// (Vert+ at this aspect, the view zoom on top: view_zoom_begin's vert_plus_fovy(fovy, z) then the projection's ky)
+float layout_scale(float fovyDeg) {
+    if (!(fovyDeg > 1.0f && fovyDeg < 170.0f)) return 0.0f;
+    float kx = 1.0f, ky = 1.0f;
+    if (!original()) factors(g_game, kx, ky);
+    const float z = g_zoom_now.load(std::memory_order_relaxed);
+    const float t = std::tan(fovyDeg * (float)M_PI / 360.0f) * ky * z;
+    return t > 0 ? 360.0f * ky / t : 0.0f;
+}
 
 float view_zoom_begin(uint32_t cam) {
     // the shift eases toward what is asked (about 0.2 s), the zoom follows at once (a pinch is smooth)
@@ -1294,9 +1305,16 @@ static int item_arrow_fade(uint32_t pane) {
     return -1;
 }
 
+#ifdef WWHD_ONLINE
+namespace android_card_mark { void after_draw(Cpu* c, uint32_t pane); }  // (online/android_card_mark.cpp)
+#endif
+
 extern "C" void hook_02877100(Cpu* c) {
     using namespace aspect;
     uint32_t pane = c->r[3];
+#ifdef WWHD_ONLINE
+    const Cpu called = *c;
+#endif
     int fade = item_arrow_fade(pane);
     if (fade < 0) {
         draw_pane(c);
@@ -1306,6 +1324,12 @@ extern "C" void hook_02877100(Cpu* c) {
         draw_pane(c);
         st8(pane + kPaneAlpha + 1, a);
     }
+#ifdef WWHD_ONLINE
+    {  // the online mark on the file select's save file cards
+        Cpu again = called;
+        android_card_mark::after_draw(&again, pane);
+    }
+#endif
     if (!ld32(pane + kPaneParent)) drc_mirror::root_done(pane);
 }
 

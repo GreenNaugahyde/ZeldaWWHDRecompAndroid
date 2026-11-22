@@ -71,3 +71,62 @@
 @026FEB20 # after lwz r0, 0x54(r30)
 @026F7EA0 # beq: wait for the continue arrow to appear (randomizer: nop)
 @026F802C # beq: wait for the continue arrow to fade (randomizer: nop)
+# Online co-op (mods/coop_*.cpp; from Galvakron/ZeldaWWHDRecompMP, MPL-2.0): Link's pose, puppets drawn from it
+023D5548  # daPy_lk_c::createHeap: a copy of each of Link's models for every puppet, on his heap
+023D4BB8  # daPy_lk_c::initModel: which file each of Link's models is (what he holds, for the puppets)
+025E38E0  # mDoExt_J3DModel__create: the models Link's createHeap makes
+023D8DF0  # daPy_lk_c::entryDLSetLight: each model Link draws (his pose, once a step), the puppets' after it
+023D8454  # daPy_lk_c::updateDLSetLight: the same
+023D9820  # daPy_lk_c::draw: the puppets' models Link did not draw himself, after him
+025E2E5C  # mDoExt_modelEntryDL: Link's body, entered straight (his pose)
+025E2DE0  # mDoExt_modelUpdateDL: the same
+027F583C  # J3DModel entry of one material's shapes: Link's face, the puppets' copies after his
+027F50F8  # J3DModel texture lists (viewCalc): Link's body texture in each wearer's tunic colour
+026066C4  # dComIfG_getObjectRes: which file of Link's archive a model is (his items')
+025D5928  # fopAcM_fastCreate: the boat's own cannon ball and Link's items, for the other players (mods/coop_world.cpp)
+# Online co-op, the session (mods/coop_sync.cpp)
+025202F8  # dComIfG_resetToOpening: a guest's way back to the title
+0252012C  # dComIfGp_setNextStage: a guest going into a stage the host isn't in waits for the host
+# Online co-op, shared progress (mods/coop_progress.cpp): another player's doors moving, shown here
+021262D8  # door10 openInit: a player's shutter opening, shown on the others
+02126334  # door10 closeInit: closing
+02128430  # door12 openInit
+0212848C  # door12 closeInit
+021A3AA0  # daKnob00 openInit: a player's knob door swinging, shown on the others
+# Online co-op, the placed monsters (mods/coop_monsters.cpp, mods/coop_world.cpp)
+025BA6A4  # dSv_info_c::isActor: a placed monster killed while a co-op player was in its stage is not made again
+025D99E8  # fopAcM_createDisappear: a co-op monster another player killed drops nothing on its owner's game
+025A847C  # dPa_control_c::set (the shared emitter factory): Link's particles, for the other players (online co-op: mods/coop_pose.cpp's particle)
+# (fopAc_Execute 025D475C, the co-op monsters' hook, is the cheats' one above: mods/cheats.cpp calls coop_world.cpp's)
+# Online co-op, see-through players and the J3D draw-bucket guard (runtime/src/online/compat/j3d_draw_guard.cpp, upstream's
+# hooks_j3d.txt): no packet entered twice, a looping bucket cut, marked packets drawn see-through
+027F10CC  # J3DDrawBuffer::drawHead
+027F1174  # J3DDrawBuffer::drawTail
+027F093C  # J3DDrawBuffer::frameInit
+027F0C14  # J3DDrawBuffer::entryZSort
+027F0DA8  # J3DDrawBuffer::entryNonSort
+027F0E04  # J3DDrawBuffer::entryImm
+# Online quest texts in the game's own message window (online/android_say.cpp; upstream's story_mail way)
+025F50E8  # message manager getMessage: our message's MSBT entry noted
+0273A2E8  # MSBT text of a label index: our text for that entry while it is shown
+# Loot swords (mods/loot_sword.cpp): a sword attack's power scaled by the loot sword's percentage
+023E5600  # daPy_lk_c::setAtParam: r4 attack type (2 sword), r5 power (soup doubles it here)
+# Loot armour (mods/loot_sword.cpp): Link's damage lowered; his spare models shown, right after his hands are entered
+023F51D4  # daPy_lk_c::setDamagePoint: f1 the change of his hearts in quarters (negative: damage; Hero Mode doubles it here)
+023D9340  # daPy_lk_c, HD: a model noted after entryDLSetLight (r3 Link, r5 the model)
+# Seamless houses (mods/seamless_houses.cpp): the play scene's create phases traced (which one waits)
+025B0FB4  # dScnPly phase 0
+025B13EC  # dScnPly phase 1
+025B1418  # dScnPly phase 2
+025B1590  # dScnPly phase 3
+025B168C  # dScnPly phase 4
+025B1F54  # dScnPly phase 5
+025B1FF8  # dScnPly phase 6
+025B2F90  # dScnPly phase 7
+025B375C  # dScnPly phase 8
+025B3114  # dScnPly phase 9
+025B3764  # dScnPly phase 10
+025C34AC  # dStage_roomControl_c::loadRoom: seamless houses, room 50 (Link's house) loads with Outset
+02520630  # dComIfGp_getMapTrans: seamless houses, room 50's model offset
+@0207A4F4 # daBg_c::create: transS of the room model at its MULT place (seamless houses: room 50 lifted)
+025217F8  # dComIfGs_setGameStartStage: seamless houses, a save in the house continues on Outset

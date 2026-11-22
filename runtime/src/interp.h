@@ -6,6 +6,11 @@
 namespace interp {
 // the camera drawn last (camera_process_class; eye at +0xDC, center at +0xE8), 0 before the first
 uint32_t last_camera();
+// online co-op's puppets (mods/coop_pose.cpp): a joint matrix (3x4) as scale and rotation; two joints blended
+bool mtx_to_quat(const float* m, float* s, float* q);
+void blend_joint(const float* a, const float* b, float* out, float t);
+// the eye of the camera drawn last, blended or exact (false before the first): Graphics > Grass draw distance
+bool drawn_eye(float eye[3]);
 bool frame_is_hold();        // this frame's per-frame function runs a hold pass (no logic): for tasks that calc before it
 void record_executed_step(); // game thread; includes built-in turbo passes
 uint64_t executed_steps();    // actual actor logic passes, including true60 half steps

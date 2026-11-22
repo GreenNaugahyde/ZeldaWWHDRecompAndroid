@@ -61,6 +61,7 @@ HLE(proc_ui, ProcUIDrawDoneRelease) {}
 HLE(proc_ui, ProcUIProcessMessages) { ret(c, 0); }  // PROCUI_STATUS_IN_FOREGROUND
 
 // ---- vpad (GamePad): keyboard / host controllers
+namespace android_down { bool holding(); }
 HLE(vpad, VPADRead) {
     // (chan, VPADStatus* buf, count, int32* error) -> samples written
     uint32_t chan = arg(c, 0), st = arg(c, 1), count = arg(c, 2), err = arg(c, 3);
@@ -94,6 +95,10 @@ HLE(vpad, VPADRead) {
         p.lx = f.lx; p.ly = f.ly; p.rx = f.rx; p.ry = f.ry;
     }
     last_p = p;
+    if (android_down::holding()) {  // (online: Link is down, online/android_down.cpp: no input but + and -)
+        p.buttons &= 0x000C;
+        p.lx = p.ly = p.rx = p.ry = 0;
+    }
     if (input::pro_controller()) {  // GamePad on the table: screen and touch only
         p.buttons = 0;
         p.lx = p.ly = p.rx = p.ry = 0;

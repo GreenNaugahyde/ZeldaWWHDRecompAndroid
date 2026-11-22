@@ -1,0 +1,19 @@
+# (fork) Daily quests for the fork's server: copy to quests.txt beside your server.toml (or set WWHD_QUESTS_DIR).
+# Without the file the server uses this same built-in pool. Each day (UTC) it picks 3 of them, the same for everyone.
+# A party member's defeat of a monster in the same place counts for every member there.
+# id|name|what (shown in the game)|monsters (process names in hex, comma separated; * any)|stage (* any)|goal|rupees
+1|Bokoblin trouble|Defeat 15 Bokoblins|BD|*|15|100
+2|ChuChu cleanup|Defeat 20 ChuChus|CE|*|20|50
+3|Moblin hunt|Defeat 10 Moblins|BC|*|10|150
+4|Darknut duel|Defeat 5 Darknuts|BF|*|5|300
+5|Keese swarm|Defeat 20 Keese|D7|*|20|50
+6|Lay them to rest|Defeat 10 Stalfos, ReDeads or Poes|BE,E0,D4|*|10|200
+7|Monster slayer|Defeat 50 monsters|*|*|50|200
+8|Armos breaker|Defeat 8 Armos or Armos Knights|CB,CA|*|8|200
+9|Peahat plucker|Defeat 10 Peahats|D1|*|10|100
+# Events (id 100 and up: every day, counted when the party wins the event in the game)
+100|Outset under siege|Protect Grandma's house from 4 waves of monsters|*|event:siege|1|500
+101|Raiders from the sea|Keep the raiders off Outset and out of Grandma's house|*|event:shipraid|1|800
+# Server-wide (field 8: world-day or world-week): everyone on the server adds to one count; reaching it pays everyone who helped
+200|Moblin purge|Everyone on this server together: defeat 300 Moblins this week|BC|*|300|300|world-week
+201|ChuChu flood|Everyone on this server together: defeat 200 ChuChus today|CE|*|200|100|world-day

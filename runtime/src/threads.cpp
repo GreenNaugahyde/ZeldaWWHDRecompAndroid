@@ -22,7 +22,11 @@
 #include "platform.h"
 #include "runtime.h"
 #include "savestate.h"
+#include "no_destroy.h"
+#include "rendezvous.h"
 #include "hle/os_time.h"
+#include "guest_addr.h"
+#include "thread_chain.h"
 
 // ---------------------------------------------------------------- time
 namespace timebase {
@@ -155,11 +159,16 @@ struct CoreSched {
     HostThread* owner = nullptr;
     std::deque<HostThread*> ready;  // FIFO among equal priorities
 };
-static CoreSched g_sched[3];
+// never destroyed (no_destroy.h, upstream 917ceeec): the tick thread and guest threads waiting for a core may still
+// use them when the process leaves through exit() (Quit: System.exit)
+static NoDestroy<CoreSched[3]> g_sched_store;
+static CoreSched (&g_sched)[3] = g_sched_store.value;
 // threads waiting in a ready queue; the tick thread sleeps while there are none (battery, heat)
 static std::atomic<int> g_ready_count{0};
-static std::mutex g_tick_m;
-static std::condition_variable g_tick_cv;
+static NoDestroy<std::mutex> g_tick_m_store;
+static std::mutex& g_tick_m = g_tick_m_store.value;
+static NoDestroy<std::condition_variable> g_tick_cv_store;
+static std::condition_variable& g_tick_cv = g_tick_cv_store.value;
 
 static HostThread* best_ready(CoreSched& k) {  // k.m held
     HostThread* b = nullptr;
@@ -499,8 +508,11 @@ struct GuestExit {
 // whose outcome is decided only by HLE objects (re-checked after waking), or idle (service threads).
 // A parked thread that wakes while frozen stops at the gate before it consumes anything, so the HLE
 // objects and guest memory fully describe where it will continue.
-static std::mutex g_frz_m;
-static std::condition_variable g_frz_cv;
+// never destroyed (no_destroy.h): a thread may wait at the gate when the process exits
+static NoDestroy<std::mutex> g_frz_m_store;
+static std::mutex& g_frz_m = g_frz_m_store.value;
+static NoDestroy<std::condition_variable> g_frz_cv_store;
+static std::condition_variable& g_frz_cv = g_frz_cv_store.value;
 static bool g_frozen = false;
 static HostThread* g_frz_owner = nullptr;
 
@@ -1126,6 +1138,7 @@ struct HQueue {
     // operation manager polls this way, ~50k times a second) is throttled; see OSReceiveMessage
     uint32_t receiver = 0;     // guest thread that last received
     uint32_t self_streak = 0;  // consecutive messages sent by that same thread
+    uint64_t foreign = 0;      // messages sent by other threads (ends a throttled wait at once)
 };
 // WWHD_NO_SPIN_THROTTLE=1: never throttle self-post loops
 static const bool g_spin_throttle = getenv("WWHD_NO_SPIN_THROTTLE") == nullptr;
@@ -1159,6 +1172,7 @@ HLE(coreinit, OSSendMessage) {
         if (flags & 2) q->msgs.push_front(msg); else q->msgs.push_back(msg);  // OS_MESSAGE_FLAG_HIGH_PRIORITY
         uint32_t self = threads::current_thread();
         q->self_streak = (self && self == q->receiver) ? q->self_streak + 1 : 0;
+        if (!q->self_streak) q->foreign++;
     }
     q->cv.notify_all();
     ret(c, 1);
@@ -1168,16 +1182,17 @@ HLE(coreinit, OSReceiveMessage) {
     uint32_t m = arg(c, 1), flags = arg(c, 2);
     std::array<uint32_t, 4> msg;
     if (g_trace_msg) LOG("[msg] recv q=%08X flags=%X lr=%08X thread=%08X", arg(c, 0), flags, c->lr, threads::current_thread());
-    bool throttle;
-    {
-        std::lock_guard<std::mutex> lk(q->m);
-        throttle = g_spin_throttle && q->self_streak > 64 && q->receiver == threads::current_thread() && q->msgs.size() <= 1;
-    }
-    // only its own messages for a while: let it poll at 1 kHz with the core released. Before taking
-    // a message, as a parked sleep: a save state can be taken meanwhile (like OSSleepTicks)
-    if (throttle) threads::park_sleep_until(std::chrono::steady_clock::now() + std::chrono::milliseconds(1));
     {
         std::unique_lock<std::mutex> lk(q->m);
+        // only its own messages for a while: let it poll every 16 ms with the core released (1 kHz still
+        // cost ~40% of a core on SD855), but take another thread's message at once. Before taking a
+        // message, as a parked wait: a save state can be taken meanwhile (like OSSleepTicks)
+        // (WWHD's keeps two of its own in the queue: the streak alone says nothing else is waiting)
+        if (g_spin_throttle && q->self_streak > 64 && q->receiver == threads::current_thread()) {
+            uint64_t foreign = q->foreign;
+            auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(16);
+            park_wait(lk, q->cv, [&] { return q->foreign != foreign; }, W_MSG_RECV, arg(c, 0), &deadline);
+        }
         if (q->msgs.empty()) {
             if (!(flags & 1)) { ret(c, 0); return; }
             park_wait(lk, q->cv, [&] { return !q->msgs.empty(); }, W_MSG_RECV, arg(c, 0));
@@ -1228,27 +1243,31 @@ void os_wakeup_thread_queue(uint32_t queue) {
     q->cv.notify_all();
 }
 
-// OSRendezvous
+// OSRendezvous: one arrival flag per core (rendezvous.h). A waiter marks the core it runs on (the
+// core OSGetCoreId reports) and waits until every core in its mask has arrived. WWHD's sound
+// start-up depends on it: the main thread (core 1) starts a thread on core 0 and waits with mask 1
+// until that thread has finished its set-up; the started thread waits with mask 3. (It counted
+// arrivals before: a caller whose own core was not in its mask counted itself and passed at once.
+// From upstream aaa5fcde.)
 struct HRendezvous {
     std::mutex m;
     std::condition_variable cv;
-    uint32_t arrived = 0;
+    threads::RendezvousCores cores;
 };
 static ObjTable<HRendezvous> g_rdv;
 HLE(coreinit, OSInitRendezvous) {
     HRendezvous* r = g_rdv.get(arg(c, 0));
     std::lock_guard<std::mutex> lk(r->m);
-    r->arrived = 0;
+    r->cores.reset();
 }
 HLE(coreinit, OSWaitRendezvous) {
-    // arg1 is a core mask; we treat each set bit as one participant
     HRendezvous* r = g_rdv.get(arg(c, 0));
-    uint32_t need = __builtin_popcount(arg(c, 1) & 7);
+    const uint32_t mask = arg(c, 1);
     std::unique_lock<std::mutex> lk(r->m);
-    if (t_self && t_self->rejoin) t_self->rejoin = false;  // a rebuilt thread: counted in the save already
-    else r->arrived++;
+    if (t_self && t_self->rejoin) t_self->rejoin = false;  // a rebuilt thread: its core marked in the save already
+    else r->cores.arrive(t_self ? t_self->core : 1u);
     r->cv.notify_all();
-    park_wait(lk, r->cv, [&] { return r->arrived >= need; }, W_RDV, arg(c, 0));
+    park_wait(lk, r->cv, [&] { return r->cores.complete(mask); }, W_RDV, arg(c, 0));
     ret(c, 1);
 }
 
@@ -1262,10 +1281,16 @@ struct Alarm {
     uint32_t callback;
     uint64_t serial;
 };
-static std::mutex g_alarm_mutex;
-static std::condition_variable g_alarm_cv;
-static std::multimap<uint64_t, Alarm> g_alarm_queue;
-static std::unordered_map<uint32_t, uint64_t> g_alarm_serial;  // alarm -> active serial (0 = cancelled)
+// never destroyed (no_destroy.h): the detached alarm thread waits on g_alarm_cv (with no timeout while no alarm is set)
+// and reads the queue until the process ends
+static NoDestroy<std::mutex> g_alarm_mutex_store;
+static std::mutex& g_alarm_mutex = g_alarm_mutex_store.value;
+static NoDestroy<std::condition_variable> g_alarm_cv_store;
+static std::condition_variable& g_alarm_cv = g_alarm_cv_store.value;
+static NoDestroy<std::multimap<uint64_t, Alarm>> g_alarm_queue_store;
+static std::multimap<uint64_t, Alarm>& g_alarm_queue = g_alarm_queue_store.value;
+static NoDestroy<std::unordered_map<uint32_t, uint64_t>> g_alarm_serial_store;
+static std::unordered_map<uint32_t, uint64_t>& g_alarm_serial = g_alarm_serial_store.value;  // alarm -> active serial (0 = cancelled)
 static uint64_t g_next_serial = 1;
 static bool g_alarm_thread_started = false;
 
@@ -1470,20 +1495,36 @@ struct ThreadRec {
     Cpu cpu;
 };
 
-// guest call chain of a parked thread: stack pointer, return address and the back chain of saved
-// return addresses must be identical, so its host call stack is the same as the saved one
-bool same_chain(const Cpu& cur, const Cpu& saved) {
-    if (cur.r[1] != saved.r[1] || cur.lr != saved.lr) return false;
-    uint32_t a = cur.r[1];
-    for (int i = 0; i < 512; i++) {
-        uint32_t na = ld32(a), nb = ss::snap_ld32(a);
-        if (na != nb) return false;
-        if (!na || na <= a || na - a > 0x100000) break;
-        if (ld32(na + 4) != ss::snap_ld32(na + 4)) return false;
-        a = na;
-    }
-    return true;
+// Equivalent continuations (thread_chain.h, upstream #565): pairs of return addresses after two calls of
+// the same callee in one function whose following code is the same up to dead scratch registers.
+// - sead::Thread::run (USA 0275FFCC): every sead worker thread (JpegEncodeMgrThread, ...) waits for its
+//   next message in MessageQueue::pop, called once before the message loop (returns to 0275FFEC) and
+//   once at its end (returns to 02760020). Both compare the message with mQuitMessage and branch to the
+//   same two places, which write r0 before reading it and never read r10. JpegEncodeMgrThread waits in
+//   the first pop until a picto is taken or decoded and in the loop pop ever after, so a full state
+//   saved before the first picto would otherwise need a rebuild (or be refused) after it.
+bool equivalent_return(uint32_t a, uint32_t b) {
+    static const std::array<std::array<uint32_t, 2>, 1> pairs = [] {
+        std::array<std::array<uint32_t, 2>, 1> v{};
+        // only when the whole function keeps its layout in the running release (GC: 0 inside a function
+        // that differs)
+        const uint32_t lo = GC(0x0275FFCC), hi = GC(0x0276003C);
+        if (lo && hi && hi - lo == 0x70) v[0] = {GC(0x0275FFEC), GC(0x02760020)};
+        return v;
+    }();
+    for (auto& p : pairs)
+        if (p[0] && p[1] && ((a == p[0] && b == p[1]) || (a == p[1] && b == p[0]))) return true;
+    return false;
 }
+
+// guest call chain of a parked thread: stack pointer, return address and the back chain of saved
+// return addresses must be identical (or equivalent continuations), so its host call stack is the same
+// as the saved one
+thread_chain::Diff chain_diff(const Cpu& cur, const Cpu& saved) {
+    return thread_chain::compare(cur.r[1], cur.lr, saved.r[1], saved.lr, [](uint32_t a) { return ld32(a); },
+                                 [](uint32_t a) { return ss::snap_ld32(a); }, equivalent_return);
+}
+bool same_chain(const Cpu& cur, const Cpu& saved) { return chain_diff(cur, saved).same(); }
 
 uint32_t owner_guest(const void* o, bool& ok) {
     if (!o) return 0;
@@ -1584,7 +1625,7 @@ bool threads_ss_save(ss::Writer& w, std::string& why) {
     for (auto& [a, r] : rv) {
         std::lock_guard<std::mutex> l(r->m);
         w.u32(a);
-        w.u32(r->arrived);
+        w.u32(r->cores.arrived);  // core mask (bit n: core n arrived)
     }
     {
         std::lock_guard<std::mutex> l(g_alarm_mutex);
@@ -1750,16 +1791,23 @@ bool threads_ss_check(ss::Reader r, std::string& why) {
             }
             continue;
         }
-        bool same = s.wst == wst && (s.wst != kParked || (s.wait_kind == t->wait_kind && s.wait_obj == t->wait_obj)) &&
-                    same_chain(t->cpu, s.cpu);
-        if (same) continue;
-        snprintf(buf, sizeof buf, "is at a different place (lr %08X sp %08X, saved lr %08X sp %08X)", t->cpu.lr, t->cpu.r[1], s.cpu.lr,
-                 s.cpu.r[1]);
+        const bool same_wait = s.wst == wst && (s.wst != kParked || (s.wait_kind == t->wait_kind && s.wait_obj == t->wait_obj));
+        const thread_chain::Diff d = chain_diff(t->cpu, s.cpu);
+        if (same_wait && d.same()) continue;
+        std::string reason;
+        if (!same_wait) {
+            snprintf(buf, sizeof buf, "is at a different place (lr %08X sp %08X, saved lr %08X sp %08X)", t->cpu.lr, t->cpu.r[1],
+                     s.cpu.lr, s.cpu.r[1]);
+            reason = buf;
+        } else {
+            // "thread NAME is at a different place (...)" naming the differing field; plan() adds the name itself
+            const std::string name = threads::thread_name(t), full = thread_chain::describe(name, d);
+            reason = full.substr(std::string("thread " + name + " ").size());
+        }
         if (!rebuild) {
-            why = "thread " + threads::thread_name(t) + " " + buf;
+            why = "thread " + threads::thread_name(t) + " " + reason;
             return false;
         }
-        std::string reason = buf;
         if (!plan(s, ARebuild, reason.c_str(), t)) return false;
     }
     for (auto& [g, t] : g_threads) {
@@ -1935,13 +1983,13 @@ void threads_ss_load(ss::Reader& r) {
     cnt = r.u32();
     for (auto& [a, x] : sorted<HRendezvous>(g_rdv)) {
         std::lock_guard<std::mutex> l(x->m);
-        x->arrived = 0;
+        x->cores.reset();
     }
     for (uint32_t i = 0; i < cnt; i++) {
         uint32_t a = r.u32(), arrived = r.u32();
         HRendezvous* x = g_rdv.get(a);
         std::lock_guard<std::mutex> l(x->m);
-        x->arrived = arrived;
+        x->cores.arrived = arrived;
     }
     // alarms; the guest clock continues from the saved time
     uint64_t saved_now;

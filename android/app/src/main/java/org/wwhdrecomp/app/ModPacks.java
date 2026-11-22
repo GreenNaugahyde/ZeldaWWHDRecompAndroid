@@ -284,7 +284,7 @@ final class ModPacks {
      * in "packs_slots_used" (bits), the first read only notes them.
      */
     static void slotsCheck(MainActivity a) {
-        if (a.prefs == null || !perFile(a.prefs)) return;
+        if (a.prefs == null || SavePages.viewing() || !perFile(a.prefs)) return;
         int used = Native.saveSlotsUsed();
         if (used < 0) return;
         int before = a.prefs.getInt("packs_slots_used", -1);

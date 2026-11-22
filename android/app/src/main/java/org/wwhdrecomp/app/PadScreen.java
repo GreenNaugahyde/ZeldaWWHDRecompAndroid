@@ -6,7 +6,6 @@ import android.graphics.Canvas;
 import android.graphics.Paint;
 import android.graphics.Rect;
 import android.graphics.RectF;
-import android.graphics.Typeface;
 import android.view.MotionEvent;
 import android.view.View;
 
@@ -97,9 +96,8 @@ final class PadScreen extends View {
     private final RectF chartRect = new RectF(), listRect = new RectF();
     private float contentH;
 
-    private final Paint fill = new Paint(Paint.ANTI_ALIAS_FLAG), text = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private final Paint fill = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint bmp = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.FILTER_BITMAP_FLAG);
-    private final Paint glyphs = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.FILTER_BITMAP_FLAG);
     private final float dp;
     private final Runnable redraw = () -> post(this::invalidate);
 
@@ -111,7 +109,6 @@ final class PadScreen extends View {
         super(c);
         this.link = link;
         dp = c.getResources().getDisplayMetrics().density;
-        text.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
         labels = padLabels(c);
     }
 
@@ -247,69 +244,13 @@ final class PadScreen extends View {
     }
 
     // ---------------------------------------------------------------- the game's fonts
-    /** text in the game's text font (CKingMsg), h its cell height in pixels, centred on x (align 0), from x (-1) or
-     *  ending at x (1), its cell's middle at y; the system's font until the font is here */
-    private float msg(Canvas c, String t, float x, float y, float h, int color, int align) {
-        GameFont f = GameFont.MSG;
-        if (!f.isReady(getContext(), redraw)) {
-            text.setColor(color);
-            text.setTextSize(h * 0.62f);
-            text.setTextAlign(align == 0 ? Paint.Align.CENTER : align < 0 ? Paint.Align.LEFT : Paint.Align.RIGHT);
-            c.drawText(t, x, y + h * 0.22f, text);
-            return text.measureText(t);
-        }
-        float k = h / f.height(), w = 0;
-        text.setTextSize(h * 0.62f);
-        for (int i = 0; i < t.length(); i++) w += f.has(t.charAt(i)) ? f.advance(t.charAt(i)) * k : text.measureText(String.valueOf(t.charAt(i)));
-        float left = align == 0 ? x - w / 2 : align < 0 ? x : x - w, top = y - h / 2;
-        glyphs.setColor(color);
-        text.setColor(color);
-        text.setTextAlign(Paint.Align.LEFT);
-        for (int i = 0; i < t.length(); i++) {
-            char ch = t.charAt(i);
-            if (f.has(ch)) left += f.draw(c, ch, left, top, k, glyphs);
-            else {
-                String one = String.valueOf(ch);
-                c.drawText(one, left, top + f.baselinePx() * k, text);
-                left += text.measureText(one);
-            }
-        }
-        return w;
-    }
+    private final GameDraw draw = new GameDraw(getContext(), redraw);
 
-    /** the width msg would take */
-    private float msgWidth(String t, float h) {
-        GameFont f = GameFont.MSG;
-        if (!f.isReady(getContext(), redraw)) {
-            text.setTextSize(h * 0.62f);
-            return text.measureText(t);
-        }
-        float k = h / f.height(), w = 0;
-        text.setTextSize(h * 0.62f);
-        for (int i = 0; i < t.length(); i++) w += f.has(t.charAt(i)) ? f.advance(t.charAt(i)) * k : text.measureText(String.valueOf(t.charAt(i)));
-        return w;
-    }
+    private float msg(Canvas c, String t, float x, float y, float h, int color, int align) { return draw.msg(c, t, x, y, h, color, align); }
 
-    /** a label in the game's title font with its outline (CKingMain: tabs, counts), centred at x, y, cell height h */
-    private void title(Canvas c, String t, float x, float y, float h, int fillColor, int outline) {
-        if (GameFont.ready(getContext(), redraw) && GameFont.covers(t)) {
-            float k = h / GameFont.cellHeight();
-            Bitmap b = GameFont.label(t, k, fillColor, outline);
-            if (b != null) {
-                c.drawBitmap(b, x - b.getWidth() / 2f, y - b.getHeight() / 2f, bmp);
-                return;
-            }
-        }
-        text.setTextSize(h * 0.6f);
-        text.setTextAlign(Paint.Align.CENTER);
-        text.setStyle(Paint.Style.STROKE);
-        text.setStrokeWidth(h * 0.1f);
-        text.setColor(outline);
-        c.drawText(t, x, y + h * 0.21f, text);
-        text.setStyle(Paint.Style.FILL);
-        text.setColor(fillColor);
-        c.drawText(t, x, y + h * 0.21f, text);
-    }
+    private float msgWidth(String t, float h) { return draw.msgWidth(t, h); }
+
+    private void title(Canvas c, String t, float x, float y, float h, int fillColor, int outline) { draw.title(c, t, x, y, h, fillColor, outline); }
 
     // ---------------------------------------------------------------- drawing
     private GameUi.GameBackground background;

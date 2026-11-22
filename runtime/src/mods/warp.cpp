@@ -31,6 +31,7 @@
 //
 // Test switch: WWHD_WARP=stage,room,spawn[,layer[,x,y,z,angle]] warps once a save file is loaded.
 #include <atomic>
+#include <thread>
 #include <chrono>
 #include <cmath>
 #include <cstdlib>
@@ -292,6 +293,36 @@ void boot_skip_draw(Cpu* c, uint32_t scene) {
 }
 }  // namespace
 
+// Save file pages (the app's SavePages.java): 0 none, 1 asked, 2 the game holds while the app moves the page's folders,
+// 3 moved: the save read again, 4 not moved. The game's own load of cking.sav (0272391C, the save manager's job 1: the card
+// buffer, the HD-only data, the file numbered in the game info) on the game thread, then each file's panel made again
+// from the new data, as after a copy or a delete (026D0AA0: the menu's entries 02726FC4, the panel 02642EEC and 02643108).
+std::atomic<int> g_page_turn{0};
+void save_page_ask() { int e = 0; g_page_turn.compare_exchange_strong(e, 1); }
+int save_page_state() { return g_page_turn.load(); }
+std::atomic<bool> g_page_ready{false};
+bool save_page_ready() { return g_page_ready.load(std::memory_order_relaxed); }
+// another game's page (a randomized or online game's save, or the game as it is from one of those): the save folder the
+// game reads and writes is that one while it shows (g_page_dir, "" the run's own); its Start or a new game there is not
+// played here: the game holds and the app restarts into that game and file (save_page_start)
+std::mutex g_page_mu;
+std::string g_page_dir, g_home_save;
+std::atomic<bool> g_page_foreign{false}, g_page_go_home{false}, g_page_start_back{false};
+std::atomic<int> g_page_start{0};
+void save_page_moved(bool ok, const std::string& dir) {
+    {
+        std::lock_guard<std::mutex> lk(g_page_mu);
+        g_page_dir = ok ? dir : g_page_dir;
+    }
+    int e = 2;
+    g_page_turn.compare_exchange_strong(e, ok ? 3 : 4);
+}
+bool save_page_foreign() { return g_page_foreign.load(); }
+void save_page_home() { if (g_page_foreign.load()) g_page_go_home = true; }
+int save_page_start() { return g_page_start.load(); }
+void save_page_start_back() { g_page_start_back = true; }
+bool save_page_cancel() { int e = 1; return g_page_turn.compare_exchange_strong(e, 0); }
+
 void warp_title_draw(Cpu* c, uint32_t scene) {
     boot_skip_draw(c, scene);
     if (!g_title_change.load(std::memory_order_relaxed)) return;
@@ -540,6 +571,92 @@ void boot_service(Cpu* c) {
             g_slots_used = used;
         }
     }
+    {
+        static int every = 0;
+        if (++every % 3 == 0) {
+            uint32_t owner = ld32(kNameOwner), menu = object(owner) && name_at(kPlay + kStartStage) == "Name" ? ld32(owner + 0x134) : 0;
+            const uint32_t st = object(menu) ? ld32(menu + 0x27C) : 0xFFFFFFFFu;
+            // the three files listed, none chosen: +0x270 1 (0 while it changes, 2 with a file open: its Start / Copy / Delete
+            // buttons, where +0x27C alone stays 1) and no decision taken (+0x1CC)
+            g_page_ready = object(menu) && st == 1 && ld32(menu + 0x270) == 1 && ld32(menu + 0x1CC) == 0 && !ld32(kOverlap)
+                    && name_state(c) == 1;
+        }
+    }
+    if (g_page_foreign.load()) {  // (another game's file: Start, or a new game's name, goes to that game)
+        static int prevNs = 1;
+        uint32_t owner = ld32(kNameOwner), menu = object(owner) ? ld32(owner + 0x134) : 0;
+        const int ns = name_state(c);
+        const bool go = (ns == 2 && prevNs != 2) || (ns == 3 && prevNs == 1 && object(menu) && ld8(menu + 0x1CD) == 1);
+        prevNs = ns;
+        if (go) {
+            const uint32_t sel = object(menu) ? ld32(menu + 0x280) : 9;
+            const int file = sel < 3 ? (int)sel + 1 : name_file();
+            LOG("[pages] save file %d of another game: waiting for the app's restart", file);
+            g_page_start_back = false;
+            g_page_start = file;
+            auto until = std::chrono::steady_clock::now() + std::chrono::seconds(20);
+            while (!g_page_start_back.load() && std::chrono::steady_clock::now() < until)
+                std::this_thread::sleep_for(std::chrono::milliseconds(20));
+            g_page_start = 0;
+            g_page_start_back = false;
+            LOG("[pages] no restart: back to the files");
+            name_back_to_files(c);
+            prevNs = 1;
+        }
+    }
+    {
+        const uint32_t mgr = ld32(kSaveMgr), pageOwner = ld32(kNameOwner), pageMenu = object(pageOwner) ? ld32(pageOwner + 0x134) : 0;
+        // (only while the three files are listed: no file open, no copy, delete or question under way)
+        if (g_page_turn.load() == 1 && object(mgr) && object(pageMenu) && g_page_ready.load() && !ld32(kOverlap) && name_state(c) == 1) {
+            LOG("[pages] the game holds");
+            g_page_turn = 2;
+            for (int i = 0; i < 5000 && g_page_turn.load() == 2; i++) std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        }
+        if (g_page_go_home.exchange(false) && !g_home_save.empty()) {  // (a save state loaded: the game's own save again)
+            config::save_dir = g_home_save;
+            g_page_foreign = false;
+            {
+                std::lock_guard<std::mutex> lk(g_page_mu);
+                g_page_dir.clear();
+            }
+            LOG("[pages] save folder: the game's own again (a save state)");
+        }
+        int turn = g_page_turn.load();
+        if (turn == 3 && object(mgr)) {
+            {
+                std::string d;
+                {
+                    std::lock_guard<std::mutex> lk(g_page_mu);
+                    d = g_page_dir;
+                }
+                if (g_home_save.empty()) g_home_save = config::save_dir;
+                config::save_dir = d.empty() ? g_home_save : d;
+                g_page_foreign = !d.empty();
+                LOG("[pages] save folder %s", config::save_dir.c_str());
+            }
+            Cpu saved = *c;
+            guest_call(c, GC(0x0272391C), {mgr});
+            int made = 0;
+            const uint32_t entries = object(pageMenu) ? ld32(pageMenu + 0x2D4) : 0;
+            if (object(entries)) {
+                guest_call(c, GC(0x02726FC4), {entries});
+                const uint32_t list = ld32(pageMenu + 0x4C), count = ld32(pageMenu + 0x48);
+                for (uint32_t k = 0; k < 3 && object(list) && count > 8; k++) {  // (the three files' panels: elements 6..8)
+                    const uint32_t panel = ld32(list + (6 + k) * 4);
+                    if (object(panel) && ld32(panel + 0xBC) == entries && ld8(panel + 0xC0) == k) {
+                        guest_call(c, GC(0x02642EEC), {panel});
+                        guest_call(c, GC(0x02643108), {panel});  // (its place name; an empty panel still holds the layout's text)
+                        made++;
+                    }
+                }
+            }
+            *c = saved;
+            LOG("[pages] save read again (result %d), %d panels made", (int)ld32(mgr + 0x24), made);
+            g_page_turn = 0;
+        } else if (turn == 4) {
+            g_page_turn = 0;
+        }
+    }
     if (g_title_cut.load(std::memory_order_relaxed) && name_at(kPlay + kStartStage) == "Name") {
         g_title_cut = false;
         g_boot_skip = 0;  // (the file select there: its way back to the title stays)
@@ -571,8 +688,11 @@ void boot_service(Cpu* c) {
         return;
     }
     uint16_t maxLife = ld16(card + (uint32_t)(file - 1) * kCardSlot);
-    if (maxLife < 12 || maxLife > 80) {
-        LOG("[boot] file select: save file %d has no game (max life %u), left to the player", file, maxLife);
+    // (an empty file holds the game's start values, max life 12 too: it has never been saved, its save counter 0 (+0x153,
+    // dSv_player_info_c), as the file select shows "New Game" for it)
+    uint16_t saves = ld16(card + (uint32_t)(file - 1) * kCardSlot + 0x153);
+    if (maxLife < 12 || maxLife > 80 || saves == 0) {
+        LOG("[boot] file select: save file %d has no game (max life %u, saved %u times), left to the player", file, maxLife, saves);
         return;
     }
     st8(info + kInfoDataNum, (uint8_t)(file - 1));

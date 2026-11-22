@@ -14,6 +14,10 @@ enum class Id { USA, EUR, JPN };
 // chooses the release from the executable's entry point; false if it is neither
 bool select(uint32_t entryPoint);
 Id id();
+// the release the app named before loading the library (WWHD_RELEASE; USA without it). It is id() from then until
+// select(): addresses worked out while the library loads (upstream's file-level GD() constants, online co-op) are
+// this release's
+Id boot_id();
 const char* name();           // "USA" / "EUR" / "JPN"
 const char* name_of(Id id);
 const char* name_of_entry(uint32_t entryPoint);  // "" if unknown

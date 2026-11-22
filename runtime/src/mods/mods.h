@@ -30,6 +30,7 @@ void set_swipe_boat(float k);
 void set_mouse_sensitivity(float s);
 // the game's first-person look ran just now (camera.cpp)
 bool first_person_view();
+inline bool first_person() { return first_person_view(); }  // (upstream's name: online co-op)
 bool first_person_wheel();
 void set_first_person_wheel(bool on);
 bool quick_doors();
@@ -40,6 +41,10 @@ void set_walk_doors(bool on);
 bool walk_doors_by_a();
 bool walk_door_exit();  // walk_doors.cpp: Link went into the doorway of a house door: its scene change runs fast  // they open on A (the game's "Open" prompt) instead of when Link comes near
 void set_walk_doors_by_a(bool on);
+// fpcM_Execute's hook (true60.cpp): true = this process waits this step (the new actors of a room a walk-through door
+// just showed wait as in the door scene; upstream #529). Reset after a state load (process ids start over).
+bool walk_doors_hold(uint32_t proc);
+void walk_doors_hold_reset();
 bool fast_scenes();
 void set_fast_scenes(bool on);
 float run_speed();  // Link's running: multiplier of the distance per step (1 = off)
@@ -79,6 +84,7 @@ void postbox_present();           // the app's Yes: the Picto Box shown to the p
 bool postbox_near();              // Link faces a postbox (its A icon)
 void postbox_pad(input::PadState& s);  // filter_pad: the Picto Box's button pressed for postbox_present
 void postbox_service(Cpu* c);     // game main thread, frame start (interp.cpp)
+void warp_map_service(Cpu* c);    // game main thread, frame start (interp.cpp): the Ballad of Gales' map, a tapped cyclone
 // Link's clothes (clothes.cpp): 0 the story's, 1 Hero's clothes, 2 casual clothes (a change: a puff of smoke)
 int link_clothes();
 void set_link_clothes(int mode);
@@ -88,7 +94,9 @@ void link_colors_service();
 // Player models per save file (player_models.cpp): the played pack (the game's or a randomized game's
 // permanent_3d.pack), the mod packs' folder and each save file's model folder ("": HD Link)
 void set_player_models(const std::string& basePack, const std::string& packsDir, const std::vector<std::string>& folders);
-bool player_model_file(int file);  // save file 0..2 has a model (Link's colours leave it alone)
+bool player_model_file(int file);
+std::string player_model_in_memory();  // the model's folder Link.bfres holds now, "" the game's Link
+void player_model_dirs(std::string& basePack, std::string& packsDir);  // the played pack (Link.szs in it), the packs' folder  // save file 0..2 has a model (Link's colours leave it alone)
 uint32_t player_model_area(uint32_t* size);  // guest memory of the model in (save states keep it); size 0: none
 void player_models_service();  // game main thread, frame start (interp.cpp), before link_colors_service
 // save file names (save_names.cpp): renamed in play, up to 16 characters; their longer part kept in the player model
@@ -243,6 +251,17 @@ void set_boot_file(int file);
 void boot_service(Cpu* c);
 // the save files holding a game as the file select shows them (bits 0..2), -1 outside its file list
 int save_slots_used();
+// save file pages (warp.cpp; SavePages.java): the app asks; 2 = the game holds at a frame start while the file list shows and the
+// app moves the page's folders, then says so: the game reads the save again and makes the file panels again
+void save_page_ask();
+int save_page_state();
+bool save_page_ready();
+void save_page_moved(bool ok, const std::string& dir);
+bool save_page_foreign();
+void save_page_home();
+int save_page_start();
+void save_page_start_back();
+bool save_page_cancel();
 // fopScnM_ChangeReq's hook (turbo.cpp), before the call: the logo's request for the title changed into
 // the file select's (set_boot_skip)
 void boot_scene_request(Cpu* c, uint32_t lr);
@@ -360,10 +379,60 @@ void set_warp_from_title(bool on);
 // here
 void warp_title_draw(Cpu* c, uint32_t scene);
 
+// seamless houses (seamless_houses.cpp): once per logic step after the execute (turbo.cpp's after_execute)
+void seamless_step(Cpu* c);
+bool seamless_hold(uint32_t proc);
+bool seamless_houses();  // Game > Walk-through doors > Houses without loading
+void set_seamless_houses(bool on);
+bool seamless_doors_by_a();
+std::string seamless_file(const std::string& gpath);  // hle/fs.cpp: a seamless house archive read for sea_Room50.szs  // walk-through doors open on A in this house (its people watch the door)  // a house actor waits while Link is not in its house (true60.cpp, fpcM_Execute)
+void walk_doors_arrived();  // walk_doors.cpp: Link was put through a door (the door he stands at stays shut)
+
 // shared helpers (mods.cpp)
 uint64_t step();    // full logic steps so far (interp::logic_steps)
 double game_time(); // seconds of game time (steps / 30)
 bool trace_on();    // WWHD_MODS_TRACE: log mod decisions
 void trace(const char* fmt, ...) __attribute__((format(printf, 1, 2)));
 
+// loot swords (loot_sword.cpp): a sword attack's power in percent of the game's (100 = the game's sword)
+void set_loot_power(int percent);
+int loot_power();
+// its reach: the Master Sword's tip constant times `factor` (1 = the game's)
+void set_loot_reach(float factor, float heroFactor, float tiltDegrees);
+float loot_reach();
+// the loot sword per save file (ids of gcmodel/hd_sword.h, "" the game's), made from the game's files in gameDir;
+// put in over Link's model live (player_models.cpp)
+void set_loot_swords(const std::string& gameDir, const std::vector<std::string>& ids);
+uint32_t loot_sword_area(uint32_t* size);  // its guest memory, with the shield's (save states keep it)
+// the loot shield per save file (ids of gcmodel/hd_sword.h shield_list, "id#tier"; "" the game's); after set_loot_swords
+void set_loot_shields(const std::vector<std::string>& ids);
+std::string loot_in_memory(bool shield);  // the sword's / shield's id on Link now, "" the game's
+// loot armour per save file (slot 0 head, 1 chest, 2 outfit; ids of gcmodel/hd_sword.h armor_list, "id#tier"; "" none); after set_loot_swords
+void set_loot_armor(int slot, const std::vector<std::string>& ids);
+uint32_t loot_armor_area(uint32_t* size);  // its guest memory (save states keep it)
+uint32_t loot_outfit_area(uint32_t* size);
+std::string loot_outfit_in_memory();  // its id on Link now, "" none
+// what Link wears now (loot_sword.cpp: his draw shows it, his damage is lowered by it)
+void set_loot_worn(bool helmet, bool chest, int defencePercent);
+// an outfit at its own proportions: Link's joints stretched once a pose is made (nullptr: not)
+void set_loot_skeleton(const float* ratio, int count, float raise, const float* offset, float armAngle, const float* handFrame, float handScale);
+void loot_before_entry(uint32_t model);  // a model of Link's about to be entered in his draw
+void loot_before_draw(uint32_t link);  // Link's draw starts
+void loot_after_calc(uint32_t model);
+// a loot item in real use (loot_item.cpp): take = make the game's carried weapon `type` (0..5), drop = let go of it; state 0 none, 1 waiting for him to pick it up, 2 in his hand
+void loot_item_take(int type);
+void loot_world_on(bool on);  // loot_world.cpp: enemy drops, wear, chests (android LootWorld)
+void loot_world_service(Cpu* c, uint32_t link, bool settled);
+std::vector<float> loot_world_poll();  // scene, room tick, Link x y z, hits, his yaw, then x y z per defeat
+std::vector<float> loot_world_spots();  // room, set id, x y z per enemy placed in this room
+std::vector<int> loot_world_opened();
+std::string loot_world_where();  // "stage\troom"
+void loot_world_chests(const std::string& stage, const std::vector<int>& keys, const std::vector<int>& rooms, const std::vector<float>& xyz, const std::vector<int>& yaw, const std::vector<int>& flags);
+bool loot_world_project(float* xyz);  // to layout units in xyz[0..1]
+int loot_world_rupees();
+void loot_world_pay(int n);
+void loot_world_test_enemy();
+void loot_item_service(Cpu* c);  // each step in play, in the game's update
+void loot_item_drop();
+int loot_item_state();
 }  // namespace mods

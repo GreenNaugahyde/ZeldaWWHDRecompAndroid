@@ -182,6 +182,36 @@ The original project (macOS, the 60 fps modes, decompilation tools) is described
 
 ## Version history
 
+**0.9.9d**
+
+- Game › **Save file pages** (on): more than three save files. A torn green strip below the files on
+  the file select turns the pages (L / R on a controller), **+** adds a page, Game › Manage pages
+  deletes one. Settings per save file name the page and the file.
+- Controls › Touch › **Button rings**: the sailing compass's thick or the moon clock's thin bronze ring
+  around the round on-screen buttons, the stick and the context buttons (off by default).
+- The **Ballad of Gales** map works by touch: a tap on a cyclone selects it, a second tap sails there,
+  B leaves the map (#79).
+- Game › **Menu language**: **Русский** (Russian) for the app's menus, hints and dialogs (by l1137l,
+  #77); the game itself keeps the release's languages.
+- Graphics › Picture quality › **Bloom strength** (0 to 200 %, 100 % is the original game) and
+  **Distant shadows** (off: the far shadows aren't drawn, less GPU work for weaker phones) (by l1137l,
+  #78, an idea from WindWakerHD-Android-Plus).
+- Graphics › Picture quality › **Grass draw distance**: tall grass farther away is not drawn, a big
+  saving in thick grass on slower phones (All = the original game).
+- **60 fps (interpolated)**: music and sound fades, the sky's and light's colour changes (weather,
+  evening, arrow flashes) and the message box's button icons run at the game's speed instead of twice
+  as fast; the King of Red Lions' whirlwind after the Ballad of Gales is heard; at sea, objects are
+  culled as at 30 fps; a cut tree's top comes to rest at the right angle; the pirate ship's sail no
+  longer tears, and the grass cutter and Moblins' hair behave as at 30 fps.
+- Walk-through doors: going through a house door is faster (the sound no longer holds the new room
+  back), and the Tower of the Gods' statue room no longer stops the game after a walk-through door.
+- Save states work again after freeing Tingle (#75), and a full save state taken before the first
+  picto loads after it too.
+- The options page fits on phones that render apps at a lower resolution (Android game mode, MagicOS)
+  instead of being cut off at the right and bottom (#76).
+- The Grandma's Secret achievement checks Grandma's chest.
+- Quit closes the app cleanly.
+
 **0.9.9c**
 
 - Mods › Mod packs › **Per save file**: each save file has its own packs, presets and loading order.
@@ -831,6 +861,9 @@ fixes, most of the render thread speedups, the record thread, Turnip tile render
 handler.
 
 [Abssenta](https://github.com/Abssenta) contributed pull request #42: the inverted camera up/down.
+
+[l1137l](https://github.com/l1137l) contributed pull requests #77 and #78: the Russian menu language, bloom
+strength and distant shadows (0.9.9d).
 
 [Nycolazs](https://github.com/Nycolazs)'s
 [WindWakerHD-Android-Plus](https://github.com/Nycolazs/WindWakerHD-Android-Plus) gave 60 fps

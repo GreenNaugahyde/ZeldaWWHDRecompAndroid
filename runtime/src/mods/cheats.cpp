@@ -540,11 +540,19 @@ void cheats_service() {
 // its health (0x285 -> 0x3A1) at 1, so any hit takes the last point. Bosses that count hits themselves are
 // not changed by it.
 extern "C" void f_025D475C_orig(Cpu* c);
+extern "C" void coop_hook_025D475C(Cpu* c);
+namespace android_siege { bool march(uint32_t actor, float was[3]); void unmarch(float was[3]); }  // (online/android_siege.cpp)
+namespace android_shipraid { bool before(uint32_t actor, float was[3]); void unmarch(const float was[3]); }  // (online/android_shipraid.cpp)  // (CMakeLists: coop_world.cpp built with hook_025D475C=coop_hook_025D475C)
 extern "C" void hook_025D475C(Cpu* c) {
     const uint32_t a = c->r[3];
     if (mods::infinite(mods::kOneHit) && ld8(a + 0x2DA) == 2 && (int8_t)ld8(a + 0x3A1) > 1) st8(a + 0x3A1, 1);
     mods::touch_actor_seen(a);     // the actor A acts on (touch_state.cpp)
     mods::hit_stop_step(a, true);  // hit freezes switched off (turbo.cpp)
-    f_025D475C_orig(c);
+    float was[3];
+    const bool marching = android_siege::march(a, was);  // (online: a siege monster going for Grandma's house)
+    const bool raiding = !marching && android_shipraid::before(a, was);  // (online: the raiders' ship, its crew, Grandma)
+    coop_hook_025D475C(c);         // online co-op's monsters (mods/coop_world.cpp's hook, renamed there; it runs the original)
+    if (marching) android_siege::unmarch(was);
+    if (raiding) android_shipraid::unmarch(was);
     mods::hit_stop_step(a, false);
 }

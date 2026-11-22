@@ -77,6 +77,7 @@ uint64_t record_stamp();
 bool display_record_blended();    // (the pass being drawn or painted)
 uint64_t display_record_stamp();
 void exact_after_pass(uint32_t ea, uint32_t value, int size);  // (blended record pass: put back before the next logic)
+void keep_draw_side(uint32_t ea);  // a draw's GPU buffer selector: a kept actor's put-back leaves it (interp_keep.h)
 }  // namespace interp
 
 extern "C" {
@@ -784,8 +785,88 @@ extern "C" void hook_025D0994(Cpu* c) {
 // frame interpolation. Advanced once per logic step, shown at the pass's fraction
 // (interp_fade.h bytes_call). Tree data: packet +0x9C, 0xA8 apart, alpha at +3.
 extern "C" void f_025CA6EC_orig(Cpu* c);
+// The game reads one of update's matrices: animation (025C6D40, logic) copies the cut top's mTopMtx (slot +0x24) into
+// the tree's mFallenTopMtx (data +0x70) when it lands, and places the smoke with it. update builds the matrices from
+// the slots' angles and the top's offset, which a blended pass shows blended (sway_calc); the step's record pass
+// builds them exactly again before the next logic pass. When pacing drops the rest of a step (its record pass
+// included), the next logic pass found the blended matrices, and a top landing then rested at a blended pose. After
+// update on a blended pass the exact matrices of the slots shown blended are built as update builds them (the game's
+// matrix functions, the exact angles and offsets) and put in when the next pass starts (fx_pass_start); the pass draws
+// what update built. (debug: WWHD_INTERP_TREE_MTX=0 leaves them as before.)
+namespace {
+constexpr uint32_t kTreeAnm = 0x2A9C, kTreeAnmStride = 0x84, kTreeData = 0x9C, kTreeDataStride = 0xA8;
+constexpr int kTreeAnms = 72, kTreeDatas = 64, kTreeMtxWords = 24;  // mTopMtx +0x24, mTrunkMtx +0x54 (3x4 each)
+struct TreeMtxExact { uint32_t ea; uint32_t w[kTreeMtxWords]; };
+std::vector<TreeMtxExact> g_tree_exact;  // put in at the next pass start
+void tree_exact_matrices(Cpu* c, uint32_t pk) {
+    static const bool off = getenv("WWHD_INTERP_TREE_MTX") && atoi(getenv("WWHD_INTERP_TREE_MTX")) == 0;  // debug: 0 = old
+    if (off) return;
+    const uint32_t lo = pk + kTreeAnm, len = kTreeAnmStride * kTreeAnms;
+    bool blended[kTreeAnms] = {};
+    int n = 0;
+    for (const Temp& e : g_temp)
+        if (e.addr - lo < len) n += !blended[(e.addr - lo) / kTreeAnmStride], blended[(e.addr - lo) / kTreeAnmStride] = true;
+    if (!n) return;
+    static const uint32_t kStack = GD(0x1048D0CC);  // update's work matrix
+    static const uint32_t kRotY = GC(0x025F1884), kConcatX = GC(0x025F1BF4), kConcatY = GC(0x025F1C28), kCopy = GC(0x028E90D4);
+    uint32_t stack[12], drawn[kTreeAnms][0x84 / 4];
+    for (int k = 0; k < 12; k++) stack[k] = ld32(kStack + 4 * k);
+    for (int i = 0; i < kTreeAnms; i++)
+        if (blended[i]) for (int k = 0; k < 0x84 / 4; k++) drawn[i][k] = ld32(lo + kTreeAnmStride * i + 4 * k);
+    for (auto it = g_temp.rbegin(); it != g_temp.rend(); ++it)  // the exact slot values (an s16 entry: its whole word)
+        if (it->addr - lo < len) st32(it->addr, it->exact);
+    const uint32_t sp = c->r[1], lr = c->lr, r3 = c->r[3], r4 = c->r[4], r5 = c->r[5];
+    auto rot = [&](uint32_t a, uint32_t ax, uint32_t ay, uint32_t to) {  // update's rotateY, concatenate X, Y; copy
+        const int16_t cut = (int16_t)ld16(a + 0xA);
+        guest_call(c, kRotY, {kStack, (uint32_t)(int32_t)cut});
+        guest_call(c, kConcatX, {kStack, (uint32_t)(int32_t)(int16_t)ld16(a + ax)});
+        guest_call(c, kConcatY, {kStack, (uint32_t)(int32_t)(int16_t)((int16_t)ld16(a + ay) - cut)});
+        guest_call(c, kCopy, {kStack, a + to});
+    };
+    for (int i = 0; i < kTreeAnms; i++)
+        if (blended[i]) {
+            const uint32_t a = lo + kTreeAnmStride * i;
+            rot(a, 0x4, 0x6, 0x24);  // mTopMtx: mTopAngleX, mTopAngleY
+            rot(a, 0x8, 0x2, 0x54);  // mTrunkMtx: mTrunkAngleX, mTrunkAngleY
+        }
+    c->r[1] = sp, c->lr = lr, c->r[3] = r3, c->r[4] = r4, c->r[5] = r5;
+    // the translations, as update's loop over the trees sets them (active, not clipped this pass; the top of a tree
+    // that has not landed: its position + the top's offset; the trunk: its position)
+    for (int t = 0; t < kTreeDatas; t++) {
+        const uint32_t d = pk + kTreeData + kTreeDataStride * t;
+        const uint8_t state = ld8(d);
+        const int i = (int8_t)ld8(d + 2);
+        if (!(state & 2) || (state & 4) || i < 0 || i >= kTreeAnms || !blended[i]) continue;
+        const uint32_t a = lo + kTreeAnmStride * i;
+        for (int k = 0; k < 3; k++) {
+            const float p = u32_as_f32(ld32(d + 4 + 4 * k));
+            if (!(state & 8)) st32(a + 0x24 + 4 * (3 + 4 * k), f32_as_u32(p + u32_as_f32(ld32(a + 0x18 + 4 * k))));
+            st32(a + 0x54 + 4 * (3 + 4 * k), ld32(d + 4 + 4 * k));
+        }
+    }
+    for (int i = 0; i < kTreeAnms; i++)
+        if (blended[i]) {
+            const uint32_t a = lo + kTreeAnmStride * i;
+            TreeMtxExact x{a + 0x24, {}};
+            for (int k = 0; k < kTreeMtxWords; k++) x.w[k] = ld32(a + 0x24 + 4 * k);
+            g_tree_exact.push_back(x);
+            for (int k = 0; k < 0x84 / 4; k++) st32(a + 4 * k, drawn[i][k]);  // the pass draws what update built
+        }
+    for (int k = 0; k < 12; k++) st32(kStack + 4 * k, stack[k]);
+    static int tr = trace_left(4);
+    if (tr) {
+        tr--;
+        LOG("[interp-fx] trees: exact matrices of %d blended slots kept for the next pass (t %.3f)", n, interp::pass_t());
+    }
+}
+}  // namespace
 extern "C" void hook_025CA6EC(Cpu* c) {
-    if (!on(8) || true60::enabled() || interp::in_execute()) { f_025CA6EC_orig(c); return; }
+    if (!on(8) || true60::enabled() || interp::in_execute()) {
+        const uint32_t pk = c->r[3];
+        f_025CA6EC_orig(c);
+        if (on(16) && halfway()) tree_exact_matrices(c, pk);
+        return;
+    }
     const uint32_t pk = c->r[3];
     static interp::fade::BytesGate<64> gate;
     uint8_t v[64];
@@ -804,6 +885,7 @@ extern "C" void hook_025CA6EC(Cpu* c) {
         st8(pk + 0x9C + 0xA8 * i + 3, v[i]);
         if (v[i] != gate.after[i]) interp::exact_after_pass(pk + 0x9C + 0xA8 * i + 3, gate.after[i], 1);
     }
+    if (on(16) && halfway()) tree_exact_matrices(c, pk);
 }
 extern "C" void hook_0254C6C4(Cpu* c) { sway_calc(c, 0, f_0254C6C4_orig); }
 extern "C" void hook_025C9948(Cpu* c) { sway_calc(c, 1, f_025C9948_orig); }
@@ -992,6 +1074,17 @@ void cloth_packet_fields(Cpu* c, ClothPacketKind kind, void (*original)(Cpu*), c
 void cloth_packet(Cpu* c, ClothPacketKind kind, void (*original)(Cpu*), std::initializer_list<PacketField> fields) {
     cloth_packet_fields(c, kind, original, fields);
 }
+// The custom cloth packets' GPU buffer sets: two sets of GX2 buffers (0x254 bytes each) and the word
+// after them, flipped by every upload (issue #446, interp_keep.h). Registered on every upload, so
+// that a kept actor's put-back leaves the word as the upload left it. Offsets from the packet (r3),
+// read from each upload's code: the sets' base register + 0x950 (2 x 2 buffers) or + 0x4A8 (2 x 1).
+constexpr uint32_t kGpuSetGridSail = 0xCE8 + 0x950, kGpuSetPirateSail = 0xA4 + 0x950, kGpuSetFortressFlag = 0xA4 + 0x950,
+                   kGpuSetBuoyFlag = 0xD24 + 0x950, kGpuSetBuoyPole = 0x1F1C + 0x4A8, kGpuSetPirateFlag = 0x914 + 0x950,
+                   kGpuSetMantle = 0x8BC + 0x4A8, kGpuSetSandFloor = 0x18CF0 + 0x4A8, kGpuSetTapestry = 0xA4 + 0x950,
+                   kGpuSetGoalFlag = 0xA8 + 0x950;
+void gpu_set(Cpu* c, uint32_t offset) {
+    if (interp::enabled()) interp::keep_draw_side(c->r[3] + offset);
+}
 
 // mDoExt_3DlineMat1 (textured: ropes, grapple, bridges) and mDoExt_3DlineMat0 (plain: Ganondorf's
 // hair, Puppet Ganon's strings, Moblin and Stalfos weapon ropes, chained items) generate their GPU
@@ -1039,11 +1132,13 @@ extern "C" void hook_025EA548(Cpu* c) { line_packet(c, f_025EA548_orig, kLineMat
 extern "C" void hook_025EAF58(Cpu* c) { line_packet(c, f_025EAF58_orig, kLineMat0, kLineMat0Layout); }
 extern "C" void f_021625DC_orig(Cpu*); // daHo_packet_c upload (KoRL sail)
 extern "C" void hook_021625DC(Cpu* c) {
+    gpu_set(c, kGpuSetGridSail);
     const uint32_t p = c->r[3];
     cloth_packet(c, kGridSail, f_021625DC_orig, {{p+0xAC, 12, true}, {p+0xE0, 85*3*3}});
 }
 extern "C" void f_0245F638_orig(Cpu*); // pirate ship sail upload
 extern "C" void hook_0245F638(Cpu* c) {
+    gpu_set(c, kGpuSetPirateSail);
     const uint32_t p = c->r[3], i = ld8(p+0x2EBE);
     if (i > 1 || !on(16)) { f_0245F638_orig(c); return; }
     cloth_packet(c, kPirateSail, f_0245F638_orig, {{p+0x1294, 12, true},
@@ -1051,6 +1146,7 @@ extern "C" void hook_0245F638(Cpu* c) {
 }
 extern "C" void f_021B89B4_orig(Cpu*); // Forsaken Fortress flag upload
 extern "C" void hook_021B89B4(Cpu* c) {
+    gpu_set(c, kGpuSetFortressFlag);
     const uint32_t p = c->r[3], i = ld8(p+0x1A2E);
     if (i > 1 || !on(16)) { f_021B89B4_orig(c); return; }
     cloth_packet(c, kFortressFlag, f_021B89B4_orig, {{p+0x1290, 12, true},
@@ -1058,16 +1154,19 @@ extern "C" void hook_021B89B4(Cpu* c) {
 }
 extern "C" void f_0232B624_orig(Cpu*); // buoy flag upload
 extern "C" void hook_0232B624(Cpu* c) {
+    gpu_set(c, kGpuSetBuoyFlag);
     const uint32_t p = c->r[3], i = ld32(p+0xC18);
     if (i > 1 || !on(16)) { f_0232B624_orig(c); return; }
     cloth_packet(c, kBuoyFlag, f_0232B624_orig, {{p+0xC4C, 12, true}, {p+0x9C+i*0x4EC, 35*3*3}});
 }
 extern "C" void f_0232B984_orig(Cpu*); // buoy pole: keep the flag's attachment at the same fraction
 extern "C" void hook_0232B984(Cpu* c) {
+    gpu_set(c, kGpuSetBuoyPole);
     cloth_packet(c, kBuoyPole, f_0232B984_orig, {{c->r[3]+0xC1C, 12, true}});
 }
 extern "C" void f_023D0E68_orig(Cpu*); // pirate ship skull flag upload
 extern "C" void hook_023D0E68(Cpu* c) {
+    gpu_set(c, kGpuSetPirateFlag);
     const uint32_t p = c->r[3], i = ld8(p+0x906);
     if (i > 1 || !on(16)) { f_023D0E68_orig(c); return; }
     cloth_packet(c, kPirateFlag, f_023D0E68_orig, {{p+0x98, 12, true},
@@ -1075,6 +1174,7 @@ extern "C" void hook_023D0E68(Cpu* c) {
 }
 extern "C" void f_021BBC34_orig(Cpu*); // mantle/cape vertex fill and uniforms
 extern "C" void hook_021BBC34(Cpu* c) {
+    gpu_set(c, kGpuSetMantle);
     const uint32_t p = c->r[3];
     cloth_packet(c, kMantle, f_021BBC34_orig,
         {{p+0x98, 12, true}, {p+0xC8, 12, true}, {p+0xFC, 81*3*2}});
@@ -1084,6 +1184,7 @@ extern "C" void hook_021BBC34(Cpu* c) {
 // 02103FA4) moves once per step
 extern "C" void f_02103B30_orig(Cpu*);
 extern "C" void hook_02103B30(Cpu* c) {
+    gpu_set(c, kGpuSetSandFloor);
     const uint32_t p = c->r[3];
     cloth_packet(c, kSandFloor, f_02103B30_orig, {{p+0xCC, 0x1081*3}, {p+0xC6D8, 0x1081*3}});
 }
@@ -1092,6 +1193,7 @@ extern "C" void hook_02103B30(Cpu* c) {
 // and its world matrix (+0x2390)
 extern "C" void f_0239DD2C_orig(Cpu*);
 extern "C" void hook_0239DD2C(Cpu* c) {
+    gpu_set(c, kGpuSetTapestry);
     const uint32_t p = c->r[3], i = ld32(p+0x20BC);
     if (i > 1 || !on(16)) { f_0239DD2C_orig(c); return; }
     cloth_packet(c, kTapestry, f_0239DD2C_orig, {{p+0x2390, 12, true}, {p+0x106C+i*0x6C0, 48*3*3}});
@@ -1101,6 +1203,7 @@ extern "C" void hook_0239DD2C(Cpu* c) {
 // and the flag's matrix (+0x1318)
 extern "C" void f_0215F9E4_orig(Cpu*);
 extern "C" void hook_0215F9E4(Cpu* c) {
+    gpu_set(c, kGpuSetGoalFlag);
     const uint32_t p = c->r[3], i = ld8(p+0x2648);
     if (i > 1 || !on(16)) { f_0215F9E4_orig(c); return; }
     cloth_packet(c, kGoalFlag, f_0215F9E4_orig, {{p+0x1318, 12, true},
@@ -1124,6 +1227,9 @@ void fx_pass_start() {
     g_wave_keep = 0;
     wave_restore();
     temp_restore();
+    for (const TreeMtxExact& x : g_tree_exact)
+        for (int k = 0; k < kTreeMtxWords; k++) st32(x.ea + 4 * k, x.w[k]);
+    g_tree_exact.clear();
 }
 // blended hold pass (after fx_pass_start and the save-state service, which want the exact values):
 // particles, wave crests, sprites, sway and bush animations at this pass's fraction. (Values that

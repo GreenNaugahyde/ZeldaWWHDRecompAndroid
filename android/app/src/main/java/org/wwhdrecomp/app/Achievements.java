@@ -349,7 +349,7 @@ final class Achievements {
             song("song_passing", 5, R.string.ach_t_song_passing),
             // side quests
             own("grandma_chest", QUESTS, 2, CHEST, R.string.ach_t_grandma_chest, R.string.ach_d_grandma_chest,
-                    s -> (s.stageByte(0x0B, 3) & 0x09) == 0x09),
+                    s -> s.chests(0x0B, 1L << 5)),
             own("grandma_soup", QUESTS, 5, GameIcons.itemTexture(0x55), R.string.ach_t_grandma_soup, R.string.ach_d_grandma_soup,
                     s -> s.event(0x2A20)),
             own("black_pig", QUESTS, 3, HEART, R.string.ach_t_black_pig, R.string.ach_d_black_pig, OUTSET, s -> s.stageBit(0, 0x17, 2)),

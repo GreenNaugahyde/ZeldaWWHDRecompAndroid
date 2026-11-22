@@ -21,13 +21,19 @@ final class NewGames {
 
     /** the save data read: a new game's file let go of the old game's model, colours and long name */
     static void check(MainActivity a, byte[] d) {
-        if (a.prefs == null || !isNew(d) || d.length <= Achievements.FILE_NO) return;
+        if (a.prefs == null || SavePages.viewing() || !isNew(d) || d.length <= Achievements.FILE_NO) return;
         int no = d[Achievements.FILE_NO] & 0xFF;
         if (no >= PlayerModels.FILES) return;
         int file = no + 1;
+        Loot.clearCollection(a, file);
         boolean model = a.prefs.contains(PlayerModels.pref(file)), colours = LinkColors.on(a, file),
-                name = a.prefs.contains(SaveNames.pref(file));
-        if (!model && !colours && !name) return;
+                name = a.prefs.contains(SaveNames.pref(file)), sword = a.prefs.contains(Loot.SWORDS.pref(file)) || a.prefs.contains(Loot.SHIELDS.pref(file));
+        if (!model && !colours && !name && !sword) return;
+        if (sword) {  // (a new game: the game's sword; the runtime already shows it)
+            a.prefs.edit().remove(Loot.SWORDS.pref(file)).remove(Loot.SWORDS.prefTier(file)).remove(Loot.SHIELDS.pref(file))
+                    .remove(Loot.SHIELDS.prefTier(file)).apply();
+            Loot.handOver(a);
+        }
         android.util.Log.i("wwhd", "new game in save file " + file + ": the game's Link (was: " + (model ? "model " : "")
                 + (colours ? "colours " : "") + (name ? "long name" : "") + ")");
         a.prefs.edit().remove(PlayerModels.pref(file)).remove(SaveNames.pref(file)).putBoolean(LinkColors.prefOn(file), false).apply();

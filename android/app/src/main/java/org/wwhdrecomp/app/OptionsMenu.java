@@ -438,8 +438,10 @@ final class OptionsMenu extends Dialog {
             outer.addView(plus, new FrameLayout.LayoutParams(-1, -1));
             showPlus();
             setContentView(outer);
+            fitToWindow(outer);
         } else {
             setContentView(root);
+            fitToWindow(root);
         }
         WindowInsetsController ic = w.getInsetsController();  // the window's views exist from here on
         if (ic != null) {
@@ -749,6 +751,36 @@ final class OptionsMenu extends Dialog {
         }
     }
 
+    /**
+     * The page is laid out in the activity's pixels (its window metrics, the game screen's layout units), but this
+     * dialog's window can come in another scale: when the system renders the app at a lower resolution (Android's
+     * game mode downscaling: the activity at 0.85 of the screen, the dialog not; MagicOS the other way round, where
+     * the page came out ~1.2x too big, cut at the right and bottom: issue #76). Then the page keeps the activity's
+     * size and is scaled to the window, as the system scales the activity.
+     */
+    private void fitToWindow(View content) {
+        android.graphics.Rect win = a.getWindowManager().getCurrentWindowMetrics().getBounds();
+        View parent = (View) content.getParent();
+        if (parent == null || win.width() <= 0 || win.height() <= 0) return;
+        parent.addOnLayoutChangeListener((v, l, t, r, b, ol, ot, or, ob) -> {
+            if (r - l <= 0 || b - t <= 0) return;
+            float fx = (r - l) / (float) win.width(), fy = (b - t) / (float) win.height();
+            // (a resolution scale is the same both ways; one side only is a camera cutout not reached yet, as while
+            // the inventory's page is laid out ahead: no scale)
+            boolean same = Math.abs(fx - 1) < 0.01f && Math.abs(fy - 1) < 0.01f || Math.abs(fx - fy) > 0.01f;
+            float sx = same ? 1 : fx, sy = same ? 1 : fy;
+            if (Math.abs(sx - content.getScaleX()) < 0.005f && Math.abs(sy - content.getScaleY()) < 0.005f) return;
+            android.util.Log.i("wwhd", "options page: window " + (r - l) + "x" + (b - t) + ", laid out for " + win.width() + "x" + win.height());
+            v.post(() -> {
+                content.setLayoutParams(same ? new FrameLayout.LayoutParams(-1, -1) : new FrameLayout.LayoutParams(win.width(), win.height()));
+                content.setPivotX(0);
+                content.setPivotY(0);
+                content.setScaleX(sx);
+                content.setScaleY(sy);
+            });
+        });
+    }
+
     private int arrowW;  // the page arrow's width (onCreate)
     private PlusButton plus;
 
@@ -940,6 +972,47 @@ final class OptionsMenu extends Dialog {
                         .button(android.R.string.ok, null).show());
     }
 
+    // ---- Game > Save file pages: each page with its files; one deleted after a question
+    private void savePagesPage() {
+        pageTitle(R.string.pages_manage);
+        note(a.getString(R.string.pages_manage_about));
+        for (int p = 1; p <= SavePages.count(a); p++) {
+            final int page = p;
+            String title = a.getString(R.string.file_page, p) + (p == SavePages.page(a) ? " \u00B7 " + a.getString(R.string.file_in_use) : "");
+            submenu(title, SavePages.pageSummary(a, p), "", () -> {
+                int why = SavePages.whyNotDelete(a, page);
+                if (why != 0) {
+                    new GameDialog(a).title(a.getString(R.string.file_page, page)).message(a.getString(why)).button(R.string.opt_ok, null).show();
+                    return;
+                }
+                new GameDialog(a).title(a.getString(R.string.pages_delete_title, page))
+                        .message(a.getString(R.string.pages_delete_message, SavePages.pageSummary(a, page)))
+                        .button(R.string.opt_cancel, null)
+                        .button(R.string.pages_delete, () -> {
+                            SavePages.deletePage(a, page);
+                            fill();
+                        }).show();
+            });
+        }
+    }
+
+    // what a per-file setting changes: page, file and its name
+    // the page whose files the settings below change (not while the game's own page turns: SavePages.view)
+    private int viewDepth;
+
+    private void pageRow() {
+        if (!SavePages.shown(a)) return;
+        choice(rowText(a.getString(R.string.file_page_row), a.getString(R.string.file_page_row_hint)), SavePages.pageLabels(a), SavePages.viewed(a) - 1, i -> {
+            viewDepth = pageStack.size();
+            SavePages.view(a, i + 1);
+            fill();
+        });
+    }
+
+    private void targetNote(int file) {
+        note(a.getString(R.string.file_target, SavePages.target(a, file)));
+    }
+
     private void note(String text) {
         TextView t = GameUi.text(getContext(), gameStyle);
         t.setText(text);
@@ -983,6 +1056,7 @@ final class OptionsMenu extends Dialog {
 
     @Override
     public void dismiss() {
+        SavePages.endView(a);
         boolean game = !a.gameLanguage().equals(languageAtOpen), menu = !a.menuLanguage().equals(menuLanguageAtOpen);
         if (game || menu) {
             languageAtOpen = a.gameLanguage();
@@ -1030,6 +1104,7 @@ final class OptionsMenu extends Dialog {
     // ---- the tabs' settings
     private void fill() {
         if (rows == null) return;
+        if (SavePages.viewing() && (page == null || pageStack.size() < viewDepth)) SavePages.endView(a);  // (left the settings page)
         View focused = getCurrentFocus();
         int focusIndex = focused != null && focused.getParent() == rows ? rows.indexOfChild(focused) : -1;
         rows.removeAllViews();
@@ -1284,6 +1359,14 @@ final class OptionsMenu extends Dialog {
         toggle(R.string.opt_distant_shadows, R.string.opt_distant_shadows_hint, Native.getOption("distant_shadows") != 0,
                on -> a.setBool("distant_shadows", on));
         toggle(R.string.opt_aniso, 0, Native.getOption("aniso") != 0, on -> a.setBool("aniso", on));
+        // tall grass farther than this from the camera is not drawn (upstream's Graphics > Grass draw distance)
+        final int[] grass = {0, 4000, 3000, 2000};
+        int grassCur = 0;
+        for (int i = 0; i < grass.length; i++) if (grass[i] == a.prefs.getInt("grass_distance", 0)) grassCur = i;
+        choice(R.string.opt_grass, R.string.opt_grass_hint, a.getResources().getStringArray(R.array.grass_distances), grassCur, i -> {
+            a.prefs.edit().putInt("grass_distance", grass[i]).apply();
+            Native.setOption("grass_distance", grass[i]);
+        });
     }
 
     // Graphics > Screen: the picture's shape and zoom, the TV and GamePad screens' places
@@ -1364,16 +1447,16 @@ final class OptionsMenu extends Dialog {
         java.util.List<Integer> menuLangs = new java.util.ArrayList<>();
         menuLangs.add(0);  // English
         for (int l : langs) if (l != 0) menuLangs.add(l);
-        int ru = java.util.Arrays.asList(MainActivity.LANGUAGES).indexOf("ru");   // Russian (res/values-ru)
+        int ru = java.util.Arrays.asList(MainActivity.MENU_LANGUAGES).indexOf("ru");   // Russian (res/values-ru)
         if (ru >= 0 && !menuLangs.contains(ru)) menuLangs.add(ru);
         String[] menuNames = new String[menuLangs.size()];
         int curMenu = 0;
         for (int i = 0; i < menuNames.length; i++) {
-            menuNames[i] = MainActivity.LANGUAGE_NAMES[menuLangs.get(i)];
-            if (MainActivity.LANGUAGES[menuLangs.get(i)].equals(a.menuLanguage())) curMenu = i;
+            menuNames[i] = MainActivity.MENU_LANGUAGE_NAMES[menuLangs.get(i)];
+            if (MainActivity.MENU_LANGUAGES[menuLangs.get(i)].equals(a.menuLanguage())) curMenu = i;
         }
         choice(R.string.opt_menu_language, R.string.opt_menu_language_hint, menuNames, curMenu,
-                i -> a.setMenuLanguage(MainActivity.LANGUAGES[menuLangs.get(i)]));
+                i -> a.setMenuLanguage(MainActivity.MENU_LANGUAGES[menuLangs.get(i)]));
         GameProgress.Result progress = GameProgress.read(GameProgress.labels(a));
         submenu(R.string.opt_progress, R.string.opt_progress_hint, progress != null ? progress.percent() + " %" : "",
                 () -> openPage(this::progressPage));
@@ -1382,8 +1465,17 @@ final class OptionsMenu extends Dialog {
         submenu(R.string.opt_ach_settings, R.string.opt_ach_settings_hint, "", () -> openPage(this::achievementSettingsPage));
         submenu(R.string.rando_title, R.string.rando_hint, Randomizer.playing(a) ? a.getString(R.string.rando_on_now) : "",
                 () -> openPage(this::randoPage));
+        if (BuildConfig.ONLINE)
+            submenu(R.string.coop_title, R.string.coop_hint, Native.coopOnline() ? a.getString(R.string.opt_on) : "", () -> openPage(onlinePage));
         toggle(R.string.opt_skip_title, R.string.opt_skip_title_hint, a.prefs.getBoolean("skip_title", false),
                 on -> a.prefs.edit().putBoolean("skip_title", on).apply());  // (read at the next start)
+        toggle(R.string.opt_save_pages, R.string.opt_save_pages_hint, a.prefs.getBoolean("save_pages_on", true),
+                on -> a.prefs.edit().putBoolean("save_pages_on", on).apply());
+        if (a.prefs.getBoolean("save_pages_on", true) && !Randomizer.playing(a) && !OnlineGames.playing(a))
+            submenu(a.getString(R.string.pages_manage), a.getString(R.string.pages_manage_hint), String.valueOf(SavePages.count(a)),
+                    () -> openPage(this::savePagesPage));
+        toggle(R.string.opt_ask_game, BuildConfig.ONLINE ? R.string.opt_ask_game_hint : R.string.opt_ask_game_hint_rando, a.prefs.getBoolean("ask_game_at_start", false),
+                on -> a.prefs.edit().putBoolean("ask_game_at_start", on).apply());
         modToggle(3, R.string.opt_mod_quick_doors, R.string.opt_mod_speed_hint);
         modToggle(10, R.string.opt_mod_walk_doors, R.string.opt_mod_walk_doors_hint);
         if (a.prefs.getBoolean(MainActivity.MODS[10], false)) {  // how they open: Link coming near, or A on the game's Open prompt
@@ -1394,6 +1486,14 @@ final class OptionsMenu extends Dialog {
                         a.prefs.edit().putBoolean("mod_walk_doors_a", k == 1).apply();
                         Native.setOption("mod_walk_doors_a", k);
                     });
+            // houses on the sea loaded near their doors and entered without a load (mods/seamless_houses.cpp)
+            if (BuildConfig.SEAMLESS) {
+            indentNext = true;
+            toggle(R.string.opt_mod_seamless_houses, R.string.opt_mod_seamless_houses_hint, a.prefs.getBoolean("mod_seamless_houses", false), on -> {
+                a.prefs.edit().putBoolean("mod_seamless_houses", on).apply();
+                Native.setOption("mod_seamless_houses", on ? 1 : 0);
+            });
+            }
         }
         modToggle(4, R.string.opt_mod_fast_scenes, R.string.opt_mod_speed_hint);
         modToggle(5, R.string.opt_mod_ff_cutscenes, R.string.opt_mod_ff_hint);
@@ -1533,6 +1633,10 @@ final class OptionsMenu extends Dialog {
         if (Randomizer.pending(a.prefs)) note(Randomizer.remaking(a.prefs) != 0
                 ? a.getString(R.string.rando_remake_pending, Randomizer.name(a, Randomizer.remaking(a.prefs)))
                 : a.getString(R.string.rando_pending));
+        String[] scopes = {a.getString(R.string.online_scope_off), a.getString(R.string.online_scope_whole), a.getString(R.string.online_scope_files)};
+        if (BuildConfig.ONLINE)
+            choice(R.string.online_scope, R.string.rando_online_next_hint, scopes, a.prefs.getInt(OnlineGames.PREF_RANDO_NEXT, OnlineGames.OFF),
+                k -> a.prefs.edit().putInt(OnlineGames.PREF_RANDO_NEXT, k).apply());
         addAction(rows, R.string.rando_make, () -> {
             int same = Randomizer.sameGame(a);
             GameDialog d = new GameDialog(a).title(R.string.rando_make).button(R.string.opt_cancel, null);
@@ -1568,6 +1672,9 @@ final class OptionsMenu extends Dialog {
                 String.valueOf(Randomizer.lastInfo(a, n, "seed")), Randomizer.gameMb(a, n)));
         if (n == Randomizer.playingGame(a)) note(a.getString(R.string.rando_playing_this));
         else addAction(rows, R.string.rando_play_this, () -> playRando(n));
+        String[] scopes = {a.getString(R.string.online_scope_off), a.getString(R.string.online_scope_whole), a.getString(R.string.online_scope_files)};
+        if (BuildConfig.ONLINE)
+            choice(R.string.online_scope, R.string.rando_online_game_hint, scopes, OnlineGames.scopeOf(a, "r" + n), k -> OnlineGames.setScopeOf(a, "r" + n, k));
         // Link's colours as they are now on Randomizer > Link's colours: the same game made again (its save stays)
         addAction(rows, R.string.rando_remake, () -> new GameDialog(a).title(Randomizer.name(a, n))
                 .message(a.getString(R.string.rando_remake_ask))
@@ -1898,6 +2005,10 @@ final class OptionsMenu extends Dialog {
     // textures are made again for the game (shown at once)
     private void lookChanged() {
         if (!lookGame) return;
+        if (!LinkColors.on(a, lookFile)) {  // (a colour changed is a colour wanted: the switch shows it on)
+            a.prefs.edit().putBoolean(LinkColors.prefOn(lookFile), true).apply();
+            rows.post(this::fill);
+        }
         if (!LinkColors.separate(a, lookFile)) RandoNative.syncShared(Randomizer.data(a), lookWork);
         LinkColors.remakeSoon(a);
     }
@@ -1941,13 +2052,15 @@ final class OptionsMenu extends Dialog {
         LinkColors c = LinkColors.read(a, lookWork);
         if (c == null) return;
         if (lookGame) {
-            String[] files = new String[LinkColors.FILES];
-            for (int i = 0; i < files.length; i++) files[i] = a.getString(R.string.look_file_n, i + 1);
+            pageRow();
+            String[] files = SavePages.fileLabels(a, LinkColors.FILES);
             choice(rowText(a.getString(R.string.look_file), a.getString(R.string.look_file_hint)), files, lookFile - 1, i -> {
                 lookFile = i + 1;
                 a.prefs.edit().putInt("link_colors_file", lookFile).apply();
                 lookWork = LinkColors.fileWork(a, lookFile);
+                fill();  // (the switch, the preview and the colours are that file's)
             });
+            targetNote(lookFile);
             // (a file playing as a GameCube player model: the model's own colours, nothing to set here)
             String model = PlayerModels.get(a, lookFile);
             if (model != null) {
@@ -2142,6 +2255,8 @@ final class OptionsMenu extends Dialog {
         e.setText(cur);
         e.setSingleLine(true);
         e.setTextColor(GameUi.INK);
+        e.setSelectAllOnFocus(true);  // (typing replaces the old value; a tap places the cursor)
+        e.requestFocus();
         new GameDialog(a).title(title).content(e).button(R.string.opt_cancel, null).button(R.string.opt_ok, () -> {
             set.set(e.getText().toString());
             fill();
@@ -2619,6 +2734,593 @@ final class OptionsMenu extends Dialog {
         }
     }
 
+    // ---- Game > Online: upstream's online co-op (issue #444; runtime/src/online/android_coop.cpp), cross-play with its
+    // PC builds and servers. The settings are the native side's (Native.coopSettings, the app's files/online folder).
+    private final Runnable onlinePage = this::onlinePage;
+    private String onlineSeen = "";  // what the page showed last (redrawn when the session's state changes)
+
+    private java.util.Map<String, String> coopSettings() {
+        java.util.Map<String, String> m = new java.util.HashMap<>();
+        for (String line : Native.coopSettings().split("\n")) {
+            int eq = line.indexOf('=');
+            if (eq > 0) m.put(line.substring(0, eq), line.substring(eq + 1));
+        }
+        return m;
+    }
+
+    private void coopSet(String key, String value) {
+        Native.coopSaveSettings(key + "=" + value.replace('\n', ' '));
+        fill();
+    }
+
+    // "address[:port]" into the address and port keys
+    private void coopSetAddress(String addrKey, String portKey, String text) {
+        String t = text.trim();
+        if (t.isEmpty()) return;
+        int colon = t.lastIndexOf(':');
+        int port = 7777;
+        if (colon > 0 && t.indexOf(':') == colon) {  // (one colon: host:port; IPv6 addresses keep theirs)
+            try {
+                port = Integer.parseInt(t.substring(colon + 1).trim());
+                t = t.substring(0, colon).trim();
+            } catch (NumberFormatException ignored) {
+            }
+        }
+        Native.coopSaveSettings(addrKey + "=" + t + "\n" + portKey + "=" + port);
+        fill();
+    }
+
+    // the session's state the page shows: redrawn once a second when it changed
+    private String onlineState() {
+        // (the ping and other numbers that change all the time left out: the page is drawn again only when something
+        // else changed, so the focus and Android's view of the page hold still)
+        StringBuilder b = new StringBuilder(Native.coopStatus().replaceAll("[0-9]+ ms", ""));
+        for (String p : Native.coopPlayers()) {
+            String[] f = tabs(p);
+            if (f.length > 4) f[4] = "";
+            b.append('|').append(String.join("\t", f));
+        }
+        for (String i : Native.coopInvites()) b.append('|').append(i);
+        b.append('|').append(Native.coopModProblems()).append('|').append(Native.coopPartyMods());
+        int[] flags = Native.coopPartyFlags();
+        if (flags != null) b.append('|').append(flags[0]).append(',').append(flags[1]);
+        for (String t : Native.coopModelTransfers()) {  // (a step of 10 % at a time)
+            String[] f = tabs(t);
+            b.append('|').append(f.length > 3 ? f[0] + f[1] + f[2] + (Integer.parseInt(f[3]) / 10) : t);
+        }
+        return b.toString();
+    }
+
+    private final Runnable onlineTick = new Runnable() {
+        @Override
+        public void run() {
+            if (page != onlinePage || !isShowing()) return;
+            String now = onlineState();
+            if (!now.equals(onlineSeen)) fill();
+            rows.postDelayed(this, 1000);
+        }
+    };
+
+    private static String[] tabs(String line) { return line.split("\t", -1); }
+
+    // "File 2 · Name" (the name the game has for it, when it has one)
+    private String onlineFileName(int file) {
+        String[] names = SaveNames.current();
+        String n = names != null && file - 1 < names.length ? names[file - 1] : null;
+        return n != null && !n.trim().isEmpty() ? a.getString(R.string.online_file_named, file, n.trim()) : a.getString(R.string.online_file, file);
+    }
+
+    // Game > Online's first rows: what of this game plays online and whose settings follow; false: none (nothing more)
+    private boolean onlineScopeRows() {
+        if (OnlineGames.playing(a)) {
+            note(a.getString(R.string.online_game_this, OnlineGames.name(a, OnlineGames.playingGame(a))));
+            submenu(R.string.online_games, R.string.online_games_hint, String.valueOf(OnlineGames.games(a).size()),
+                    () -> openPage(this::onlineGamesPage));
+            return true;
+        }
+        int scope = OnlineGames.scope(a);
+        choice(R.string.online_scope, R.string.online_scope_hint, new String[] {a.getString(R.string.online_scope_off),
+                a.getString(R.string.online_scope_whole), a.getString(R.string.online_scope_files)}, scope, k -> OnlineGames.setScope(a, k));
+        int files = OnlineGames.files(a);
+        if (scope == OnlineGames.FILES)
+            for (int k = 1; k <= 3; k++) {
+                final int file = k;
+                toggle(rowText(onlineFileName(k), a.getString(R.string.online_file_hint)), (files & 1 << (k - 1)) != 0,
+                        v -> OnlineGames.setFile(a, file, v));
+            }
+        submenu(R.string.online_games, R.string.online_games_hint, OnlineGames.games(a).isEmpty() ? "" : String.valueOf(OnlineGames.games(a).size()),
+                () -> openPage(this::onlineGamesPage));
+        if (scope == OnlineGames.OFF) {
+            note(a.getString(R.string.online_off_note));
+            return false;
+        }
+        if (scope == OnlineGames.WHOLE) return true;
+        if (files == 0) {
+            note(a.getString(R.string.online_no_files));
+            return false;
+        }
+        String[] now = OnlineGames.now();
+        int played = 0;
+        try {
+            played = Integer.parseInt(now[1]);
+        } catch (NumberFormatException ignored) {
+        }
+        if (played >= 1 && played <= 3 && (files & 1 << (played - 1)) != 0) {
+            heading(a.getString(R.string.online_settings_playing, onlineFileName(played)), false);
+            return true;
+        }
+        java.util.List<Integer> chosen = new java.util.ArrayList<>();
+        StringBuilder list = new StringBuilder();
+        for (int k = 1; k <= 3; k++)
+            if ((files & 1 << (k - 1)) != 0) {
+                chosen.add(k);
+                if (list.length() > 0) list.append(", ");
+                list.append(onlineFileName(k));
+            }
+        note(a.getString(R.string.online_waits_files, list.toString()));
+        String[] names = new String[chosen.size()];
+        for (int i = 0; i < names.length; i++) names[i] = onlineFileName(chosen.get(i));
+        int cur = Math.max(0, chosen.indexOf(OnlineGames.editFile(a)));
+        choice(R.string.online_settings_of, R.string.online_settings_of_hint, names, cur, k -> OnlineGames.setEditFile(a, chosen.get(k)));
+        return true;
+    }
+
+    // Game > Online > Online games: games of their own for playing online (their own save files and states)
+    private void onlineGamesPage() {
+        pageTitle(R.string.online_games);
+        note(a.getString(R.string.online_games_about));
+        int now = OnlineGames.playingGame(a);
+        for (int n : OnlineGames.games(a)) {
+            final int g = n;
+            submenu(OnlineGames.name(a, n), null, n == now ? a.getString(R.string.rando_playing_now) : "", () -> {
+                onlineGame = g;
+                openPage(this::onlineGamePage);
+            });
+        }
+        if (now != 0) addAction(rows, R.string.online_game_back_plain, () -> {
+            Randomizer.choose(a, 0);
+            a.restartForPacks();
+        });
+        addAction(rows, R.string.online_game_new, () -> askText(R.string.online_game_new_name, "", t -> {
+            int n = OnlineGames.create(a, t);
+            new GameDialog(a).title(OnlineGames.name(a, n)).message(R.string.online_game_play_now)
+                    .button(R.string.online_game_later, null)
+                    .button(R.string.online_game_play, () -> {
+                        OnlineGames.choose(a, n);
+                        a.restartForPacks();
+                    }).show();
+        }));
+    }
+
+    // Game > Online > Online games > one: play it, rename it, delete it
+    private int onlineGame;
+
+    private void onlineGamePage() {
+        int n = onlineGame;
+        if (!OnlineGames.exists(a, n)) {  // (deleted)
+            page = pageStack.poll();
+            fill();
+            return;
+        }
+        String name = OnlineGames.name(a, n);
+        pageTitle(name);
+        boolean playing = n == OnlineGames.playingGame(a);
+        if (playing) note(a.getString(R.string.online_game_playing));
+        else addAction(rows, R.string.online_game_play_this, () -> {
+            OnlineGames.choose(a, n);
+            a.restartForPacks();
+        });
+        addAction(rows, R.string.online_game_rename, () -> askText(R.string.online_game_rename, name, t -> {
+            if (!t.trim().isEmpty()) OnlineGames.rename(a, n, t);
+        }));
+        addAction(rows, R.string.online_game_delete, () -> new GameDialog(a).title(name)
+                .message(a.getString(R.string.online_game_delete_ask, name))
+                .button(R.string.opt_cancel, null)
+                .button(R.string.online_game_delete, () -> {
+                    OnlineGames.delete(a, n);
+                    if (playing) {  // (the game as it is from a restart on)
+                        a.restartForPacks();
+                        return;
+                    }
+                    page = pageStack.poll();
+                    fill();
+                }).show());
+    }
+
+    private void onlinePage() {
+        pageTitle(R.string.coop_title);
+        onlineSeen = onlineState();
+        rows.removeCallbacks(onlineTick);
+        rows.postDelayed(onlineTick, 1000);
+        if (Native.coopUnsupported()) {  // (the JPN release: the co-op code's offsets are the USA / EUR ones)
+            note(a.getString(R.string.coop_unsupported_jpn));
+            return;
+        }
+        boolean noticeOk = "1".equals(coopSettings().get("notice_ok"));
+        if (!noticeOk) {  // (nothing is sent before the privacy notice is accepted)
+            note(a.getString(R.string.coop_notice_title));
+            note(Native.coopNotice());
+            submenu(R.string.coop_notice_accept, 0, "", () -> coopSet("notice_ok", "1"));
+            return;
+        }
+        // which games and save files go online (OnlineGames), then the settings of the one in use
+        if (!onlineScopeRows()) return;
+        java.util.Map<String, String> set = coopSettings();  // (the settings of the game or file chosen above)
+        boolean on = "1".equals(OnlineGames.now()[2]);
+        boolean server = "1".equals(set.get("server"));
+        int way = server ? 0 : "1".equals(set.get("role")) ? 2 : 1;
+        choice(R.string.coop_way, R.string.coop_way_hint,
+                new String[] {a.getString(R.string.coop_way_server), a.getString(R.string.coop_way_host), a.getString(R.string.coop_way_join)}, way,
+                k -> Native.coopSaveSettings("server=" + (k == 0 ? 1 : 0) + "\nrole=" + (k == 2 ? 1 : 0)));
+        if (server) {
+            String addr = set.get("server_addr") + ":" + set.get("server_port");
+            submenu(R.string.coop_server, R.string.coop_server_hint, addr,
+                    () -> askText(R.string.coop_server, addr, t -> coopSetAddress("server_addr", "server_port", t)));
+            String[] saved = Native.coopServers();
+            if (saved.length > 0) submenu(R.string.coop_saved_servers, R.string.coop_saved_servers_hint, String.valueOf(saved.length),
+                    () -> openPage(this::onlineServersPage));
+        } else if (way == 2) {
+            String addr = set.get("addr") + ":" + set.get("port");
+            submenu(R.string.coop_host_addr, R.string.coop_host_addr_hint, addr,
+                    () -> askText(R.string.coop_host_addr, addr, t -> coopSetAddress("addr", "port", t)));
+        } else {
+            String port = set.get("port");
+            submenu(R.string.coop_port, 0, port, () -> askText(R.string.coop_port, port, t -> coopSet("port", t.trim())));
+        }
+        String name = set.get("name");
+        submenu(R.string.coop_name, R.string.coop_name_hint, name, () -> askText(R.string.coop_name, name, t -> {
+            if (!t.trim().isEmpty()) coopSet("name", t.trim());
+        }));
+        String[] tunics = {a.getString(R.string.coop_tunic_0), a.getString(R.string.coop_tunic_1), a.getString(R.string.coop_tunic_2),
+                a.getString(R.string.coop_tunic_3)};
+        int tunic = 0;
+        try {
+            tunic = Integer.parseInt(set.get("tunic"));
+        } catch (NumberFormatException ignored) {
+        }
+        choice(R.string.coop_tunic, 0, tunics, tunic, k -> Native.coopSaveSettings("tunic=" + k));
+        note(a.getString(R.string.coop_status) + ": " + Native.coopStatus());
+        String problems = Native.coopModProblems();
+        if (!problems.isEmpty()) note(a.getString(R.string.coop_mod_problems, problems));
+        String partyMods = Native.coopPartyMods();  // (a party turned this game away for its gameplay options)
+        if ("match".equals(partyMods)) note(a.getString(R.string.coop_party_mods_match));
+        else if ("use".equals(partyMods)) submenu(R.string.coop_party_mods, R.string.coop_party_mods_hint, "", this::coopUsePartyMods);
+        else if (partyMods.startsWith("no\t")) note(a.getString(R.string.coop_party_mods_cant, partyMods.substring(3)));
+        if (on) submenu(R.string.coop_retry, 0, "", () -> { Native.coopRetry(); fill(); });
+        if (server) {
+            String code = Native.coopFriendCode();
+            if (!code.isEmpty()) submenu(R.string.coop_friend_code, R.string.coop_friend_code_hint, code, () -> {
+                android.content.ClipboardManager cm = (android.content.ClipboardManager) a.getSystemService(android.content.Context.CLIPBOARD_SERVICE);
+                if (cm != null) cm.setPrimaryClip(android.content.ClipData.newPlainText("friend code", code));
+                android.widget.Toast.makeText(a, R.string.coop_copied, android.widget.Toast.LENGTH_SHORT).show();
+            });
+            if (Native.coopViaServer()) {
+                submenu(R.string.coop_invite, R.string.coop_invite_hint, "", () -> askText(R.string.coop_invite, "", t -> {
+                    String why = Native.coopInvite(t.trim());
+                    android.widget.Toast.makeText(a, why.isEmpty() ? a.getString(R.string.coop_invite_sent) : why,
+                            android.widget.Toast.LENGTH_SHORT).show();
+                }));
+                for (String inv : Native.coopInvites()) {
+                    String[] f = tabs(inv);
+                    if (f.length < 2) continue;
+                    int party = (int) Long.parseLong(f[0]);
+                    submenu(a.getString(R.string.coop_invitation, f[1]), null, "", () -> new GameDialog(a)
+                            .title(a.getString(R.string.coop_invitation, f[1]))
+                            .button(R.string.coop_decline, () -> { Native.coopAnswer(party, false); fill(); })
+                            .button(R.string.coop_join, () -> { Native.coopAnswer(party, true); fill(); }).show());
+                }
+            }
+        }
+        // a randomized game: the seed goes to a friend as text (the game protocol is not touched: upstream's server keeps
+        // each game in a world of its own, so a vanilla game never meets a randomized one there)
+        if (server && Randomizer.playing(a)) {
+            String link = Randomizer.lastInfo(a, Randomizer.playingGame(a), "permalink");
+            if (link != null && !link.isEmpty())
+                submenu(R.string.coop_seed_share, R.string.coop_seed_share_hint, "", () -> shareText(coopSeedText(link, set)));
+        }
+        if (Randomizer.releaseOk(a))
+            submenu(R.string.coop_seed_play, R.string.coop_seed_play_hint, "", () -> askText(R.string.coop_seed_play, clipboardText(), this::coopSeedFrom));
+        // the party, then the players nearby (strangers through a server)
+        String[] players = Native.coopPlayers();
+        java.util.List<String[]> members = new java.util.ArrayList<>(), others = new java.util.ArrayList<>();
+        for (String p : players) {
+            String[] f = tabs(p);
+            if (f.length >= 7) ("1".equals(f[3]) ? members : others).add(f);
+        }
+        if (Native.coopOnline()) {
+            int[] size = Native.coopPartySize();
+            note(a.getString(R.string.coop_party, size[1], size[0]));
+            for (String[] f : members) {
+                int id = Integer.parseInt(f[0]);
+                int t = Integer.parseInt(f[2]) & 3;
+                submenu(f[1], tunics[t] + " · " + f[4] + " ms", a.getString(R.string.coop_go_to), () -> { Native.coopGoTo(id); closeToGame(); });
+            }
+            if (Native.coopViaServer() && size[1] > 1) submenu(R.string.coop_leave, 0, "", () -> { Native.coopLeaveParty(); fill(); });
+            int[] flags = Native.coopPartyFlags();  // the party's switches: the leader sets them, everyone sees them
+            if (flags != null) {
+                note(a.getString(flags[1] == 1 ? R.string.coop_switches_lead : R.string.coop_switches_member));
+                int[] bits = {1, 2, 4, 16};
+                int[] names = {R.string.coop_switch_progress, R.string.coop_switch_rupees, R.string.coop_switch_ff, R.string.coop_switch_together};
+                int[] hints = {R.string.coop_switch_progress_hint, R.string.coop_switch_rupees_hint, R.string.coop_switch_ff_hint,
+                        R.string.coop_switch_together_hint};
+                for (int i = 0; i < bits.length; i++) {
+                    final int bit = bits[i];
+                    final boolean v = (flags[0] & bit) != 0;
+                    if (flags[1] != 1) {
+                        submenu(names[i], hints[i], a.getString(v ? R.string.opt_on : R.string.opt_off),
+                                () -> android.widget.Toast.makeText(a, R.string.coop_switches_member, android.widget.Toast.LENGTH_SHORT).show());
+                        continue;
+                    }
+                    toggle(names[i], hints[i], v, nv -> {
+                        int[] now = Native.coopPartyFlags();
+                        if (now == null) return;
+                        String why = Native.coopSetPartyFlags(nv ? now[0] | bit : now[0] & ~bit);
+                        if (!why.isEmpty()) android.widget.Toast.makeText(a, why, android.widget.Toast.LENGTH_LONG).show();
+                        fill();
+                    });
+                }
+            }
+            if (!others.isEmpty()) {
+                note(a.getString(R.string.coop_nearby));
+                for (String[] f : others) {
+                    int id = Integer.parseInt(f[0]);
+                    String state = "1".equals(f[5]) ? a.getString(R.string.coop_blocked) : "1".equals(f[6]) ? a.getString(R.string.coop_muted) : "";
+                    submenu(f[1], f[4] + " ms", state, () -> new GameDialog(a).title(f[1])
+                            .button(R.string.opt_cancel, null)
+                            .button(R.string.coop_mute, () -> coopBlock(id, 2))
+                            .button(R.string.coop_block, () -> coopBlock(id, 1)).show());
+                }
+            }
+            submenu(R.string.coop_emotes, R.string.coop_emotes_hint, "", () -> openPage(this::onlineEmotesPage));
+            submenu(R.string.coop_wave, R.string.coop_wave_hint, "", () -> { Native.coopRaidWave(); closeToGame(); });
+            submenu(R.string.coop_siege, R.string.coop_siege_hint, "", () -> { Native.coopSiege(); closeToGame(); });
+            submenu(R.string.coop_shipraid, R.string.coop_shipraid_hint, "", () -> { Native.coopShipRaid(); closeToGame(); });
+            {  // (fork) daily quests from the fork's server (online/android_quests.cpp): only when it has them
+                String[] q = Native.coopQuests();
+                if (q.length > 1) {
+                    int open = 0;
+                    for (int i = 1; i < q.length; i++) { String[] f = tabs(q[i]); if (f.length >= 7 && !"1".equals(f[5])) open++; }
+                    submenu(R.string.coop_quests, R.string.coop_quests_hint, open + " / " + (q.length - 1), () -> openPage(this::onlineQuestsPage));
+                }
+            }
+        }
+        if (!server) toggle(R.string.coop_together, R.string.coop_together_hint, "1".equals(set.get("together")),
+                v -> coopSet("together", v ? "1" : "0"));
+        else choice(R.string.coop_strangers, R.string.coop_strangers_hint,
+                new String[] {a.getString(R.string.coop_strangers_solid), a.getString(R.string.coop_strangers_see)},
+                "1".equals(set.get("strangers")) ? 1 : 0, k -> Native.coopSaveSettings("strangers=" + k));
+        // player models over the connection (the fork's: online/android_models.cpp)
+        toggle(R.string.coop_model_send, R.string.coop_model_send_hint, "1".equals(set.get("model_send")),
+                v -> coopSet("model_send", v ? "1" : "0"));
+        toggle(R.string.coop_model_receive, R.string.coop_model_receive_hint, "1".equals(set.get("model_receive")),
+                v -> coopSet("model_receive", v ? "1" : "0"));
+        for (String t : Native.coopModelTransfers()) {
+            String[] f = tabs(t);
+            if (f.length < 4) continue;
+            String model = f[1].startsWith("gcmodel-") ? f[1].substring(8) : f[1];
+            note(a.getString("in".equals(f[0]) ? R.string.coop_model_in : R.string.coop_model_out, model, f[2], f[3]));
+        }
+        {  // raid: more monsters (the fork's: online/android_raid.cpp; the session host's choice counts)
+            int raid = 0;
+            try { raid = Integer.parseInt(set.get("raid")); } catch (Exception e) { }
+            choice(R.string.coop_raid, R.string.coop_raid_hint,
+                    new String[] {a.getString(R.string.opt_off), "+1", "+2", "+3", a.getString(R.string.coop_raid_party)},
+                    Math.max(0, Math.min(4, raid)), k -> coopSet("raid", String.valueOf(k)));
+        }
+        toggle(R.string.coop_pvp, R.string.coop_pvp_hint, "1".equals(set.get("pvp_sea")), v -> coopSet("pvp_sea", v ? "1" : "0"));
+        toggle(R.string.coop_radar, R.string.coop_radar_hint, "1".equals(set.get("radar")), v -> coopSet("radar", v ? "1" : "0"));
+        if (Native.coopBlocks().length > 0)
+            submenu(R.string.coop_blocks, R.string.coop_blocks_hint, String.valueOf(Native.coopBlocks().length), () -> openPage(this::onlineBlocksPage));
+        String[] mine = Native.coopMyMods();
+        StringBuilder modNames = new StringBuilder();
+        for (String m : mine) {
+            String[] f = tabs(m);
+            if (modNames.length() > 0) modNames.append(", ");
+            modNames.append(f.length > 1 ? f[1] : f[0]);
+        }
+        submenu(R.string.coop_mods, R.string.coop_mods_hint, mine.length == 0 ? a.getString(R.string.coop_mods_none) : String.valueOf(mine.length),
+                () -> new GameDialog(a).title(R.string.coop_mods)
+                        .message(mine.length == 0 ? a.getString(R.string.coop_mods_none) : modNames.toString())
+                        .button(android.R.string.ok, null).show());
+        submenu(R.string.coop_notice, 0, "", () -> new GameDialog(a).title(R.string.coop_notice_title).message(Native.coopNotice())
+                .button(android.R.string.ok, null).show());
+        note(a.getString(R.string.coop_cross));
+    }
+
+    // the party's gameplay options: the fork's own features the party doesn't play with are turned off, in the game and in
+    // the app's options (they would come back at the next start otherwise)
+    private void coopUsePartyMods() {
+        String[] r = Native.coopUsePartyMods();
+        if (r.length == 0 || !r[0].isEmpty()) {
+            android.widget.Toast.makeText(a, a.getString(R.string.coop_party_mods_cant, r.length > 0 ? r[0] : ""), android.widget.Toast.LENGTH_LONG).show();
+            fill();
+            return;
+        }
+        android.content.SharedPreferences.Editor e = a.prefs.edit();
+        for (int i = 1; i < r.length; i++) {
+            String[] bools = {}, speeds = {};
+            switch (r[i]) {
+                case "android.jump-anywhere": bools = new String[] {"mod_jump"}; break;
+                case "android.leaf-lift": bools = new String[] {"mod_leaf_lift"}; break;
+                case "android.walk-doors": bools = new String[] {"mod_walk_doors"}; break;
+                case "android.quick-doors": bools = new String[] {"mod_quick_doors", "mod_fast_scenes"}; break;
+                case "android.speeds": speeds = new String[] {"mod_run_speed", "mod_swim_speed", "mod_climb_speed", "mod_sidle_speed"}; break;
+                case "android.cheats":
+                    bools = new String[] {"cheat_inf_health", "cheat_inf_magic", "cheat_inf_ammo", "cheat_inf_rupees", "cheat_inf_bags",
+                            "cheat_inf_breath", "cheat_one_hit", "cheat_fast_push"};
+                    break;
+                default: break;
+            }
+            for (String k : bools) e.putBoolean(k, false);
+            for (String k : speeds) e.putInt(k, 100);
+        }
+        e.apply();
+        android.widget.Toast.makeText(a, R.string.coop_party_mods_done, android.widget.Toast.LENGTH_LONG).show();
+        Native.coopRetry();
+        fill();
+    }
+
+    // ---- a friend's randomizer seed, as text: "Game: EUR", "Server: host:port", "Friend code: ...", "Permalink: ...";
+    // the first lines are the player's language, the keyed ones always English (read back by coopSeedFrom)
+    private String coopSeedText(String link, java.util.Map<String, String> set) {
+        StringBuilder b = new StringBuilder(a.getString(R.string.coop_seed_text)).append('\n');
+        String release = Native.gameRelease(a.gameDir());
+        if (release != null && !release.isEmpty()) b.append("Game: ").append(release).append('\n');
+        b.append("Server: ").append(set.get("server_addr")).append(':').append(set.get("server_port")).append('\n');
+        String code = Native.coopFriendCode();
+        if (!code.isEmpty()) b.append("Friend code: ").append(code).append('\n');
+        b.append("Permalink: ").append(link);
+        return b.toString();
+    }
+
+    private String clipboardText() {
+        android.content.ClipboardManager cm = (android.content.ClipboardManager) a.getSystemService(android.content.Context.CLIPBOARD_SERVICE);
+        if (cm == null || !cm.hasPrimaryClip() || cm.getPrimaryClip() == null || cm.getPrimaryClip().getItemCount() == 0) return "";
+        CharSequence t = cm.getPrimaryClip().getItemAt(0).coerceToText(a);
+        return t == null || !t.toString().contains("Permalink:") ? "" : t.toString();
+    }
+
+    private static String keyed(String text, String key) {
+        for (String line : text.split("\n")) {
+            String l = line.trim();
+            if (l.regionMatches(true, 0, key, 0, key.length())) return l.substring(key.length()).trim();
+        }
+        return "";
+    }
+
+    // the friend's text (or a bare permalink): the same seed made here (or the one made before chosen), their server
+    // set, and once online their friend code invited (MainActivity.coopPoll)
+    private void coopSeedFrom(String text) {
+        String t = text.trim();
+        String link = keyed(t, "Permalink:");
+        if (link.isEmpty() && !t.contains("\n") && !t.contains(" ")) link = t;  // (a permalink alone)
+        if (link.isEmpty()) {
+            new GameDialog(a).title(R.string.coop_seed_play).message(R.string.coop_seed_none).button(R.string.opt_ok, null).show();
+            return;
+        }
+        String release = keyed(t, "Game:"), mine = Native.gameRelease(a.gameDir());
+        if (!release.isEmpty() && mine != null && !mine.isEmpty() && !release.equalsIgnoreCase(mine)) {
+            new GameDialog(a).title(R.string.coop_seed_play).message(a.getString(R.string.coop_seed_region, release, mine))
+                    .button(R.string.opt_ok, null).show();
+            return;
+        }
+        String err = RandoNative.loadPermalink(Randomizer.data(a), Randomizer.work(a), link);
+        if (err != null) {
+            new GameDialog(a).title(R.string.coop_seed_play).message(err).button(R.string.opt_ok, null).show();
+            return;
+        }
+        String server = keyed(t, "Server:"), code = keyed(t, "Friend code:");
+        int same = Randomizer.sameGame(a);
+        String what = a.getString(same != 0 ? R.string.coop_seed_ask_made : R.string.coop_seed_ask_make,
+                same != 0 ? Randomizer.name(a, same) : RandoNative.seed(Randomizer.data(a), Randomizer.work(a)));
+        if (!server.isEmpty()) what += "\n\n" + a.getString(R.string.coop_seed_ask_server, server);
+        if (!code.isEmpty()) what += "\n" + a.getString(R.string.coop_seed_ask_invite, code);
+        new GameDialog(a).title(R.string.coop_seed_play).message(what).button(R.string.opt_cancel, null)
+                .button(R.string.coop_seed_go, () -> {
+                    if (!server.isEmpty()) {
+                        String addr = server;
+                        int port = 7777, colon = server.lastIndexOf(':');
+                        if (colon > 0 && server.indexOf(':') == colon) {
+                            try {
+                                port = Integer.parseInt(server.substring(colon + 1).trim());
+                                addr = server.substring(0, colon).trim();
+                            } catch (NumberFormatException ignored) {
+                            }
+                        }
+                        // (into the friend's game's own settings, once it is played: OnlineGames.applyPending)
+                        a.prefs.edit().putString(OnlineGames.PREF_SERVER_AFTER, addr + "\t" + port).commit();
+                    }
+                    a.prefs.edit().putString(MainActivity.PREF_COOP_INVITE, code).commit();
+                    if (same != 0) Randomizer.choose(a, same);
+                    else Randomizer.requestNew(a);
+                    a.restartForPacks();
+                }).show();
+    }
+
+    private void coopBlock(int id, int kind) {
+        String why = Native.coopBlock(id, kind);
+        if (!why.isEmpty()) android.widget.Toast.makeText(a, why, android.widget.Toast.LENGTH_SHORT).show();
+        fill();
+    }
+
+    // Game > Online > Emotes: each one played now (the others see it; your own Link shows a bubble)
+    private void onlineEmotesPage() {
+        pageTitle(R.string.coop_emotes);
+        for (String e : Native.coopEmotes()) {
+            String[] f = tabs(e);
+            if (f.length < 2) continue;
+            int id = Integer.parseInt(f[0]);
+            submenu(f[1], null, "", () -> { Native.coopEmote(id); closeToGame(); });
+        }
+    }
+
+    // (fork) Game > Online > Daily quests: today's quests of the fork's server, progress, reward, time to the next day
+    private void onlineQuestsPage() {
+        pageTitle(R.string.coop_quests);
+        Native.coopQuestsAsk();
+        String[] q = Native.coopQuests();
+        if (q.length == 0) { note(a.getString(R.string.coop_quests_none)); return; }
+        String[] head = tabs(q[0]);
+        if (head.length >= 3) {
+            if (!head[0].isEmpty()) note(head[0]);
+            note(a.getString(R.string.coop_quests_next, Integer.parseInt(head[1]), Integer.parseInt(head[2])));
+        }
+        // server-wide first, then events, then today's (kind: 2, 3, 1)
+        int[] order = {2, 3, 1};
+        int[] heads = {R.string.coop_quests_world, R.string.coop_quests_events, R.string.coop_quests_daily};
+        for (int k = 0; k < order.length; k++) {
+            boolean headed = false;
+            for (int i = 1; i < q.length; i++) {
+                String[] f = tabs(q[i]);
+                if (f.length < 7) continue;
+                int kind = f.length >= 10 ? Integer.parseInt(f[7]) : 1;
+                if (kind != order[k]) continue;
+                if (!headed) { note(a.getString(heads[k])); headed = true; }
+                boolean done = "1".equals(f[5]);
+                String value = done ? a.getString(R.string.coop_quests_done) : f[3] + " / " + f[4];
+                String hint;
+                if (kind == 2) {
+                    int mins = Integer.parseInt(f[9]);
+                    String left = mins >= 1440 ? (mins / 1440) + " d " + (mins % 1440 / 60) + " h" : (mins / 60) + " h " + (mins % 60) + " min";
+                    hint = a.getString(R.string.coop_quests_world_hint, f[2], Integer.parseInt(f[6]), Integer.parseInt(f[8]), left);
+                } else {
+                    hint = f[2] + " · " + a.getString(R.string.coop_quests_reward, Integer.parseInt(f[6]));
+                }
+                submenu(f[1], hint, value, () -> fill());
+            }
+        }
+    }
+
+    // Game > Online > Saved servers: use one, its rules, forget it
+    private void onlineServersPage() {
+        pageTitle(R.string.coop_saved_servers);
+        for (String sv : Native.coopServers()) {
+            String[] f = tabs(sv);
+            if (f.length < 3) continue;
+            int port = Integer.parseInt(f[2]);
+            submenu(f[0], f[1] + ":" + f[2], "", () -> {
+                String rules = Native.coopServerRules(f[1], port);
+                new GameDialog(a).title(f[0]).message(rules.isEmpty() ? a.getString(R.string.coop_rules_wait) : rules)
+                        .button(R.string.coop_forget, () -> { Native.coopForgetServer(f[1], port); fill(); })
+                        .button(R.string.coop_use, () -> {
+                            Native.coopSaveSettings("server=1\nserver_addr=" + f[1] + "\nserver_port=" + port);
+                            onBackPressed();
+                        }).show();
+            });
+        }
+    }
+
+    // Game > Online > Blocked and muted: undo one
+    private void onlineBlocksPage() {
+        pageTitle(R.string.coop_blocks);
+        for (String b : Native.coopBlocks()) {
+            String[] f = tabs(b);
+            if (f.length < 3) continue;
+            String kind = "2".equals(f[1]) ? a.getString(R.string.coop_muted) : a.getString(R.string.coop_blocked);
+            submenu(f[2].isEmpty() ? f[0] : f[2], kind, a.getString(R.string.coop_unblock), () -> { Native.coopUnblock(f[0]); fill(); });
+        }
+    }
+
     // Game > Songs: conducted songs replayed, songs sung into the microphone (SongListener, experimental), play buttons
     private void songsPage() {
         pageTitle(R.string.opt_page_songs);
@@ -2713,6 +3415,20 @@ final class OptionsMenu extends Dialog {
         submenu(R.string.opt_cheats, R.string.opt_cheats_hint, "", () -> openPage(this::cheatsPage));
         submenu(a.getString(R.string.rando_look), a.getString(R.string.look_hint),
                 LinkColors.anyOn(a) ? a.getString(R.string.look_on_short) : "", () -> openLook(true));
+        if (BuildConfig.LOOT) for (Loot L : new Loot[] {Loot.SWORDS, Loot.SHIELDS, Loot.HELMETS, Loot.CHESTS, Loot.OUTFITS}) {
+            if (L.ids().isEmpty()) continue;
+            java.util.LinkedHashSet<String> who = new java.util.LinkedHashSet<>();
+            for (int f = 1; f <= Loot.FILES; f++) who.add(L.name(a, L.get(a, f)));
+            String value = who.size() == 1 ? who.iterator().next()
+                    : L.name(a, L.get(a, 1)) + " · " + L.name(a, L.get(a, 2)) + " · " + L.name(a, L.get(a, 3));
+            submenu(a.getString(L.text(a, "title")), a.getString(L.text(a, "hint")), value, () -> {
+                // (opens on the save file in play; at the title on the one picked last)
+                int played = PlayerModels.playedFile();
+                if (played > 0) a.prefs.edit().putInt(L.prefFile(), played).apply();
+                lootKind = L;
+                openPage(this::lootSwordsPage);
+            });
+        }
         submenu(a.getString(R.string.names_title), a.getString(R.string.names_hint), "", () -> {
             // (opens on the save file in play; at the title on the one picked last)
             int played = PlayerModels.playedFile();
@@ -2918,13 +3634,14 @@ final class OptionsMenu extends Dialog {
             }, r -> fill());
         }
         modelFile = Math.max(1, Math.min(PlayerModels.FILES, a.prefs.getInt("player_model_file", modelFile)));
-        String[] files = new String[PlayerModels.FILES];
-        for (int i = 0; i < files.length; i++) files[i] = a.getString(R.string.look_file_n, i + 1);
+        pageRow();
+        String[] files = SavePages.fileLabels(a, PlayerModels.FILES);
         choice(rowText(a.getString(R.string.look_file), a.getString(R.string.packs_gc_file_hint)), files, modelFile - 1, i -> {
             modelFile = i + 1;
             a.prefs.edit().putInt("player_model_file", modelFile).apply();
             fill();
         });
+        targetNote(modelFile);
         note(a.getString(R.string.packs_gc_model_about));
         String on = PlayerModels.get(a, modelFile);
         java.util.List<String> names = new java.util.ArrayList<>();
@@ -2953,17 +3670,113 @@ final class OptionsMenu extends Dialog {
         }
     }
 
+    // ---- Mods > Loot swords / Loot shields (Loot, runtime/src/gcmodel/hd_sword.h): a sword or shield won in online quests in place of the
+    // Master Sword, per save file, switched live
+    private Loot lootKind = Loot.SWORDS;
+
+    private void lootSwordsPage() {
+        final Loot L = lootKind;
+        pageTitle(L.text(a, "title"));
+        int file = Math.max(1, Math.min(Loot.FILES, a.prefs.getInt(L.prefFile(), 1)));
+        pageRow();
+        String[] files = SavePages.fileLabels(a, Loot.FILES);
+        choice(rowText(a.getString(R.string.look_file), a.getString(L.text(a, "file_hint"))), files,
+                file - 1, i -> {
+                    a.prefs.edit().putInt(L.prefFile(), i + 1).apply();
+                    fill();
+                });
+        targetNote(file);
+        note(a.getString(L.text(a, "about")));
+        String on = L.get(a, file);
+        int tier = L.tier(a, file);
+        // the colour tier (a sword stronger with each): for the file's choice (an outfit has none)
+        if (on != null && L.armor != 2) {
+            String[] tiers = new String[Loot.TIERS];
+            for (int i = 0; i < tiers.length; i++)
+                tiers[i] = a.getString(a.getResources().getIdentifier("loot_tier_" + i, "string", a.getPackageName()))
+                        + (i > 0 && (L.sword || L.armor >= 0) ? " (+" + (Loot.TIER_POWER[i] - 100) + " %)" : "");
+            choice(rowText(a.getString(R.string.loot_colour), a.getString(L.text(a, "colour_hint"))),
+                    tiers, tier, i -> {
+                        L.setTier(a, file, i);
+                        fill();
+                    });
+        }
+        // (a whole character: at its own height and proportions, or at Link's size)
+        if (on != null && L.armor == 2 && Loot.found(on))
+            toggle(R.string.loot_outfit_small, R.string.loot_outfit_small_hint, tier == 1, v -> {
+                L.setTier(a, file, v ? 1 : 0);
+                fill();
+            });
+        java.util.List<String> ids = new java.util.ArrayList<>(), found = new java.util.ArrayList<>();
+        ids.add(null);
+        for (String id : L.ids()) (Loot.found(id) ? found : ids).add(id);
+        for (String id : ids) lootSwordRow(L, file, id, on, tier);
+        toggle(R.string.loot_tab, R.string.loot_tab_hint, a.prefs.getBoolean("loot_tab", true), v -> a.prefs.edit().putBoolean("loot_tab", v).apply());
+        toggle(R.string.loot_world, R.string.loot_world_hint, a.prefs.getBoolean("loot_world", true), v -> a.prefs.edit().putBoolean("loot_world", v).apply());
+        toggle(R.string.loot_pick_button, R.string.loot_pick_button_hint, a.prefs.getBoolean("loot_pick_button", false), v -> a.prefs.edit().putBoolean("loot_pick_button", v).apply());
+        toggle(R.string.loot_gone, R.string.loot_gone_hint, a.prefs.getBoolean("loot_gone", false), v -> a.prefs.edit().putBoolean("loot_gone", v).apply());
+        // every other thing of the game that can be held: by its name's first letter
+        if (!found.isEmpty()) {
+            submenu(a.getString(R.string.loot_found), a.getString(R.string.loot_found_hint, found.size()),
+                    Loot.found(on) ? L.name(a, on) : "", () -> openPage(this::lootFoundPage));
+            if (!BuildConfig.PUBLIC_RELEASE)  // (the rating panel: a developer tool, loot_verdicts.tsv)
+                toggle(R.string.loot_test, R.string.loot_test_hint, a.prefs.getBoolean("loot_test", false), v -> {
+                a.prefs.edit().putBoolean("loot_test_shield", L == Loot.SHIELDS).putBoolean("loot_test_outfit", L == Loot.OUTFITS).apply();
+                a.setLootTest(v);
+                if (v) dismiss();  // the game, with the panel on it
+            });
+        }
+    }
+
+    private void lootSwordRow(Loot L, int file, String id, String on, int tier) {
+        boolean cur = id == null ? on == null : id.equals(on);
+        String hint = id == null || (!L.sword && L.armor < 0) ? null
+                : a.getString(L.sword ? R.string.loot_strength : R.string.loot_defence, L.power(id) * (cur ? Loot.TIER_POWER[tier] : 100) / 100);
+        submenu(L.name(a, id), hint, cur ? a.getString(R.string.packs_gc_current) : "", cur ? () -> {} : () -> {
+            L.set(a, file, id);
+            fill();
+        });
+    }
+
+    private String lootLetter;
+
+    private void lootFoundPage() {
+        final Loot L = lootKind;
+        pageTitle(R.string.loot_found);
+        java.util.TreeMap<String, Integer> letters = new java.util.TreeMap<>();
+        for (String id : L.ids())
+            if (Loot.found(id)) letters.merge(L.name(a, id).substring(0, 1).toUpperCase(java.util.Locale.ROOT), 1, Integer::sum);
+        for (java.util.Map.Entry<String, Integer> e : letters.entrySet())
+            submenu(e.getKey(), null, String.valueOf(e.getValue()), () -> {
+                lootLetter = e.getKey();
+                openPage(this::lootLetterPage);
+            });
+    }
+
+    private void lootLetterPage() {
+        final Loot L = lootKind;
+        pageTitle(R.string.loot_found);
+        int file = Math.max(1, Math.min(Loot.FILES, a.prefs.getInt(L.prefFile(), 1)));
+        String on = L.get(a, file);
+        int tier = L.tier(a, file);
+        java.util.List<String> ids = new java.util.ArrayList<>();
+        for (String id : L.ids())
+            if (Loot.found(id) && L.name(a, id).toUpperCase(java.util.Locale.ROOT).startsWith(lootLetter)) ids.add(id);
+        ids.sort((x, y) -> L.name(a, x).compareToIgnoreCase(L.name(a, y)));
+        for (String id : ids) lootSwordRow(L, file, id, on, tier);
+    }
+
     // ---- Mods > Save file names (SaveNames, runtime/src/mods/save_names.cpp): a file's name changed in play, up to 16
     // characters; read from the game's memory (nothing to change before the game has its names)
     private void saveNamesPage() {
         pageTitle(R.string.names_title);
         int file = Math.max(1, Math.min(SaveNames.FILES, a.prefs.getInt("save_name_file", 1)));
-        String[] files = new String[SaveNames.FILES];
-        for (int i = 0; i < files.length; i++) files[i] = a.getString(R.string.look_file_n, i + 1);
+        String[] files = SavePages.fileLabels(a, SaveNames.FILES);
         choice(rowText(a.getString(R.string.look_file), a.getString(R.string.names_file_hint)), files, file - 1, i -> {
             a.prefs.edit().putInt("save_name_file", i + 1).apply();
             fill();
         });
+        targetNote(file);
         note(a.getString(R.string.names_about, SaveNames.MAX, SaveNames.OWN));
         String[] cur = SaveNames.current();
         if (cur == null) {
@@ -2984,7 +3797,7 @@ final class OptionsMenu extends Dialog {
         e.setSelectAllOnFocus(true);
         e.setTextColor(GameUi.INK);
         e.setFilters(new android.text.InputFilter[] {new android.text.InputFilter.LengthFilter(SaveNames.MAX)});
-        new GameDialog(a).title(a.getString(R.string.look_file_n, file)).content(e).button(R.string.opt_cancel, null).button(R.string.opt_ok, () -> {
+        new GameDialog(a).title(SavePages.target(a, file)).content(e).button(R.string.opt_cancel, null).button(R.string.opt_ok, () -> {
             String name = SaveNames.clean(e.getText().toString());
             String bad = SaveNames.badChar(a, name);
             if (bad != null) {
@@ -3008,13 +3821,15 @@ final class OptionsMenu extends Dialog {
         toggle(rowText(a.getString(R.string.packs_per_file), a.getString(R.string.packs_per_file_hint)), ModPacks.perFile(a.prefs),
                 v -> packsEdit(() -> ModPacks.setPerFile(base, a.prefs, v), false));
         if (ModPacks.perFile(a.prefs)) {
-            String[] files = new String[ModPacks.FILES];
-            for (int i = 0; i < files.length; i++) files[i] = a.getString(R.string.look_file_n, i + 1);
+            indentNext = true;
+            pageRow();
+            String[] files = SavePages.fileLabels(a, ModPacks.FILES);
             indentNext = true;
             choice(rowText(a.getString(R.string.look_file), a.getString(R.string.packs_file_hint)), files, ModPacks.editScope(a.prefs) - 1, i -> {
                 a.prefs.edit().putInt("packs_edit_file", i + 1).apply();
                 fill();
             });
+            targetNote(ModPacks.editScope(a.prefs));
             note(a.getString(R.string.packs_file_running, ModPacks.activeScope(a.prefs)));
         }
         // player models: one row, their own page (a whole collection made this page slow and long)
@@ -3368,6 +4183,12 @@ final class OptionsMenu extends Dialog {
         }
         choice(R.string.opt_onscreen_size, 0, sizes, cur, i -> {
             a.prefs.edit().putFloat("controls_scale", MainActivity.CONTROL_SIZES[i]).apply();
+            a.applyControlsAppearance();
+        });
+        // the round buttons and the stick in the sailing compass's or the moon clock's bronze ring (ControlsView.drawRinged)
+        String[] rings = {a.getString(R.string.opt_off), a.getString(R.string.opt_button_ring_compass), a.getString(R.string.opt_button_ring_clock)};
+        choice(R.string.opt_button_ring, R.string.opt_button_ring_hint, rings, a.prefs.getInt("button_ring", 0), i -> {
+            a.prefs.edit().putInt("button_ring", i).apply();
             a.applyControlsAppearance();
         });
         toggle(R.string.opt_menu_overlay, R.string.opt_menu_overlay_hint, a.prefs.getBoolean("menu_overlay", false), on -> {

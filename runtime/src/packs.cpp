@@ -495,7 +495,26 @@ extern "C" void wwhd_pack_trace(Cpu* c, uint32_t addr) {
 
 const std::vector<Status>& status() { return g_status; }
 
+namespace {
+std::mutex g_virtual_mu;
+std::map<std::string, std::string> g_virtual;  // lower-case path below /vol/content: host file
+}  // namespace
+void add_virtual_file(const std::string& rel, const std::string& host) {
+    std::lock_guard<std::mutex> lk(g_virtual_mu);
+    if (host.empty()) g_virtual.erase(lower(rel));
+    else g_virtual[lower(rel)] = host;
+}
 std::string content_file(const std::string& rel) {
+    {
+        std::lock_guard<std::mutex> lk(g_virtual_mu);
+        if (!g_virtual.empty()) {
+            const auto v = g_virtual.find(lower(rel));
+            if (v != g_virtual.end()) {
+                LOG("[packs] game file %s: %s (added by the runtime)", rel.c_str(), v->second.c_str());
+                return v->second;
+            }
+        }
+    }
     if (g_contentFiles.empty()) return "";
     std::string key = lower(rel);
     auto it = g_contentFiles.find(key);
@@ -710,7 +729,7 @@ void file_service(Cpu* c) {
     const int state = mods::name_state(c);
     const bool started = state == 2 && prev != 2;
     prev = state;
-    if (!started) return;
+    if (!started || mods::save_page_foreign()) return;  // (another game's file: the app restarts into that game)
     int file = mods::name_file() - 1;
     if (file < 0 || file > 2) return;
     std::string dir, running;

@@ -21,7 +21,7 @@ import java.util.Map;
  */
 final class GameIcons {
     private static final String DIR = "game_icons";
-    private static final int VERSION = 52;  // bump to rebuild after a change of the list
+    private static final int VERSION = 53;  // bump to rebuild after a change of the list
     private static final String ITEMS = "BtnItemIcon_00", COLLECT = "BtnCollectIcon_00";
     private static final Map<String, Bitmap> cache = new HashMap<>();
     private static volatile boolean building, failed;  // (failed: one try per start without a 2D pack)
@@ -420,6 +420,8 @@ final class GameIcons {
                 new String[] {"DungeonMapDoor_00", "MapDoor_00^t"}, new String[] {"DungeonMapUp_00", "MapFloorUpDown_00^t"});
         // the round mini map's frame: the sailing compass's bezel and its face's gleam (CompassClock_00)
         java.util.Collections.addAll(l, new String[] {"CompassClock_00", "CompassBase_00^t"}, new String[] {"CompassClock_00", "CompassSpec_01^t"});
+        // the moon clock's bezel beside it (ControlsView's Button rings: the thin one)
+        l.add(new String[] {"CompassClock_00", "ClockBase_00^t"});
         // its wind arrow (MenuMap_00: the arrow's and its shadow's left half, a quarter of the dial) and the treasure
         // charts beside it (TreMap_00: a chart's picture per sea room and salvage point set, the X; the title ribbon)
         java.util.Collections.addAll(l, new String[] {"MenuMap_00", "WindArrowNow_00^t"}, new String[] {"MenuMap_00", "WindArrowNow_02^q"},

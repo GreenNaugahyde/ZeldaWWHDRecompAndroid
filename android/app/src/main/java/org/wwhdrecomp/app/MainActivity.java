@@ -129,6 +129,11 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
             packFileSwitch(f);
             firstStartMessage();
             checkMemory();
+            coopPoll();
+            if (f == 0 && prefs != null && !SavePages.viewing()) {
+                lootQuick.poll();
+                lootWorld.poll();
+            }
             if (controls != null && !benchRunning && tour == null) {
                 int[] ts = Native.touchState();
                 controls.ringHint(ts);
@@ -137,6 +142,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
             }
             boolean noPad = !controllerConnected();
             setFilesTouch(f == Native.FRONT_FILES && noPad);
+            savePages.poll(f, !noPad);
             setMenuTouch(noPad && drcScreen() && Native.drcGameCursor());
             if (lastController == null) usePadMap(firstController());  // (the one the menu's buttons page edits)
             if (controls != null) {
@@ -161,6 +167,33 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         }
     };
     private final android.os.Handler frontHandler = new android.os.Handler(android.os.Looper.getMainLooper());
+
+    // online co-op (upstream's, issue #444): its marks over the picture while a session runs, and what it tells the
+    // player (joined, left, invitations, refusals) as short messages
+    private CoopOverlay coopOverlay;
+    // a friend's seed made from their text (OptionsMenu.coopSeedFrom): their friend code, invited once this game is on
+    // their server (then forgotten)
+    static final String PREF_COOP_INVITE = "coop_invite_after";
+
+    // Wi-Fi in its low-latency mode while a session runs: otherwise the radio dozes between transmissions and the
+    // others' poses arrive in bursts a beacon interval (~100 ms) late, which the puppets' buffer then has to cover
+    private PadLink.WifiAwake coopWifi;
+
+    private void coopPoll() {
+        if (!started) return;
+        final boolean online = Native.coopOnline();
+        if (coopOverlay != null) coopOverlay.setRunning(online);
+        if (coopWifi == null && online) coopWifi = new PadLink.WifiAwake(this);
+        if (coopWifi != null) coopWifi.set(online && resumed);
+        String code = prefs.getString(PREF_COOP_INVITE, "");
+        if (!code.isEmpty() && Native.coopViaServer() && !Native.coopFriendCode().isEmpty() && Native.coopStatus().startsWith("Online")) {
+            String why = Native.coopInvite(code);
+            prefs.edit().remove(PREF_COOP_INVITE).apply();
+            android.widget.Toast.makeText(this, why.isEmpty() ? getString(R.string.coop_seed_invited, code) : why, android.widget.Toast.LENGTH_LONG).show();
+        }
+        for (String n : Native.coopNotices())
+            android.widget.Toast.makeText(this, n, n.length() > 60 ? android.widget.Toast.LENGTH_LONG : android.widget.Toast.LENGTH_SHORT).show();
+    }
     private static final float TV_ASPECT = 16f / 9f, DRC_ASPECT = 854f / 480f;
 
     SharedPreferences prefs;
@@ -270,9 +303,14 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
             CrashLogs.deleteShared(this, prefs);  // shared in an earlier run
             // a shader dump (WWHD_DUMP_SHADERS=<files>/shaders, debugging) left from an earlier start
             if (Os.getenv("WWHD_DUMP_SHADERS") == null) Backup.deleteTree(new File(baseDir(), "shaders"));
+            // the game's release (meta.xml) before the library loads: its address constants are worked out then
+            // (release.cpp boot_release; online co-op's file-level ones)
+            setenv("WWHD_RELEASE", PadLink.release(PadLink.gameId(new File(gameDir()).getParentFile())));
             System.loadLibrary("wwhd");
             libraryLoaded = true;
         }
+        // online co-op's folder (identity key, settings, block list): before the options or the game read them
+        if (libraryLoaded) Native.coopInit(new File(getFilesDir(), "online").getAbsolutePath());
         // testing (not in published releases): WWHD_TV=1 in wwhd.env acts as a TV on a phone or tablet
         tv = isTv(this) || (!BuildConfig.PUBLIC_RELEASE && "1".equals(Os.getenv("WWHD_TV")));
         // (test only: WWHD_TV_1080=1 switches the display to 1080p; the user found the TV's mode change not nice,
@@ -305,8 +343,12 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     // ------------------------------------------------------------------ game language
     // The console language the game sees (runtime: UCReadSysConfig), from the release's languages;
     // by default the device's, else English. Applies at the next start.
-    static final String[] LANGUAGES = {"en", "fr", "de", "it", "es", "ja", "ru"};
-    static final String[] LANGUAGE_NAMES = {"English", "Français", "Deutsch", "Italiano", "Español", "日本語", "Русский"};
+    static final String[] LANGUAGES = {"en", "fr", "de", "it", "es", "ja"};
+    static final String[] LANGUAGE_NAMES = {"English", "Français", "Deutsch", "Italiano", "Español", "日本語"};
+    /** the app's own texts (Menu language): the game's languages (same indexes) and those only the app has (Russian,
+     *  res/values-ru); the game never gets one of these */
+    static final String[] MENU_LANGUAGES = {"en", "fr", "de", "it", "es", "ja", "ru"};
+    static final String[] MENU_LANGUAGE_NAMES = {"English", "Français", "Deutsch", "Italiano", "Español", "日本語", "Русский"};
 
     /** the release's languages (indexes into LANGUAGES): USA English, French, Spanish; EUR the first
      *  five; JPN Japanese */
@@ -334,7 +376,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
      *  game's font has */
     static String menuLanguage(android.content.SharedPreferences p) {
         String l = p.getString("menu_language", "en");
-        for (String s : LANGUAGES)
+        for (String s : MENU_LANGUAGES)
             if (s.equals(l)) return l;
         return "en";
     }
@@ -927,13 +969,16 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         // with randomized games made: which game, at each start of the app (a restart of its own keeps the one played)
         if (!gameAsked) {
             gameAsked = true;
+            // (Game > Ask which game at the start; else the one played last, the others are pages on the file select)
             if (tourSlot == 0 && !Benchmark.pending(prefs) && !getIntent().getBooleanExtra(RestartActivity.EXTRA_RESTARTED, false)
-                    && askGame()) return;
+                    && prefs.getBoolean("ask_game_at_start", false) && askGame()) return;
         }
         Native.setRandomizer(Randomizer.runtimeDir(this));
         Native.setKeepPlainCode(prefs.getBoolean(Randomizer.PREF_KEEP_PLAIN, true));
         // the save files' player models to the runtime (put in live when a file is played; the pack this game plays is the base)
         PlayerModels.prepare(this);
+        // the save files' loot swords (Mods > Loot swords: made from the game's files and put in live)
+        Loot.handOver(this);
         // the save files' long names to the runtime (Mods > Save file names)
         SaveNames.handOver(this);
         // Link's colours in the game as it is (Mods > Link's colours): their pack made first when they changed (the game
@@ -982,6 +1027,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         installShaderTemplate();
         String failedDriver = applyGpuDriver();
         // the save state picker before the intro: the game waits for it from its first frame on
+        SavePages.recover(this);  // (a page turn a crash cut short)
         File play = playDir();  // (the randomized game's own save and states while it is played)
         boolean offerStates = !bench && (tourSlot != 0 || startMode() != START_INTRO) && !usedStateSlots(play).isEmpty();
         if (offerStates) Native.setStartHold(true);
@@ -1441,6 +1487,8 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
             renderScale = Float.parseFloat(prefs.getString("res_scale", "1"));
         }
         root.addView(surface, new FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
+        coopOverlay = new CoopOverlay(this);  // (online co-op's marks: over the picture, under the controls)
+        root.addView(coopOverlay, new FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
         controls = new ControlsView(this, this);
         itemRing = new ItemRing(this, controls);
         controls.setItemRing(itemRing);
@@ -1458,11 +1506,13 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(GameUi.px(this, 120), GameUi.px(this, 48), Gravity.TOP | Gravity.END);
         lp.setMargins(m, m, m, m);
         root.addView(filesBack, lp);
+        savePages.addTo(root);
         setContentView(root);
         applyControlsAppearance();
         hideSystemBars();
         warpTest = null;
         if (prefs.getBoolean("warp_test", false)) setWarpTest(true);  // again after a restart (a crash while testing)
+        if (prefs.getBoolean("loot_test", false)) setLootTest(true);
     }
 
     // developer: story presets from a WWHD save file (StoryPresets): the file, then a name for its slots
@@ -1542,6 +1592,23 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         if (on && root != null) {
             warpTest = new WarpTestOverlay(this);
             root.addView(warpTest, warpTest.layoutParams());
+        }
+    }
+
+    // the found things' switcher over the game (LootTestOverlay)
+    private LootTestOverlay lootTest;
+
+    void setLootTest(boolean on) {
+        prefs.edit().putBoolean("loot_test", on).apply();
+        FrameLayout root = surface != null && surface.getParent() instanceof FrameLayout ? (FrameLayout) surface.getParent() : null;
+        if (lootTest != null) {
+            lootTest.stop();
+            if (lootTest.getParent() != null) ((FrameLayout) lootTest.getParent()).removeView(lootTest);
+            lootTest = null;
+        }
+        if (on && BuildConfig.LOOT && root != null) {
+            lootTest = new LootTestOverlay(this);
+            root.addView(lootTest, lootTest.layoutParams());
         }
     }
 
@@ -1701,12 +1768,15 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     }
 
     private void applyOptions() {
+        OnlineGames.handOver(this);  // (which games and save files play online)
+        OnlineGames.applyPending(this);
         Native.setOption("ao_mode", prefs.getInt("ao_mode", Native.getOption("ao_mode")));
         Native.setOption("ao_hires", prefs.getBoolean("ao_hires", Native.getOption("ao_hires") != 0) ? 1 : 0);
         Native.setOption("area_blur", prefs.getBoolean("area_blur", Native.getOption("area_blur") != 0) ? 1 : 0);
         Native.setOption("bloom_strength", prefs.getInt("bloom_strength", Native.getOption("bloom_strength")));
         Native.setOption("distant_shadows", prefs.getBoolean("distant_shadows", Native.getOption("distant_shadows") != 0) ? 1 : 0);
         Native.setOption("aniso", prefs.getBoolean("aniso", Native.getOption("aniso") != 0) ? 1 : 0);
+        Native.setOption("grass_distance", prefs.getInt("grass_distance", 0));
         Native.setOption("vsync", prefs.getBoolean("vsync", false) ? 1 : 0);
         Native.setOption("upscale", prefs.getInt("upscale", Native.getOption("upscale")));
         // every controller and the touch controls act as the Wii U GamePad (+ shows its screen, see
@@ -1728,6 +1798,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         Native.setOption("cheat_moon_fly", prefs.getInt("cheat_moon_fly", 100));
         Native.setOption("mod_leaf_lift_height", prefs.getInt("mod_leaf_lift_height", 100));
         Native.setOption("mod_walk_doors_a", prefs.getBoolean("mod_walk_doors_a", false) ? 1 : 0);
+        if (BuildConfig.SEAMLESS && prefs.getBoolean("mod_seamless_houses", false)) Native.setOption("mod_seamless_houses", 1);  // (off: wwhd.env may still set it)
         Native.setOption("mod_text_pauses_off", prefs.getBoolean("mod_text_pauses_off", false) ? 1 : 0);
         Native.setOption("mod_hit_stop_off", hitStopOff());
         Native.setOption("mod_camera_speed", prefs.getInt("mod_camera_speed", 100));
@@ -1768,6 +1839,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         controls.setTvBackdrop(prefs.getInt("controls_tv_backdrop", 50) / 100f);  // (that view: the TV picture there)
         controls.setSwipeSpeed(prefs.getFloat("swipe_speed", SWIPE_SPEED_DEFAULT));
         controls.setFilled(nw && prefs.getBoolean("controls_filled", false));
+        controls.setButtonRing(prefs.getInt("button_ring", 0));  // (Button rings: off, the compass's, the moon clock's)
         // context buttons: the game's button cluster (X, Y, R, B, ZR, A's seat and floating label) is hidden.
         // The large Picto Box view (off: the game's original Picto Box and telescope screens): the finder
         // twice its size (aspect.cpp), zoomed by pinching; the zoom bar and the stick guides (Zoom / Look
@@ -1836,6 +1908,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     private static final String HUD_BUTTONS = "N_X_00,N_Y_00,N_R_00,P_B_00,P_ZR_00,P_SetSeatASpecial_00,W_SetSeatA_00,L_CommandA_00";
     private boolean hudContext, hudPicto, filesTouch, menuTouch, shortcutHidden;
     private TextView filesBack;
+    private final SavePages savePages = new SavePages(this);
 
     // (Large Picto Box view: its zoom bar, stick guides and d-pad icons too; the game's d-pad in play
     // (Shortcut_00: Wind Waker, cannon, salvage arm) while the item ring has them: Flexible style, no
@@ -1843,7 +1916,16 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     private void applyHudHidden() {
         Native.setHudHidden((hudContext || filesTouch || menuTouch ? HUD_BUTTONS : "")
                 + (hudPicto ? ",N_Zoom_00,P_LStick_00,P_RStick_00,N_ControlPad_00" : "")
-                + (shortcutHidden || hudContext ? ",N_Shortcut_00" : "") + slotHidden);
+                + (shortcutHidden || hudContext ? ",N_Shortcut_00" : "") + slotHidden + (lootBIcon ? ",L_BCollectIcon_00" : ""));
+    }
+
+    private boolean lootBIcon;
+
+    /** a loot sword is worn and the game's own HUD shows: its sword icon on B makes room for the real picture (ControlsView) */
+    void setLootBIcon(boolean hide) {
+        if (hide == lootBIcon) return;
+        lootBIcon = hide;
+        applyHudHidden();
     }
 
     // the item buttons' names on the game's HUD and its drop slots, and on the touch buttons (Controls > Item button
@@ -2054,6 +2136,28 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     // GamePad inset, used when the GamePad is set to show in the layout instead of on that display
     int layoutSetting() { return prefs.getInt("layout", hasSecondDisplay() ? LAYOUT_INSET : LAYOUT_TV); }
 
+    // the Loot tab's window on Link (LootMenu's Gear page): its rect on the surface, null when closed
+    private RectF lootHole;
+    private static final float LOOT_ZOOM = 1.5f, LOOT_LINK_Y = 0.56f;  // the picture's height per window's; where Link stands in it
+
+    /** rect on the screen (view pixels) or null */
+    void setLootPreview(RectF screen) {
+        RectF hole = null;
+        if (screen != null && surface != null) {
+            int[] at = new int[2];
+            surface.getLocationOnScreen(at);
+            hole = new RectF(screen);
+            hole.offset(-at[0], -at[1]);
+        }
+        if (java.util.Objects.equals(hole, lootHole)) return;
+        lootHole = hole;
+        if (controls != null) {
+            controls.setVisibility(hole != null ? View.INVISIBLE : View.VISIBLE);  // (nothing of ours in the window)
+            Native.setTouchSwipeCamera(hole != null || (controls.flexibleNow() && prefs.getInt("touch_camera", 0) == 1));  // (a swipe there turns the camera)
+        }
+        updateLayout();
+    }
+
     void updateLayout() {
         if (surfaceW == 0 || surfaceH == 0 || controls == null) return;
         float W = surfaceW, H = surfaceH;
@@ -2104,8 +2208,14 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
                 break;
         }
         float k = bufScale;  // buffer pixels
-        Native.setLayout(new float[] {tv.left * k, tv.top * k, tv.right < 0 ? -1 : tv.width() * k, tv.right < 0 ? -1 : tv.height() * k},
-                drc == null ? null : new float[] {drc.left * k, drc.top * k, drc.width() * k, drc.height() * k}, drc != null);
+        RectF shownTv = tv, shownDrc = drc;
+        if (lootHole != null) {  // (LootMenu's window on Link: the TV picture behind it, zoomed to him; the screen's shape, so the game's layout stays)
+            float th = lootHole.height() * LOOT_ZOOM, tw = th * W / H, l = lootHole.centerX() - tw / 2, t = lootHole.centerY() - th * LOOT_LINK_Y;
+            shownTv = new RectF(l, t, l + tw, t + th);
+            shownDrc = null;
+        }
+        Native.setLayout(new float[] {shownTv.left * k, shownTv.top * k, shownTv.right < 0 ? -1 : shownTv.width() * k, shownTv.right < 0 ? -1 : shownTv.height() * k},
+                shownDrc == null ? null : new float[] {shownDrc.left * k, shownDrc.top * k, shownDrc.width() * k, shownDrc.height() * k}, shownDrc != null);
         // the GamePad picture of + takes the TV picture's shape: no jump between the two. The game lays it out in
         // that shape also while it's hidden (no GamePad picture in this layout), so + shows it ready, not 16:9 first
         boolean fillDrc = (drcShown || drc == null) && tvFillsScreen() && !drcForFiles;  // (the file select: its stretched sides flickered)
@@ -2113,6 +2223,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         controls.setDrcRect(drc == null ? null : fillDrc ? drc : fit(drc, DRC_ASPECT));
         controls.setTvRect(tv.right < 0 ? null : fit(tv, TV_ASPECT));
         controls.setTvArea(tv.right < 0 ? null : tvFillsScreen() ? tv : fit(tv, TV_ASPECT));  // (the picture's own corners)
+        if (coopOverlay != null) coopOverlay.setPicture(tv.right < 0 ? new RectF(0, 0, -1, -1) : tvFillsScreen() ? tv : fit(tv, TV_ASPECT));
         controls.setClimbHud(prefs.getBoolean("mod_climb", false));
         controls.setPerfHud(prefs.getBoolean("perf_hud", false));
         controls.setPerfItems(prefs.getInt("perf_items", ControlsView.PERF_ALL));
@@ -2128,11 +2239,14 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     void repushInput() { pushInput(); }
 
     /** the game in play: no event, no pause menu, not the GamePad picture (as ItemRing.eligible) */
-    private boolean padInPlay() {
+    boolean padInPlay() {
         if (drcScreen()) return false;
         int[] s = Native.touchState();
         return s[0] != 0 && s[8] == 0 && s[9] == 0;
     }
+
+    final LootQuick lootQuick = new LootQuick(this);
+    final LootWorld lootWorld = new LootWorld(this);
 
     private void pushInput() {
         if (benchRunning) {  // the benchmark's input only (no touch, no controller; the first start's confirm press)
@@ -2206,6 +2320,11 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         if (focus || drcScreen() || screenRemote() || padPicture()) startFocusTick();
         float lx = ownStick ? 0 : pick(controls.stickX(0), mapper.lx, mapper.keyLX(), padHost != null ? padAxis(padHost.lx) : 0);
         float ly = ownStick ? 0 : pick(controls.stickY(0), mapper.ly, mapper.keyLY(), padHost != null ? padAxis(padHost.ly) : 0);
+        {  // a loot weapon on X / Y / R (LootQuick): that button is ours in play, no item ring on it
+            final int before = b;
+            b = lootWorld.filter(lootQuick.filter(b));
+            touchB &= ~(before & ~b);
+        }
         if (itemRing != null) {  // X / Y / R held for the item ring (ItemRing)
             b = itemRing.filter(b, touchB, pick(0, mapper.lx, mapper.keyLX()), pick(0, mapper.ly, mapper.keyLY()));
             if (itemRing.takesLeftStick()) lx = ly = 0;
@@ -2398,6 +2517,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
             targets.add(view);
         }
         addOptionsArrow();
+        addLootTab();
     }
 
     private boolean backOnly, wasBackOnly;  // readTargets: only the game's Back button (A and B tap it), no highlight
@@ -2504,6 +2624,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
                     ChartMarks.I.setDungeon(0, 0, 0, 0, null);
                     pauseForMenu(false);
                     if (controls != null) controls.setOptionsArrow(false, 0, 0, 0, 0);
+                    if (controls != null) controls.setLootTab(false, 0, 0, 0, 0);
                     if (padHost != null) padHost.sendArrow(false, 0, 0, 0, 0, 0);
                     focusTicking = false;
                     return;
@@ -2512,6 +2633,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
                 readTargets();  // touch only: still follows the chart views (which square a finger opened)
                 slotHold(now / 1000000);
                 optionsArrow();
+                lootTab();
                 strayPages();
                 trackView();
                 chartMarks();
@@ -2522,6 +2644,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
             readTargets();
             slotHold(now / 1000000);
             optionsArrow();
+            lootTab();
             strayPages();
             trackView();
             chartMarks();
@@ -2536,8 +2659,16 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     // menu does with the Pro Controller); its own Options / Save pause it too and are left alone
 
     private void pauseForMenu(boolean on) {
-        Native.setGamePaused(on && Native.pauseKind() == 0);  // (each frame: it runs out by itself; the game's Options / Save pause it their own way)
+        Native.setGamePaused(on && lootHole == null && Native.pauseKind() == 0);  // (the Loot tab's window on Link: the game runs, his model is set as he moves. Each frame: it runs out by itself; the game's Options / Save pause it their own way)
     }
+
+    boolean drcScreenShown() { return drcScreen(); }
+
+    /** the game's own X / Y / R / B are hidden in favour of the touch ones */
+    boolean hudHiddenForTouch() { return hudContext; }
+
+    /** which of the game's buttons a controller key is (Native bits, 0 none) */
+    int padBit(int code) { return mapper != null ? mapper.bitFor(code) : 0; }
 
     /** the GamePad picture is shown on its own (the screen the controller and the fingers work) */
     private boolean drcScreen() {
@@ -2642,6 +2773,40 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     private void strayPages() {
         if (Native.itemPageX() > 0.5f && (optionsPage == null || !optionsPage.isShowing()) && !Native.itemPageGliding())
             Native.setItemPageDrag(2, 0);
+    }
+
+    private static final String LOOT_TAB = "app/loot";
+
+    /** the Loot tab, one step on from the game's last menu tab: a target too, for the controller */
+    private void addLootTab() {
+        if (!BuildConfig.LOOT || !prefs.getBoolean("loot_tab", true) || !drcScreen() || Native.drcGameCursor()) return;
+        if (controls != null && controls.songListOn()) return;  // (the baton's song list over the menu: no inventory)
+        Target last = null, before = null;
+        for (Target t : targets) {
+            if (!t.key.startsWith("L_BtnMenu_") || t.x <= 0f || t.x >= 1f) continue;
+            // (a tab can have several boxes at the same place)
+            if (last == null || t.x > last.x + 0.01f) {
+                if (last != null) before = last;
+                last = t;
+            } else if (t.x < last.x - 0.01f && (before == null || t.x > before.x)) before = t;
+        }
+        if (last == null) return;
+        Target a = new Target();
+        a.key = a.name = LOOT_TAB;
+        a.x = last.x + (before != null ? last.x - before.x : last.w * 1.05f);
+        a.y = last.y;
+        a.w = last.w;
+        a.h = last.h;
+        if (a.x + a.w / 2 < 1f) targets.add(a);
+    }
+
+    private void lootTab() {
+        for (Target a : targets)
+            if (a.key.equals(LOOT_TAB)) {
+                controls.setLootTab(true, a.x, a.y, a.w, a.h);
+                return;
+            }
+        controls.setLootTab(false, 0, 0, 0, 0);
     }
 
     private void optionsArrow() {
@@ -2829,7 +2994,10 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
             }
         } else if (touchAt == -1) {  // A: a tap on the highlight
             if (cur != null && cur.key.startsWith(TILE)) tile = Integer.parseInt(cur.key.substring(TILE.length()));
-            if (cur != null && cur.key.equals(OPTIONS_ARROW)) {
+            if (cur != null && cur.key.equals(LOOT_TAB)) {
+                touchAt = 0;
+                controls.post(() -> LootMenu.open(this));
+            } else if (cur != null && cur.key.equals(OPTIONS_ARROW)) {
                 touchAt = 0;
                 controls.post(() -> {
                     onOptionsPage();
@@ -3166,6 +3334,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
             if (e.getAction() == KeyEvent.ACTION_UP) menuOrBack();
             return true;
         }
+        if (controller && savePages.key(code, mapper.bitFor(code), e.getAction() == KeyEvent.ACTION_DOWN, e.getRepeatCount() == 0)) return true;
         if (mapper.onKey(e)) {
             if (controller) controllerUsed(e.getDevice());
             pushInput();
@@ -3321,6 +3490,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         if (started) Native.setPaused(true);
         if (motion != null) motion.stop();
         if (rumble != null) rumble.stop();
+        if (coopWifi != null) coopWifi.set(false);  // (taken again by coopPoll in front)
     }
 
     @Override
@@ -4200,11 +4370,12 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         d.button(R.string.opt_ok, null).show();
     }
 
-    // the game as it is or one of the randomized games (Randomizer.games), before the game code check: each has its own
-    // code, files, save and states. The one played last has the focus (a controller's A takes it). false: none made
+    // the game as it is, one of the online games (OnlineGames) or one of the randomized games (Randomizer.games), before
+    // the game code check: each has its own save and states (a randomized game its code and files too). The one played
+    // last has the focus (a controller's A takes it). false: none made
     private boolean askGame() {
-        java.util.List<Integer> games = Randomizer.games(this);
-        if (games.isEmpty()) return false;
+        java.util.List<Integer> games = Randomizer.games(this), online = OnlineGames.games(this);
+        if (games.isEmpty() && online.isEmpty()) return false;
         LinearLayout box = new LinearLayout(this);
         box.setOrientation(LinearLayout.VERTICAL);
         int pad = (int) (24 * getResources().getDisplayMetrics().density);
@@ -4212,16 +4383,29 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         TextView t = cardText();
         t.setText(R.string.rando_pick_title);
         box.addView(t);
-        int last = Randomizer.chosen(this);
+        int last = Randomizer.chosen(this), lastOnline = OnlineGames.chosen(this);
         View focus = null;
-        for (int i = -1; i < games.size(); i++) {
-            final int n = i < 0 ? 0 : games.get(i);
-            TextView b = cardButton(n == 0 ? getString(R.string.rando_pick_plain) : Randomizer.name(this, n), v -> {
+        TextView plain = cardButton(getString(R.string.rando_pick_plain) + OnlineGames.mark(this, "p"), v -> {
+            Randomizer.choose(this, 0);
+            checkAndStart();
+        });
+        box.addView(plain, cardButtonLp());
+        focus = plain;
+        for (int n : online) {
+            TextView b = cardButton(getString(R.string.online_game_pick, OnlineGames.name(this, n)), v -> {
+                OnlineGames.choose(this, n);
+                checkAndStart();
+            });
+            box.addView(b, cardButtonLp());
+            if (n == lastOnline) focus = b;
+        }
+        for (int n : games) {
+            TextView b = cardButton(Randomizer.name(this, n) + OnlineGames.mark(this, "r" + n), v -> {
                 Randomizer.choose(this, n);
                 checkAndStart();
             });
             box.addView(b, cardButtonLp());
-            if (n == last || focus == null) focus = b;
+            if (n == last && lastOnline == 0) focus = b;
         }
         setContentView(seaScreen(box));
         focus.requestFocus();
@@ -4561,6 +4745,13 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
 
     void restartForPacks() { restartApp(); }
 
+    /** save file pages: another game's file chosen; restarted into that game (chosen already) and straight into the file */
+    void restartIntoFile(int file, String what) {
+        prefs.edit().putInt("packs_auto_file", file).putString("packs_auto_text", getString(R.string.page_loading, what, file)).commit();
+        packLoading(file, 0.1f);
+        keyHandler.postDelayed(this::restartForPacks, 300);  // (the loading screen drawn first)
+    }
+
     // mod packs per save file (ModPacks.perFile): the file select handed over a save file whose packs differ from the
     // running ones (the runtime holds the game, packs.h file_service): the game restarts with that file's; at the file
     // select after the restart a note asks for that file again
@@ -4601,7 +4792,8 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
             LinearLayout box = new LinearLayout(this);
             box.setOrientation(LinearLayout.VERTICAL);
             TextView t = new TextView(this);
-            t.setText(getString(R.string.packs_loading, file));
+            String what = prefs.getString("packs_auto_text", null);  // (another game's page: its name)
+            t.setText(what != null ? what : getString(R.string.packs_loading, file));
             t.setTextSize(20);
             box.addView(t);
             packCover = coverScreen(box);
@@ -4734,7 +4926,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
 
     private void autoEnd(boolean note) {
         int file = prefs.getInt("packs_auto_file", 0);
-        prefs.edit().remove("packs_auto_file").apply();
+        prefs.edit().remove("packs_auto_file").remove("packs_auto_text").apply();
         autoButtons = 0;
         if (note) packLoadingEnd();
         if (note) new GameDialog(this).title(R.string.opt_packs).message(getString(R.string.packs_switched, file)).button(R.string.opt_ok, null).show();

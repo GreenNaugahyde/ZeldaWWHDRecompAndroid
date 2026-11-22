@@ -126,6 +126,7 @@ final class LinkColors {
 
     // the runtime's folder (it reads the files again)
     private static void handOver(MainActivity a) {
+        if (SavePages.viewing()) return;  // (another page's settings: not the game's)
         Native.setLinkColors(active(a) && anyOn(a) ? gameDir(a).getAbsolutePath() : null);
     }
 

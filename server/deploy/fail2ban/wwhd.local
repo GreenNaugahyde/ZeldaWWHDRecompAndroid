@@ -1,0 +1,19 @@
+# fail2ban jails (fork). Copy to /etc/fail2ban/jail.d/wwhd.local
+[DEFAULT]
+banaction = nftables-multiport
+banaction_allports = nftables-allports
+backend = systemd
+
+[sshd]
+enabled = true
+maxretry = 4
+findtime = 10m
+bantime = 1h
+
+[wwhd-status]
+enabled = true
+filter = wwhd-status
+port = http,https
+maxretry = 8
+findtime = 15m
+bantime = 2h

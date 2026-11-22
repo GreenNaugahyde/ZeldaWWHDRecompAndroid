@@ -103,6 +103,42 @@ final class Native {
     static native void setRandomizer(String outDir);
     /** player models per save file (PlayerModels): the played permanent_3d.pack, the mod packs' folder, each file's model folder or null */
     static native void setPlayerModels(String basePack, String packsDir, String file1, String file2, String file3);
+    /** loot swords per save file (runtime/src/mods/player_models.cpp): the game's folder, each file's sword id (null: the game's) */
+    static native void setLootSwords(String gameDir, String file1, String file2, String file3);
+    /** the loot swords there are: "id\tname\tpower" each */
+    static native String[] lootSwords();
+    /** a loot sword's or shield's picture from its real model: size x size RGBA, null when it can't be made (slow: not on the UI thread) */
+    static native byte[] lootIcon(String gameDir, String id, int kind, int size);
+    /** a loot item in real use (loot_item.cpp): the game's carried weapon `type` 0..5 made for Link to pick up */
+    static native void lootItemTake(int type);
+    static native void lootItemDrop();
+    /** 0 none, 1 waiting for him to pick it up, 2 in his hand */
+    static native int lootItemState();
+    // loot in the world (loot_world.cpp, LootWorld)
+    static native void lootWorldOn(boolean on);
+    static native float[] lootWorldPoll();
+    static native float[] lootWorldSpots();
+    static native int[] lootWorldOpened();
+    static native String lootWorldWhere();
+    static native void lootWorldChests(String stage, int[] keys, int[] rooms, float[] xyz, int[] yaw, int[] flags);
+    static native boolean lootWorldProject(float[] xyz);
+    static native int lootWorldRupees();
+    static native void lootWorldPay(int n);
+    static native void lootWorldTestEnemy();
+    /** the game's HUD buttons X, Y, R, B, ZR: x, y of each in layout units; then 1 when it shows its sword icon on B */
+    static native int[] hudButtonPlaces();
+    /** loot shields per save file (the same way; after setLootSwords, which brings the game's folder) */
+    static native void setLootShields(String file1, String file2, String file3);
+    /** the loot shields there are: "id\tname\tpower" each */
+    static native String[] lootShields();
+    /** loot armour per save file (slot 0 head, 1 chest) */
+    static native void setLootArmor(int slot, String file1, String file2, String file3);
+    /** the armour there is: "id\tname\tdefence" each */
+    static native String[] lootArmor(int slot);
+    /** the sword's / shield's id on Link now, "" the game's own */
+    static native String lootInMemory(boolean shield);
+    /** the outfit's id on Link now, "" none */
+    static native String lootOutfitInMemory();
     /** Save file names (SaveNames): each file's name over 8 characters (null: none); any time. */
     static native void setSaveNames(String file1, String file2, String file3);
     /** Renames save file `file` (1..3) in the game's memory at the next frame. */
@@ -273,6 +309,18 @@ final class Native {
 
     /** the save files holding a game as the file select shows them (bits 0..2); -1 outside its file list */
     static native int saveSlotsUsed();
+    /** save file pages (SavePages): asked; the state: 1 waiting, 2 the game holds for the move, 0 done */
+    static native void savePageAsk();
+    static native int savePageState();
+    /** the file select's list of three files shows, nothing chosen */
+    static native boolean savePageReady();
+    static native void savePageMoved(boolean ok, String dir);
+    /** another game's save files show (a randomized or online game's, or the game as it is from one of those) */
+    static native boolean savePageForeign();
+    /** such a file chosen to be played: its number (the game holds for the restart), 0 none; ... or back to the files */
+    static native int savePageStart();
+    static native void savePageStartBack();
+    static native boolean savePageCancel();
     /** the GamePad screen's touch targets drawn now: "name parent x y w h;" (16:9 screen, 0..1, y down) */
     static native String drcTargets();
     /** the touch boxes of a menu on both screens (title, file select): as drcTargets, parent "p<pp|v1|a255" */
@@ -332,4 +380,79 @@ final class Native {
         }
         a.runOnUiThread(() -> a.showTextInput(initial, maxLen));
     }
+
+    // ---- online co-op (upstream's, issue #444; runtime/src/online/android_coop.cpp) ----
+    /** The app's internal folder for online (identity key, settings, block list); before start(). */
+    static native void coopInit(String dir);
+    /** The settings as "key=value" lines (on, notice_ok, server, server_addr, server_port, role, addr, port, name, tunic,
+     *  radar, pvp_sea, strangers); written back the same way (only the keys given change). */
+    static native String coopSettings();
+    static native void coopSaveSettings(String text);
+    /** Which games and save files play online (OnlineGames): this game's key, 0 off / 1 whole / 2 the files in files
+     *  (bit n-1), the file whose settings are used while none of them is played. */
+    static native void coopScope(String key, int scope, int files, int edit);
+    /** (fork) Daily quests of the fork's server: none without one; first "greeting\thours\tminutes to the next day",
+     *  then "id\tname\twhat\tprogress\tgoal\tdone\trupees" each. */
+    static native String[] coopQuests();
+    static native void coopQuestsAsk();
+    /** (fork) A wave of monsters around Link now, for everyone in the session. */
+    static native void coopRaidWave();
+    /** (fork) The event "Outset under siege", Grandma's house where Link stands. */
+    static native void coopSiege();
+    /** (fork) The event "Raiders from the sea", Grandma's door where Link stands. */
+    static native void coopShipRaid();
+    /** "profile\tsave file played (0 none)\t1 when online should run". */
+    static native String coopScopeNow();
+    static native String coopNotice();
+    static native void coopRetry();
+    /** One status line ("" while off). */
+    static native String coopStatus();
+    /** True when online co-op can't run with this game (the JPN release, for now). */
+    static native boolean coopUnsupported();
+    /** A session runs (directly or through a server). */
+    static native boolean coopOnline();
+    static native String coopFriendCode();
+    static native boolean coopViaServer();
+    /** "" when sent, else why not. */
+    static native String coopInvite(String code);
+    /** "party\tfrom" each. */
+    static native String[] coopInvites();
+    static native void coopAnswer(int party, boolean yes);
+    static native void coopLeaveParty();
+    /** {the party's largest size, its size now}. */
+    static native int[] coopPartySize();
+    /** "id\tname\ttunic\tmember\tping\tblocked\tmuted" each. */
+    static native String[] coopPlayers();
+    static native void coopGoTo(int id);
+    /** kind 1 block, 2 mute; "" done, else why not. */
+    static native String coopBlock(int id, int kind);
+    /** "key\tkind\tname" each. */
+    static native String[] coopBlocks();
+    static native void coopUnblock(String key);
+    /** "id\tname" each. */
+    static native String[] coopEmotes();
+    static native void coopEmote(int id);
+    /** "name\taddr\tport" each. */
+    static native String[] coopServers();
+    static native void coopForgetServer(String addr, int port);
+    static native String coopServerRules(String addr, int port);
+    static native String coopModProblems();
+    /** "id\tname" each: this game's features that count online. */
+    static native String[] coopMyMods();
+    /** After a party's refusal for the gameplay options: "" none to take, "match" they match now, "use" this game can
+     *  switch to the party's, "no\twhy" it can't. */
+    static native String coopPartyMods();
+    /** Switches to the party's gameplay options: {"" done or why not, then the ids of the features turned off}. */
+    static native String[] coopUsePartyMods();
+    /** The party's switches {flags (1 shared progress, 2 shared rupees, 4 friendly fire, 16 stay together), 1 when this
+     *  player leads}; null in no party on a server. */
+    static native int[] coopPartyFlags();
+    /** Sets the party's switches (the leader): "" done, else why not. */
+    static native String coopSetPartyFlags(int flags);
+    /** Player models going over the connection: "in|out\tmodel\tplayer\tpercent" each. */
+    static native String[] coopModelTransfers();
+    static native String[] coopNotices();
+    /** The overlay's shapes for a w x h picture (15 floats each: kind, r, g, b, a, 4 points, size, text index). */
+    static native float[] coopOverlay(float w, float h);
+    static native String[] coopOverlayTexts();
 }

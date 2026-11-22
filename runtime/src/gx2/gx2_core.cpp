@@ -17,6 +17,7 @@
 #include "gx2_texture_regs.h"
 #include "platform.h"
 #include "runtime.h"
+#include "../no_destroy.h"
 #include "../aspect.h"
 #include <map>
 #include <unistd.h>
@@ -165,7 +166,7 @@ static void reg_stats(uint32 first, uint32 n, bool alu, bool unchanged) {
     g_rs_small[n <= 1 ? 0 : n <= 2 ? 1 : n <= 4 ? 2 : n <= 8 ? 3 : 4]++;
 }
 
-__attribute__((always_inline)) static inline void apply_regs(uint32 first, const uint32* v, uint32 n) {
+__attribute__((always_inline)) static inline void apply_regs_now(uint32 first, const uint32* v, uint32 n) {
     if (first + n > kNumRegs) return;
     touch_regs(first, n);
     // uniform constants (most of the register traffic): no draw or shader state, nothing to compare
@@ -181,6 +182,52 @@ __attribute__((always_inline)) static inline void apply_regs(uint32 first, const
     if (g_gen_stats) reg_stats(first, n, false, i == n);
     if (i < n) apply_changed(first, v, n, i);
     if (g_shadow) copy_words(&g_shadow[first], v, n);
+}
+
+// ---- see-through draws (OP_SEE_THROUGH, upstream's gx2_core.cpp; online co-op's players outside the party, drawn
+// half transparent): while on, colour target 0's blend is forced to constant alpha x source + (1 - constant alpha) x
+// destination (the destination's alpha kept); what the game writes to those registers meanwhile is kept and put back
+// when it ends. The registers: CB_COLOR_CONTROL (its blend mask, target 0), CB_BLEND0_CONTROL, CB_BLEND_ALPHA.
+static bool g_see = false;
+static uint32 g_see_alpha = 0;
+static uint32 g_see_want[3];
+static const uint32 kSeeRegs[3] = {REGADDR::CB_COLOR_CONTROL, REGADDR::CB_BLEND0_CONTROL, REGADDR::CB_BLEND_RED + 3};
+static uint32 see_forced(int k, uint32 want) {
+    if (k == 0) return want | (1u << 8);  // (BLEND_MASK bits 8..15: target 0 blends)
+    if (k == 2) return g_see_alpha;
+    using BF = LATTE_CB_BLENDN_CONTROL::E_BLENDFACTOR;
+    using CF = LATTE_CB_BLENDN_CONTROL::E_COMBINEFUNC;
+    LATTE_CB_BLENDN_CONTROL r;
+    r.set_COLOR_SRCBLEND(BF::BLEND_CONST_ALPHA).set_COLOR_DSTBLEND(BF::BLEND_ONE_MINUS_CONST_ALPHA);
+    r.set_COLOR_COMB_FCN(CF::DST_PLUS_SRC).set_SEPARATE_ALPHA_BLEND(true);
+    r.set_ALPHA_SRCBLEND(BF::BLEND_ZERO).set_ALPHA_DSTBLEND(BF::BLEND_ONE).set_ALPHA_COMB_FCN(CF::DST_PLUS_SRC);
+    return r.getRawValue();
+}
+static void see_through(uint32 alpha_bits) {
+    if (alpha_bits && !g_see) for (int k = 0; k < 3; k++) g_see_want[k] = g_regs[kSeeRegs[k]];
+    const bool was = g_see;
+    g_see = alpha_bits != 0, g_see_alpha = alpha_bits;
+    for (int k = 0; k < 3; k++) {
+        if (!g_see && !was) break;
+        const uint32 v = g_see ? see_forced(k, g_see_want[k]) : g_see_want[k];
+        apply_regs_now(kSeeRegs[k], &v, 1);
+    }
+}
+__attribute__((noinline)) static void apply_regs_see(uint32 first, const uint32* v, uint32 n) {
+    // (the three lie between CB_BLEND_RED + 3, 0xA108, and CB_COLOR_CONTROL, 0xA202)
+    if (first <= (uint32)REGADDR::CB_COLOR_CONTROL && first + n > (uint32)REGADDR::CB_BLEND_RED + 3 && first < kNumRegs &&
+        n <= kNumRegs - first) {
+        std::vector<uint32> tmp(v, v + n);
+        for (int k = 0; k < 3; k++)
+            if (kSeeRegs[k] >= first && kSeeRegs[k] < first + n)
+                g_see_want[k] = tmp[kSeeRegs[k] - first], tmp[kSeeRegs[k] - first] = see_forced(k, g_see_want[k]);
+        return apply_regs_now(first, tmp.data(), n);
+    }
+    apply_regs_now(first, v, n);
+}
+__attribute__((always_inline)) static inline void apply_regs(uint32 first, const uint32* v, uint32 n) {
+    if (__builtin_expect(g_see, 0)) return apply_regs_see(first, v, n);
+    apply_regs_now(first, v, n);
 }
 
 // ---------------------------------------------------------------- display list recording
@@ -242,9 +289,16 @@ static void execute_one(Op op, const uint32* p, uint32 n);
 // Like the real GPU, command execution runs asynchronously to the game: GX2 calls append to a
 // queue that a render thread turns into GPU work (Metal or Vulkan). WWHD_NO_RENDER_THREAD=1 executes inline.
 static const bool g_render_thread = getenv("WWHD_NO_RENDER_THREAD") == nullptr;
-static std::mutex g_q_mutex;
-static std::condition_variable g_q_cv, g_q_done_cv;
-static std::vector<uint32> g_q_pending, g_q_work;
+// never destroyed (no_destroy.h, upstream 363af55e): the detached render thread waits on g_q_cv (with no timeout while
+// idle) and uses the queue until the process ends, also when it leaves through exit() (Quit: System.exit)
+static NoDestroy<std::mutex> g_q_mutex_store;
+static std::mutex& g_q_mutex = g_q_mutex_store.value;
+static NoDestroy<std::condition_variable> g_q_cv_store, g_q_done_cv_store;
+static std::condition_variable& g_q_cv = g_q_cv_store.value;
+static std::condition_variable& g_q_done_cv = g_q_done_cv_store.value;
+static NoDestroy<std::vector<uint32>> g_q_pending_store, g_q_work_store;
+static std::vector<uint32>& g_q_pending = g_q_pending_store.value;
+static std::vector<uint32>& g_q_work = g_q_work_store.value;
 static bool g_q_waiting = false;
 static uint64_t g_fence_issued = 0, g_fence_done = 0;
 
@@ -278,7 +332,7 @@ static bool g_pending_reads = true;  // (under g_q_mutex)
 static uint32 g_pending_ops = 0;     // debug (WWHD_TRACE_DRAWDONE): bit per op that set it
 static bool reads_guest(Op op) {
     switch (op) {
-    case OP_NOP: case OP_SET_REGS: case OP_COPY_TO_SCAN: case OP_SET_CONTEXT: case OP_SET_PROJ_REGS: case OP_FLUSH:
+    case OP_NOP: case OP_SET_REGS: case OP_SEE_THROUGH: case OP_COPY_TO_SCAN: case OP_SET_CONTEXT: case OP_SET_PROJ_REGS: case OP_FLUSH:
     case OP_DRAW_DONE: case OP_SWAP: case OP_SETUP_CONTEXT: case OP_FENCE: case OP_WARM:
     case OP_INVALIDATE:  // marks surfaces for a check at their next use (a draw, behind a later wait)
         return false;  // their payload carries what they need (or host state only)
@@ -499,6 +553,7 @@ static void execute_one(Op op, const uint32* p, uint32 n) {
         break;
     }
     case OP_PEEK_Z: gfx::peek_z(p, n); break;
+    case OP_SEE_THROUGH: see_through(n ? p[0] : 0); break;
     case OP_LAYOUT_ROOT: {
         uint32 w = g_regs[mmCB_COLOR0_TILE] & 0xFFFF, h = g_regs[mmCB_COLOR0_FRAG];
         aspect::layout_root_target(p[0], gfx::target_is_tv(w, h) ? aspect::kTvTarget : gfx::target_is_drc(w, h) ? aspect::kDrcTarget : aspect::kOtherTarget);
@@ -737,7 +792,11 @@ HLE(gx2, GX2CopySurface) {
         render_sync();
     }
 }
+// seamless houses (mods/turbo.cpp): while set, the scan buffers keep their last picture (the door's scene change is
+// shown as a still picture instead of a fade)
+namespace gx2 { std::atomic<bool> g_hold_picture{false}; }
 HLE(gx2, GX2CopyColorBufferToScanBuffer) {
+    if (gx2::g_hold_picture.load(std::memory_order_relaxed)) return;
     std::vector<uint32> p;
     put_struct(p, arg(c, 0), kColorBufferWords);
     p.push_back(arg(c, 1));

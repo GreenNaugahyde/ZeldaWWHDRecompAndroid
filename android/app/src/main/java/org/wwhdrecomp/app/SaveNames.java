@@ -21,6 +21,7 @@ final class SaveNames {
 
     /** the long names to the runtime (any time; at the start too) */
     static void handOver(MainActivity a) {
+        if (SavePages.viewing()) return;  // (another page's settings: not the game's)
         Native.setSaveNames(a.prefs.getString(pref(1), null), a.prefs.getString(pref(2), null), a.prefs.getString(pref(3), null));
     }
 

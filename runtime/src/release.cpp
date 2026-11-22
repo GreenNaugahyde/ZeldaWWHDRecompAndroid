@@ -31,6 +31,17 @@ struct Map {
 };
 
 Id g_id = Id::USA;
+Id g_boot = Id::USA;
+
+// before every other initializer of the library (priority 101): the app sets WWHD_RELEASE from the game's
+// meta.xml before System.loadLibrary, so that GD() / GC() in file-level constants map to this game (upstream sets
+// its maps when it builds; ours are chosen at run time)
+__attribute__((constructor(101))) void boot_release() {
+    const char* r = getenv("WWHD_RELEASE");
+    if (!r) return;
+    if (!strcmp(r, "EUR")) g_id = g_boot = Id::EUR;
+    else if (!strcmp(r, "JPN")) g_id = g_boot = Id::JPN;
+}
 
 Map parse(const char* begin, const char* end) {
     Map m;
@@ -104,6 +115,7 @@ bool known_entry(uint32_t entryPoint) {
 bool select(uint32_t entryPoint) { return release_of(entryPoint, g_id); }
 
 Id id() { return g_id; }
+Id boot_id() { return g_boot; }
 const char* name() { return name_of(g_id); }
 const char* name_of(Id id) { return id == Id::EUR ? "EUR" : id == Id::JPN ? "JPN" : "USA"; }
 

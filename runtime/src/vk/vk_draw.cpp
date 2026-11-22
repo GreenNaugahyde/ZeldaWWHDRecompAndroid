@@ -6,6 +6,7 @@ extern "C" uint64_t g_draw_state_gen;    // gx2_core.cpp: bumped by any non-data
 // Draw calls on Vulkan: shader translation (Cemu decompiler, GLSL -> SPIR-V), pipelines, resource
 // binding and primitive submission. Follows gfx/metal_draw.mm; binding conventions are those of
 // the Vulkan GLSL the decompiler emits (one descriptor set per stage, as in Cemu's Vulkan renderer).
+#include "../interp.h"
 #include "../packs.h"
 #include "area_sample.h"
 #include "hud_coverage.h"
@@ -2439,6 +2440,17 @@ static std::atomic<bool> g_aniso{[] { const char* e = getenv("WWHD_ANISO"); retu
 bool aniso_enabled() { return g_aniso.load(std::memory_order_relaxed); }
 void set_aniso(bool v) { g_aniso = v; LOG("[gfx] anisotropic filtering %s", v ? "on" : "off"); }
 
+// Graphics > Grass draw distance (upstream e669fa5b..9d55a305, DaniXK-96): the islands' tall grass is drawn as
+// thousands of separate patches (~5400 of 7000 draws a frame in the Forest Haven's thickest spot); those farther
+// than this from the drawn camera's eye are skipped. 0 = the original game (all); WWHD_GRASS_DISTANCE wins
+static std::atomic<int> g_grass{[] { const char* e = getenv("WWHD_GRASS_DISTANCE"); return e ? std::clamp(atoi(e), 0, 100000) : -1; }()};
+int grass_distance() { return std::max(0, g_grass.load(std::memory_order_relaxed)); }
+void set_grass_distance(int d) {
+    if (getenv("WWHD_GRASS_DISTANCE")) return;
+    g_grass = std::clamp(d, 0, 100000);
+    LOG("[gfx] grass draw distance %d%s", d, d ? "" : " (all)");
+}
+
 // allowAniso: the bound texture is a real mipmapped asset (not a buffer the GPU rendered); the game also
 // reads its screen-sized lighting/occlusion buffers through mip-filtering samplers, and anisotropy there
 // blurs the screen-space effects
@@ -4561,11 +4573,11 @@ void cache_warm_step() {
 }
 
 enum Skip { SK_GS, SK_RASTER_KILL, SK_NO_FETCH, SK_NO_SHADER, SK_NO_TARGET, SK_PRIM, SK_PASS, SK_PIPELINE, SK_CULL, SK_SCISSOR, SK_COMPILING,
-            SK_DROPPED_DEPTH, SK_DROPPED_COLOR, SK_PIPE_COMPILING, SK_FAR_SHADOW, SK_COUNT };
+            SK_DROPPED_DEPTH, SK_DROPPED_COLOR, SK_PIPE_COMPILING, SK_GRASS, SK_FAR_SHADOW, SK_COUNT };
 static uint64_t g_skip[SK_COUNT];
 static const char* kSkipNames[SK_COUNT] = {"geometry-shader", "raster-kill", "no-fetch-shader", "shader-failed", "no-target",
                                            "unsupported-prim", "no-pass", "pipeline-failed", "cull-all", "empty-scissor",
-                                           "compiling", "dropped-depth", "dropped-color", "pipeline-compiling", "far-shadow"};
+                                           "compiling", "dropped-depth", "dropped-color", "pipeline-compiling", "far-grass", "far-shadow"};
 // draws left out so far because their shader or pipeline was still compiling (the benchmark)
 uint64_t skipped_compiling() { return g_skip[SK_COMPILING] + g_skip[SK_PIPE_COMPILING]; }
 
@@ -5091,6 +5103,29 @@ void draw(const uint32_t* regs, uint32_t prim, uint32_t count, uint32_t indexTyp
     ((uint32_t*)regs)[REGADDR::VGT_PRIMITIVE_TYPE] = prim;
     if (regs[REGADDR::VGT_GS_MODE] & 3) { g_skip[SK_GS]++; return; }  // geometry shaders: not supported yet
     if (regs[REGADDR::PA_CL_CLIP_CNTL] & (1 << 22)) { g_skip[SK_RASTER_KILL]++; return; }  // rasterization disabled
+    // Graphics > Grass draw distance: a tall grass patch (108 vertices; its vertex program one of the three below, by
+    // bytes hash; the same programs draw the small palms and plants, 216, which stay) whose model translation (vertex
+    // uniform block 1, a 3x4 row-major matrix) lies farther than that from the drawn camera's eye (horizontal) is
+    // skipped before anything is resolved (the fast path below keys on generations: a skipped draw changes nothing)
+    if (const int grass = grass_distance(); grass > 0 && uint64_t(count) * instances == 108) {
+        static constexpr uint64_t kGrassVs[] = {0x23CDD3D4D6BAAACDull, 0x042E089911FC3CC0ull, 0x7C8717CA596569B3ull};
+        struct Seen { uint32_t addr = 0, size = 0; uint64_t frame = ~0ull; bool grass = false; };
+        static Seen seen[8];
+        const uint32_t vsAddr = regs[mmSQ_PGM_START_VS] << 8, vsSize = regs[mmSQ_PGM_START_VS + 1] << 3;
+        Seen& sn = seen[(vsAddr >> 8) & 7];
+        if (sn.frame != R.frame || sn.addr != vsAddr || sn.size != vsSize) {
+            const uint64_t h = vsAddr && vsSize && vsSize <= 0x100000 ? program_hash(vsAddr, vsSize) : 0;
+            sn = {vsAddr, vsSize, R.frame, h && std::find(std::begin(kGrassVs), std::end(kGrassVs), h) != std::end(kGrassVs)};
+        }
+        float eye[3];
+        const uint32_t ub = regs[mmSQ_VTX_UNIFORM_BLOCK_START + 7], ubSize = regs[mmSQ_VTX_UNIFORM_BLOCK_START + 8] + 1;
+        if (sn.grass && ub && ubSize >= 48 && interp::drawn_eye(eye)) {
+            float m[12];
+            memcpy(m, mem::ptr(ub), sizeof m);  // (the game swaps its uniform blocks for the GPU: little-endian as is)
+            const float dx = m[3] - eye[0], dz = m[11] - eye[2], d = (float)grass;
+            if (dx * dx + dz * dz > d * d) { g_skip[SK_GRASS]++; return; }
+        }
+    }
 
     // fast path: nothing but data registers (uniform constants, uniform block and vertex buffer
     // addresses) changed since the previous draw, which is in the same render pass, and no surface was

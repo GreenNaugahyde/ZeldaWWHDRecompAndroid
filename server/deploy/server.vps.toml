@@ -1,0 +1,57 @@
+# wwhd-online-server on a VPS (fork): the hardened settings. docs/online-server-vps.md walks through it.
+# install.sh copies this to /etc/wwhd-online/server.toml once (never over an edited one).
+# Relative file names are in the working directory /var/lib/wwhd-online (the systemd unit sets it).
+
+[server]
+name = "WWHD pre-release server"
+contact = "CHANGE ME: your name or address (shown to players before they connect: privacy notice)"
+rules = "Pre-release test server. Be kind. No griefing."
+public = true                        # refuses to start without the real crypto (Monocypher)
+invite_only = false                  # true + allow = [...]: only these friend codes may join (closed test)
+# allow = ["KQ7F-9MZ2-XD"]
+
+[network]
+bind = "0.0.0.0"                     # the firewall decides who reaches it (deploy/nftables.conf)
+port = 7777                          # UDP, and TCP as the fallback
+max_players = 64                     # raise when the box keeps up (status page: tick, traffic)
+tcp = true
+
+[files]
+key = "server.key"                   # the server's identity: back it up; players pin it and are warned if it changes
+bans = "bans.txt"
+reports = "reports.log"
+admin_socket = "/run/wwhd-online/admin.sock"    # 0600: root or the wwhd user only (wwhd-admin)
+status_socket = "/run/wwhd-online/status.sock"  # 0660, read-only: the status page
+team_state = "team-state.txt"
+
+[limits]
+pow_bits = 18                        # the join puzzle (default). 20 makes a phone join take seconds longer
+per_ip = 3                           # players from one address (a family behind one router)
+keep_ip_hash = true                  # bans also hold a salted hash of the address
+loopback_exempt = false
+strikes_kick = 120                   # rate / plausibility strikes within a minute before a kick
+
+[scale]
+mode = "off"                         # one process; the status page sees every player only in this mode
+
+[metrics]
+file = ""                            # the status page reads the live counts instead
+every_s = 10
+
+[pvp]
+sea = "opt-in"                       # "off", "opt-in" (each player's toggle) or "on"
+# Safe zones: "square:x=..,z=..,r=..", x and z from the square's centre. These are the measured big islands
+# (positions taken from the game's sea rooms: the middle of the land, radius = farthest land + 5,000 of water).
+# They are facts you may change: edit, add or remove lines. Small islands are left open for PvP.
+zones_replace = true
+zones = [
+  "10:x=-300,z=-100,r=12000",        # Windfall Island
+  "43:x=-200,z=19200,r=15500",       # Outset Island
+  "12:x=3500,z=-5100,r=16000",       # Dragon Roost Island
+  "40:x=15400,z=-700,r=10000",       # Forest Haven
+  "16:x=100,z=20100,r=10000",        # Tingle Island
+  "0:x=1800,z=-800,r=15500",         # Forsaken Fortress
+  "25:x=0,z=0,r=18000",              # Tower of the Gods
+  "44:x=20000,z=19400,r=11000",      # Headstone Island (Earth Temple)
+  "3:x=19800,z=-19600,r=12000",      # Gale Isle (Wind Temple)
+]

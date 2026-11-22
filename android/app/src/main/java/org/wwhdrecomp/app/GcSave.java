@@ -131,6 +131,63 @@ final class GcSave {
         return out;
     }
 
+    /** the names of a cking.sav's three files as the game shows them, null for a file without a game; null when it is no cking.sav */
+    static String[] fileNames(byte[] sav) {
+        if (sav == null || sav.length != HD_FILE) return null;
+        String[] r = new String[3];
+        int names = 3 * HD_SLOT + 3 * (HD_EXTRA[0] + HD_EXTRA[1] + HD_EXTRA[2]);
+        for (int k = 0; k < 3; k++) {
+            int o = k * HD_SLOT + SAVE_COUNT;
+            if (sav[o] == 0 && sav[o + 1] == 0) continue;
+            int at = names + k * HD_EXTRA[3], chars = 0;
+            while (chars < 9 && (sav[at + 2 * chars] != 0 || sav[at + 2 * chars + 1] != 0)) chars++;
+            r[k] = new String(sav, at, 2 * chars, StandardCharsets.UTF_16BE);
+        }
+        return r;
+    }
+
+    /**
+     * A cking.sav with three new files (a new page of save files). The files hold the game's own start values: an unused
+     * file of `like` (a save of this device, or null) if it has one, else `template` (0xA94 bytes, a file the game never used).
+     */
+    static byte[] blankCkingSav(byte[] like, byte[] template) {
+        byte[] out = new byte[HD_FILE];
+        byte[] slot = template;
+        if (like != null && like.length == HD_FILE)
+            for (int s = 0; s < 3; s++)
+                if (like[s * HD_SLOT + SAVE_COUNT] == 0 && like[s * HD_SLOT + SAVE_COUNT + 1] == 0 && hdSlotOk(like, s * HD_SLOT)) {
+                    slot = java.util.Arrays.copyOfRange(like, s * HD_SLOT, (s + 1) * HD_SLOT);
+                    break;
+                }
+        // (the player section's bytes 3 and 4 of a save made on this device: the text language; 0 would be Japanese on any start)
+        boolean known = like != null && like.length == HD_FILE;
+        byte lang3 = known ? like[3 * HD_SLOT + 3] : 0, lang4 = known ? like[3 * HD_SLOT + 4] : 0;
+        for (int s = 0; s < 3; s++) System.arraycopy(slot, 0, out, s * HD_SLOT, HD_SLOT);
+        byte[] name = "Link".getBytes(StandardCharsets.UTF_16BE);
+        int p = 3 * HD_SLOT;
+        CRC32 crc = new CRC32();
+        for (int sect = 0; sect < HD_EXTRA.length; sect++)
+            for (int s = 0; s < 3; s++) {
+                byte[] v = new byte[HD_EXTRA[sect]], forCrc = v;
+                if (sect == 0) {
+                    v[3] = lang3;
+                    v[4] = lang4;
+                    v[5] = 1;
+                }
+                if (sect == 3) {
+                    System.arraycopy(name, 0, v, 0, name.length);
+                    forCrc = new byte[18];
+                    System.arraycopy(v, 0, forCrc, 0, 5);  // (characters + 1 bytes of the name, as toCkingSav)
+                }
+                System.arraycopy(v, 0, out, p, v.length);
+                crc.update(forCrc);
+                p += v.length;
+            }
+        put32(out, p, 4);
+        put32(out, p + 4, crc.getValue());
+        return out;
+    }
+
     /**
      * A copy of a WWHD cking.sav with every name the player typed made "Link" (About > Share game
      * log): in each slot's packed data the three name fields (mPlayerName and the two after it) that
@@ -225,6 +282,12 @@ final class GcSave {
     }
 
     // mDoMemCdRWm_CalcCheckSumGameData: u32 byte sum and u32 sum of the complements after the data
+    private static boolean hdSlotOk(byte[] b, int o) {
+        long sum = 0;
+        for (int i = 0; i < HD_SLOT_USED; i++) sum += b[o + i] & 0xFF;
+        return get32(b, o + HD_SLOT_USED) == (sum & 0xFFFFFFFFL);
+    }
+
     private static boolean checksumOk(byte[] b, int o) {
         long sum = 0;
         for (int i = 0; i < PACKED_LEN; i++) sum += b[o + i] & 0xFF;

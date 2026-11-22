@@ -90,7 +90,7 @@ final class Randomizer {
 
     /** Before the runtime starts (MainActivity.askGame): the game this run plays. */
     static void choose(MainActivity a, int n) {
-        a.prefs.edit().putInt(PREF_GAME, n).commit();
+        a.prefs.edit().putInt(PREF_GAME, n).putInt(OnlineGames.PREF_GAME, 0).commit();  // (no online game then)
         playing = null;
     }
 
@@ -98,7 +98,7 @@ final class Randomizer {
     static int playingGame(MainActivity a) {
         if (playing == null) {
             int n = chosen(a);
-            playing = made(a, n) && releaseOk(a) && madeForThisRelease(a, n) ? n : 0;
+            playing = made(a, n) && releaseOk(a) && madeForThisRelease(a, n) && a.prefs.getInt(OnlineGames.PREF_GAME, 0) == 0 ? n : 0;
         }
         return playing;
     }
@@ -107,7 +107,10 @@ final class Randomizer {
     static boolean playing(MainActivity a) { return playingGame(a) != 0; }
 
     /** The folder with save/ and states/ of the game this run plays. */
-    static File playDir(MainActivity a) { return playing(a) ? gameDir(a, playingGame(a)) : a.baseDir(); }
+    static File playDir(MainActivity a) {
+        if (OnlineGames.playing(a)) return OnlineGames.gameDir(a, OnlineGames.playingGame(a));
+        return playing(a) ? gameDir(a, playingGame(a)) : a.baseDir();
+    }
 
     /** What Native.setRandomizer gets: the randomized game's folder or null. */
     static String runtimeDir(MainActivity a) { return playing(a) ? outDir(a, playingGame(a)).getAbsolutePath() : null; }
@@ -273,7 +276,10 @@ final class Randomizer {
         making = dir;
         String err = RandoNative.generate(data, dir.getAbsolutePath(), a.gameDir(), new File(dir, "out").getAbsolutePath());
         if (err != null) Backup.deleteTree(dir);
-        else choose(a, n);
+        else {
+            choose(a, n);
+            OnlineGames.madeRando(a, n);  // (online from its first start, when chosen for it)
+        }
         return err;
     }
 

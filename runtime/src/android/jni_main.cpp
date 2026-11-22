@@ -1,5 +1,6 @@
 // Android entry points (JNI, class org.wwhdrecomp.app.Native). The activity owns the UI thread;
 // the runtime boots on a thread of its own and the game runs on its guest threads as on macOS.
+#include "../gcmodel/hd_sword.h"
 #include <android/native_window_jni.h>
 #include <jni.h>
 #include <dirent.h>
@@ -46,6 +47,8 @@ int ao_mode();
 void set_ao_mode(int m);
 bool aniso_enabled();
 void set_aniso(bool v);
+int grass_distance();
+void set_grass_distance(int d);
 bool vsync();
 void set_drc_window_fps(int fps);
 void set_tvout_window_fps(int fps);
@@ -656,6 +659,144 @@ JNI_FN(void, setPlayerModels)(JNIEnv* env, jclass, jstring basePack, jstring pac
     mods::set_player_models(basePack ? jstr(env, basePack) : "", packsDir ? jstr(env, packsDir) : "", folders);
 }
 
+// loot swords per save file (mods/player_models.cpp, gcmodel/hd_sword.h): the game's folder (content/ in it), each
+// save file's sword id (null or "": the game's sword); any time (put in live)
+JNI_FN(void, setLootSwords)(JNIEnv* env, jclass, jstring gameDir, jstring s1, jstring s2, jstring s3) {
+    std::vector<std::string> ids;
+    for (jstring x : {s1, s2, s3}) ids.push_back(x ? jstr(env, x) : "");
+    mods::set_loot_swords(gameDir ? jstr(env, gameDir) : "", ids);
+}
+// loot shields per save file (the same way: shield ids, "id#tier"); after setLootSwords (it brings the game's folder)
+JNI_FN(void, setLootShields)(JNIEnv* env, jclass, jstring s1, jstring s2, jstring s3) {
+    std::vector<std::string> ids;
+    for (jstring x : {s1, s2, s3}) ids.push_back(x ? jstr(env, x) : "");
+    mods::set_loot_shields(ids);
+}
+// loot armour per save file (slot 0 head, 1 chest; the same way)
+JNI_FN(void, setLootArmor)(JNIEnv* env, jclass, jint slot, jstring s1, jstring s2, jstring s3) {
+    std::vector<std::string> ids;
+    for (jstring x : {s1, s2, s3}) ids.push_back(x ? jstr(env, x) : "");
+    mods::set_loot_armor(slot, ids);
+}
+// the armour there is: "id\tname\tdefence (percent)" each
+JNI_FN(jobjectArray, lootArmor)(JNIEnv* env, jclass, jint slot) {
+    const auto& l = gcmodel::armor_list(slot);
+    jobjectArray a = env->NewObjectArray((jsize)l.size(), env->FindClass("java/lang/String"), nullptr);
+    for (size_t i = 0; i < l.size(); i++) {
+        const std::string row = std::string(l[i].id) + "\t" + l[i].name + "\t" + std::to_string(l[i].defence);
+        jstring js = env->NewStringUTF(row.c_str());
+        env->SetObjectArrayElement(a, (jsize)i, js);
+        env->DeleteLocalRef(js);
+    }
+    return a;
+}
+// the sword's / shield's id on Link now ("": the game's)
+JNI_FN(jstring, lootInMemory)(JNIEnv* env, jclass, jboolean shield) { return env->NewStringUTF(mods::loot_in_memory(shield).c_str()); }
+// the outfit's id on Link now ("": none; without what the runtime adds to it)
+JNI_FN(jstring, lootOutfitInMemory)(JNIEnv* env, jclass) { return env->NewStringUTF(mods::loot_outfit_in_memory().c_str()); }
+// the shields there are: "id\tname\t100" each
+JNI_FN(jobjectArray, lootShields)(JNIEnv* env, jclass) {
+    const auto& l = gcmodel::shield_list();
+    jobjectArray a = env->NewObjectArray((jsize)l.size(), env->FindClass("java/lang/String"), nullptr);
+    for (size_t i = 0; i < l.size(); i++) {
+        const std::string row = std::string(l[i].id) + "\t" + l[i].name + "\t" + std::to_string(l[i].power);
+        jstring js = env->NewStringUTF(row.c_str());
+        env->SetObjectArrayElement(a, (jsize)i, js);
+        env->DeleteLocalRef(js);
+    }
+    return a;
+}
+// the swords there are: "id\tname\tpower (percent)" each
+// a loot weapon's picture from its real model: size x size RGBA, null when it can't be made (LootIcons.java; a background thread)
+JNI_FN(jbyteArray, lootIcon)(JNIEnv* env, jclass, jstring gameDir, jstring id, jint kind, jint size) {  // kind: 0 sword, 1 shield, 2 head, 3 chest, 4 outfit
+    const std::string i = jstr(env, id);
+    if (size <= 0 || size > 512) return nullptr;
+    std::vector<uint8_t> rgba;
+    std::string error;
+    bool ok = false;
+    if (kind >= 2) {
+        const gcmodel::ArmorDef* def = gcmodel::armor_def(kind - 2, i);
+        if (!def) return nullptr;
+        ok = gcmodel::armor_icon(jstr(env, gameDir), *def, size, rgba, error);
+    } else {
+        const gcmodel::SwordDef* def = kind == 1 ? gcmodel::shield_def(i) : gcmodel::sword_def(i);
+        if (!def) return nullptr;
+        ok = gcmodel::weapon_icon(jstr(env, gameDir), *def, size, rgba, error);
+    }
+    if (!ok) {
+        LOG("[loot] no picture of %s: %s", i.c_str(), error.c_str());
+        return nullptr;
+    }
+    jbyteArray a = env->NewByteArray((jsize)rgba.size());
+    env->SetByteArrayRegion(a, 0, (jsize)rgba.size(), (const jbyte*)rgba.data());
+    return a;
+}
+// the game's HUD buttons (X, Y, R, B, ZR): x, y of each in layout units
+JNI_FN(void, lootItemTake)(JNIEnv*, jclass, jint type) { mods::loot_item_take(type); }
+JNI_FN(void, lootItemDrop)(JNIEnv*, jclass) { mods::loot_item_drop(); }
+JNI_FN(jint, lootItemState)(JNIEnv*, jclass) { return mods::loot_item_state(); }
+static jfloatArray float_array(JNIEnv* env, const std::vector<float>& v) {
+    jfloatArray a = env->NewFloatArray((jsize)v.size());
+    if (a && !v.empty()) env->SetFloatArrayRegion(a, 0, (jsize)v.size(), v.data());
+    return a;
+}
+JNI_FN(void, lootWorldOn)(JNIEnv*, jclass, jboolean on) { mods::loot_world_on(on); }
+JNI_FN(jfloatArray, lootWorldPoll)(JNIEnv* env, jclass) { return float_array(env, mods::loot_world_poll()); }
+JNI_FN(jfloatArray, lootWorldSpots)(JNIEnv* env, jclass) { return float_array(env, mods::loot_world_spots()); }
+JNI_FN(jintArray, lootWorldOpened)(JNIEnv* env, jclass) {
+    const std::vector<int> v = mods::loot_world_opened();
+    jintArray a = env->NewIntArray((jsize)v.size());
+    if (a && !v.empty()) env->SetIntArrayRegion(a, 0, (jsize)v.size(), reinterpret_cast<const jint*>(v.data()));
+    return a;
+}
+JNI_FN(jstring, lootWorldWhere)(JNIEnv* env, jclass) { return env->NewStringUTF(mods::loot_world_where().c_str()); }
+JNI_FN(void, lootWorldChests)(JNIEnv* env, jclass, jstring stage, jintArray keys, jintArray rooms, jfloatArray xyz, jintArray yaw, jintArray flags) {
+    const char* s = env->GetStringUTFChars(stage, nullptr);
+    const std::string st = s;
+    env->ReleaseStringUTFChars(stage, s);
+    const auto ints = [&](jintArray a) {
+        std::vector<int> v(env->GetArrayLength(a));
+        if (!v.empty()) env->GetIntArrayRegion(a, 0, (jsize)v.size(), reinterpret_cast<jint*>(v.data()));
+        return v;
+    };
+    std::vector<float> f(env->GetArrayLength(xyz));
+    if (!f.empty()) env->GetFloatArrayRegion(xyz, 0, (jsize)f.size(), f.data());
+    mods::loot_world_chests(st, ints(keys), ints(rooms), f, ints(yaw), ints(flags));
+}
+JNI_FN(jboolean, lootWorldProject)(JNIEnv* env, jclass, jfloatArray xyz) {
+    float p[3];
+    env->GetFloatArrayRegion(xyz, 0, 3, p);
+    if (!mods::loot_world_project(p)) return JNI_FALSE;
+    env->SetFloatArrayRegion(xyz, 0, 3, p);
+    return JNI_TRUE;
+}
+JNI_FN(void, lootWorldTestEnemy)(JNIEnv*, jclass) { mods::loot_world_test_enemy(); }
+JNI_FN(jint, lootWorldRupees)(JNIEnv*, jclass) { return mods::loot_world_rupees(); }
+JNI_FN(void, lootWorldPay)(JNIEnv*, jclass, jint n) { mods::loot_world_pay(n); }
+JNI_FN(jintArray, hudButtonPlaces)(JNIEnv* env, jclass) {
+    jint v[11];
+    v[10] = hud_b_icon_shown() ? 1 : 0;
+    for (int i = 0; i < 5; i++) {
+        int32_t o[2];
+        hud_cluster_place(i, o);
+        v[2 * i] = o[0], v[2 * i + 1] = o[1];
+    }
+    jintArray a = env->NewIntArray(11);
+    env->SetIntArrayRegion(a, 0, 11, v);
+    return a;
+}
+JNI_FN(jobjectArray, lootSwords)(JNIEnv* env, jclass) {
+    const auto& l = gcmodel::sword_list();
+    jobjectArray a = env->NewObjectArray((jsize)l.size(), env->FindClass("java/lang/String"), nullptr);
+    for (size_t i = 0; i < l.size(); i++) {
+        const std::string row = std::string(l[i].id) + "\t" + l[i].name + "\t" + std::to_string(l[i].power);
+        jstring js = env->NewStringUTF(row.c_str());
+        env->SetObjectArrayElement(a, (jsize)i, js);
+        env->DeleteLocalRef(js);
+    }
+    return a;
+}
+
 // save file names (mods/save_names.cpp): each file's name over 8 characters (null or shorter: none); any time
 JNI_FN(void, setSaveNames)(JNIEnv* env, jclass, jstring n1, jstring n2, jstring n3) {
     std::array<std::u16string, 3> names;
@@ -866,6 +1007,7 @@ JNI_FN(void, setOption)(JNIEnv* env, jclass, jstring name, jint value) {
     else if (n == "bloom_strength") gfx::set_bloom_strength(value);
     else if (n == "distant_shadows") gfx::set_distant_shadows(value != 0);
     else if (n == "aniso") gfx::set_aniso(value != 0);
+    else if (n == "grass_distance") gfx::set_grass_distance(value);  // (Graphics > Grass draw distance, 0 = all)
     else if (n == "vsync") gfx::set_vsync(value != 0);
     else if (n == "drc_window_fps") gfx::set_drc_window_fps(value);
     else if (n == "tvout_window_fps") gfx::set_tvout_window_fps(value);
@@ -931,6 +1073,7 @@ JNI_FN(void, setOption)(JNIEnv* env, jclass, jstring name, jint value) {
     else if (n == "mod_quick_doors") mods::set_quick_doors(value != 0);
     else if (n == "mod_walk_doors") mods::set_walk_doors(value != 0);
     else if (n == "mod_walk_doors_a") mods::set_walk_doors_by_a(value != 0);
+    else if (n == "mod_seamless_houses") mods::set_seamless_houses(value != 0);
     else if (n == "mod_hit_stop_off") mods::set_hit_stop_off(value);
     else if (n == "mod_fast_scenes") mods::set_fast_scenes(value != 0);
     else if (n == "mod_ff_cutscenes") mods::set_ff_cutscenes(value != 0);
@@ -1002,6 +1145,7 @@ JNI_FN(jint, getOption)(JNIEnv* env, jclass, jstring name) {
     if (n == "bloom_strength") return gfx::bloom_strength();
     if (n == "distant_shadows") return gfx::distant_shadows();
     if (n == "aniso") return gfx::aniso_enabled();
+    if (n == "grass_distance") return gfx::grass_distance();
     if (n == "vsync") return gfx::vsync();
     if (n == "upscale") return gfx::upscale_mode();
     if (n == "pro_controller") return input::pro_controller();
@@ -1034,6 +1178,7 @@ JNI_FN(jint, getOption)(JNIEnv* env, jclass, jstring name) {
     if (n == "mod_quick_doors") return mods::quick_doors();
     if (n == "mod_walk_doors") return mods::walk_doors();
     if (n == "mod_walk_doors_a") return mods::walk_doors_by_a();
+    if (n == "mod_seamless_houses") return mods::seamless_houses();
     if (n == "mod_hit_stop_off") return mods::hit_stop_off();
     if (n == "mod_fast_scenes") return mods::fast_scenes();
     if (n == "mod_ff_cutscenes") return mods::ff_cutscenes();
@@ -1145,6 +1290,14 @@ JNI_FN(jint, packFileSwitch)(JNIEnv*, jclass) { return g_started ? packs::file_s
 JNI_FN(void, packFileContinue)(JNIEnv*, jclass) { packs::file_switch_continue(); }
 JNI_FN(void, packFileBack)(JNIEnv*, jclass) { packs::file_switch_back(); }
 JNI_FN(jint, saveSlotsUsed)(JNIEnv*, jclass) { return g_started ? mods::save_slots_used() : -1; }
+JNI_FN(void, savePageAsk)(JNIEnv*, jclass) { if (g_started) mods::save_page_ask(); }
+JNI_FN(jint, savePageState)(JNIEnv*, jclass) { return g_started ? mods::save_page_state() : 0; }
+JNI_FN(jboolean, savePageReady)(JNIEnv*, jclass) { return g_started && mods::save_page_ready(); }
+JNI_FN(void, savePageMoved)(JNIEnv* env, jclass, jboolean ok, jstring dir) { mods::save_page_moved(ok, dir ? jstr(env, dir) : ""); }
+JNI_FN(jboolean, savePageForeign)(JNIEnv*, jclass) { return g_started && mods::save_page_foreign(); }
+JNI_FN(jint, savePageStart)(JNIEnv*, jclass) { return g_started ? mods::save_page_start() : 0; }
+JNI_FN(void, savePageStartBack)(JNIEnv*, jclass) { mods::save_page_start_back(); }
+JNI_FN(jboolean, savePageCancel)(JNIEnv*, jclass) { return mods::save_page_cancel(); }
 // the game's own GamePad screens as drawing orders for a GamePad device (drc_mirror.h; PadHost)
 JNI_FN(void, drcMirror)(JNIEnv*, jclass, jboolean on) { drc_mirror::set_on(on); }
 JNI_FN(jbyteArray, drcMirrorFrame)(JNIEnv* env, jclass) {
